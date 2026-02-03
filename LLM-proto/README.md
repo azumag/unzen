@@ -1,4 +1,4 @@
-# 分散型 LLM 推論 API (LLM-Relay) 詳細設計書
+# unzen (LLM-proto) 詳細設計書
 
 ## 1. 概要
 
