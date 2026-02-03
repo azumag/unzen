@@ -55,8 +55,8 @@ unzen (QJS-proto) は、Webサイト閲覧者のブラウザを分散型サー�
 │  └─────────────────────────────────────────────────────────┘   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
-           ┌───────────────┼───────────────┐
-           │               │               │
+            ┌───────────────┼───────────────┐
+            │               │               │
 ┌──────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
 │   Worker Node 1 │ │ Worker Node 2│ │ Worker Node 3│
 │  ┌───────────┐  │ │ ┌───────────┐ │ │ ┌───────────┐ │
@@ -120,8 +120,8 @@ cat > Makefile.wasm << 'EOF'
 CC=emcc
 CFLAGS=-O3 -flto \
   -s WASM=1 \
-  -s EXPORTED_FUNCTIONS='["_js_init", "_js_eval", "_js_free", "_malloc", "_free"]' \
-  -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "UTF8ToString", "stringToUTF8"]' \
+  -s EXPORTED_FUNCTIONS='["_js_init", "_js_eval", "_js_free", "_malloc", "_free"]'
+  -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap", "UTF8ToString", "stringToUTF8"]'
   -s ALLOW_MEMORY_GROWTH=1 \
   -s MAXIMUM_MEMORY=16MB \
   -s STACK_SIZE=1MB \
