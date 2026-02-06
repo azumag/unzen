@@ -1,46 +1,156 @@
 # unzen (QJS-proto)
 
-ブラウザ上で Wasm 版 QuickJS を動かし、外部から与えられた関数を実行して結果を返すプロトタイプです。
+サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
+QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行し、サーバーコストを削減する。
 
-## 1. 目的と前提
+> **ステータス**: 設計・技術検証段階。APIは未確定であり、変更される可能性があります。
 
-unzen (QJS-proto) は、Web サイト閲覧者のブラウザを「分散型のサーバーレス実行環境」として活用する構想を検証するための試作です。  
-現時点では **設計と技術検証が中心** であり、商用 SLA やコスト削減効果は未検証です。
+## コンセプト
 
-## 2. 用語
+```js
+// サーバー側で定義: この関数はブラウザで実行される
+export const spamCheck = unzen.define(function(text) {
+  const patterns = [/viagra/i, /casino/i, /lottery/i];
+  return patterns.some(p => p.test(text));
+});
+```
 
-| 用語 | 意味 |
-|---|---|
-| Dispatcher | リクエスト受付・Worker 選定・結果集約・フォールバック判定を行うサーバー |
-| Worker | 閲覧者ブラウザ内の Web Worker。QuickJS (Wasm) を実行 |
-| Worker SDK | サイトに埋め込み、Worker を起動・通信させるクライアント SDK |
-| Runtime | QuickJS を Wasm 化した実行エンジン |
+訪問者がコメント投稿時:
+1. `spamCheck` は訪問者自身のブラウザ内で実行される
+2. サーバーへのリクエストは発生しない
+3. ブラウザで実行できない場合はサーバーにフォールバック
 
-## 3. ざっくりした流れ
+**訪問者が必要とする機能を、訪問者自身のブラウザで実行する。**
+サーバーは関数を定義するだけ。他人のための計算は一切ない。
 
-1. 外部クライアントが Dispatcher の API にリクエスト
-2. Dispatcher が利用可能な Worker を選定
-3. 実行コードと引数を Worker に送信（キャッシュ済みなら引数のみ）
-4. Worker が QuickJS で実行し結果を返却
-5. Dispatcher が結果を検証し、クライアントへ応答
+## 基本的な使い方 (API設計例)
 
-## 4. 主要な制約とリスク
+```bash
+npm install @unzen/server @unzen/client
+```
 
-- **ブラウザは不安定**: タブが閉じられるため、重複実行・フォールバックが必須
-- **モバイル制約**: モバイルブラウザはバックグラウンド停止が強い（特に Mobile Safari）
-- **セキュリティ**: サンドボックス強化と結果検証が不可欠
-- **計測不足**: 性能・コストは現時点で仮説段階
+```typescript
+// server.ts - サーバー側
+import { UnzenServer } from '@unzen/server';
 
-## 5. 想定ユースケース（検証対象）
+const unzen = new UnzenServer();
 
-- ダイナミック・コンテンツ生成
-- 画像・動画の軽量メタデータ抽出（ローカル前処理）
-- スパム判定や軽量フィルタリングの分散実行
+// 関数を定義: ブラウザで実行される
+export const spamCheck = unzen.define('spamCheck', (text: string) => {
+  const patterns = [/viagra/i, /casino/i, /lottery/i];
+  return patterns.some(p => p.test(text));
+});
 
-## 6. ドキュメント
+// ミドルウェアを追加 (Express/Hono等)
+app.use('/unzen', unzen.middleware());
+```
 
-詳細は `docs/` ディレクトリにまとめています。[ドキュメント一覧](docs/INDEX.md)を参照してください。
+```html
+<!-- クライアント側 -->
+<script src="@unzen/client.js"></script>
+<script>
+  const unzen = new UnzenClient({ endpoint: '/unzen' });
 
-- [詳細設計書](docs/design.md) - アーキテクチャ、サンドボックス、API設計
+  // ブラウザ内で実行される。失敗時は自動でサーバーにフォールバック
+  const isSpam = await unzen.call('spamCheck', commentText);
+</script>
+```
+
+## 2つのランタイム
+
+| | QuickJS (JS) | MoonBit (Wasm) |
+|---|---|---|
+| 言語 | JavaScript | MoonBit |
+| 実行方式 | Wasm上でJSを解釈実行 | wasm-gc にネイティブコンパイル |
+| サイズ | ~150KB (gzip) + 関数コード | 関数ごとに数百B〜数十KB |
+| 性能 | 短時間関数に十分 (50ms以内) | Rustに近い高速実行 |
+| ブラウザ | ほぼ全ブラウザ | wasm-gc対応 (Chrome 119+, Firefox 120+, Safari 18+) |
+| 用途 | 手軽にJS関数を委任 | 性能が重要な計算処理 |
+
+### MoonBit の例
+
+```moonbit
+// stats.mbt - MoonBitで書いた統計関数 → Wasmにコンパイル
+// pub fn で公開した関数がWasmエクスポートとなる
+pub fn std_dev(data : Array[Double]) -> Double {
+  let n = data.length()
+  if n < 2 { return 0.0 }
+  let mut sum = 0.0
+  for x in data { sum = sum + x }
+  let avg = sum / n.to_double()
+  let mut v = 0.0
+  for x in data { let d = x - avg; v = v + d * d }
+  (v / (n - 1).to_double()).sqrt()
+}
+```
+
+```bash
+moon build --target wasm-gc --release  # → 数百B〜数十KBのWasmバイナリ
+```
+
+```typescript
+// サーバー側で登録: entryPoint は pub fn 名に対応
+export const stdDev = unzen.defineMoonBit('stdDev', {
+  wasmPath: './stats.wasm', entryPoint: 'std_dev',
+});
+```
+
+## セキュリティ
+
+関数はサンドボックス内で実行される:
+- **外部接続禁止**: fetch, WebSocket, XHR 等は一切使えない
+- **DOM アクセス不可**: Web Worker 内で隔離実行
+- **リソース制限**: メモリ 16MB、実行時間 50ms 上限
+- **純粋計算のみ**: 入力→計算→出力。副作用なし
+
+## 想定ユースケース
+
+- **フォームバリデーション**: 複雑なスキーマ検証をブラウザで
+- **データ変換**: JSON/CSV/XMLの整形・変換
+- **コンテンツフィルタリング**: スパム判定、NGワード検出
+- **暗号化・ハッシュ**: SHA-256計算、チェックサム
+- **軽量画像処理**: メタデータ抽出、サイズ計算
+
+## アーキテクチャ
+
+```
+[サイトオーナー]
+  npm install @unzen/server @unzen/client
+
+  サーバー SDK              クライアント SDK
+  ┌─────────────┐           ┌──────────────────┐
+  │ 関数を定義   │──配信──→  │ Web Worker        │
+  │ フォールバック│           │  └ QuickJS (Wasm) │
+  │ 実行        │           │  └ MoonBit (Wasm) │
+  └─────────────┘           └──────────────────┘
+        ↑                          │
+        └──失敗時フォールバック──────┘
+```
+
+## ドキュメント
+
+詳細は `docs/` ディレクトリにまとめています。[ドキュメント一覧](docs/INDEX.md) を参照。
+
+- [設計書](docs/design.md) - アーキテクチャ、サンドボックス、SDK設計
 - [セキュリティ制約とユースケース](docs/use-cases-and-constraints.md) - 外部接続禁止ポリシー
-- [分散ディスパッチャー設計](docs/distributed-dispatcher.md) - スケーリングパターン
+- [学術参考文献](docs/references.md) - Wasm セキュリティ、サンドボックス関連論文
+
+## 類似プロジェクトとの違い
+
+| プロジェクト | アプローチ | unzen との違い |
+|---|---|---|
+| Qwik | `$` 境界でクライアント実行を制御 | UIレンダリング専用。汎用計算ではない |
+| React RSC | `"use server"` / `"use client"` | クライアント→サーバー方向。逆 |
+| wasi-worker | WASIバイナリをブラウザで実行 | 低レベルランタイムのみ。DXフレームワークなし |
+| Comlink | Web Worker を透過的に呼び出し | ブラウザ内のスレッド間のみ。サーバー委任なし |
+
+## なぜ unzen？
+
+- **サーバーコスト削減**: バリデーションやデータ変換をブラウザで処理し、API呼び出しを減らす
+- **レスポンス向上**: ネットワーク往復なしで即座に結果を返す
+- **プライバシー**: ユーザーデータがサーバーに送信されずにブラウザ内で完結する
+- **自動フォールバック**: Wasm未対応ブラウザでも同じ関数がサーバーで実行される
+
+## ライセンス
+
+未定 (MIT or AGPL を検討中)

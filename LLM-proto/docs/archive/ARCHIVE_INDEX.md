@@ -19,6 +19,7 @@
 | innovative-worker-models.md | QJS-proto/docs/ | 探索的メモ。PLAN.md v2.6で方針確定済み | PLAN.md セクション2-3 |
 | detailed-cost-calculation.md | QJS-proto/docs/ | コスト試算に矛盾あり（70B: $0.0085）。PLAN.md v2.6で「未確定」と判定 | PLAN.md セクション4, 6 |
 | complete-cost-calculation-v2.md | QJS-proto/docs/ | コスト試算に矛盾あり（70B: $0.0015）。PLAN.md v2.6で「未確定」と判定 | PLAN.md セクション4, 6 |
+| distributed-dispatcher.md | QJS-proto/docs/ | 自己消費モデルへの移行により分散ディスパッチャー設計は不要 | QJS-proto/docs/design.md (v3.0) |
 
 ---
 
