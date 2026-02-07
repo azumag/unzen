@@ -1,0 +1,23 @@
+{
+  "name": "@unzen/demo",
+  "version": "0.1.0",
+  "description": "E2E demo for QJS-proto framework",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "start": "tsx server.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@unzen/server": "file:../packages/server",
+    "@unzen/client": "file:../packages/client",
+    "@hono/node-server": "^1.0.0",
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0"
+  }
+}

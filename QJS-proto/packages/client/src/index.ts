@@ -1,0 +1,64 @@
+/**
+ * @unzen/client
+ *
+ * Browser client SDK for QJS-proto.
+ *
+ * Design principles:
+ * - Zero runtime dependencies (besides @unzen/shared)
+ * - Works in all modern browsers (ES2022+)
+ * - Web Worker-based for non-blocking execution
+ * - Transparent sandboxing via WASM
+ *
+ * Key responsibilities:
+ * - Load and initialize WASM runtimes
+ * - Execute code in sandboxed environment
+ * - Communicate with server for coordination
+ * - Handle function results and errors
+ *
+ * Main API:
+ * ```typescript
+ * import { UnzenClient } from '@unzen/client';
+ *
+ * const client = new UnzenClient({ endpoint: 'https://example.com' });
+ * const result = await client.call('functionName', arg1, arg2);
+ * client.dispose();
+ * ```
+ */
+
+// Main client class
+export {
+  UnzenClient,
+  type UnzenClientOptions,
+  type DiagnosticResult,
+} from './unzen-client';
+
+// Component classes (advanced usage)
+export { FallbackHandler } from './fallback-handler';
+export { ManifestFetcher } from './manifest-fetcher';
+export { CodeFetcher } from './code-fetcher';
+
+// Sandbox interface and mock (advanced usage)
+export {
+  type SandboxExecutor,
+  MockSandboxExecutor,
+} from './quickjs-sandbox';
+
+// Re-export commonly used types from @unzen/shared for convenience
+export type {
+  RuntimeType,
+  FunctionDefinition,
+  ExecutionOptions,
+  ExecutionResult,
+  ManifestResponse,
+  FunctionManifestEntry,
+  ExecutionRequest,
+  ExecutionResponse,
+} from '@unzen/shared';
+
+// Re-export error classes
+export {
+  UnzenError,
+  UnzenRuntimeError,
+  UnzenFunctionError,
+  UnzenNetworkError,
+} from '@unzen/shared';

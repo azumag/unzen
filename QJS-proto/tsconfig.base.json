@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    // Strict type checking for maximum safety
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+
+    // Modern JavaScript target with ES2022 features
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    // ESNext modules for native ESM support
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    // Enable project references for monorepo
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // Output configuration
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    // Interop constraints
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Path resolution (will be overridden in package-specific configs)
+    "paths": {}
+  },
+  "exclude": ["node_modules", "dist"]
+}

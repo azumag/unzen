@@ -1,0 +1,46 @@
+/**
+ * @unzen/shared
+ *
+ * Shared types and utilities for QJS-proto framework.
+ *
+ * This package contains:
+ * - Protocol definitions for browser-server communication
+ * - Common type definitions
+ * - Error classes for consistent error handling
+ *
+ * Design principles:
+ * - No external runtime dependencies (keep lightweight)
+ * - Strong typing with TypeScript
+ * - ESM-only for modern browser/Node compatibility
+ *
+ * @module @unzen/shared
+ */
+
+// Type definitions
+export {
+  type RuntimeType,
+  type FunctionDefinition,
+  type ExecutionOptions,
+  type ExecutionResult,
+  isRuntimeType,
+  isValidFunctionDefinition,
+} from './types';
+
+// Error classes
+export {
+  UnzenError,
+  UnzenRuntimeError,
+  UnzenFunctionError,
+  UnzenNetworkError,
+} from './errors';
+
+// Protocol types
+export {
+  type ManifestRequest,
+  type ManifestResponse,
+  type FunctionManifestEntry,
+  type ExecutionRequest,
+  type ExecutionResponse,
+  createManifestResponse,
+  createExecutionResponse,
+} from './protocol';

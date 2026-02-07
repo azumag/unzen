@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Package-relative path resolution
+    "outDir": "./dist",
+    "composite": false,
+    "declaration": true,
+    "declarationMap": true,
+    // Path aliases for workspace references
+    // Point to dist for built types
+    "paths": {
+      "@unzen/shared": ["../shared/dist/index.d.ts"]
+    },
+    // Browser-compatible DOM types
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test", "tests"]
+}
