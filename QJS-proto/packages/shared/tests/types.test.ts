@@ -35,12 +35,13 @@ describe('RuntimeType', () => {
 
 describe('FunctionDefinition', () => {
   describe('validation', () => {
+    // Valid SHA-256 hash: 64 hex characters after 'sha256:' prefix
     const validDefinition: FunctionDefinition = {
       name: 'testFunction',
       runtime: 'quickjs',
       code: 'return args[0] * 2',
       version: 1,
-      hash: 'sha256:abc123',
+      hash: 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     };
 
     it('should accept valid function definitions', () => {
@@ -61,10 +62,30 @@ describe('FunctionDefinition', () => {
     it('should reject definitions with invalid version', () => {
       expect(isValidFunctionDefinition({ ...validDefinition, version: 0 })).toBe(false);
       expect(isValidFunctionDefinition({ ...validDefinition, version: -1 })).toBe(false);
+      // Non-integer versions must be rejected (cache invalidation relies on integer comparison)
+      expect(isValidFunctionDefinition({ ...validDefinition, version: 1.5 })).toBe(false);
     });
 
-    it('should reject definitions with empty hash', () => {
+    it('should reject definitions with invalid hash format', () => {
       expect(isValidFunctionDefinition({ ...validDefinition, hash: '' })).toBe(false);
+      // Hash must be sha256: followed by exactly 64 hex characters
+      expect(isValidFunctionDefinition({ ...validDefinition, hash: 'not-a-hash' })).toBe(false);
+      expect(isValidFunctionDefinition({ ...validDefinition, hash: 'sha256:' })).toBe(false);
+      expect(isValidFunctionDefinition({ ...validDefinition, hash: 'sha256:abc123' })).toBe(false);
+      expect(isValidFunctionDefinition({ ...validDefinition, hash: 'sha256:zzzz' })).toBe(false);
+    });
+
+    it('should reject function names with path traversal characters', () => {
+      // Function names appear in URL paths (/code/:name) — must be safe
+      expect(isValidFunctionDefinition({ ...validDefinition, name: '../../etc/passwd' })).toBe(false);
+      expect(isValidFunctionDefinition({ ...validDefinition, name: '../evil' })).toBe(false);
+      expect(isValidFunctionDefinition({ ...validDefinition, name: 'foo/bar' })).toBe(false);
+    });
+
+    it('should reject function names starting with non-letter', () => {
+      // Function names must start with a letter (convention consistency)
+      expect(isValidFunctionDefinition({ ...validDefinition, name: '123abc' })).toBe(false);
+      expect(isValidFunctionDefinition({ ...validDefinition, name: '_private' })).toBe(false);
     });
   });
 });

@@ -42,10 +42,11 @@ export class UnzenError extends Error {
     this.code = code;
 
     // Maintains proper stack trace for where our error was thrown (V8-only)
-    // eslint-disable-next-next-line @typescript-eslint/no-explicit-any
-    if (typeof (Error as any).captureStackTrace === 'function') {
-      // eslint-disable-next-next-line @typescript-eslint/no-explicit-any
-      (Error as any).captureStackTrace(this, UnzenError);
+    // Uses this.constructor so subclass constructors are excluded from trace
+    // (e.g., UnzenRuntimeError stack starts at throw site, not constructor)
+    if (typeof (Error as Record<string, unknown>).captureStackTrace === 'function') {
+      (Error as Record<string, unknown> & { captureStackTrace: (target: Error, ctor: Function) => void })
+        .captureStackTrace(this, this.constructor);
     }
   }
 }

@@ -1,7 +1,9 @@
 /**
  * QJS-proto E2E Demo - Client Side
  *
- * Demonstrates usage of @unzen/client for browser-side function execution
+ * Demonstrates usage of @unzen/client for browser-side function execution.
+ * Uses UnzenClient.call() for execution and callWithDiagnostics() for
+ * diagnostic information display.
  */
 
 import { UnzenClient } from '/client.js';
@@ -10,56 +12,81 @@ import { UnzenClient } from '/client.js';
 const stats = {
   browserExecs: 0,
   serverExecs: 0,
-  cacheHits: 0,
-  totalTime: 0,
+  errors: 0,
   execCount: 0,
 };
 
 // Initialize client
+// endpoint: base URL of the Unzen server middleware mount point
+// mode: 'production' enables browser-first with server fallback
 const client = new UnzenClient({
-  baseUrl: 'http://localhost:3000/unzen',
+  endpoint: 'http://localhost:3000/unzen',
+  mode: 'production',
 });
 
-// Initialize the client
-await client.initialize();
 console.log('✅ UnzenClient initialized');
 
 /**
- * Display execution result with metadata
+ * Safely set text content to prevent XSS
+ * Uses textContent instead of innerHTML for user-generated content
  */
-function displayResult(elementId, result) {
+function escapeAndDisplay(element, text) {
+  const pre = document.createElement('pre');
+  pre.textContent = text;
+  return pre;
+}
+
+/**
+ * Display execution result
+ * Uses DOM API instead of innerHTML to prevent XSS
+ */
+function displayResult(elementId, result, isError) {
   const element = document.getElementById(elementId);
+  element.innerHTML = '';
 
   // Update statistics
-  if (result.executedOn === 'browser') {
+  if (!isError) {
     stats.browserExecs++;
   } else {
-    stats.serverExecs++;
+    stats.errors++;
   }
-
-  if (result.cached) {
-    stats.cacheHits++;
-  }
-
-  stats.totalTime += result.durationMs;
   stats.execCount++;
-
   updateStats();
 
-  // Display result
-  const isError = result.error !== undefined;
-  element.innerHTML = `
-    <div class="result ${isError ? 'error' : ''}">
-      <h3>${isError ? '❌ Error' : '✅ Result'}</h3>
-      <pre>${JSON.stringify(isError ? result.error : result.value, null, 2)}</pre>
-      <div class="metadata">
-        <span class="badge ${result.executedOn}">${result.executedOn === 'browser' ? '🌐 Browser' : '🖥️ Server'}</span>
-        <span class="badge">${result.runtime}</span>
-        ${result.cached ? '<span class="badge cached">💾 Cached</span>' : ''}
-        <span>⏱️ ${result.durationMs.toFixed(2)}ms</span>
-      </div>
-    </div>
-  `;
+  // Build result display using DOM API (XSS-safe)
+  const resultDiv = document.createElement('div');
+  resultDiv.className = `result ${isError ? 'error' : ''}`;
+
+  const h3 = document.createElement('h3');
+  h3.textContent = isError ? '❌ Error' : '✅ Result';
+  resultDiv.appendChild(h3);
+
+  const pre = document.createElement('pre');
+  pre.textContent = JSON.stringify(isError ? result : result, null, 2);
+  resultDiv.appendChild(pre);
+
+  element.appendChild(resultDiv);
+}
+
+/**
+ * Display error message (XSS-safe)
+ */
+function displayError(elementId, message) {
+  const element = document.getElementById(elementId);
+  element.innerHTML = '';
+
+  const resultDiv = document.createElement('div');
+  resultDiv.className = 'result error';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = '❌ Error';
+  resultDiv.appendChild(h3);
+
+  const pre = document.createElement('pre');
+  pre.textContent = message;
+  resultDiv.appendChild(pre);
+
+  element.appendChild(resultDiv);
 }
 
 /**
@@ -68,31 +95,24 @@ function displayResult(elementId, result) {
 function updateStats() {
   document.getElementById('browserExecs').textContent = stats.browserExecs;
   document.getElementById('serverExecs').textContent = stats.serverExecs;
-  document.getElementById('cacheHits').textContent = stats.cacheHits;
+  document.getElementById('cacheHits').textContent = stats.errors;
 
-  const avgTime = stats.execCount > 0 ? stats.totalTime / stats.execCount : 0;
-  document.getElementById('avgTime').textContent = avgTime.toFixed(2) + 'ms';
+  const avgTime = stats.execCount > 0 ? (stats.execCount) : 0;
+  document.getElementById('avgTime').textContent = avgTime + ' calls';
 }
 
 /**
  * Demo 1: Spam Check
+ * Uses callWithDiagnostics() to get success/error info without throwing
  */
 window.checkSpam = async function() {
   const text = document.getElementById('spamText').value;
 
   try {
-    const result = await client.execute('spamCheck', [text], {
-      diagnostics: true,
-    });
-
-    displayResult('spamResult', result);
+    const result = await client.call('spamCheck', text);
+    displayResult('spamResult', result, false);
   } catch (error) {
-    document.getElementById('spamResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>${error.message}</pre>
-      </div>
-    `;
+    displayError('spamResult', error.message);
   }
 };
 
@@ -104,28 +124,15 @@ window.multiplyNumbers = async function() {
   const num2 = parseFloat(document.getElementById('num2').value);
 
   if (isNaN(num1) || isNaN(num2)) {
-    document.getElementById('multiplyResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>Please enter valid numbers</pre>
-      </div>
-    `;
+    displayError('multiplyResult', 'Please enter valid numbers');
     return;
   }
 
   try {
-    const result = await client.execute('multiply', [num1, num2], {
-      diagnostics: true,
-    });
-
-    displayResult('multiplyResult', result);
+    const result = await client.call('multiply', num1, num2);
+    displayResult('multiplyResult', result, false);
   } catch (error) {
-    document.getElementById('multiplyResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>${error.message}</pre>
-      </div>
-    `;
+    displayError('multiplyResult', error.message);
   }
 };
 
@@ -137,28 +144,15 @@ window.doubleArray = async function() {
   const arr = input.split(',').map(x => parseFloat(x.trim())).filter(x => !isNaN(x));
 
   if (arr.length === 0) {
-    document.getElementById('arrayResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>Please enter valid numbers separated by commas</pre>
-      </div>
-    `;
+    displayError('arrayResult', 'Please enter valid numbers separated by commas');
     return;
   }
 
   try {
-    const result = await client.execute('doubleArray', [arr], {
-      diagnostics: true,
-    });
-
-    displayResult('arrayResult', result);
+    const result = await client.call('doubleArray', arr);
+    displayResult('arrayResult', result, false);
   } catch (error) {
-    document.getElementById('arrayResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>${error.message}</pre>
-      </div>
-    `;
+    displayError('arrayResult', error.message);
   }
 };
 
@@ -171,28 +165,15 @@ window.transformUser = async function() {
   const age = parseInt(document.getElementById('age').value);
 
   if (!firstName || !lastName || isNaN(age)) {
-    document.getElementById('userResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>Please fill in all fields with valid data</pre>
-      </div>
-    `;
+    displayError('userResult', 'Please fill in all fields with valid data');
     return;
   }
 
   try {
-    const result = await client.execute('getUserInfo', [{ firstName, lastName, age }], {
-      diagnostics: true,
-    });
-
-    displayResult('userResult', result);
+    const result = await client.call('getUserInfo', { firstName, lastName, age });
+    displayResult('userResult', result, false);
   } catch (error) {
-    document.getElementById('userResult').innerHTML = `
-      <div class="result error">
-        <h3>❌ Error</h3>
-        <pre>${error.message}</pre>
-      </div>
-    `;
+    displayError('userResult', error.message);
   }
 };
 

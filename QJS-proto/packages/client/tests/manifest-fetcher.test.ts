@@ -162,6 +162,32 @@ describe('ManifestFetcher', () => {
     await expect(fetcher.fetch()).rejects.toThrow(UnzenNetworkError);
   });
 
+  it('should deduplicate concurrent fetch calls', async () => {
+    // When multiple callers invoke fetch() concurrently before the first
+    // resolves, only one HTTP request should be made (race condition fix)
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockManifest,
+    });
+    globalThis.fetch = fetchMock;
+
+    const fetcher = new ManifestFetcher('https://example.com');
+
+    // Fire 3 concurrent fetches
+    const [result1, result2, result3] = await Promise.all([
+      fetcher.fetch(),
+      fetcher.fetch(),
+      fetcher.fetch(),
+    ]);
+
+    // Only 1 HTTP request should have been made
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // All callers should get the same result
+    expect(result1).toEqual(mockManifest);
+    expect(result2).toEqual(mockManifest);
+    expect(result3).toEqual(mockManifest);
+  });
+
   it('should handle empty manifest', async () => {
     const emptyManifest: ManifestResponse = {
       functions: {},

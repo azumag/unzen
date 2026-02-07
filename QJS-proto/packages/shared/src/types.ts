@@ -49,23 +49,33 @@ export interface FunctionDefinition {
  * @param def - Function definition to validate
  * @returns true if definition is valid
  */
+/**
+ * Safe function name pattern
+ * Only alphanumeric, underscore, and hyphen allowed.
+ * Prevents path traversal (../../) and URL injection attacks
+ * when function names are used in URL paths or file system paths.
+ */
+const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
+
 export function isValidFunctionDefinition(def: unknown): def is FunctionDefinition {
   if (typeof def !== 'object' || def === null) {
     return false;
   }
 
-  const d = def as Partial<FunctionDefinition>;
+  // Use Record<string, unknown> for safe property access without type assertion lies
+  const d = def as Record<string, unknown>;
 
   return (
     typeof d.name === 'string' &&
-    d.name.length > 0 &&
+    SAFE_FUNCTION_NAME.test(d.name) &&
     isRuntimeType(d.runtime) &&
     typeof d.code === 'string' &&
     d.code.length > 0 &&
     typeof d.version === 'number' &&
+    Number.isInteger(d.version) &&
     d.version > 0 &&
     typeof d.hash === 'string' &&
-    d.hash.length > 0
+    /^sha256:[a-f0-9]{64}$/.test(d.hash)
   );
 }
 

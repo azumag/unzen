@@ -86,18 +86,62 @@ describe('FallbackHandler', () => {
     );
   });
 
-  it('should throw UnzenNetworkError on HTTP error status', async () => {
-    // Mock HTTP error response
+  it('should throw UnzenNetworkError on HTTP error with unparseable body', async () => {
+    // Mock HTTP error response with no JSON body
+    // When body can't be parsed, it's a network/infrastructure error
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
-      status: 500,
-      statusText: 'Internal Server Error',
+      status: 502,
+      statusText: 'Bad Gateway',
+      json: async () => { throw new SyntaxError('Unexpected token'); },
     });
 
     const handler = new FallbackHandler('https://example.com');
 
     await expect(handler.execute('test', [])).rejects.toThrow(
       UnzenNetworkError
+    );
+  });
+
+  it('should throw UnzenFunctionError on HTTP 400 with error body', async () => {
+    // Server returns 400 for UnzenFunctionError (user code bug)
+    // Client must preserve this classification, not wrap as NetworkError
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      json: async () => ({
+        result: null,
+        error: 'Function execution failed: TypeError',
+      }),
+    });
+
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute('test', [])).rejects.toThrow(
+      UnzenFunctionError
+    );
+    await expect(handler.execute('test', [])).rejects.toThrow(
+      'Function execution failed: TypeError'
+    );
+  });
+
+  it('should throw UnzenFunctionError on HTTP 500 with error body', async () => {
+    // Server returns 500 with structured error → still extract the error message
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => ({
+        result: null,
+        error: 'Execution timeout exceeded (50ms)',
+      }),
+    });
+
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute('test', [])).rejects.toThrow(
+      UnzenFunctionError
     );
   });
 

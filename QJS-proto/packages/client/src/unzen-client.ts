@@ -25,7 +25,7 @@
  * - Runtime errors fallback (environment issues are recoverable)
  */
 
-import { UnzenFunctionError } from '@unzen/shared';
+import { UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
 import { FallbackHandler } from './fallback-handler';
 import { ManifestFetcher } from './manifest-fetcher';
 import { CodeFetcher } from './code-fetcher';
@@ -111,6 +111,12 @@ export class UnzenClient {
    * - browser-only: Browser only, throw on any error
    */
   async call<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
+    // Prevent use after disposal
+    // Disposed client has released sandbox resources; execution would fail
+    if (this.disposed) {
+      throw new UnzenRuntimeError('Client has been disposed. Create a new instance.');
+    }
+
     // Development mode: always use fallback
     if (this.mode === 'development') {
       return (await this.fallbackHandler.execute(name, args)) as T;

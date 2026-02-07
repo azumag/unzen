@@ -418,5 +418,15 @@ describe('UnzenClient', () => {
       client.dispose();
       expect(() => client.dispose()).not.toThrow();
     });
+
+    it('should throw UnzenRuntimeError when call() is invoked after dispose', async () => {
+      // Disposed client has released sandbox resources
+      // Subsequent call() must fail immediately with clear error
+      const client = new UnzenClient({ endpoint: 'https://example.com' });
+      client.dispose();
+
+      await expect(client.call('add', 1, 2)).rejects.toThrow(UnzenRuntimeError);
+      await expect(client.call('add', 1, 2)).rejects.toThrow('disposed');
+    });
   });
 });

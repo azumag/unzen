@@ -40,6 +40,13 @@ export class ManifestFetcher {
    */
   private cache: ManifestResponse | null = null;
 
+  /**
+   * In-flight fetch promise for deduplication
+   * Prevents multiple concurrent fetch() calls from hitting the server
+   * (race condition fix: second caller awaits the same promise)
+   */
+  private inflight: Promise<ManifestResponse> | null = null;
+
   constructor(endpoint: string) {
     this.endpoint = endpoint;
   }
@@ -57,6 +64,30 @@ export class ManifestFetcher {
       return this.cache;
     }
 
+    // Deduplicate concurrent fetch() calls
+    // If a fetch is already in progress, return the same promise
+    // This prevents N concurrent callers from making N HTTP requests
+    if (this.inflight !== null) {
+      return this.inflight;
+    }
+
+    // Create and store the fetch promise before awaiting
+    this.inflight = this.fetchFromServer();
+
+    try {
+      const manifest = await this.inflight;
+      return manifest;
+    } finally {
+      // Clear inflight regardless of success/failure
+      // On failure, next call will retry
+      this.inflight = null;
+    }
+  }
+
+  /**
+   * Internal: perform actual HTTP fetch of manifest
+   */
+  private async fetchFromServer(): Promise<ManifestResponse> {
     const url = `${this.endpoint}/manifest`;
 
     try {
@@ -118,5 +149,6 @@ export class ManifestFetcher {
    */
   invalidate(): void {
     this.cache = null;
+    this.inflight = null;
   }
 }

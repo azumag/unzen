@@ -65,10 +65,25 @@ export class QuickJSRuntime {
 
     try {
       // Remove eval and Function constructor for security
-      // These could be used to bypass sandbox restrictions
+      // Using Object.defineProperty with configurable:false prevents restoration
+      // via prototype chain (e.g., ({}).constructor.constructor)
+      // Simple `delete` is insufficient: user code could restore via
+      // `const F = ({}).constructor.constructor; F('return eval')()`
       const removeUnsafeGlobals = `
-        delete globalThis.eval;
-        delete globalThis.Function;
+        Object.defineProperty(globalThis, 'eval', {
+          value: undefined, writable: false, configurable: false
+        });
+        Object.defineProperty(globalThis, 'Function', {
+          value: undefined, writable: false, configurable: false
+        });
+        // Freeze built-in prototypes to prevent prototype pollution attacks
+        // Note: This is Phase 1 hardening. Phase 2 (WebWorker + QuickJS Wasm)
+        // provides 4-layer isolation making these concerns moot.
+        // Remaining Phase 1 vectors: Reflect API, other built-in prototypes.
+        Object.freeze(Object.prototype);
+        Object.freeze(Array.prototype);
+        Object.freeze(String.prototype);
+        Object.freeze(Number.prototype);
       `;
       const removeResult = context.evalCode(removeUnsafeGlobals);
       if (removeResult.error) {
