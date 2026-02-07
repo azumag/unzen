@@ -177,4 +177,86 @@ window.transformUser = async function() {
   }
 };
 
+// ============================================================
+// Practical Server-Side Delegation Demos
+// ============================================================
+
+/**
+ * Demo 5: Form Validation
+ * Tamper-proof validation in QuickJS sandbox (email, credit card, phone, password)
+ */
+window.validateForm = async function() {
+  const fields = {};
+  const email = document.getElementById('validateEmail').value;
+  const card = document.getElementById('validateCard').value;
+  const phone = document.getElementById('validatePhone').value;
+  const password = document.getElementById('validatePassword').value;
+
+  if (email) fields.email = email;
+  if (card) fields.creditCard = card;
+  if (phone) fields.phone = phone;
+  if (password) fields.password = password;
+
+  try {
+    const result = await client.call('formValidate', fields);
+    displayResult('formResult', result, false);
+  } catch (error) {
+    displayError('formResult', error.message);
+  }
+};
+
+/**
+ * Demo 6: Price Calculator
+ * Tamper-proof price computation with tax, discount, and shipping
+ */
+window.calculatePrice = async function() {
+  try {
+    const items = JSON.parse(document.getElementById('priceItems').value);
+    const region = document.getElementById('priceRegion').value;
+    const discountStr = document.getElementById('priceDiscount').value.trim();
+    const order = { items, region };
+    if (discountStr) {
+      order.discount = JSON.parse(discountStr);
+    }
+    const result = await client.call('calculatePrice', order);
+    displayResult('priceResult', result, false);
+  } catch (error) {
+    displayError('priceResult', error.message);
+  }
+};
+
+/**
+ * Demo 7: Markdown to HTML
+ * Offload SSR Markdown rendering to client sandbox
+ */
+window.convertMarkdown = async function() {
+  const markdown = document.getElementById('markdownInput').value;
+
+  try {
+    const result = await client.call('markdownToHtml', markdown);
+    displayResult('markdownResult', result, false);
+    // Show rendered HTML preview (result is already sanitized by the sandbox)
+    const preview = document.getElementById('markdownPreview');
+    preview.innerHTML = result;
+    preview.style.display = 'block';
+  } catch (error) {
+    displayError('markdownResult', error.message);
+  }
+};
+
+/**
+ * Demo 8: Text Statistics
+ * Pure computation: word count, readability scoring, Flesch-Kincaid grade
+ */
+window.analyzeText = async function() {
+  const text = document.getElementById('textInput').value;
+
+  try {
+    const result = await client.call('textStats', text);
+    displayResult('textResult', result, false);
+  } catch (error) {
+    displayError('textResult', error.message);
+  }
+};
+
 console.log('✅ Demo ready! Try the examples above.');

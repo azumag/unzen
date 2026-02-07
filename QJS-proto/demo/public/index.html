@@ -266,6 +266,97 @@
     <div id="userResult"></div>
   </div>
 
+  <!-- ============================================================ -->
+  <!-- Practical Server-Side Delegation Demos -->
+  <!-- These demonstrate the core value: server computation → browser sandbox -->
+  <!-- ============================================================ -->
+
+  <!-- Form Validation Demo -->
+  <div class="demo-section">
+    <h2>5. Form Validation (Tamper-Proof)</h2>
+    <p style="color: #666; margin-bottom: 1rem;">Traditionally server-side to prevent devtools bypass. QuickJS sandbox provides the same tamper-proof guarantee in the browser.</p>
+    <div class="form-group">
+      <label for="validateEmail">Email:</label>
+      <input type="text" id="validateEmail" value="user@example.com">
+    </div>
+    <div class="form-group">
+      <label for="validateCard">Credit Card (Luhn check):</label>
+      <input type="text" id="validateCard" value="4111 1111 1111 1111">
+    </div>
+    <div class="form-group">
+      <label for="validatePhone">Phone:</label>
+      <input type="text" id="validatePhone" value="+1-555-123-4567">
+    </div>
+    <div class="form-group">
+      <label for="validatePassword">Password:</label>
+      <input type="text" id="validatePassword" value="MyP@ssw0rd!23">
+    </div>
+    <button onclick="validateForm()">Validate</button>
+    <div id="formResult"></div>
+  </div>
+
+  <!-- Price Calculator Demo -->
+  <div class="demo-section">
+    <h2>6. Price Calculator (Tamper-Proof)</h2>
+    <p style="color: #666; margin-bottom: 1rem;">Traditionally server-side to prevent price manipulation. Sandbox prevents tampering while reducing latency from ~100ms to ~2ms.</p>
+    <div class="form-group">
+      <label for="priceItems">Items (JSON):</label>
+      <textarea id="priceItems" style="min-height: 60px;">[{"name":"Widget","price":50,"quantity":2,"weight":1},{"name":"Gadget","price":25,"quantity":1,"weight":0.5}]</textarea>
+    </div>
+    <div class="form-group">
+      <label for="priceRegion">Region:</label>
+      <input type="text" id="priceRegion" value="JP">
+    </div>
+    <div class="form-group">
+      <label for="priceDiscount">Discount (JSON, optional):</label>
+      <input type="text" id="priceDiscount" value='{"type":"percentage","value":10}'>
+    </div>
+    <button onclick="calculatePrice()">Calculate Price</button>
+    <div id="priceResult"></div>
+  </div>
+
+  <!-- Markdown to HTML Demo -->
+  <div class="demo-section">
+    <h2>7. Markdown to HTML (CPU Offload)</h2>
+    <p style="color: #666; margin-bottom: 1rem;">Traditionally SSR renders Markdown on server. Offloading to client sandbox frees server CPU for other tasks.</p>
+    <div class="form-group">
+      <label for="markdownInput">Markdown:</label>
+      <textarea id="markdownInput" style="min-height: 120px;"># Hello World
+
+This is **bold** and *italic* text with `inline code`.
+
+## Features
+
+- Browser-side execution
+- Tamper-proof sandbox
+- Automatic fallback
+
+Visit [Example](https://example.com) for more.
+
+```
+const x = 1;
+console.log(x);
+```</textarea>
+    </div>
+    <button onclick="convertMarkdown()">Convert to HTML</button>
+    <div id="markdownResult"></div>
+    <div id="markdownPreview" style="margin-top: 1rem; padding: 1rem; border: 1px solid #ddd; border-radius: 4px; display: none;"></div>
+  </div>
+
+  <!-- Text Statistics Demo -->
+  <div class="demo-section">
+    <h2>8. Text Statistics (Pure Computation)</h2>
+    <p style="color: #666; margin-bottom: 1rem;">Readability scoring and text analysis — pure computation ideal for sandbox. Includes Flesch-Kincaid grade level.</p>
+    <div class="form-group">
+      <label for="textInput">Text to analyze:</label>
+      <textarea id="textInput" style="min-height: 120px;">The quick brown fox jumps over the lazy dog. This is a simple sentence for testing readability analysis.
+
+More complex sentences with sophisticated vocabulary demonstrate how the Flesch-Kincaid algorithm measures text difficulty. Longer words and complex sentence structures increase the grade level.</textarea>
+    </div>
+    <button onclick="analyzeText()">Analyze Text</button>
+    <div id="textResult"></div>
+  </div>
+
   <!-- Statistics -->
   <div class="demo-section">
     <h2>📊 Execution Statistics</h2>

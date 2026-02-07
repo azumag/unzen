@@ -14,6 +14,12 @@ import { UnzenServer } from '@unzen/server';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import {
+  formValidateCode,
+  calculatePriceCode,
+  markdownToHtmlCode,
+  textStatsCode,
+} from './sample-functions';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -48,6 +54,19 @@ unzenServer.defineRaw('getUserInfo', `(user) => ({
   isAdult: user.age >= 18,
   initials: user.firstName[0] + user.lastName[0],
 })`);
+
+// Practical sample functions (demonstrating server→browser delegation value)
+// Function 6: Tamper-proof form validation (email, credit card, phone, password)
+unzenServer.defineRaw('formValidate', formValidateCode);
+
+// Function 7: Secure price calculation (tax, discount, shipping)
+unzenServer.defineRaw('calculatePrice', calculatePriceCode);
+
+// Function 8: Markdown→HTML rendering (offload SSR to client)
+unzenServer.defineRaw('markdownToHtml', markdownToHtmlCode);
+
+// Function 9: Text statistics with Flesch-Kincaid readability
+unzenServer.defineRaw('textStats', textStatsCode);
 
 // Initialize the server
 await unzenServer.initialize();

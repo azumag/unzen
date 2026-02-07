@@ -121,8 +121,108 @@ else
 fi
 echo ""
 
+# ============================================================
+# Practical Sample Functions (server→browser delegation demos)
+# ============================================================
+
+# Test 11: formValidate - valid email
+echo "📝 Test 11: POST /unzen/exec/formValidate (valid email)"
+RESULT=$(echo '{"args":[{"email":"user@example.com"}]}' | curl -s -X POST ${BASE_URL}/unzen/exec/formValidate -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'"valid":true'* ]]; then
+  echo "✅ formValidate OK (valid email accepted)"
+else
+  echo "❌ formValidate FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 12: formValidate - invalid email
+echo "📝 Test 12: POST /unzen/exec/formValidate (invalid email)"
+RESULT=$(echo '{"args":[{"email":"bad-email"}]}' | curl -s -X POST ${BASE_URL}/unzen/exec/formValidate -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'"valid":false'* ]] && [[ $RESULT == *'"email"'* ]]; then
+  echo "✅ formValidate OK (invalid email rejected)"
+else
+  echo "❌ formValidate FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 13: calculatePrice - basic order
+echo "💰 Test 13: POST /unzen/exec/calculatePrice (JP order)"
+RESULT=$(echo '{"args":[{"items":[{"name":"Widget","price":100,"quantity":1}],"region":"JP"}]}' | curl -s -X POST ${BASE_URL}/unzen/exec/calculatePrice -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'"subtotal":100'* ]] && [[ $RESULT == *'"tax":10'* ]]; then
+  echo "✅ calculatePrice OK (JP tax 10% applied)"
+else
+  echo "❌ calculatePrice FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 14: calculatePrice - with discount
+echo "💰 Test 14: POST /unzen/exec/calculatePrice (with discount)"
+RESULT=$(echo '{"args":[{"items":[{"name":"Item","price":200,"quantity":1}],"region":"JP","discount":{"type":"percentage","value":10}}]}' | curl -s -X POST ${BASE_URL}/unzen/exec/calculatePrice -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'"discount":20'* ]]; then
+  echo "✅ calculatePrice OK (10% discount applied)"
+else
+  echo "❌ calculatePrice FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 15: markdownToHtml - heading
+echo "📄 Test 15: POST /unzen/exec/markdownToHtml (heading)"
+RESULT=$(echo '{"args":["# Hello World"]}' | curl -s -X POST ${BASE_URL}/unzen/exec/markdownToHtml -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'<h1>Hello World</h1>'* ]]; then
+  echo "✅ markdownToHtml OK (# → h1)"
+else
+  echo "❌ markdownToHtml FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 16: markdownToHtml - bold and italic
+echo "📄 Test 16: POST /unzen/exec/markdownToHtml (inline formatting)"
+RESULT=$(echo '{"args":["**bold** and *italic*"]}' | curl -s -X POST ${BASE_URL}/unzen/exec/markdownToHtml -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'<strong>bold</strong>'* ]] && [[ $RESULT == *'<em>italic</em>'* ]]; then
+  echo "✅ markdownToHtml OK (bold + italic)"
+else
+  echo "❌ markdownToHtml FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 17: textStats - word count
+echo "📊 Test 17: POST /unzen/exec/textStats (word count)"
+RESULT=$(echo '{"args":["The quick brown fox"]}' | curl -s -X POST ${BASE_URL}/unzen/exec/textStats -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'"words":4'* ]]; then
+  echo "✅ textStats OK (4 words counted)"
+else
+  echo "❌ textStats FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
+# Test 18: textStats - sentence and paragraph count
+echo "📊 Test 18: POST /unzen/exec/textStats (sentences + readability)"
+RESULT=$(echo '{"args":["Hello world. How are you?"]}' | curl -s -X POST ${BASE_URL}/unzen/exec/textStats -H 'Content-Type: application/json' -d @-)
+if [[ $RESULT == *'"sentences":2'* ]] && [[ $RESULT == *'"fleschKincaidGrade"'* ]]; then
+  echo "✅ textStats OK (2 sentences, FK grade computed)"
+else
+  echo "❌ textStats FAILED"
+  echo "Response: $RESULT"
+  exit 1
+fi
+echo ""
+
 echo "===================================="
-echo "✅ All 10 E2E tests passed!"
+echo "✅ All 18 E2E tests passed!"
 echo ""
 echo "🎉 Demo server is working correctly!"
 echo "   Visit: ${BASE_URL}"
