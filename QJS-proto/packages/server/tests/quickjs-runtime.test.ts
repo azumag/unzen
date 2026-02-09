@@ -98,6 +98,20 @@ describe('QuickJSRuntime', () => {
       await expect(runtime.execute(code, [])).rejects.toThrow();
     });
 
+    it('should block Proxy constructor', async () => {
+      // Proxy can intercept property access to reconstruct blocked APIs
+      const code = 'function run() { return typeof Proxy; }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('undefined');
+    });
+
+    it('should block Reflect object', async () => {
+      // Reflect provides low-level object manipulation bypassing frozen prototypes
+      const code = 'function run() { return typeof Reflect; }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('undefined');
+    });
+
     it('should handle null and undefined', async () => {
       // Note: JSON.stringify converts undefined to null in arrays
       // So args[1] will be null, not undefined
@@ -110,6 +124,79 @@ describe('QuickJSRuntime', () => {
       const code = 'function run(val) { return !val; }';
       const result = await runtime.execute(code, [false]);
       expect(result).toBe(true);
+    });
+
+    // === Security boundary tests: prototype chain sandbox escape ===
+    // These tests verify that the sandbox cannot be escaped via constructor
+    // property traversal. Any object's .constructor.constructor reaches Function,
+    // which allows arbitrary code execution if not blocked.
+    // See: C1 finding from 5-agent review (2026-02-10)
+
+    it('should block Object prototype chain to Function constructor', async () => {
+      // ({}).constructor → Object, Object.constructor → Function
+      // Function("return 42")() executes arbitrary code, bypassing sandbox
+      const code = 'function run() { try { return ({}).constructor.constructor("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block Array prototype chain to Function constructor', async () => {
+      // [].constructor → Array, Array.constructor → Function
+      const code = 'function run() { try { return [].constructor.constructor("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block String prototype chain to Function constructor', async () => {
+      // "".constructor → String, String.constructor → Function
+      const code = 'function run() { try { return "".constructor.constructor("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block Number prototype chain to Function constructor', async () => {
+      // (0).constructor → Number, Number.constructor → Function
+      const code = 'function run() { try { return (0).constructor.constructor("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block RegExp prototype chain to Function constructor', async () => {
+      // /./.constructor → RegExp, RegExp.constructor → Function
+      const code = 'function run() { try { return /./.constructor.constructor("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block AsyncFunction constructor via prototype chain', async () => {
+      // (async function(){}).constructor gives AsyncFunction, which inherits from Function
+      // AsyncFunction.prototype.__proto__ === Function.prototype
+      // If Function.prototype.constructor is cut, this should also be blocked
+      const code = 'function run() { try { var AF = (async function(){}).constructor; return AF("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block GeneratorFunction constructor via prototype chain', async () => {
+      // (function*(){}).constructor gives GeneratorFunction, which inherits from Function
+      const code = 'function run() { try { var GF = (function*(){}).constructor; return GF("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block AsyncGeneratorFunction constructor via prototype chain', async () => {
+      // (async function*(){}).constructor gives AsyncGeneratorFunction
+      // This inherits from Function and was missed in first fix
+      const code = 'function run() { try { var AGF = (async function*(){}).constructor; return AGF("return 42")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
+    });
+
+    it('should block eval reconstruction via Function constructor', async () => {
+      // Attempting to reconstruct eval via prototype chain
+      const code = 'function run() { try { var F = ({}).constructor.constructor; return F("return eval")(); } catch(e) { return "blocked"; } }';
+      const result = await runtime.execute(code, []);
+      expect(result).toBe('blocked');
     });
 
     it('should isolate execution context between calls', async () => {

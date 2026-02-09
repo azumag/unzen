@@ -180,22 +180,44 @@ export const calculatePriceCode = `(order) => {
 // ============================================================
 export const markdownToHtmlCode = `(markdown) => {
   // Escape HTML special characters to prevent XSS injection
+  // All 5 dangerous characters must be escaped (OWASP recommendation)
   function escapeHtml(text) {
     return text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // Sanitize URL: only allow http, https, mailto, and relative paths
   // Blocks javascript:, data:, vbscript: and other dangerous schemes
   function sanitizeUrl(url) {
-    var trimmed = url.trim().toLowerCase();
-    if (trimmed.indexOf('javascript:') === 0 || trimmed.indexOf('data:') === 0 || trimmed.indexOf('vbscript:') === 0) {
+    // Strip ASCII control characters (0x00-0x1F, 0x7F) that browsers silently
+    // remove when parsing URLs in HTML attributes. Without this stripping,
+    // "java\\tscript:" bypasses indexOf check but browsers treat it as "javascript:"
+    var stripped = url.replace(/[\\x00-\\x1f\\x7f]/g, '');
+    // URL-decode before scheme check to prevent %3A (:) encoding bypass.
+    // "javascript%3Aalert(1)" decodes to "javascript:alert(1)" in browsers.
+    // Repeatedly decode until stable to handle any depth of encoding.
+    var decoded = stripped;
+    try {
+      var prev = '';
+      while (decoded !== prev) {
+        prev = decoded;
+        decoded = decodeURIComponent(decoded);
+      }
+    } catch(e) {
+      // decodeURIComponent throws on malformed sequences (e.g., %ZZ)
+      // Fall through with partially decoded value
+    }
+    var cleaned = decoded.trim().toLowerCase();
+    if (cleaned.indexOf('javascript:') === 0 || cleaned.indexOf('data:') === 0 || cleaned.indexOf('vbscript:') === 0) {
       return '';
     }
-    return url;
+    // Return stripped (control chars removed) but case-preserved URL
+    // Using cleaned (lowercased) would break case-sensitive URL paths
+    return stripped;
   }
 
   // Apply inline formatting: bold, italic, code, links, images
@@ -208,7 +230,9 @@ export const markdownToHtmlCode = `(markdown) => {
     // URLs are sanitized to prevent javascript: and data: injection
     line = line.replace(/!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, function(match, alt, url) {
       var safe = sanitizeUrl(url);
-      return safe ? '<img src="' + safe + '" alt="' + alt + '" />' : '';
+      // Defense-in-depth: escape alt text even though callers already escape.
+      // Prevents XSS if processInline is ever called on unescaped input.
+      return safe ? '<img src="' + safe + '" alt="' + escapeHtml(alt) + '" />' : '';
     });
     line = line.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function(match, text, url) {
       var safe = sanitizeUrl(url);

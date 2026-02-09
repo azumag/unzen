@@ -529,6 +529,69 @@ describe('markdownToHtml', () => {
       const result = body.result as string;
       expect(result).not.toContain('data:');
     });
+
+    it('javascript: with tab bypass (java\\tscript:) -> link stripped', async () => {
+      // Browsers strip ASCII control chars from URLs, so "java\\tscript:" = "javascript:"
+      // sanitizeUrl must strip control chars before scheme check
+      const { body } = await execFunction('markdownToHtml', '[click](java\tscript:alert(1))');
+      const result = body.result as string;
+      expect(result).not.toContain('javascript:');
+      // The link should be stripped, but text preserved
+      expect(result).toContain('click');
+    });
+
+    it('img alt with HTML injection -> alt text must be escaped', async () => {
+      // C2 finding: img alt attribute was not HTML-escaped, allowing attribute injection
+      // e.g., !["><img onerror=alert(1)>](logo.png) could inject HTML
+      // Input is escaped at paragraph level first, then defense-in-depth in processInline
+      const { body } = await execFunction('markdownToHtml', '!["><img onerror=alert(1)>](logo.png)');
+      const result = body.result as string;
+      // Must NOT contain raw dangerous HTML tag
+      expect(result).not.toContain('<img onerror');
+      // Must contain img with safe alt (double-escaped is fine — defense-in-depth)
+      expect(result).toContain('<img src="logo.png"');
+    });
+
+    it('img alt with quote injection -> quotes must be escaped', async () => {
+      // Alt text with double quotes should be escaped to prevent attribute breakout
+      const { body } = await execFunction('markdownToHtml', '![alt" onload="alert(1)](logo.png)');
+      const result = body.result as string;
+      // Must NOT allow attribute breakout via unescaped quote
+      expect(result).not.toContain('" onload="');
+      expect(result).toContain('<img src="logo.png"');
+    });
+
+    it('URL-encoded javascript: scheme -> blocked', async () => {
+      // sanitizeUrl must decode URL-encoded schemes before checking
+      // javascript%3Aalert(1) decodes to javascript:alert(1) in browser
+      const { body } = await execFunction('markdownToHtml', '[click](javascript%3Aalert(1))');
+      const result = body.result as string;
+      expect(result).not.toContain('javascript');
+      expect(result).toContain('click');
+    });
+
+    it('URL-encoded data: scheme -> blocked', async () => {
+      const { body } = await execFunction('markdownToHtml', '[click](data%3Atext/html,<script>alert(1)</script>)');
+      const result = body.result as string;
+      expect(result).not.toContain('data%3A');
+      expect(result).not.toContain('data:');
+    });
+
+    it('mixed case URL-encoded javascript: -> blocked', async () => {
+      // JaVaScRiPt%3A should also be blocked
+      const { body } = await execFunction('markdownToHtml', '[click](JaVaScRiPt%3Aalert(1))');
+      const result = body.result as string;
+      expect(result).not.toContain('javascript');
+      expect(result).not.toContain('JaVaScRiPt');
+    });
+
+    it('single quotes in text -> escaped to &#39;', async () => {
+      // Single quotes must be escaped to prevent attribute injection
+      const { body } = await execFunction('markdownToHtml', "It's a test");
+      const result = body.result as string;
+      expect(result).toContain('&#39;');
+      expect(result).not.toContain("It's");
+    });
   });
 });
 

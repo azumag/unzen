@@ -185,8 +185,42 @@ export class UnzenServer {
       }
 
       try {
-        // Parse request body
-        const body = await c.req.json<ExecutionRequest>();
+        // Parse request body with JSON error handling (H2 fix)
+        let body: ExecutionRequest;
+        try {
+          body = await c.req.json<ExecutionRequest>();
+        } catch {
+          return c.json(
+            createExecutionResponse({
+              success: false,
+              error: 'Invalid JSON in request body',
+            }),
+            400
+          );
+        }
+
+        // Validate args field: must be an array with bounded length (H2 fix)
+        // Without validation, non-array args cause runtime errors (DoS vector)
+        // and unbounded arrays consume excessive memory
+        if (!Array.isArray(body.args)) {
+          return c.json(
+            createExecutionResponse({
+              success: false,
+              error: 'Request body must contain "args" array',
+            }),
+            400
+          );
+        }
+        // 128 args is a generous upper bound; no legitimate function needs more
+        if (body.args.length > 128) {
+          return c.json(
+            createExecutionResponse({
+              success: false,
+              error: 'Too many arguments (max 128)',
+            }),
+            400
+          );
+        }
 
         // Execute the function using shared runtime
         // The runtime creates a fresh context for each execution to ensure isolation
@@ -203,17 +237,25 @@ export class UnzenServer {
         // UnzenFunctionError: User code bugs (syntax/runtime errors) → HTTP 400
         // UnzenRuntimeError: Runtime problems (timeout, disposed) → HTTP 500
         // Other errors: Unknown issues → HTTP 500
+        //
+        // H3 fix: Sanitize error messages to prevent information leakage.
+        // Only UnzenFunctionError exposes the message (user's own code error).
+        // Runtime and unknown errors get generic messages.
         let errorMessage: string;
         let statusCode: number;
 
         if (error instanceof UnzenFunctionError) {
-          errorMessage = error.message;
+          // Sanitize function error: extract only the user-facing message,
+          // strip any JSON-serialized QuickJS error objects containing stack traces
+          errorMessage = this.sanitizeErrorMessage(error.message);
           statusCode = 400; // Client error - user code bug
         } else if (error instanceof UnzenRuntimeError) {
-          errorMessage = error.message;
+          // Generic message for runtime errors — don't expose timeout config etc.
+          errorMessage = 'Server execution failed';
           statusCode = 500; // Server error - runtime problem
         } else {
-          errorMessage = error instanceof Error ? error.message : String(error);
+          // Generic message for unknown errors — don't expose internals
+          errorMessage = 'Internal server error';
           statusCode = 500; // Server error - unknown issue
         }
 
@@ -228,6 +270,42 @@ export class UnzenServer {
     });
 
     return app;
+  }
+
+  /**
+   * Sanitize error messages for HTTP responses (H3 fix)
+   *
+   * Strips internal details like stack traces, file paths, and
+   * JSON-serialized QuickJS error objects from error messages.
+   * Only preserves the human-readable error description.
+   *
+   * @param message - Raw error message from QuickJS runtime
+   * @returns Sanitized message safe for HTTP response
+   */
+  private sanitizeErrorMessage(message: string): string {
+    // QuickJS wraps errors as JSON: 'Function execution failed: {"name":"Error","message":"...","stack":"..."}'
+    // Extract just the user-visible message from the JSON
+    const jsonMatch = message.match(/:\s*(\{.*\})$/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        if (parsed.message) {
+          return `Function error: ${parsed.message}`;
+        }
+      } catch {
+        // JSON parse failed, fall through to generic sanitization
+      }
+    }
+
+    // Strip file paths, stack traces, and other internal details
+    const sanitized = message
+      .replace(/\s+at\s+.*/g, '') // Remove stack trace lines
+      .replace(/[A-Z]:\\[^\s]*/g, '[path]') // Redact Windows paths (C:\Users\...)
+      .replace(/\/[^\s]*\.[jt]sx?/g, '[path]') // Redact Unix paths with JS/TS extensions
+      .replace(/\/(Users|home|var|tmp|etc|opt|usr)[^\s]*/g, '[path]') // Redact common Unix paths
+      .trim();
+
+    return sanitized || 'Function execution failed';
   }
 
   /**

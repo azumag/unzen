@@ -117,6 +117,57 @@ describe('MockSandboxExecutor', () => {
     expect(() => executor.dispose()).not.toThrow(); // Second disposal should also be safe
   });
 
+  // === SandboxExecutor Contract Tests (H1 finding from 5-agent review) ===
+  // These tests document the security behavior expected from ANY SandboxExecutor
+  // implementation. MockSandboxExecutor is NOT secure (uses Node.js vm), but
+  // these tests document the contract for Phase 2's real QuickJS Wasm executor.
+  //
+  // Contract: SandboxExecutor must handle all execution failures as UnzenFunctionError
+  // Contract: SandboxExecutor must require 'run' function in code
+  // Contract: SandboxExecutor must isolate execution contexts
+
+  describe('SandboxExecutor contract', () => {
+    it('contract: must throw UnzenFunctionError for missing run function', async () => {
+      const executor = new MockSandboxExecutor();
+      // Any SandboxExecutor implementation must throw UnzenFunctionError
+      // when the code doesn't define a 'run' function
+      await expect(executor.execute('var x = 1;', [])).rejects.toThrow(UnzenFunctionError);
+      executor.dispose();
+    });
+
+    it('contract: must throw UnzenFunctionError for code throwing errors', async () => {
+      const executor = new MockSandboxExecutor();
+      const code = 'function run() { throw new Error("user error"); }';
+      await expect(executor.execute(code, [])).rejects.toThrow(UnzenFunctionError);
+      executor.dispose();
+    });
+
+    it('contract: must pass arguments correctly to run function', async () => {
+      const executor = new MockSandboxExecutor();
+      const code = 'function run(a, b, c) { return [a, b, c]; }';
+      const result = await executor.execute(code, [1, 'two', true]);
+      expect(result).toEqual([1, 'two', true]);
+      executor.dispose();
+    });
+
+    it('contract: must support object arguments and return values', async () => {
+      const executor = new MockSandboxExecutor();
+      const code = 'function run(obj) { return { doubled: obj.value * 2 }; }';
+      const result = await executor.execute(code, [{ value: 21 }]);
+      expect(result).toEqual({ doubled: 42 });
+      executor.dispose();
+    });
+
+    it('contract: dispose must be idempotent (safe to call multiple times)', () => {
+      const executor = new MockSandboxExecutor();
+      expect(() => {
+        executor.dispose();
+        executor.dispose();
+        executor.dispose();
+      }).not.toThrow();
+    });
+  });
+
   it('should isolate execution context between calls', async () => {
     const executor = new MockSandboxExecutor();
 
