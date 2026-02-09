@@ -1,155 +1,130 @@
 # QJS-proto E2E Demo
 
-This demo demonstrates the complete QJS-proto framework with browser-side function execution and automatic server-side fallback.
+QuickJS Wasm サンドボックスによるブラウザ側関数実行のデモ。4層隔離モデルの動作を確認できる。
 
-## Features Demonstrated
+## デモ関数 (8種)
 
-1. **Spam Detection** - Text analysis function
-2. **Math Operations** - Simple multiplication
-3. **Array Transformations** - Doubling array values
-4. **Object Manipulation** - User info transformer
+### 基本デモ
+1. **Spam Detection** - テキストのスパム判定
+2. **Math Operations** - 数値の乗算
+3. **Array Transformations** - 配列要素の倍化
+4. **Object Manipulation** - ユーザー情報変換
 
-## What You'll See
+### 実用デモ (サーバー委任パターン)
+5. **Form Validation** - メール/クレジットカード/電話番号/パスワードの改竄不能バリデーション
+6. **Price Calculator** - 税金・割引・送料の改竄不能な価格計算
+7. **Markdown to HTML** - SSR Markdown レンダリングのクライアントオフロード
+8. **Text Statistics** - 単語数・可読性スコア・Flesch-Kincaid指標
 
-- ✅ Functions execute in the browser using QuickJS WebAssembly
-- ✅ Automatic fallback to server if browser execution fails
-- ✅ Smart caching of function code in IndexedDB
-- ✅ Real-time execution statistics
-- ✅ Performance metrics (execution time, cache hits, etc.)
-
-## Running the Demo
-
-### Prerequisites
+## 起動方法
 
 ```bash
-# From the project root
+# プロジェクトルートから
 npm install
 npm run build
-```
 
-### Start the Demo Server
-
-```bash
+# デモサーバー起動
 cd demo
 npm install
 npm run dev
+# → http://localhost:3000
 ```
 
-The demo will be available at: http://localhost:3000
-
-## Architecture
+## アーキテクチャ
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Browser (Client)                        │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  @unzen/client                                        │   │
-│  │  ├─ QuickJS Wasm Runtime                             │   │
-│  │  ├─ Function Code Cache (IndexedDB)                  │   │
-│  │  └─ Fallback to Server                               │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                           ↕ HTTP
+Browser Main Thread                  Web Worker Thread
+┌─────────────────────┐             ┌──────────────────────────┐
+│ UnzenClient         │  postMsg    │ Layer 1: Web Worker      │
+│  └─ WebWorkerSandbox├────────────►│  └─ Layer 2: Wasm sandbox│
+│     Executor        │◄────────────┤     └─ Layer 3: QuickJS  │
+│     (timeout guard) │  postMsg    │        └─ Layer 4: API制限│
+└─────────────────────┘             └──────────────────────────┘
+                           ↕ HTTP (fallback only)
 ┌─────────────────────────────────────────────────────────────┐
 │                    Server (Node.js + Hono)                   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  @unzen/server                                        │   │
-│  │  ├─ Function Registry                                │   │
-│  │  ├─ Manifest Builder                                 │   │
-│  │  ├─ QuickJS Runtime (fallback)                       │   │
-│  │  └─ HTTP Routes                                      │   │
-│  │     ├─ GET /manifest (function metadata)             │   │
-│  │     ├─ GET /code/:name (function code)               │   │
-│  │     └─ POST /exec/:name (fallback execution)         │   │
-│  └─────────────────────────────────────────────────────┘   │
+│  @unzen/server                                              │
+│  ├─ Function Registry (defineRaw)                           │
+│  ├─ Manifest Builder                                        │
+│  ├─ QuickJS Runtime (fallback execution)                    │
+│  ├─ Worker bundle (GET /worker.js)                          │
+│  └─ HTTP Routes                                             │
+│     ├─ GET /manifest (function metadata + hash)             │
+│     ├─ GET /code/:name (function source code)               │
+│     └─ POST /exec/:name (fallback execution)                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## API Endpoints
+## 実行フロー
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/unzen/manifest` | GET | Returns metadata for all registered functions |
-| `/unzen/code/:name` | GET | Returns function source code |
-| `/unzen/exec/:name` | POST | Executes function server-side (fallback) |
+1. **クライアント初期化**: `new UnzenClient({ endpoint, workerUrl: '/worker.js' })`
+2. **関数呼び出し**: `client.call('spamCheck', text)`
+3. **マニフェスト取得**: `GET /unzen/manifest` で関数一覧取得
+4. **コード取得**: `GET /unzen/code/spamCheck` でソースコード取得
+5. **ブラウザ実行**: Web Worker 内の QuickJS Wasm サンドボックスで実行
+6. **フォールバック**: ブラウザ実行失敗時のみ `POST /unzen/exec/spamCheck`
 
-## Execution Flow
+## コード例
 
-1. **Client calls function**: `client.execute('spamCheck', ['Buy now!'])`
-2. **Check cache**: Is function code cached in IndexedDB?
-3. **Fetch if needed**: Download code from `/unzen/code/spamCheck`
-4. **Execute in browser**: Run in QuickJS WebAssembly sandbox
-5. **Fallback on error**: POST to `/unzen/exec/spamCheck` if browser fails
-
-## Statistics Tracked
-
-- **Browser Executions**: Functions executed in the browser
-- **Server Fallbacks**: Functions executed on the server
-- **Cache Hits**: Times function code was loaded from cache
-- **Avg Execution Time**: Average time per function execution
-
-## Testing Different Scenarios
-
-### Force Server Fallback
-
-To test server fallback, you can disable WebAssembly in your browser:
-1. Chrome: Go to `chrome://flags/#enable-webassembly` and disable
-2. Or modify the client code to force fallback
-
-### Test Cache Performance
-
-1. Execute a function once (cache miss)
-2. Execute the same function again (cache hit - should be faster)
-3. Check the "Cache Hits" statistic
-
-### Test Error Handling
-
-Try executing with invalid input to see error handling in action.
-
-## Code Examples
-
-### Server-side (server.ts)
+### サーバー側 (server.ts)
 
 ```typescript
 import { UnzenServer } from '@unzen/server';
+import { Hono } from 'hono';
 
-const server = new UnzenServer({
-  baseUrl: 'http://localhost:3000/unzen',
-});
+const app = new Hono();
+const unzen = new UnzenServer({ baseUrl: 'http://localhost:3000/unzen' });
 
-// Register a function
-server.defineRaw('spamCheck', `(text) => {
-  const spamKeywords = ['spam', 'buy now', 'click here'];
-  return spamKeywords.some(kw => text.toLowerCase().includes(kw));
+unzen.defineRaw('spamCheck', `function run(text) {
+  const patterns = [/viagra/i, /casino/i, /lottery/i];
+  return patterns.some(p => p.test(text));
 }`);
 
-await server.initialize();
+await unzen.initialize();
+app.route('/unzen', unzen.createRoutes());
 ```
 
-### Client-side (demo.js)
+### クライアント側 (demo.js)
 
 ```typescript
-import { UnzenClient } from '@unzen/client';
+import { UnzenClient } from '/client.js';
 
 const client = new UnzenClient({
-  baseUrl: 'http://localhost:3000/unzen',
+  endpoint: 'http://localhost:3000/unzen',
+  mode: 'production',
+  workerUrl: '/worker.js', // QuickJS Wasm サンドボックス
 });
 
-await client.initialize();
-
-// Execute function
-const result = await client.execute('spamCheck', ['Buy now!'], {
-  diagnostics: true,
-});
-
-console.log(result.value); // true
-console.log(result.executedOn); // 'browser' or 'server'
-console.log(result.durationMs); // execution time
+const isSpam = await client.call('spamCheck', 'Buy now!');
 ```
 
-## Notes
+## API エンドポイント
 
-- Functions are sandboxed and cannot access external resources
-- Memory limit: 16MB per execution
-- Timeout: 50ms default (configurable)
-- Function code is immutable and cacheable
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/unzen/manifest` | GET | 登録関数のメタデータ (名前, ハッシュ) |
+| `/unzen/code/:name` | GET | 関数ソースコード |
+| `/unzen/exec/:name` | POST | サーバー側フォールバック実行 |
+| `/worker.js` | GET | QuickJS Wasm Worker バンドル (778KB) |
+| `/client.js` | GET | クライアントSDKバンドル |
+
+## セキュリティ
+
+関数は4層隔離サンドボックス内で実行:
+- **Layer 1**: Web Worker (別スレッド、DOM アクセス不可)
+- **Layer 2**: Wasm sandbox (メモリ隔離)
+- **Layer 3**: QuickJS interpreter (V8 とは別の JS エンジン)
+- **Layer 4**: API 制限 (eval/Function/Proxy 削除、プロトタイプ凍結)
+
+制約:
+- 外部接続禁止 (fetch, WebSocket, XHR 等)
+- メモリ制限: 16MB
+- タイムアウト: 5000ms (ブラウザ側) / 50ms (サーバー側)
+- 純粋計算のみ (入力→計算→出力、副作用なし)
+
+## フォールバックテスト
+
+サーバーフォールバックを確認するには:
+1. DevTools の Network タブを開く
+2. 関数を実行 → POST リクエストが発生しないことを確認 (ブラウザ実行成功)
+3. Worker の初期化をブロック → POST /exec リクエストが発生 (サーバーフォールバック)
