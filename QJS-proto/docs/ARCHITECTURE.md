@@ -2,7 +2,7 @@
 
 **バージョン**: 1.1
 **作成日**: 2026-02-07
-**テスト**: 165 tests passing (shared:35 + server:59 + client:50 + demo:21)
+**テスト**: 239 tests passing (shared:37 + server:61 + client:55 + demo:21 + samples:65)
 
 ---
 
@@ -188,8 +188,9 @@ Error
 
 **エラー分類の重要な詳細**:
 - QuickJSRuntime: 未知のエラーは `UnzenFunctionError` としてラップ (ユーザーコードが原因と推定)
-- FallbackHandler: HTTP非200レスポンスはすべて `UnzenNetworkError` としてラップ
-  (クライアント側では400/500の区別なし。サーバーログで判別)
+- FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
+  HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
+  body解析不可 → `UnzenNetworkError`
 
 ### 4.3 通信プロトコル (protocol.ts)
 
@@ -273,8 +274,8 @@ server.defineRaw('add', `(a, b) => a + b`);
 2. execute(code, args) →
    a. newContext() → 新しい QuickJS コンテキスト作成
    b. setMemoryLimit(16MB) → メモリ上限設定
-   c. evalCode('delete globalThis.eval; delete globalThis.Function;')
-      → 危険なAPI削除
+   c. evalCode → Object.defineProperty で eval/Function/Proxy/Reflect を
+      undefined化 (configurable:false) + 主要プロトタイプ凍結
    d. evalCode(code) → ユーザーコード (run関数) をロード
    e. evalCode('globalThis.__args__ = [...]')
       → 引数をJSON経由で注入
@@ -292,8 +293,11 @@ server.defineRaw('add', `(a, b) => a + b`);
 |------|-----|---------|
 | メモリ制限 | 16MB | `context.runtime.setMemoryLimit()` |
 | タイムアウト | 50ms | `context.runtime.setInterruptHandler()` |
-| eval禁止 | 削除 | `delete globalThis.eval` |
-| Function禁止 | 削除 | `delete globalThis.Function` |
+| eval禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
+| Function禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
+| Proxy禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
+| Reflect禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
+| プロトタイプ凍結 | 6種類 | `Object.freeze()` (Object/Array/String/Number/Boolean/RegExp) |
 | コンテキスト隔離 | 毎回新規 | `this.quickJS.newContext()` |
 
 **メモリ管理**: QuickJS は C ベースのメモリモデルのため、`.dispose()` が必須。
@@ -457,6 +461,10 @@ demo/
 | multiply | `(a, b) => a * b` | 乗算 |
 | doubleArray | `(arr) => arr.map(x => x * 2)` | 配列変換 |
 | getUserInfo | `(user) => ({ fullName, isAdult, initials })` | オブジェクト変換 |
+| formValidate | `(fields) => { ... }` | フォームバリデーション (email/CC/phone/password) |
+| calculatePrice | `(order) => { ... }` | 価格計算 (税/割引/送料) |
+| markdownToHtml | `(markdown) => { ... }` | Markdown→HTML変換 (XSSサニタイズ付き) |
+| textStats | `(text) => { ... }` | テキスト統計 (FK読解力スコア等) |
 
 ### 7.3 起動方法
 
@@ -539,14 +547,16 @@ defineRaw('add', '(a, b) => a + b')
 2. FallbackHandler.execute('add', [1, 2])
    → POST /unzen/exec/add
      Body: { "args": [1, 2] }
-   → HTTP非200: UnzenNetworkError としてラップ (400/500 区別なし)
-   → HTTP200 + error フィールドあり: UnzenFunctionError としてラップ
+   → HTTP 4xx + error body: UnzenFunctionError (ユーザーコードバグ, リトライ不可)
+   → HTTP 5xx + error body: UnzenNetworkError (サーバー問題, リトライ可)
+   → HTTP非200 + body解析不可: UnzenNetworkError
+   → HTTP200 + error フィールドあり: UnzenFunctionError
    → HTTP200 + error なし: data.result を返却
 
 3. サーバー側:
    → QuickJSRuntime.execute(code, [1, 2])
      → newContext() + setMemoryLimit(16MB)
-     → delete eval, delete Function
+     → Object.defineProperty で eval/Function/Proxy/Reflect 無効化
      → evalCode(code) → run関数ロード
      → globalThis.__args__ = [1,2]  (※ undefined → null 変換あり)
      → evalCode('run(...globalThis.__args__)') → 3
@@ -566,7 +576,7 @@ defineRaw('add', '(a, b) => a + b')
 | バージョンカウンタ揮発 | サーバー再起動でリセット | コンテンツハッシュベースに移行 |
 | JSON引数制約 | `undefined` → `null`, `Date`/`Map`/`Set` 非対応 | 構造化クローン検討 |
 | セキュリティ不足 (クライアント) | MockSandboxExecutor はセキュリティなし | WebWorker + QuickJS Wasm |
-| `delete globalThis.eval` | プロトタイプ経由でバイパス可能性 | 最小グローバルアプローチ |
+| WeakRef/FinalizationRegistry | QuickJSバージョン依存 (存在時のみ無効化) | 最小グローバルアプローチ |
 | ETag 未対応 | マニフェスト毎回全文取得 | Conditional GET 実装 |
 
 ---
@@ -586,22 +596,23 @@ defineRaw('add', '(a, b) => a + b')
 ## 11. テスト一覧
 
 ```
-Test Files  14 passed (14)
-Tests       165 passed (165)
-Duration    787ms
+Test Files  15 passed (15)
+Tests       239 passed (239)
+Duration    ~1.3s
 
-packages/shared/tests/types.test.ts          (15 tests)
-packages/shared/tests/errors.test.ts         (12 tests)
-packages/shared/tests/protocol.test.ts        (8 tests)
+packages/shared/tests/types.test.ts            (15 tests)
+packages/shared/tests/errors.test.ts           (10 tests)
+packages/shared/tests/protocol.test.ts         (13 tests)
 packages/server/tests/function-registry.test.ts (10 tests)
 packages/server/tests/manifest-builder.test.ts  (6 tests)
-packages/server/tests/quickjs-runtime.test.ts   (17 tests)
+packages/server/tests/quickjs-runtime.test.ts   (19 tests)
 packages/server/tests/unzen-server.test.ts      (13 tests)
 packages/server/tests/http-routes.test.ts       (13 tests)
-packages/client/tests/fallback-handler.test.ts   (6 tests)
+packages/client/tests/fallback-handler.test.ts   (8 tests)
 packages/client/tests/manifest-fetcher.test.ts  (10 tests)
 packages/client/tests/code-fetcher.test.ts       (8 tests)
 packages/client/tests/quickjs-sandbox.test.ts   (11 tests)
 packages/client/tests/unzen-client.test.ts      (15 tests)
 demo/tests/integration.test.ts                  (21 tests)
+demo/tests/sample-functions.test.ts             (66 tests)
 ```

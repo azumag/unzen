@@ -235,9 +235,16 @@ window.convertMarkdown = async function() {
   try {
     const result = await client.call('markdownToHtml', markdown);
     displayResult('markdownResult', result, false);
-    // Show rendered HTML preview (result is already sanitized by the sandbox)
+    // Defense in depth: render HTML in sandboxed iframe instead of innerHTML.
+    // The sandbox="" attribute blocks all scripts, forms, popups, navigation.
+    // Even if the markdown parser has a sanitization bug, scripts cannot execute.
     const preview = document.getElementById('markdownPreview');
-    preview.innerHTML = result;
+    preview.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.sandbox = '';
+    iframe.srcdoc = result;
+    iframe.style.cssText = 'width:100%;border:1px solid #ddd;border-radius:4px;min-height:100px;';
+    preview.appendChild(iframe);
     preview.style.display = 'block';
   } catch (error) {
     displayError('markdownResult', error.message);

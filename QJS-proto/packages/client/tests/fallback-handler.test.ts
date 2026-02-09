@@ -126,8 +126,9 @@ describe('FallbackHandler', () => {
     );
   });
 
-  it('should throw UnzenFunctionError on HTTP 500 with error body', async () => {
-    // Server returns 500 with structured error → still extract the error message
+  it('should throw UnzenNetworkError on HTTP 500 with error body', async () => {
+    // Server returns 500 for UnzenRuntimeError (timeout, OOM) → retryable
+    // 5xx errors are infrastructure/runtime issues, not user code bugs
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -141,7 +142,10 @@ describe('FallbackHandler', () => {
     const handler = new FallbackHandler('https://example.com');
 
     await expect(handler.execute('test', [])).rejects.toThrow(
-      UnzenFunctionError
+      UnzenNetworkError
+    );
+    await expect(handler.execute('test', [])).rejects.toThrow(
+      'Execution timeout exceeded (50ms)'
     );
   });
 

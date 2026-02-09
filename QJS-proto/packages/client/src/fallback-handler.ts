@@ -72,12 +72,15 @@ export class FallbackHandler {
 
       // Check for error in response body (present for both 4xx and 5xx)
       if (data.error) {
-        // 4xx errors indicate user code / request issues → FunctionError
-        // This preserves the server's UnzenFunctionError classification
-        if (response.status >= 400 && response.status < 500) {
-          throw new UnzenFunctionError(data.error);
+        // HTTP 5xx = server/runtime issues → NetworkError (retryable)
+        // Server sends 500 for UnzenRuntimeError (timeout, OOM).
+        // These are infrastructure problems, not user code bugs.
+        if (response.status >= 500) {
+          throw new UnzenNetworkError(data.error);
         }
-        // 5xx or other errors with error body → FunctionError (server wrapped it)
+        // HTTP 4xx or 2xx with error body → FunctionError (not retryable)
+        // Server sends 400 for UnzenFunctionError (user code bug).
+        // 2xx with error is an edge case but treated as function error.
         throw new UnzenFunctionError(data.error);
       }
 
