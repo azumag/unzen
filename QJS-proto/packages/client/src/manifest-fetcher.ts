@@ -16,6 +16,13 @@
  * - invalidate() clears cache, forcing next fetch() to hit server
  * - No TTL expiration (manifest changes should be explicit via invalidate)
  *
+ * ETag caching (Phase 3):
+ * - Server returns ETag header with manifest responses
+ * - Client stores ETag and sends If-None-Match on subsequent requests
+ * - On 304 Not Modified, client reuses last known manifest (lastManifest)
+ * - invalidate() clears in-memory cache but preserves ETag and lastManifest
+ *   to allow efficient revalidation without full re-download
+ *
  * Protocol:
  * - GET /manifest
  * - Response: ManifestResponse (see @unzen/shared/protocol.ts)
@@ -34,8 +41,8 @@ export class ManifestFetcher {
   private readonly endpoint: string;
 
   /**
-   * Cached manifest data
-   * null = not yet fetched
+   * Cached manifest data (in-memory cache)
+   * null = not yet fetched or invalidated
    * ManifestResponse = cached data
    */
   private cache: ManifestResponse | null = null;
@@ -46,6 +53,21 @@ export class ManifestFetcher {
    * (race condition fix: second caller awaits the same promise)
    */
   private inflight: Promise<ManifestResponse> | null = null;
+
+  /**
+   * Stored ETag from last server response for conditional requests (Phase 3)
+   * Used to send If-None-Match header on subsequent fetch requests.
+   * Preserved across invalidate() to allow ETag-based revalidation.
+   */
+  private etag: string | null = null;
+
+  /**
+   * Last fetched manifest for 304 revalidation (Phase 3)
+   * Separate from in-memory cache (this.cache) because it must survive
+   * invalidate() calls. When server responds 304, this value is used
+   * as the manifest without re-downloading.
+   */
+  private lastManifest: ManifestResponse | null = null;
 
   constructor(endpoint: string) {
     this.endpoint = endpoint;
@@ -86,27 +108,66 @@ export class ManifestFetcher {
 
   /**
    * Internal: perform actual HTTP fetch of manifest
+   *
+   * Supports ETag-based conditional requests (Phase 3):
+   * - Sends If-None-Match header if a previous ETag is stored
+   * - Handles 304 Not Modified by returning the last known manifest
+   * - Stores new ETag and manifest on 200 OK responses
    */
   private async fetchFromServer(): Promise<ManifestResponse> {
     const url = `${this.endpoint}/manifest`;
+
+    // Build request headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    // Send If-None-Match header for conditional request (ETag revalidation)
+    // This tells the server: "only send the full response if the manifest
+    // has changed since I last saw it (identified by this ETag)"
+    // Only send if we also have lastManifest to use on 304 response.
+    // Without lastManifest, a 304 would have no manifest to return,
+    // and 304 responses have no body per HTTP spec (can't call .json()).
+    if (this.etag && this.lastManifest) {
+      headers['If-None-Match'] = this.etag;
+    }
 
     try {
       // Fetch manifest from server
       const response = await globalThis.fetch(url, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
       });
 
-      // Check HTTP status
+      // 304 Not Modified: server confirms our cached version is still current
+      // Reuse the last known manifest instead of parsing a new response body
+      // (304 responses have no body per HTTP spec)
+      if (response.status === 304 && this.lastManifest) {
+        this.cache = this.lastManifest;
+        return this.lastManifest;
+      }
+
+      // Check HTTP status for other non-OK responses
       if (!response.ok) {
         throw new UnzenNetworkError(
           `Failed to fetch manifest: ${response.status} ${response.statusText}`
         );
       }
 
+      // Extract ETag from response for future conditional requests
+      // Store it regardless of whether we had one before (may be a new value)
+      // Use optional chaining for resilience: some environments or mocks
+      // may not provide a headers object on the Response
+      const etag = response.headers?.get('ETag');
+      if (etag) {
+        this.etag = etag;
+      }
+
       // Parse and cache response
       const manifest: ManifestResponse = await response.json();
       this.cache = manifest;
+      // Store in lastManifest for 304 revalidation after future invalidate() calls
+      this.lastManifest = manifest;
 
       return manifest;
     } catch (error) {
@@ -142,13 +203,32 @@ export class ManifestFetcher {
   }
 
   /**
+   * Check if manifest is currently cached in memory.
+   * Used by UnzenClient to report cache status in diagnostics.
+   *
+   * @returns true if manifest is cached and available without network request
+   */
+  isCached(): boolean {
+    return this.cache !== null;
+  }
+
+  /**
    * Invalidate cached manifest
    *
    * Forces next fetch() to retrieve from server instead of cache.
    * Use this when you know the manifest has changed on the server.
+   *
+   * Note: etag and lastManifest are intentionally NOT cleared.
+   * This allows ETag-based revalidation after cache invalidation,
+   * so the client can send If-None-Match and potentially receive
+   * a 304 response instead of re-downloading the full manifest.
    */
   invalidate(): void {
     this.cache = null;
     this.inflight = null;
+    // etag and lastManifest are preserved to enable conditional requests
+    // after invalidation. This is the key optimization: even after invalidation,
+    // if the server manifest hasn't changed, the client gets a lightweight 304
+    // response instead of re-downloading the full manifest JSON.
   }
 }

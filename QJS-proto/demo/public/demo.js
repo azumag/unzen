@@ -8,12 +8,13 @@
 
 import { UnzenClient } from '/client.js';
 
-// Statistics tracking
+// Statistics tracking for diagnostics display
 const stats = {
   browserExecs: 0,
   serverExecs: 0,
   errors: 0,
   execCount: 0,
+  totalDurationMs: 0,
 };
 
 // Initialize client with QuickJS Wasm worker for browser-side sandbox execution.
@@ -29,25 +30,29 @@ const client = new UnzenClient({
 console.log('✅ UnzenClient initialized');
 
 /**
- * Display execution result with execution location indicator.
- * Shows whether the function ran in the browser (QuickJS Wasm) or on the server.
+ * Display execution result with diagnostics information.
+ * Shows where the function ran, how long it took, and cache status.
  * Uses DOM API instead of innerHTML to prevent XSS.
  *
  * @param elementId - DOM element ID to render into
  * @param result - Execution result or error
  * @param isError - Whether result is an error
- * @param executedOn - 'browser' or 'server' (defaults to 'browser' for successful calls)
+ * @param diagnostics - Optional diagnostics info { executedOn, durationMs, cached }
  */
-function displayResult(elementId, result, isError, executedOn) {
+function displayResult(elementId, result, isError, diagnostics) {
   const element = document.getElementById(elementId);
   element.innerHTML = '';
 
-  // Update statistics
+  // Update statistics using diagnostics if available
   if (!isError) {
-    if (executedOn === 'server') {
+    if (diagnostics?.executedOn === 'server') {
       stats.serverExecs++;
     } else {
       stats.browserExecs++;
+    }
+    // Track total duration for average calculation
+    if (diagnostics?.durationMs != null) {
+      stats.totalDurationMs += diagnostics.durationMs;
     }
   } else {
     stats.errors++;
@@ -63,11 +68,15 @@ function displayResult(elementId, result, isError, executedOn) {
   h3.textContent = isError ? '❌ Error' : '✅ Result';
   resultDiv.appendChild(h3);
 
-  // Execution location badge (browser = blue, server = orange)
-  if (!isError) {
+  // Execution location badge with timing (browser = blue, server = orange)
+  if (!isError && diagnostics) {
     const badge = document.createElement('span');
-    badge.className = `badge ${executedOn === 'server' ? 'server' : 'browser'}`;
-    badge.textContent = executedOn === 'server' ? 'Server' : 'Browser (QuickJS Wasm)';
+    const isBrowser = diagnostics.executedOn !== 'server';
+    badge.className = `badge ${isBrowser ? 'browser' : 'server'}`;
+    const label = isBrowser ? 'Browser (QuickJS Wasm)' : 'Server';
+    const timing = diagnostics.durationMs.toFixed(1);
+    const cacheLabel = diagnostics.cached ? ' | cached' : '';
+    badge.textContent = `${label} | ${timing}ms${cacheLabel}`;
     resultDiv.appendChild(badge);
   }
 
@@ -100,30 +109,44 @@ function displayError(elementId, message) {
 }
 
 /**
- * Update statistics display
+ * Update statistics display with diagnostics data
  */
 function updateStats() {
   document.getElementById('browserExecs').textContent = stats.browserExecs;
   document.getElementById('serverExecs').textContent = stats.serverExecs;
-  document.getElementById('cacheHits').textContent = stats.errors; // "cacheHits" repurposed as error count in Phase 2
+  document.getElementById('cacheHits').textContent = stats.errors;
 
-  const avgTime = stats.execCount > 0 ? (stats.execCount) : 0;
-  document.getElementById('avgTime').textContent = avgTime + ' calls';
+  // Show average execution time from diagnostics
+  const avgTime = stats.execCount > 0
+    ? (stats.totalDurationMs / stats.execCount).toFixed(1)
+    : '0';
+  document.getElementById('avgTime').textContent = avgTime + ' ms';
+}
+
+/**
+ * Helper: Execute function with diagnostics and display result.
+ * Uses callWithDiagnostics() to get execution location, timing, and cache info.
+ *
+ * @param elementId - DOM element ID to render result into
+ * @param name - Function name to call
+ * @param args - Arguments to pass to the function
+ */
+async function execWithDiagnostics(elementId, name, ...args) {
+  const result = await client.callWithDiagnostics(name, ...args);
+  if (result.success) {
+    displayResult(elementId, result.result, false, result.diagnostics);
+  } else {
+    displayError(elementId, result.error.message);
+  }
 }
 
 /**
  * Demo 1: Spam Check
- * Uses callWithDiagnostics() to get success/error info without throwing
+ * Uses callWithDiagnostics() to get execution diagnostics
  */
 window.checkSpam = async function() {
   const text = document.getElementById('spamText').value;
-
-  try {
-    const result = await client.call('spamCheck', text);
-    displayResult('spamResult', result, false);
-  } catch (error) {
-    displayError('spamResult', error.message);
-  }
+  await execWithDiagnostics('spamResult', 'spamCheck', text);
 };
 
 /**
@@ -138,12 +161,7 @@ window.multiplyNumbers = async function() {
     return;
   }
 
-  try {
-    const result = await client.call('multiply', num1, num2);
-    displayResult('multiplyResult', result, false);
-  } catch (error) {
-    displayError('multiplyResult', error.message);
-  }
+  await execWithDiagnostics('multiplyResult', 'multiply', num1, num2);
 };
 
 /**
@@ -158,12 +176,7 @@ window.doubleArray = async function() {
     return;
   }
 
-  try {
-    const result = await client.call('doubleArray', arr);
-    displayResult('arrayResult', result, false);
-  } catch (error) {
-    displayError('arrayResult', error.message);
-  }
+  await execWithDiagnostics('arrayResult', 'doubleArray', arr);
 };
 
 /**
@@ -179,12 +192,7 @@ window.transformUser = async function() {
     return;
   }
 
-  try {
-    const result = await client.call('getUserInfo', { firstName, lastName, age });
-    displayResult('userResult', result, false);
-  } catch (error) {
-    displayError('userResult', error.message);
-  }
+  await execWithDiagnostics('userResult', 'getUserInfo', { firstName, lastName, age });
 };
 
 // ============================================================
@@ -207,12 +215,7 @@ window.validateForm = async function() {
   if (phone) fields.phone = phone;
   if (password) fields.password = password;
 
-  try {
-    const result = await client.call('formValidate', fields);
-    displayResult('formResult', result, false);
-  } catch (error) {
-    displayError('formResult', error.message);
-  }
+  await execWithDiagnostics('formResult', 'formValidate', fields);
 };
 
 /**
@@ -228,8 +231,7 @@ window.calculatePrice = async function() {
     if (discountStr) {
       order.discount = JSON.parse(discountStr);
     }
-    const result = await client.call('calculatePrice', order);
-    displayResult('priceResult', result, false);
+    await execWithDiagnostics('priceResult', 'calculatePrice', order);
   } catch (error) {
     displayError('priceResult', error.message);
   }
@@ -242,9 +244,9 @@ window.calculatePrice = async function() {
 window.convertMarkdown = async function() {
   const markdown = document.getElementById('markdownInput').value;
 
-  try {
-    const result = await client.call('markdownToHtml', markdown);
-    displayResult('markdownResult', result, false);
+  const diagResult = await client.callWithDiagnostics('markdownToHtml', markdown);
+  if (diagResult.success) {
+    displayResult('markdownResult', diagResult.result, false, diagResult.diagnostics);
     // Defense in depth: render HTML in sandboxed iframe instead of innerHTML.
     // The sandbox="" attribute blocks all scripts, forms, popups, navigation.
     // Even if the markdown parser has a sanitization bug, scripts cannot execute.
@@ -252,12 +254,12 @@ window.convertMarkdown = async function() {
     preview.innerHTML = '';
     const iframe = document.createElement('iframe');
     iframe.sandbox = '';
-    iframe.srcdoc = result;
+    iframe.srcdoc = diagResult.result;
     iframe.style.cssText = 'width:100%;border:1px solid #ddd;border-radius:4px;min-height:100px;';
     preview.appendChild(iframe);
     preview.style.display = 'block';
-  } catch (error) {
-    displayError('markdownResult', error.message);
+  } else {
+    displayError('markdownResult', diagResult.error.message);
   }
 };
 
@@ -267,13 +269,7 @@ window.convertMarkdown = async function() {
  */
 window.analyzeText = async function() {
   const text = document.getElementById('textInput').value;
-
-  try {
-    const result = await client.call('textStats', text);
-    displayResult('textResult', result, false);
-  } catch (error) {
-    displayError('textResult', error.message);
-  }
+  await execWithDiagnostics('textResult', 'textStats', text);
 };
 
 console.log('✅ Demo ready! Try the examples above.');

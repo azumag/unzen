@@ -1,0 +1,9 @@
+{
+  "is-main": true,
+  "link": {
+    "wasm-gc": {
+      "exports": ["sort_benchmark", "generate_random_array"],
+      "use-js-string-builtin": true
+    }
+  }
+}

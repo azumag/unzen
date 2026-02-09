@@ -30,6 +30,8 @@ export {
   UnzenClient,
   type UnzenClientOptions,
   type DiagnosticResult,
+  type DiagnosticInfo,
+  type PartialDiagnosticInfo,
 } from './unzen-client';
 
 // Component classes (advanced usage)

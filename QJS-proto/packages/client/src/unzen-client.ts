@@ -33,14 +33,51 @@ import { MockSandboxExecutor, type SandboxExecutor } from './quickjs-sandbox';
 import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 
 /**
+ * Diagnostic metadata returned with successful callWithDiagnostics() calls.
+ * Provides transparency about where, how fast, and whether caching was used.
+ */
+export interface DiagnosticInfo {
+  /** Where the function was executed: browser sandbox or server fallback */
+  executedOn: 'browser' | 'server';
+  /** Total execution time in milliseconds (includes fetch + sandbox/server time) */
+  durationMs: number;
+  /** Whether the manifest was already cached when this call was made */
+  cached: boolean;
+}
+
+/**
+ * Partial diagnostic info included with error results.
+ * Always includes durationMs and cached (measurable regardless of success/failure).
+ * executedOn is included when we know where the error occurred.
+ */
+export interface PartialDiagnosticInfo {
+  /** Where the error occurred, if determinable */
+  executedOn?: 'browser' | 'server';
+  /** Total time from call start to error, in milliseconds */
+  durationMs: number;
+  /** Whether the manifest was already cached when this call was made */
+  cached: boolean;
+}
+
+/**
  * Diagnostic result type for callWithDiagnostics
  *
- * Success case: { success: true, result: T }
- * Error case: { success: false, error: {type, message} }
+ * Success case: { success: true, result: T, diagnostics: DiagnosticInfo }
+ * Error case: { success: false, error: {type, message}, diagnostics: PartialDiagnosticInfo }
+ *
+ * Both success and error cases include diagnostics. On error, diagnostics
+ * always include durationMs and cached; executedOn is included when the
+ * error location is determinable.
+ *
+ * Error types:
+ * - 'function_error': User code bug (e.g., throw in function, function not found)
+ * - 'browser_runtime_error': Browser sandbox failure (Wasm issue, timeout, etc.)
+ * - 'server_runtime_error': Server fallback failure (network, endpoint down)
+ * - 'client_disposed': Client was disposed before this call
  */
 export type DiagnosticResult<T = unknown> =
-  | { success: true; result: T; error?: never }
-  | { success: false; result?: never; error: { type: string; message: string } };
+  | { success: true; result: T; diagnostics: DiagnosticInfo; error?: never }
+  | { success: false; result?: never; error: { type: string; message: string }; diagnostics: PartialDiagnosticInfo };
 
 /**
  * Client configuration options
@@ -168,32 +205,116 @@ export class UnzenClient {
   /**
    * Call a function with diagnostics
    *
-   * Returns DiagnosticResult with success flag, result, and error details.
+   * Returns DiagnosticResult with success flag, result, diagnostics, and error details.
    * Never throws (errors are captured in result).
+   *
+   * Unlike call(), this method implements its own execution flow to track:
+   * - executedOn: whether the function ran in browser or on server
+   * - durationMs: total execution time including fetch and execution
+   * - cached: whether the manifest was already in cache before this call
    *
    * @param name - Function name
    * @param args - Function arguments
-   * @returns DiagnosticResult with success/error info
+   * @returns DiagnosticResult with success/error info and diagnostics
    */
   async callWithDiagnostics<T = unknown>(
     name: string,
     ...args: unknown[]
   ): Promise<DiagnosticResult<T>> {
+    // Check if manifest is already cached before this call starts.
+    // This provides insight into whether we needed a network round-trip for the manifest.
+    const wasCached = this.manifestFetcher.isCached();
+    const startTime = performance.now();
+
+    // Track where execution was attempted for error diagnostics.
+    // This is set as execution progresses so we know where the error occurred.
+    let lastAttemptedOn: 'browser' | 'server' | undefined;
+
     try {
-      const result = await this.call<T>(name, ...args);
+      // Prevent use after disposal
+      if (this.disposed) {
+        // No execution attempted — return 'client_disposed' error type
+        // with durationMs but without executedOn (no execution location applies)
+        return {
+          success: false,
+          error: {
+            type: 'client_disposed',
+            message: 'Client has been disposed. Create a new instance.',
+          },
+          diagnostics: {
+            durationMs: performance.now() - startTime,
+            cached: wasCached,
+          },
+        };
+      }
+
+      let result: T;
+      let executedOn: 'browser' | 'server';
+
+      if (this.mode === 'development') {
+        // Development mode: always use server fallback
+        lastAttemptedOn = 'server';
+        result = (await this.fallbackHandler.execute(name, args)) as T;
+        executedOn = 'server';
+      } else {
+        // Production/browser-only mode: try browser execution
+        try {
+          lastAttemptedOn = 'browser';
+          result = (await this.executeBrowser(name, args)) as T;
+          executedOn = 'browser';
+        } catch (error) {
+          // Function errors are NOT recovered by fallback
+          if (error instanceof UnzenFunctionError) {
+            throw error;
+          }
+
+          // Runtime errors in browser-only mode are fatal
+          if (this.mode === 'browser-only') {
+            throw error;
+          }
+
+          // Production mode: fallback on runtime error
+          lastAttemptedOn = 'server';
+          result = (await this.fallbackHandler.execute(name, args)) as T;
+          executedOn = 'server';
+        }
+      }
+
+      const durationMs = performance.now() - startTime;
+
       return {
         success: true,
         result,
+        diagnostics: {
+          executedOn,
+          durationMs,
+          cached: wasCached,
+        },
       };
     } catch (error) {
+      // Determine specific error type based on error class and execution context.
+      // This provides consumers with actionable information about what went wrong
+      // and where it happened.
+      let errorType: string;
+      if (error instanceof UnzenFunctionError) {
+        errorType = 'function_error';
+      } else if (lastAttemptedOn === 'server') {
+        errorType = 'server_runtime_error';
+      } else {
+        // Browser-side runtime error (Wasm failure, timeout, etc.)
+        errorType = 'browser_runtime_error';
+      }
+
       return {
         success: false,
         error: {
-          type:
-            error instanceof UnzenFunctionError
-              ? 'function_error'
-              : 'runtime_error',
+          type: errorType,
           message: error instanceof Error ? error.message : String(error),
+        },
+        diagnostics: {
+          executedOn: lastAttemptedOn,
+          durationMs: performance.now() - startTime,
+          cached: wasCached,
         },
       };
     }

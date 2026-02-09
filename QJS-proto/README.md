@@ -3,7 +3,7 @@
 サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
 QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行し、サーバーコストを削減する。
 
-> **ステータス**: Phase 2 完了。ブラウザ側 QuickJS Wasm サンドボックス（4層隔離）が稼働中。313テスト通過。
+> **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。381テスト通過。
 
 ## コンセプト
 
@@ -102,12 +102,16 @@ Browser Main Thread                  Web Worker Thread
 | 性能 | 短時間関数に十分 (50ms以内) | Rustに近い高速実行 |
 | ブラウザ | ほぼ全ブラウザ | wasm-gc対応 (Chrome 119+, Firefox 120+, Safari 18+) |
 | 用途 | 手軽にJS関数を委任 | 性能が重要な計算処理 |
-| 実装状況 | **Phase 2 完了** | 未実装 (Phase 3+) |
+| 実装状況 | **Phase 2 完了** | **Phase 3 PoC** (ビルド検証済) |
 
 ## プロジェクト構成
 
 ```
 QJS-proto/
+├── moonbit-poc/           # MoonBit wasm-gc PoC (Phase 3)
+│   ├── fibonacci/         # fibonacci ベンチマーク (8.2KB wasm)
+│   ├── sort/              # quicksort ベンチマーク (9.0KB wasm)
+│   └── benchmark/         # ブラウザベンチマーク UI
 ├── packages/
 │   ├── shared/         # 共有型定義・エラー・セキュリティコード
 │   │   └── src/
@@ -121,6 +125,12 @@ QJS-proto/
 │   │       ├── function-registry.ts # 関数レジストリ
 │   │       ├── quickjs-runtime.ts   # サーバー側 QuickJS ランタイム
 │   │       └── manifest-builder.ts  # マニフェストビルダー
+│   ├── bundler/        # モジュールバンドラー (@unzen/bundler)
+│   │   └── src/
+│   │       ├── bundler.ts             # esbuildラッパー + セキュリティプラグイン
+│   │       ├── module-whitelist.ts    # モジュールホワイトリスト検証
+│   │       ├── forbidden-api-check.ts # 禁止API検出（防御多層）
+│   │       └── index.ts              # パッケージエントリポイント
 │   └── client/         # クライアントSDK (@unzen/client)
 │       └── src/
 │           ├── unzen-client.ts       # メインクライアントクラス
@@ -152,7 +162,7 @@ QJS-proto/
 # インストール
 npm install
 
-# テスト実行 (313テスト)
+# テスト実行 (381テスト)
 npx vitest run
 
 # ビルド
@@ -185,8 +195,10 @@ cd demo && npm run dev
 詳細は `docs/` ディレクトリにまとめています。[ドキュメント一覧](docs/INDEX.md) を参照。
 
 - [設計書](docs/design.md) - アーキテクチャ、サンドボックス、SDK設計
+- [モジュールバンドラー](docs/bundler.md) - @unzen/bundler の設計と使い方
 - [セキュリティ制約とユースケース](docs/use-cases-and-constraints.md) - 外部接続禁止ポリシー
 - [学術参考文献](docs/references.md) - Wasm セキュリティ、サンドボックス関連論文
+- [MoonBit wasm-gc PoC](moonbit-poc/README.md) - Phase 3 MoonBit ランタイム検証 (ビルド済み、ブラウザベンチマーク付き)
 
 ## ライセンス
 

@@ -8,7 +8,7 @@
  * - Hono middleware for HTTP endpoints
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { UnzenServer } from '../src/unzen-server';
 import type { FunctionDefinition } from '@unzen/shared';
 
@@ -133,6 +133,100 @@ describe('UnzenServer', () => {
       const fn2 = server.getFunction('func2');
 
       expect(fn1?.hash).not.toBe(fn2?.hash);
+    });
+
+    it('should NOT double-wrap code that starts with function run', () => {
+      // When code is already in `function run(...)` form, wrapping it again
+      // would create nested functions that break execution
+      const code = 'function run(x) { return x * 2; }';
+      server.defineRaw('double', code);
+
+      const fn = server.getFunction('double');
+      // Code should be used as-is, not wrapped in another function run()
+      expect(fn?.code).toBe(code);
+      // Should NOT contain double wrapping
+      expect(fn?.code).not.toContain('return (function run');
+    });
+
+    it('should NOT double-wrap code with leading whitespace before function run', () => {
+      const code = '  function run(x) { return x * 3; }';
+      server.defineRaw('triple', code);
+
+      const fn = server.getFunction('triple');
+      // After trimming, starts with 'function run' → use as-is
+      expect(fn?.code).toBe(code);
+    });
+
+    it('should still wrap arrow functions', () => {
+      const code = '(x) => x * 2';
+      server.defineRaw('double', code);
+
+      const fn = server.getFunction('double');
+      expect(fn?.code).toContain('function run');
+      expect(fn?.code).toContain(code);
+    });
+
+    it('should still wrap regular function expressions', () => {
+      const code = 'function(x) { return x * 2; }';
+      server.defineRaw('double', code);
+
+      const fn = server.getFunction('double');
+      expect(fn?.code).toContain('function run(...args)');
+    });
+  });
+
+  describe('pure function warnings', () => {
+    it('should warn when function code contains fetch(', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      server.defineRaw('fetchFunc', '() => fetch("https://example.com")');
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('fetch')
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('should warn when function code contains XMLHttpRequest', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      server.defineRaw('xhrFunc', '() => new XMLHttpRequest()');
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('XMLHttpRequest')
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('should warn when function code contains import(', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      server.defineRaw('importFunc', '() => import("module")');
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('import(')
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('should warn when function code contains WebSocket', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      server.defineRaw('wsFunc', '() => new WebSocket("ws://example.com")');
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('WebSocket')
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('should NOT warn for pure computation code', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      server.defineRaw('pureFunc', '(x) => x * 2');
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
   });
 

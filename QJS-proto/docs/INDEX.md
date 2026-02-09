@@ -12,6 +12,8 @@
 | [sample-functions.md](sample-functions.md) | 実践的サンプル関数のリファレンス | 開発者・利用者 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Phase 1 MVP 実装アーキテクチャ詳細 | 開発者・設計者 |
 | [heavy-samples-and-modules.md](heavy-samples-and-modules.md) | 重い処理サンプル7提案 + モジュールシステム設計 | 全員 |
+| [bundler.md](bundler.md) | @unzen/bundler モジュールバンドラー設計・API | 開発者 |
+| [MoonBit PoC](../moonbit-poc/README.md) | Phase 3 MoonBit wasm-gc ランタイム検証・ベンチマーク | 開発者・設計者 |
 
 ## 推奨読み順
 

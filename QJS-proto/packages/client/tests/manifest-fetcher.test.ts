@@ -204,4 +204,111 @@ describe('ManifestFetcher', () => {
     expect(manifest).toEqual(emptyManifest);
     expect(fetcher.getEntry('anything')).toBeUndefined();
   });
+
+  // === ETag caching tests (Phase 3) ===
+  // ETag caching allows the client to send conditional requests
+  // (If-None-Match) and receive 304 Not Modified when the manifest
+  // hasn't changed, saving bandwidth and parse time.
+
+  describe('ETag caching', () => {
+    it('should store ETag from server response and send If-None-Match on next fetch', async () => {
+      // First fetch: server returns manifest with ETag header
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"abc123"' }),
+        json: async () => mockManifest,
+      });
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+
+      // Invalidate in-memory cache to force a new server request
+      // (ETag and lastManifest should be preserved across invalidation)
+      fetcher.invalidate();
+
+      // Second fetch: verify If-None-Match is sent with stored ETag
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"abc123"' }),
+        json: async () => mockManifest,
+      });
+
+      await fetcher.fetch();
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://example.com/manifest',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'If-None-Match': 'W/"abc123"',
+          }),
+        })
+      );
+    });
+
+    it('should return cached manifest on 304 response', async () => {
+      // First fetch: get manifest and ETag from server
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"abc123"' }),
+        json: async () => mockManifest,
+      });
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+
+      // Invalidate in-memory cache (simulates stale cache scenario)
+      fetcher.invalidate();
+
+      // Second fetch: server responds 304 Not Modified
+      // Client should reuse the last known manifest from lastManifest
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 304,
+        statusText: 'Not Modified',
+        headers: new Headers({ 'ETag': 'W/"abc123"' }),
+      });
+
+      const manifest = await fetcher.fetch();
+      expect(manifest).toEqual(mockManifest);
+    });
+
+    it('should update cached manifest and ETag on 200 after invalidation', async () => {
+      // First fetch: initial manifest
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"etag1"' }),
+        json: async () => mockManifest,
+      });
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+      fetcher.invalidate();
+
+      // Second fetch: server returns updated manifest with new ETag
+      const updatedManifest: ManifestResponse = {
+        functions: {
+          ...mockManifest.functions,
+          newFunc: {
+            runtime: 'quickjs',
+            hash: 'xyz',
+            version: 3,
+            codeUrl: 'https://example.com/code/newFunc',
+          },
+        },
+      };
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"etag2"' }),
+        json: async () => updatedManifest,
+      });
+
+      const manifest = await fetcher.fetch();
+      expect(manifest).toEqual(updatedManifest);
+    });
+  });
 });

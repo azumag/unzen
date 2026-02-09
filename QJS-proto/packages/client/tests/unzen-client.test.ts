@@ -341,7 +341,7 @@ describe('UnzenClient', () => {
   });
 
   describe('callWithDiagnostics', () => {
-    it('should return ExecutionResult with success', async () => {
+    it('should return success result with diagnostics for browser execution', async () => {
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) {
           return Promise.resolve({
@@ -365,14 +365,82 @@ describe('UnzenClient', () => {
 
       const result = await client.callWithDiagnostics<number>('add', 1, 2);
 
+      // Success shape with diagnostics
       expect(result.success).toBe(true);
       expect(result.result).toBe(3);
       expect(result.error).toBeUndefined();
 
+      // Diagnostics must include execution location, timing, and cache status
+      expect(result.diagnostics).toBeDefined();
+      expect(result.diagnostics!.executedOn).toBe('browser');
+      expect(typeof result.diagnostics!.durationMs).toBe('number');
+      expect(result.diagnostics!.durationMs).toBeGreaterThanOrEqual(0);
+      expect(typeof result.diagnostics!.cached).toBe('boolean');
+
       client.dispose();
     });
 
-    it('should return ExecutionResult with error', async () => {
+    it('should report executedOn as server when fallback is used', async () => {
+      // Development mode always uses server fallback
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: 3 }),
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'development',
+      });
+
+      const result = await client.callWithDiagnostics<number>('add', 1, 2);
+
+      expect(result.success).toBe(true);
+      expect(result.result).toBe(3);
+      expect(result.diagnostics).toBeDefined();
+      expect(result.diagnostics!.executedOn).toBe('server');
+      expect(typeof result.diagnostics!.durationMs).toBe('number');
+
+      client.dispose();
+    });
+
+    it('should report cached=true when manifest was already in cache', async () => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => mockManifest,
+          });
+        }
+        if (url.includes('/code/add.js')) {
+          return Promise.resolve({
+            ok: true,
+            text: async () => mockAddCode,
+          });
+        }
+        throw new Error('Unexpected URL');
+      });
+
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'production',
+      });
+
+      // First call populates cache
+      await client.call('add', 1, 2);
+
+      // Second call with diagnostics — manifest should be cached
+      const result = await client.callWithDiagnostics<number>('add', 1, 2);
+
+      expect(result.success).toBe(true);
+      expect(result.diagnostics!.cached).toBe(true);
+
+      client.dispose();
+    });
+
+    it('should return error result with partial diagnostics on failure', async () => {
+      // Function error: user code throws. Error result should include
+      // partial diagnostics (durationMs, cached, executedOn) for debugging.
       const errorCode = 'function run() { throw new Error("Test error"); }';
 
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -401,7 +469,131 @@ describe('UnzenClient', () => {
       expect(result.success).toBe(false);
       expect(result.result).toBeUndefined();
       expect(result.error).toBeDefined();
+      expect(result.error?.type).toBe('function_error');
       expect(result.error?.message).toContain('Test error');
+
+      // Partial diagnostics should be present even on failure
+      expect(result.diagnostics).toBeDefined();
+      expect(result.diagnostics.durationMs).toBeGreaterThanOrEqual(0);
+      expect(typeof result.diagnostics.cached).toBe('boolean');
+      expect(result.diagnostics.executedOn).toBe('browser');
+
+      client.dispose();
+    });
+
+    it('should return client_disposed error with diagnostics for disposed client', async () => {
+      // Disposed client should return a clear error with diagnostics
+      // (durationMs measured, but no executedOn since no execution occurred)
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'production',
+      });
+      client.dispose();
+
+      const result = await client.callWithDiagnostics('add', 1, 2);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('client_disposed');
+      expect(result.error?.message).toContain('disposed');
+
+      // Diagnostics present but no executedOn (no execution was attempted)
+      expect(result.diagnostics).toBeDefined();
+      expect(result.diagnostics.durationMs).toBeGreaterThanOrEqual(0);
+      expect(typeof result.diagnostics.cached).toBe('boolean');
+      expect(result.diagnostics.executedOn).toBeUndefined();
+    });
+
+    it('should return browser_runtime_error for runtime errors in browser-only mode', async () => {
+      // In browser-only mode, runtime errors should NOT fallback to server
+      // and should be reported as browser_runtime_error with location info
+      const { MockSandboxExecutor } = await import('../src/quickjs-sandbox');
+      const failingSandbox = new MockSandboxExecutor();
+      failingSandbox.execute = async () => {
+        throw new UnzenRuntimeError('Wasm init failed');
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => mockManifest,
+          });
+        }
+        if (url.includes('/code/add.js')) {
+          return Promise.resolve({
+            ok: true,
+            text: async () => mockAddCode,
+          });
+        }
+        throw new Error('Should not call other endpoints');
+      });
+
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'browser-only',
+        sandbox: failingSandbox,
+      });
+
+      const result = await client.callWithDiagnostics('add', 1, 2);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('browser_runtime_error');
+      expect(result.error?.message).toContain('Wasm init failed');
+
+      // Should report where the error occurred
+      expect(result.diagnostics).toBeDefined();
+      expect(result.diagnostics.executedOn).toBe('browser');
+      expect(result.diagnostics.durationMs).toBeGreaterThanOrEqual(0);
+
+      client.dispose();
+    });
+
+    it('should include durationMs even for server fallback in production mode', async () => {
+      // Simulate a scenario where browser execution fails with RuntimeError
+      // and falls back to server
+      const { MockSandboxExecutor } = await import('../src/quickjs-sandbox');
+      const failingSandbox = new MockSandboxExecutor();
+      const origExecute = failingSandbox.execute.bind(failingSandbox);
+      failingSandbox.execute = async () => {
+        throw new UnzenRuntimeError('Wasm unavailable');
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => mockManifest,
+          });
+        }
+        if (url.includes('/code/add.js')) {
+          return Promise.resolve({
+            ok: true,
+            text: async () => mockAddCode,
+          });
+        }
+        if (url.includes('/exec/add')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ result: 3 }),
+          });
+        }
+        throw new Error('Unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'production',
+        sandbox: failingSandbox,
+      });
+
+      const result = await client.callWithDiagnostics<number>('add', 1, 2);
+
+      expect(result.success).toBe(true);
+      expect(result.result).toBe(3);
+      expect(result.diagnostics).toBeDefined();
+      expect(result.diagnostics!.executedOn).toBe('server');
+      expect(result.diagnostics!.durationMs).toBeGreaterThanOrEqual(0);
 
       client.dispose();
     });
