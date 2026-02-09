@@ -30,6 +30,7 @@ import { FallbackHandler } from './fallback-handler';
 import { ManifestFetcher } from './manifest-fetcher';
 import { CodeFetcher } from './code-fetcher';
 import { MockSandboxExecutor, type SandboxExecutor } from './quickjs-sandbox';
+import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 
 /**
  * Diagnostic result type for callWithDiagnostics
@@ -57,6 +58,22 @@ export interface UnzenClientOptions {
    * - browser-only: Browser only, no fallback
    */
   mode?: 'production' | 'development' | 'browser-only';
+
+  /**
+   * URL to the QuickJS worker script (e.g., '/worker.js').
+   * When provided, uses WebWorkerSandboxExecutor for browser-side execution
+   * with 4-layer isolation (Web Worker + Wasm + QuickJS + API restrictions).
+   * When omitted, falls back to MockSandboxExecutor (NOT secure, for testing only).
+   */
+  workerUrl?: string;
+
+  /**
+   * Custom SandboxExecutor instance (advanced usage).
+   * Takes precedence over workerUrl if both are provided.
+   * Allows injecting custom sandbox implementations for testing or
+   * alternative isolation strategies.
+   */
+  sandbox?: SandboxExecutor;
 }
 
 /**
@@ -91,9 +108,14 @@ export class UnzenClient {
     this.manifestFetcher = new ManifestFetcher(this.endpoint);
     this.codeFetcher = new CodeFetcher(this.endpoint);
 
-    // Use mock sandbox for MVP
-    // In Phase 2+, this will be WebWorkerSandboxExecutor
-    this.sandboxExecutor = new MockSandboxExecutor();
+    // Select sandbox executor: explicit sandbox > workerUrl > MockSandboxExecutor fallback
+    // - options.sandbox: Custom executor (advanced usage / testing)
+    // - options.workerUrl: WebWorkerSandboxExecutor with 4-layer isolation (production)
+    // - fallback: MockSandboxExecutor (NOT secure, testing only)
+    this.sandboxExecutor = options.sandbox
+      ?? (options.workerUrl
+        ? new WebWorkerSandboxExecutor({ workerUrl: options.workerUrl })
+        : new MockSandboxExecutor());
   }
 
   /**

@@ -16,37 +16,39 @@ const stats = {
   execCount: 0,
 };
 
-// Initialize client
-// endpoint: base URL of the Unzen server middleware mount point
-// mode: 'production' enables browser-first with server fallback
+// Initialize client with QuickJS Wasm worker for browser-side sandbox execution.
+// workerUrl points to the self-contained worker bundle served by the demo server.
+// When workerUrl is provided, functions execute in a Web Worker running QuickJS Wasm
+// with 4-layer isolation (Web Worker + Wasm + QuickJS + API restrictions).
 const client = new UnzenClient({
   endpoint: 'http://localhost:3000/unzen',
   mode: 'production',
+  workerUrl: '/worker.js',
 });
 
 console.log('✅ UnzenClient initialized');
 
 /**
- * Safely set text content to prevent XSS
- * Uses textContent instead of innerHTML for user-generated content
+ * Display execution result with execution location indicator.
+ * Shows whether the function ran in the browser (QuickJS Wasm) or on the server.
+ * Uses DOM API instead of innerHTML to prevent XSS.
+ *
+ * @param elementId - DOM element ID to render into
+ * @param result - Execution result or error
+ * @param isError - Whether result is an error
+ * @param executedOn - 'browser' or 'server' (defaults to 'browser' for successful calls)
  */
-function escapeAndDisplay(element, text) {
-  const pre = document.createElement('pre');
-  pre.textContent = text;
-  return pre;
-}
-
-/**
- * Display execution result
- * Uses DOM API instead of innerHTML to prevent XSS
- */
-function displayResult(elementId, result, isError) {
+function displayResult(elementId, result, isError, executedOn) {
   const element = document.getElementById(elementId);
   element.innerHTML = '';
 
   // Update statistics
   if (!isError) {
-    stats.browserExecs++;
+    if (executedOn === 'server') {
+      stats.serverExecs++;
+    } else {
+      stats.browserExecs++;
+    }
   } else {
     stats.errors++;
   }
@@ -61,8 +63,16 @@ function displayResult(elementId, result, isError) {
   h3.textContent = isError ? '❌ Error' : '✅ Result';
   resultDiv.appendChild(h3);
 
+  // Execution location badge (browser = blue, server = orange)
+  if (!isError) {
+    const badge = document.createElement('span');
+    badge.className = `badge ${executedOn === 'server' ? 'server' : 'browser'}`;
+    badge.textContent = executedOn === 'server' ? 'Server' : 'Browser (QuickJS Wasm)';
+    resultDiv.appendChild(badge);
+  }
+
   const pre = document.createElement('pre');
-  pre.textContent = JSON.stringify(isError ? result : result, null, 2);
+  pre.textContent = JSON.stringify(result, null, 2);
   resultDiv.appendChild(pre);
 
   element.appendChild(resultDiv);
@@ -95,7 +105,7 @@ function displayError(elementId, message) {
 function updateStats() {
   document.getElementById('browserExecs').textContent = stats.browserExecs;
   document.getElementById('serverExecs').textContent = stats.serverExecs;
-  document.getElementById('cacheHits').textContent = stats.errors;
+  document.getElementById('cacheHits').textContent = stats.errors; // "cacheHits" repurposed as error count in Phase 2
 
   const avgTime = stats.execCount > 0 ? (stats.execCount) : 0;
   document.getElementById('avgTime').textContent = avgTime + ' calls';

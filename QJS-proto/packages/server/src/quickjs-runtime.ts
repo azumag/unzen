@@ -18,7 +18,7 @@
  */
 
 import { getQuickJS, type QuickJSWASMModule } from 'quickjs-emscripten';
-import { UnzenRuntimeError, UnzenFunctionError, type ExecutionOptions } from '@unzen/shared';
+import { UnzenRuntimeError, UnzenFunctionError, SANDBOX_SECURITY_INIT, type ExecutionOptions } from '@unzen/shared';
 
 export class QuickJSRuntime {
   private quickJS: QuickJSWASMModule | null = null;
@@ -64,82 +64,10 @@ export class QuickJSRuntime {
     context.runtime.setMemoryLimit(16 * 1024 * 1024);
 
     try {
-      // Remove eval and Function constructor for security
-      // Using Object.defineProperty with configurable:false prevents restoration
-      // via prototype chain (e.g., ({}).constructor.constructor)
-      // Simple `delete` is insufficient: user code could restore via
-      // `const F = ({}).constructor.constructor; F('return eval')()`
-      const removeUnsafeGlobals = `
-        // CRITICAL: Cut constructor chains on Function and all Function subclasses
-        // BEFORE removing Function from globalThis. After globalThis.Function = undefined,
-        // we can't access Function.prototype anymore.
-        //
-        // Without this, any object can reach Function via prototype chain traversal:
-        //   ({}).constructor → Object → Object.constructor → Function
-        //   [].constructor → Array → Array.constructor → Function
-        //   (async function(){}).constructor → AsyncFunction (extends Function)
-        //   (function*(){}).constructor → GeneratorFunction (extends Function)
-        //
-        // We must cut constructor on ALL Function-derived prototypes.
-        // This is the #1 existential risk for sandbox security (C1 finding + gemini review).
-        (function() {
-          var FuncProto = Function.prototype;
-
-          // Also cut AsyncFunction, GeneratorFunction, and AsyncGeneratorFunction
-          // constructor chains. These inherit from Function but have their own
-          // prototype objects with .constructor pointing back to themselves.
-          // Missing any of these allows sandbox escape (gemini review finding).
-          var AsyncFuncProto = (async function(){}).constructor.prototype;
-          var GenFuncProto = (function*(){}).constructor.prototype;
-          var AsyncGenFuncProto = (async function*(){}).constructor.prototype;
-
-          // Cut all four constructor chains — these are the complete set of
-          // Function subclasses in JavaScript (ES2018+)
-          var protos = [FuncProto, AsyncFuncProto, GenFuncProto, AsyncGenFuncProto];
-          for (var i = 0; i < protos.length; i++) {
-            Object.defineProperty(protos[i], 'constructor', {
-              value: undefined, writable: false, configurable: false
-            });
-            Object.freeze(protos[i]);
-          }
-        })();
-
-        Object.defineProperty(globalThis, 'eval', {
-          value: undefined, writable: false, configurable: false
-        });
-        Object.defineProperty(globalThis, 'Function', {
-          value: undefined, writable: false, configurable: false
-        });
-        // Block Proxy/Reflect/WeakRef/FinalizationRegistry to prevent sandbox escape.
-        // Proxy can intercept property access to reconstruct blocked APIs.
-        // Reflect provides low-level object manipulation bypassing frozen prototypes.
-        // WeakRef/FinalizationRegistry can observe GC timing (side-channel).
-        Object.defineProperty(globalThis, 'Proxy', {
-          value: undefined, writable: false, configurable: false
-        });
-        Object.defineProperty(globalThis, 'Reflect', {
-          value: undefined, writable: false, configurable: false
-        });
-        if (typeof WeakRef !== 'undefined') {
-          Object.defineProperty(globalThis, 'WeakRef', {
-            value: undefined, writable: false, configurable: false
-          });
-        }
-        if (typeof FinalizationRegistry !== 'undefined') {
-          Object.defineProperty(globalThis, 'FinalizationRegistry', {
-            value: undefined, writable: false, configurable: false
-          });
-        }
-        // Freeze built-in prototypes to prevent prototype pollution attacks.
-        // Phase 2 (WebWorker + QuickJS Wasm) provides 4-layer isolation.
-        Object.freeze(Object.prototype);
-        Object.freeze(Array.prototype);
-        Object.freeze(String.prototype);
-        Object.freeze(Number.prototype);
-        Object.freeze(Boolean.prototype);
-        Object.freeze(RegExp.prototype);
-      `;
-      const removeResult = context.evalCode(removeUnsafeGlobals);
+      // Apply security hardening from shared module.
+      // This cuts Function constructor chains, removes dangerous globals,
+      // and freezes built-in prototypes. See sandbox-security.ts for details.
+      const removeResult = context.evalCode(SANDBOX_SECURITY_INIT);
       if (removeResult.error) {
         removeResult.error.dispose();
         throw new UnzenRuntimeError('Failed to remove unsafe globals');

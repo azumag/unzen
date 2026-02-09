@@ -37,11 +37,16 @@ export { FallbackHandler } from './fallback-handler';
 export { ManifestFetcher } from './manifest-fetcher';
 export { CodeFetcher } from './code-fetcher';
 
-// Sandbox interface and mock (advanced usage)
+// Sandbox interface and implementations
 export {
   type SandboxExecutor,
   MockSandboxExecutor,
 } from './quickjs-sandbox';
+
+export {
+  WebWorkerSandboxExecutor,
+  type WebWorkerSandboxOptions,
+} from './web-worker-sandbox';
 
 // Re-export commonly used types from @unzen/shared for convenience
 export type {

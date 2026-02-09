@@ -202,11 +202,12 @@
   <p class="subtitle">Browser-delegated function execution with server-side fallback</p>
 
   <div class="info-box">
-    <h3>How it works</h3>
+    <h3>How it works (Phase 2: 4-Layer Isolation)</h3>
     <ul>
-      <li><strong>Browser First:</strong> Functions execute in your browser using QuickJS WebAssembly</li>
-      <li><strong>Automatic Fallback:</strong> If browser execution fails, the server handles it</li>
-      <li><strong>Smart Caching:</strong> Function code is cached in IndexedDB for fast repeated execution</li>
+      <li><strong>Browser First:</strong> Functions execute in your browser via Web Worker + QuickJS Wasm sandbox</li>
+      <li><strong>4-Layer Isolation:</strong> Web Worker thread &rarr; Wasm memory sandbox &rarr; QuickJS interpreter &rarr; API restrictions</li>
+      <li><strong>Automatic Fallback:</strong> If browser execution fails (runtime error), the server handles it</li>
+      <li><strong>Same Security:</strong> Server and browser use identical security hardening (frozen prototypes, no eval/Function)</li>
     </ul>
   </div>
 

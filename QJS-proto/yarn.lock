@@ -17,6 +17,18 @@
   resolved "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.9.tgz"
   integrity sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw==
 
+"@jitl/quickjs-ffi-types@0.31.0":
+  version "0.31.0"
+  resolved "https://registry.npmjs.org/@jitl/quickjs-ffi-types/-/quickjs-ffi-types-0.31.0.tgz"
+  integrity sha512-1yrgvXlmXH2oNj3eFTrkwacGJbmM0crwipA3ohCrjv52gBeDaD7PsTvFYinlAnqU8iPME3LGP437yk05a2oejw==
+
+"@jitl/quickjs-singlefile-browser-release-sync@^0.31.0":
+  version "0.31.0"
+  resolved "https://registry.npmjs.org/@jitl/quickjs-singlefile-browser-release-sync/-/quickjs-singlefile-browser-release-sync-0.31.0.tgz"
+  integrity sha512-JctBiLmRpxEp83gJWhDcBuFqm5X7T683OLmncN9g0chAHkC8+y5cJmgknaAk5Rb/ANDR3pXMMnGdnGXDdysfBQ==
+  dependencies:
+    "@jitl/quickjs-ffi-types" "0.31.0"
+
 "@jridgewell/gen-mapping@^0.3.2":
   version "0.3.13"
   resolved "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz"
@@ -497,6 +509,13 @@ postcss@^8.4.12, postcss@^8.4.43, postcss@>=8.0.9:
     nanoid "^3.3.11"
     picocolors "^1.1.1"
     source-map-js "^1.2.1"
+
+quickjs-emscripten-core@^0.31.0:
+  version "0.31.0"
+  resolved "https://registry.npmjs.org/quickjs-emscripten-core/-/quickjs-emscripten-core-0.31.0.tgz"
+  integrity sha512-oQz8p0SiKDBc1TC7ZBK2fr0GoSHZKA0jZIeXxsnCyCs4y32FStzCW4d1h6E1sE0uHDMbGITbk2zhNaytaoJwXQ==
+  dependencies:
+    "@jitl/quickjs-ffi-types" "0.31.0"
 
 quickjs-emscripten@^0.23.0:
   version "0.23.0"

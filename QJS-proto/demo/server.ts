@@ -84,6 +84,19 @@ app.get('/client.js', (c) => {
   });
 });
 
+// Serve QuickJS worker script for browser-side sandbox execution.
+// This is the self-contained bundle with embedded Wasm binary (~505KB uncompressed).
+// The worker runs in a Web Worker thread, providing 4-layer isolation:
+// Web Worker + Wasm + QuickJS + API restrictions.
+app.get('/worker.js', (c) => {
+  const workerPath = join(__dirname, '../packages/client/dist/quickjs-worker.js');
+  const workerCode = readFileSync(workerPath, 'utf-8');
+  return c.text(workerCode, 200, {
+    'Content-Type': 'application/javascript',
+    'Cache-Control': 'public, max-age=3600',
+  });
+});
+
 // Serve static files from public directory
 // Use absolute path for consistent behavior in tests and direct execution
 const publicDir = join(__dirname, 'public');

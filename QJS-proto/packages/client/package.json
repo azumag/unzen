@@ -20,7 +20,9 @@
     "dev": "tsup --watch"
   },
   "dependencies": {
-    "@unzen/shared": "file:../shared"
+    "@unzen/shared": "file:../shared",
+    "quickjs-emscripten-core": "^0.31.0",
+    "@jitl/quickjs-singlefile-browser-release-sync": "^0.31.0"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
