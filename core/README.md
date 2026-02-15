@@ -1,37 +1,18 @@
 # unzen core
 
 サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
-QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行し、サーバーコストを削減する。
+QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行する。
 
 > **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。447テスト通過。
 
 ## コンセプト
 
-```js
-// サーバー側で定義: この関数はブラウザで実行される
-unzen.defineRaw('jsonSchemaValidate', schemaValidateCode, { timeout: 500 });
-```
-
-API リクエストの JSON Schema 検証を例にすると:
-1. `jsonSchemaValidate` は訪問者自身のブラウザ内で実行される
-2. 不正なリクエストはサーバーに到達する前にブロックされる
-3. ブラウザで実行できない場合はサーバーにフォールバック
-
 **訪問者が必要とする機能を、訪問者自身のブラウザで実行する。**
 サーバーは関数を定義するだけ。他人のための計算は一切ない。
 
-## サーバーコスト削減シミュレーション
-
-| 処理 | サーバーCPU/回 | 月間リクエスト | 年間サーバーコスト | unzen使用時 |
-|------|--------------|-------------|-----------------|------------|
-| JSON Schema検証 | ~15ms | 10M | $1,330 | $0 |
-| ダッシュボードソート | ~20ms | 5M | $886 | $0 |
-| テキスト類似度計算 | ~40ms | 2M | $710 | $0 |
-| フォームバリデーション | ~5ms | 10M | $443 | $0 |
-| Markdown変換 | ~20ms | 5M | $886 | $0 |
-| **合計** | | | **$4,255/年** | **$0** |
-
-> 前提: $0.05/hr compute (AWS t3.medium 相当)
+1. サーバーで関数を定義
+2. 訪問者のブラウザ内の QuickJS Wasm サンドボックスで実行
+3. ブラウザで実行できない場合はサーバーにフォールバック
 
 ## 基本的な使い方
 
@@ -47,7 +28,7 @@ import { Hono } from 'hono';
 const app = new Hono();
 const unzen = new UnzenServer({ baseUrl: 'http://localhost:3000/unzen' });
 
-// 重量関数: JSON Schema バリデーション (500ms タイムアウト)
+// JSON Schema バリデーション — ブラウザで実行される
 unzen.defineRaw('jsonSchemaValidate', `function run(schema, data) {
   function validate(schema, data, path) {
     var errors = [];
@@ -72,46 +53,44 @@ const client = new UnzenClient({
   workerUrl: '/worker.js',
 });
 
-// 100フィールドのスキーマ検証がブラウザ内で完了
-// 不正リクエストはサーバーに到達しない
+// スキーマ検証がブラウザ内で完了。サーバーへのリクエスト不要
 const result = await client.call('jsonSchemaValidate', userSchema, requestBody);
 if (!result.valid) {
   showErrors(result.errors);
 }
 ```
 
-## 重量処理サンプル
+## サンプル関数
 
-### `jsonSchemaValidate` — JSON Schema バリデーション（年間 $1,330 節約）
+### `jsonSchemaValidate` — JSON Schema バリデーション
 
-100フィールドのスキーマ検証をブラウザで実行。不正な API リクエストがサーバーに到達する前にブロック。
+API リクエストの検証をブラウザで実行。不正なリクエストがサーバーに到達する前にブロック。
+ネストしたオブジェクトや配列も再帰的に検証し、エラーパス付きで結果を返す。
 
 ```js
 const schema = {
   type: 'object',
-  required: ['name', 'email', 'age'],
+  required: ['name', 'email'],
   properties: {
     name: { type: 'string', minLength: 1 },
     email: { type: 'string', pattern: '^[^@]+@[^@]+$' },
-    age: { type: 'integer', minimum: 0, maximum: 150 },
     address: {
       type: 'object',
       properties: {
-        city: { type: 'string' },
         zip: { type: 'string', pattern: '^\\d{5}$' },
       },
     },
   },
 };
 
-const result = await client.call('jsonSchemaValidate', schema, formData);
+await client.call('jsonSchemaValidate', schema, formData);
 // → { valid: true, errors: [] }
 // → { valid: false, errors: ['$.email: string does not match pattern ...'] }
 ```
 
-### `sortData` — マルチキーソート（年間 $886 節約）
+### `sortData` — マルチキーデータソート
 
-5,000行のダッシュボードテーブルをネットワーク往復なしでソート。
+ダッシュボードテーブルのソートをネットワーク往復なしで実行。
 
 ```js
 const sorted = await client.call('sortData', tableData, [
@@ -121,14 +100,31 @@ const sorted = await client.call('sortData', tableData, [
 // → 部門昇順 → 給与降順でソートされた配列
 ```
 
-### `levenshteinDistance` — テキスト類似度（年間 $710 節約）
+### `levenshteinDistance` — テキスト類似度
 
-O(n*m) の編集距離計算。重複検出やファジー検索のサーバーCPUを大幅に削減。
+O(n*m) の編集距離計算。ファジー検索や重複検出をブラウザ内で実行。
 
 ```js
-const result = await client.call('levenshteinDistance', 'kitten', 'sitting');
+await client.call('levenshteinDistance', 'kitten', 'sitting');
 // → { distance: 3, similarity: 0.57 }
 ```
+
+### その他のサンプル
+
+- **`formValidate`** — メール・クレジットカード(Luhn)・電話番号・パスワードの複合検証
+- **`calculatePrice`** — 税金・割引・送料の改竄不能な価格計算
+- **`markdownToHtml`** — Markdown→HTML 変換（XSS 防止付き）
+- **`textStats`** — 単語数・可読性スコア（Flesch-Kincaid）
+
+詳細は [サンプル関数リファレンス](docs/sample-functions.md) を参照。
+
+## なぜ unzen？
+
+- **レスポンス向上**: ネットワーク往復なしで即座に結果を返す
+- **サーバー負荷軽減**: バリデーションやデータ変換をブラウザで処理し、API呼び出しを減らす
+- **プライバシー**: ユーザーデータがサーバーに送信されずにブラウザ内で完結する
+- **自動フォールバック**: Wasm未対応ブラウザでも同じ関数がサーバーで実行される
+- **セキュリティ**: 4層隔離モデルにより、サードパーティコードの安全な実行を保証
 
 ## タイムアウト階層
 
@@ -139,13 +135,12 @@ const result = await client.call('levenshteinDistance', 'kitten', 'sitting');
 | heavy | 2,000ms | 大規模データ処理、暗号ハッシュ |
 
 ```typescript
-// タイムアウトは defineRaw の第3引数で指定
 unzen.defineRaw('lightFunc', code);                    // 50ms (default)
 unzen.defineRaw('mediumFunc', code, { timeout: 500 }); // 500ms
 unzen.defineRaw('heavyFunc', code, { timeout: 2000 }); // 2,000ms
 ```
 
-## 4層隔離モデル (Phase 2)
+## 4層隔離モデル
 
 ブラウザ側の関数実行は4層のセキュリティ隔離で保護される:
 
@@ -198,37 +193,10 @@ core/
 │   └── benchmark/         # ブラウザベンチマーク UI
 ├── packages/
 │   ├── shared/         # 共有型定義・エラー・セキュリティコード
-│   │   └── src/
-│   │       ├── sandbox-security.ts  # サンドボックスセキュリティ初期化 (サーバー・クライアント共通)
-│   │       ├── errors.ts            # UnzenFunctionError / UnzenRuntimeError / UnzenNetworkError
-│   │       ├── types.ts             # ManifestEntry, ExecutionOptions 等
-│   │       └── protocol.ts          # HTTP プロトコル型
 │   ├── server/         # サーバーSDK (@unzen/server)
-│   │   └── src/
-│   │       ├── unzen-server.ts      # メインサーバークラス
-│   │       ├── function-registry.ts # 関数レジストリ
-│   │       ├── quickjs-runtime.ts   # サーバー側 QuickJS ランタイム
-│   │       └── manifest-builder.ts  # マニフェストビルダー
 │   ├── bundler/        # モジュールバンドラー (@unzen/bundler)
-│   │   └── src/
-│   │       ├── bundler.ts             # esbuildラッパー + セキュリティプラグイン
-│   │       ├── module-whitelist.ts    # モジュールホワイトリスト検証
-│   │       ├── forbidden-api-check.ts # 禁止API検出（防御多層）
-│   │       └── index.ts              # パッケージエントリポイント
 │   └── client/         # クライアントSDK (@unzen/client)
-│       └── src/
-│           ├── unzen-client.ts       # メインクライアントクラス
-│           ├── web-worker-sandbox.ts # WebWorkerSandboxExecutor (Phase 2)
-│           ├── quickjs-sandbox.ts    # SandboxExecutor インターフェース
-│           ├── worker/
-│           │   ├── quickjs-worker.ts    # Worker スクリプト (QuickJS Wasm)
-│           │   └── worker-protocol.ts   # Worker メッセージプロトコル
-│           ├── fallback-handler.ts   # サーバーフォールバック
-│           ├── manifest-fetcher.ts   # マニフェスト取得
-│           └── code-fetcher.ts       # 関数コード取得
 └── demo/               # E2Eデモサーバー
-    ├── server.ts
-    └── public/
 ```
 
 ## 想定ユースケース
@@ -238,15 +206,24 @@ core/
 - **価格計算**: 税金・割引・送料の改竄不能な計算
 - **コンテンツフィルタリング**: スパム判定、NGワード検出
 
-**中量処理** (500ms) — サーバーコスト削減効果大:
-- **JSON Schema 検証**: APIリクエスト検証をブラウザに委譲（~$1,330/年 節約）
-- **データソート**: ダッシュボードの大規模テーブルソート（~$886/年 節約）
-- **テキスト類似度**: Levenshtein距離による重複検出（~$710/年 節約）
+**中量処理** (500ms):
+- **JSON Schema 検証**: APIリクエスト検証をブラウザに委譲
+- **データソート**: ダッシュボードの大規模テーブルソート
+- **テキスト類似度**: Levenshtein距離による重複検出
 - **テキスト解析**: 単語数、可読性スコア、Flesch-Kincaid指標
 
 **重量処理** (2,000ms):
 - **大規模データ変換**: JSON/CSV/XMLの整形・変換
 - **暗号ハッシュ**: PBKDF2等のパスワードハッシュ
+
+## 類似プロジェクトとの違い
+
+| プロジェクト | アプローチ | unzen との違い |
+|---|---|---|
+| Qwik | `$` 境界でクライアント実行を制御 | UIレンダリング専用。汎用計算ではない |
+| React RSC | `"use server"` / `"use client"` | クライアント→サーバー方向。逆 |
+| wasi-worker | WASIバイナリをブラウザで実行 | 低レベルランタイムのみ。DXフレームワークなし |
+| Comlink | Web Worker を透過的に呼び出し | ブラウザ内のスレッド間のみ。サーバー委任なし |
 
 ## 開発
 
@@ -264,23 +241,6 @@ npm run build
 cd demo && npm run dev
 # → http://localhost:3000
 ```
-
-## 類似プロジェクトとの違い
-
-| プロジェクト | アプローチ | unzen との違い |
-|---|---|---|
-| Qwik | `$` 境界でクライアント実行を制御 | UIレンダリング専用。汎用計算ではない |
-| React RSC | `"use server"` / `"use client"` | クライアント→サーバー方向。逆 |
-| wasi-worker | WASIバイナリをブラウザで実行 | 低レベルランタイムのみ。DXフレームワークなし |
-| Comlink | Web Worker を透過的に呼び出し | ブラウザ内のスレッド間のみ。サーバー委任なし |
-
-## なぜ unzen？
-
-- **サーバーコスト削減**: バリデーションやデータ変換をブラウザで処理し、API呼び出しを減らす（年間$4,000+削減）
-- **レスポンス向上**: ネットワーク往復なしで即座に結果を返す
-- **プライバシー**: ユーザーデータがサーバーに送信されずにブラウザ内で完結する
-- **自動フォールバック**: Wasm未対応ブラウザでも同じ関数がサーバーで実行される
-- **セキュリティ**: 4層隔離モデルにより、サードパーティコードの安全な実行を保証
 
 ## ドキュメント
 

@@ -222,7 +222,6 @@ await client.call('textStats', 'The quick brown fox jumps over the lazy dog.');
 ### ユースケース
 - サーバで行っていた API リクエストの JSON Schema 検証をブラウザで実行
 - 不正なリクエストがサーバーに到達する前にブロック
-- 年間 ~$1,330 のサーバーコスト削減（10M req/month 想定）
 
 ### 入力
 ```typescript
@@ -292,7 +291,6 @@ await client.call('jsonSchemaValidate', schema, { name: '' });
 ### ユースケース
 - ダッシュボード UI で頻出する大規模テーブルのソート処理
 - ネットワーク往復なしで即座にソート結果を表示
-- 年間 ~$886 のサーバーコスト削減（5M req/month 想定）
 
 ### 入力
 ```typescript
@@ -336,7 +334,6 @@ await client.call('sortData', data, [
 ### ユースケース
 - ファジー検索、重複検出、タイポ修正候補の計算
 - O(n*m) アルゴリズムでサーバー CPU を大量消費する典型例
-- 年間 ~$710 のサーバーコスト削減（2M req/month 想定）
 
 ### 入力
 ```typescript

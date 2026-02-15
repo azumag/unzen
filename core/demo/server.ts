@@ -74,13 +74,13 @@ unzenServer.defineRaw('textStats', textStatsCode);
 // Heavy computation sample functions (500ms timeout for CPU-intensive operations)
 // These demonstrate the high-value use case: offloading expensive server CPU to browser sandbox
 
-// Function 10: JSON Schema validation (~$1,330/year server cost savings at 10M req/month)
+// Function 10: JSON Schema validation (500ms timeout for complex schemas)
 unzenServer.defineRaw('jsonSchemaValidate', jsonSchemaValidateCode, { timeout: 500 });
 
-// Function 11: Multi-key data sorting (~$886/year savings at 5M req/month)
+// Function 11: Multi-key data sorting (500ms timeout for large datasets)
 unzenServer.defineRaw('sortData', sortDataCode, { timeout: 500 });
 
-// Function 12: Levenshtein edit distance (~$710/year savings at 2M req/month)
+// Function 12: Levenshtein edit distance (500ms timeout for O(n*m) computation)
 unzenServer.defineRaw('levenshteinDistance', levenshteinDistanceCode, { timeout: 500 });
 
 // Initialize the server

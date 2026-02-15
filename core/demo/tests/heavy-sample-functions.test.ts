@@ -30,7 +30,6 @@ async function execFunction(name: string, ...args: unknown[]) {
 // jsonSchemaValidate: JSON Schema validation (Draft-07 subset)
 //
 // Why heavy: Real-world schemas can have 100+ fields with nested objects.
-// Server cost: ~15ms/request × 10M/month = $1,330/year
 // Sandbox timeout: 500ms (medium tier)
 // ============================================================
 describe('jsonSchemaValidate', () => {
@@ -300,7 +299,6 @@ describe('jsonSchemaValidate', () => {
 // sortData: Multi-key array sort
 //
 // Why heavy: Dashboard tables with 5,000+ rows, multiple sort keys
-// Server cost: ~20ms/request × 5M/month = $886/year
 // Sandbox timeout: 500ms (medium tier)
 // ============================================================
 describe('sortData', () => {
@@ -404,7 +402,6 @@ describe('sortData', () => {
 // levenshteinDistance: Text similarity calculation
 //
 // Why heavy: O(n*m) algorithm, clearly CPU-intensive for long strings
-// Server cost: ~40ms/request × 2M/month = $710/year
 // Sandbox timeout: 500ms (medium tier)
 // ============================================================
 describe('levenshteinDistance', () => {

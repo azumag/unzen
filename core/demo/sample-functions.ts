@@ -368,7 +368,7 @@ export const markdownToHtmlCode = `(markdown) => {
 //
 // Traditional approach: Server validates every API request body (~15ms CPU each).
 // Unzen approach: Schema validation runs in browser sandbox, blocking invalid
-// requests before they reach the server. Saves ~$1,330/year at 10M req/month.
+// requests before they reach the server.
 //
 // Supported constraints:
 //   type, required, properties, additionalProperties,
@@ -513,7 +513,6 @@ export const jsonSchemaValidateCode = `function run(schema, data) {
 //
 // Traditional approach: Server sorts data on every page/filter change (~20ms CPU).
 // Unzen approach: Sort runs in browser sandbox, zero network round-trip.
-// Saves ~$886/year at 5M req/month.
 //
 // Input: (data: object[], sortKeys: {key: string, order: 'asc'|'desc'}[])
 // Output: sorted array (stable sort, undefined values sort to end)
@@ -566,7 +565,6 @@ export const sortDataCode = `function run(data, sortKeys) {
 // Traditional approach: Server computes O(n*m) edit distance for fuzzy search,
 // deduplication, typo detection (~40ms CPU for typical strings).
 // Unzen approach: CPU-heavy algorithm runs in browser sandbox.
-// Saves ~$710/year at 2M req/month.
 //
 // Uses O(min(n,m)) space optimization (single row instead of full matrix).
 //
