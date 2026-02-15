@@ -1,12 +1,12 @@
 # サンプル関数リファレンス
 
-unzen core の実践的なサンプル関数。サーバサイド計算をブラウザ sandbox に委譲する価値を実証する。
+unzen core の実践的なサンプル関数について解説する。サーバサイド計算をブラウザ sandbox に委譲する価値を実証する。
 
 ## なぜこれらの関数が必要か
 
 従来のWebアプリでは以下の計算をサーバサイドで実行していた:
-- **改ざん防止**: フォーム検証、価格計算はクライアントの devtools で改ざん可能
-- **CPU負荷**: Markdownレンダリング等はサーバ CPU を消費
+- **改ざん防止**: フォーム検証や価格計算はクライアントの devtools で改ざんされうる
+- **CPU負荷**: Markdownレンダリング等がサーバ CPU を消費する
 - **RTT遅延**: すべてのリクエストがサーバ往復 (~100ms) を必要とする
 
 unzen core では QuickJS sandbox の特性（frozen prototypes, no eval, メモリ制限）により、
@@ -17,8 +17,8 @@ unzen core では QuickJS sandbox の特性（frozen prototypes, no eval, メモ
 ## 1. `formValidate` — フォーム検証
 
 ### ユースケース
-- サーバサイド検証が必要だったフォーム入力を sandbox で実行
-- devtools による改ざん不可能（QuickJS sandbox は frozen prototypes）
+- サーバサイド検証が必要だったフォーム入力を sandbox で実行する
+- devtools による改ざんが不可能になる（QuickJS sandbox は frozen prototypes）
 
 ### 入力
 ```typescript
@@ -55,17 +55,17 @@ await client.call('formValidate', { email: 'bad-email' });
 ```
 
 ### 制約
-- sandbox 実行: 16MB メモリ / 50ms タイムアウト以内
-- クレジットカード番号はスペース・ハイフンを自動除去して検証
-- パスワード強度は長さのみ（8文字以上）で判定
+- sandbox 内で実行され、16MB メモリ / 50ms タイムアウトの制限がある
+- クレジットカード番号はスペース・ハイフンを自動除去して検証する
+- パスワード強度は長さのみ（8文字以上）で判定する
 
 ---
 
 ## 2. `calculatePrice` — 価格計算
 
 ### ユースケース
-- 価格操作防止のためサーバで計算していた注文合計を sandbox で実行
-- RTT削減: ~100ms → ~2ms
+- 価格操作防止のためサーバで計算していた注文合計を sandbox で実行する
+- RTTを ~100ms から ~2ms に削減できる
 
 ### 入力
 ```typescript
@@ -134,8 +134,8 @@ await client.call('calculatePrice', {
 ## 3. `markdownToHtml` — Markdown → HTML 変換
 
 ### ユースケース
-- SSR で行っていた Markdown レンダリングをクライアントに委譲
-- サーバ CPU 負荷を分散
+- SSR で行っていた Markdown レンダリングをクライアントに委譲する
+- サーバ CPU 負荷を分散できる
 
 ### 入力
 ```typescript
@@ -177,8 +177,8 @@ await client.call('markdownToHtml', '# Hello **World**');
 ## 4. `textStats` — テキスト統計分析
 
 ### ユースケース
-- サーバで計算していた可読性スコアを sandbox で実行
-- 純粋計算なので sandbox に最適
+- サーバで計算していた可読性スコアを sandbox で実行する
+- 純粋計算なので sandbox に最適である
 
 ### 入力
 ```typescript
@@ -220,8 +220,8 @@ await client.call('textStats', 'The quick brown fox jumps over the lazy dog.');
 ## 5. `jsonSchemaValidate` — JSON Schema バリデーション
 
 ### ユースケース
-- サーバで行っていた API リクエストの JSON Schema 検証をブラウザで実行
-- 不正なリクエストがサーバーに到達する前にブロック
+- サーバで行っていた API リクエストの JSON Schema 検証をブラウザで実行する
+- 不正なリクエストがサーバーに到達する前にブロックできる
 
 ### 入力
 ```typescript
@@ -289,8 +289,8 @@ await client.call('jsonSchemaValidate', schema, { name: '' });
 ## 6. `sortData` — マルチキーソート
 
 ### ユースケース
-- ダッシュボード UI で頻出する大規模テーブルのソート処理
-- ネットワーク往復なしで即座にソート結果を表示
+- ダッシュボード UI で頻出する大規模テーブルのソート処理に使える
+- ネットワーク往復なしで即座にソート結果を表示できる
 
 ### 入力
 ```typescript
@@ -322,18 +322,18 @@ await client.call('sortData', data, [
 ```
 
 ### 仕様
-- 安定ソート（同値要素の相対順序を維持）
-- undefined/null 値はソート末尾に配置
-- 文字列は辞書順、数値は数値順で比較
-- 空の sortKeys → 元の順序を維持
+- 安定ソートであり、同値要素の相対順序を維持する
+- undefined/null 値はソート末尾に配置される
+- 文字列は辞書順、数値は数値順で比較する
+- 空の sortKeys の場合は元の順序を維持する
 
 ---
 
 ## 7. `levenshteinDistance` — テキスト類似度計算
 
 ### ユースケース
-- ファジー検索、重複検出、タイポ修正候補の計算
-- O(n*m) アルゴリズムでサーバー CPU を大量消費する典型例
+- ファジー検索、重複検出、タイポ修正候補の計算に使える
+- O(n*m) アルゴリズムでサーバー CPU を大量に消費する典型的な処理である
 
 ### 入力
 ```typescript
@@ -349,8 +349,8 @@ type LevenshteinResult = {
 ```
 
 ### アルゴリズム
-- Wagner-Fischer 動的計画法
-- O(min(n,m)) 空間最適化（1行バッファのみ使用）
+- Wagner-Fischer 動的計画法を使用する
+- O(min(n,m)) の空間最適化を行い、1行バッファのみを使用する
 - similarity = 1 - (distance / max(len(str1), len(str2)))
 
 ### 例
