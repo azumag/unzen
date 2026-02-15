@@ -1,6 +1,6 @@
 # 参考文献・関連論文まとめ
 
-unzen core の実装に関連する学術論文・技術文献の整理。
+unzen core の実装に関連する学術論文・技術文献を整理したものである。
 
 **注**: 自己消費モデル (v3.0) への移行に伴い、セクション4-6 (BFT合意、P2P、ゴシップ) は
 現在の設計では直接使用しない。歴史的参考として残すが、実装優先度は低い。
@@ -21,7 +21,7 @@ unzen core の実装に関連する学術論文・技術文献の整理。
 
 ## 1. WebAssemblyセキュリティ
 
-> unzenのコア技術。サンドボックスの安全性保証に直接関連。
+> unzenのコア技術であり、サンドボックスの安全性保証に直接関連する。
 
 ### 1.1 Provably-Safe Multilingual Software Sandboxing using WebAssembly (2022)
 - **著者**: Jay Bosamiya, Wen Shih Lim, Bryan Parno (CMU)
@@ -85,7 +85,7 @@ unzen core の実装に関連する学術論文・技術文献の整理。
 
 ## 2. JavaScriptランタイム・サンドボックス
 
-> QuickJS Wasm サンドボックスの設計・実装に直接関連。
+> QuickJS Wasm サンドボックスの設計・実装に直接関連する。
 
 ### 2.1 NatiSand: Native Code Sandboxing for JavaScript Runtimes (2023)
 - **著者**: Marco Abbadini et al. (University of Bergamo)
@@ -126,7 +126,7 @@ unzen core の実装に関連する学術論文・技術文献の整理。
 
 ## 3. ブラウザベース計算の先行研究
 
-> 直接的な実装参考ではないが、ブラウザでの計算実行の先行知見として有用。
+> 直接的な実装参考ではないが、ブラウザでの計算実行の先行知見として有用である。
 
 ### 3.1 Distributed Computing on an Ensemble of Browsers (2013)
 - **著者**: Cushing et al.
