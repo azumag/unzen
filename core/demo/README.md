@@ -1,20 +1,20 @@
 # unzen core E2E Demo
 
-QuickJS Wasm サンドボックスによるブラウザ側関数実行のデモ。4層隔離モデルの動作を確認できる。
+QuickJS Wasm サンドボックスによるブラウザ側関数実行のデモページである。4層隔離モデルの動作を確認できる。
 
 ## デモ関数 (8種)
 
 ### 基本デモ
-1. **Spam Detection** - テキストのスパム判定
-2. **Math Operations** - 数値の乗算
-3. **Array Transformations** - 配列要素の倍化
-4. **Object Manipulation** - ユーザー情報変換
+1. **Spam Detection** - テキストのスパム判定を行う
+2. **Math Operations** - 数値の乗算を行う
+3. **Array Transformations** - 配列要素を倍化する
+4. **Object Manipulation** - ユーザー情報を変換する
 
 ### 実用デモ (サーバー委任パターン)
-5. **Form Validation** - メール/クレジットカード/電話番号/パスワードの改竄不能バリデーション
-6. **Price Calculator** - 税金・割引・送料の改竄不能な価格計算
-7. **Markdown to HTML** - SSR Markdown レンダリングのクライアントオフロード
-8. **Text Statistics** - 単語数・可読性スコア・Flesch-Kincaid指標
+5. **Form Validation** - メール/クレジットカード/電話番号/パスワードの改竄不能なバリデーションを行う
+6. **Price Calculator** - 税金・割引・送料を改竄不能な形で計算する
+7. **Markdown to HTML** - SSR の Markdown レンダリングをクライアントにオフロードする
+8. **Text Statistics** - 単語数・可読性スコア・Flesch-Kincaid指標を算出する
 
 ## 起動方法
 
@@ -117,10 +117,10 @@ const isSpam = await client.call('spamCheck', 'Buy now!');
 - **Layer 4**: API 制限 (eval/Function/Proxy 削除、プロトタイプ凍結)
 
 制約:
-- 外部接続禁止 (fetch, WebSocket, XHR 等)
+- 外部接続は禁止されている (fetch, WebSocket, XHR 等)
 - メモリ制限: 16MB
 - タイムアウト: 5000ms (ブラウザ側) / 50ms (サーバー側)
-- 純粋計算のみ (入力→計算→出力、副作用なし)
+- 純粋計算のみを許可する（入力→計算→出力、副作用なし）
 
 ## フォールバックテスト
 

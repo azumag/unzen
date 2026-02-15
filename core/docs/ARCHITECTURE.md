@@ -109,7 +109,7 @@ UnzenNetworkError (通信失敗)
 ```
 
 **設計意図**: ユーザーコードのバグをフォールバックでマスクしない。
-サーバーで実行しても同じバグが発生するため、フォールバックは無意味。
+サーバーで実行しても同じバグが発生するため、フォールバックは無意味である。
 
 ---
 
@@ -183,11 +183,11 @@ Error
 ```
 
 **設計意図**:
-- `code` プロパティで `instanceof` なしの判別が可能
-- V8の `Error.captureStackTrace` を使用して適切なスタックトレースを保持
+- `code` プロパティで `instanceof` なしの判別ができる
+- V8の `Error.captureStackTrace` を使用して適切なスタックトレースを保持する
 
 **エラー分類の重要な詳細**:
-- QuickJSRuntime: 未知のエラーは `UnzenFunctionError` としてラップ (ユーザーコードが原因と推定)
+- QuickJSRuntime: 未知のエラーは `UnzenFunctionError` としてラップする (ユーザーコードが原因と推定するため)
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`
@@ -263,7 +263,7 @@ server.defineRaw('add', `(a, b) => a + b`);
 // 3. 引数渡しを ...args で標準化
 ```
 
-ラップ後のコードに対して SHA-256 ハッシュを生成し、バージョン番号を付与。
+ラップ後のコードに対して SHA-256 ハッシュを生成し、バージョン番号を付与する。
 
 ### 5.3 QuickJS サンドボックス実行エンジン
 
@@ -300,15 +300,15 @@ server.defineRaw('add', `(a, b) => a + b`);
 | プロトタイプ凍結 | 6種類 | `Object.freeze()` (Object/Array/String/Number/Boolean/RegExp) |
 | コンテキスト隔離 | 毎回新規 | `this.quickJS.newContext()` |
 
-**メモリ管理**: QuickJS は C ベースのメモリモデルのため、`.dispose()` が必須。
+**メモリ管理**: QuickJS は C ベースのメモリモデルのため、`.dispose()` が必須である。
 `evalCode()` の戻り値 (`result.value`, `result.error`) はすべて明示的に dispose する。
-コンテキスト全体は `finally` ブロックで確実に dispose。
+コンテキスト全体は `finally` ブロックで確実に dispose する。
 
-**エラーラッピング規則**: catch 内で `UnzenRuntimeError` / `UnzenFunctionError` はそのまま再throw。
-未知のエラーは `UnzenFunctionError` としてラップ (ユーザーコードが原因と推定するため)。
+**エラーラッピング規則**: catch 内で `UnzenRuntimeError` / `UnzenFunctionError` はそのまま再throwする。
+未知のエラーは `UnzenFunctionError` としてラップする (ユーザーコードが原因と推定するため)。
 
-**`dispose()` メソッド**: `quickJS` を null に設定。以降の `execute()` 呼出は
-`UnzenRuntimeError('QuickJS runtime not initialized')` をスロー。
+**`dispose()` メソッド**: `quickJS` を null に設定する。以降の `execute()` 呼出は
+`UnzenRuntimeError('QuickJS runtime not initialized')` をスローする。
 
 ### 5.4 HTTP API
 
@@ -378,13 +378,13 @@ type DiagnosticResult<T> =
 async callWithDiagnostics<T>(name: string, ...args: unknown[]): Promise<DiagnosticResult<T>>
 ```
 
-- エラーを throw せず、常に `DiagnosticResult` を返却
-- デバッグ・テスト時にエラー詳細を取得するために使用
+- エラーを throw せず、常に `DiagnosticResult` を返却する
+- デバッグ・テスト時にエラー詳細を取得するために使用する
 
 #### dispose() — リソース解放
 
-`sandboxExecutor.dispose()` を呼出。冪等 (複数回呼出し安全)。
-`disposed` フラグでダブルディスポーズを防止。
+`sandboxExecutor.dispose()` を呼び出す。冪等である (複数回呼び出しても安全)。
+`disposed` フラグでダブルディスポーズを防止する。
 
 ### 6.3 キャッシュ戦略
 
@@ -396,8 +396,8 @@ async callWithDiagnostics<T>(name: string, ...args: unknown[]): Promise<Diagnost
 invalidate() → キャッシュクリア (次回fetchでサーバーアクセス)
 ```
 
-- TTL なし (明示的 invalidate のみ)
-- インスタンス単位のスコープ
+- TTL はなく、明示的な invalidate でのみクリアされる
+- スコープはインスタンス単位である
 
 #### コードキャッシュ (CodeFetcher)
 
@@ -407,9 +407,9 @@ fetch(entry) → entry.hash をキーにキャッシュ検索
   キャッシュミス → GET entry.codeUrl → ダウンロード → hash でキャッシュ
 ```
 
-- **ハッシュベースキャッシュ**: URL ではなくコンテンツハッシュをキーに使用
-- 同一コードの関数が複数あっても1回だけダウンロード
-- ハッシュが変わらない限りキャッシュは永続
+- **ハッシュベースキャッシュ**: URL ではなくコンテンツハッシュをキーに使用する
+- 同一コードの関数が複数あっても1回だけダウンロードする
+- ハッシュが変わらない限りキャッシュは永続する
 
 ### 6.4 SandboxExecutor インターフェース
 
@@ -423,18 +423,18 @@ interface SandboxExecutor {
 **規約**:
 - コードは `function run(...args) { ... }` を定義すること
 - executor は `run(...args)` を呼び出して結果を返す
-- 実行エラーは `UnzenFunctionError` としてスロー
-- `dispose()` は冪等 (複数回呼出し安全)
+- 実行エラーは `UnzenFunctionError` としてスローする
+- `dispose()` は冪等である (複数回呼び出しても安全)
 
 **Phase 1 (MVP)**: `MockSandboxExecutor`
-- Node.js `vm` モジュールで実行
-- セキュリティなし (テスト用のみ)
-- 最小限のグローバル (Array, Object, String, Number, Boolean, Math, JSON, Error)
-- **同期関数のみサポート** (Phase 1 制約: async/Promise は未対応)
+- Node.js `vm` モジュールで実行する
+- セキュリティはない (テスト用のみ)
+- 最小限のグローバルを提供する (Array, Object, String, Number, Boolean, Math, JSON, Error)
+- **同期関数のみサポートする** (Phase 1 制約: async/Promise は未対応)
 
 **Phase 2 (計画)**: `WebWorkerSandboxExecutor`
-- Web Worker 内で QuickJS Wasm を実行
-- 4層サンドボックス: Worker → Wasm → QuickJS → API制限
+- Web Worker 内で QuickJS Wasm を実行する
+- 4層サンドボックスで隔離する: Worker → Wasm → QuickJS → API制限
 
 ---
 
