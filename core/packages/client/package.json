@@ -1,0 +1,32 @@
+{
+  "name": "@unzen/client",
+  "version": "0.1.0",
+  "description": "Browser client SDK for unzen core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "@unzen/shared": "file:../shared",
+    "quickjs-emscripten-core": "^0.31.0",
+    "@jitl/quickjs-singlefile-browser-release-sync": "^0.31.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}

@@ -2,7 +2,7 @@
 >
 > 廃止日: 2026-02-06
 > 理由: QJSはOSSプロジェクトとして確定。商用化・収益化は対象外。セキュリティ制約とユースケースは use-cases-and-constraints.md に抽出済み
-> 代替: QJS-proto/docs/use-cases-and-constraints.md, QJS-proto/docs/design.md
+> 代替: core/docs/use-cases-and-constraints.md, core/docs/design.md
 >
 > このファイルはプロジェクト方針変更（2026-02-05）により無効となりました。
 > 歴史的参考のためにのみ保管されています。内容に基づいて意思決定しないでください。

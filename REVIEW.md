@@ -1,16 +1,16 @@
 # ドキュメント再編 レビューレポート
 
 **レビュー日**: 2026年2月6日  
-**対象作業**: QJS-proto/docs/ 再編、LLM-proto/docs/archive/ 新設
+**対象作業**: core/docs/ 再編、LLM-proto/docs/archive/ 新設
 
 ---
 
 ## 1. 作業概要
 
 ### 変更内容
-- **QJS-proto/docs/**: 11ファイル → 6ファイルに集約
+- **core/docs/**: 11ファイル → 6ファイルに集約
 - **LLM-proto/docs/archive/**: 7ファイルをアーカイブ + ARCHIVE_INDEX.md新設
-- **QJS-proto/README.md**: ドキュメント参照をINDEX.mdベースに修正
+- **core/README.md**: ドキュメント参照をINDEX.mdベースに修正
 
 ### 変更理由
 プロジェクト方針変更（2026-02-05）に伴い、無効となったドキュメントを整理し、現在有効なドキュメント体系を再構築。
