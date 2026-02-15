@@ -8,7 +8,7 @@
 
 ---
 
-## 1. 重い処理サンプル提案（7ユースケース）
+## 1. 重い処理サンプル提案（6ユースケース）
 
 ### タイムアウト拡張（段階的）
 
@@ -29,11 +29,13 @@ server.defineRaw('hashPassword', code, { timeout: 500 });
 |---|---------|-------------|-----------------|--------|------|
 | 1 | PBKDF2パスワードハッシュ | 50-80ms | 1.75-4.4s | Phase 3 | 未実装 |
 | 2 | 大規模配列ソート（10K要素） | 15-25ms | 525ms-1.4s | Phase 1 | **実装済** |
-| 3 | CSVパース（5MB, 50K行） | 30-50ms | 1.05-2.75s | Phase 2 | 未実装 |
-| 4 | 画像メタデータ抽出（EXIF） | 10-20ms | 350ms-1.1s | Phase 2 | 未実装 |
-| 5 | 大規模Markdown変換（10K行） | 20-35ms | 700ms-1.9s | Phase 2 | 未実装 |
-| 6 | JSONスキーマバリデーション | 15-30ms | 525ms-1.65s | Phase 1 | **実装済** |
-| 7 | テキスト類似度（Levenshtein） | 40-70ms | 1.4-3.85s | Phase 3 | **実装済** |
+| 3 | 画像メタデータ抽出（EXIF） | 10-20ms | 350ms-1.1s | Phase 2 | 未実装 |
+| 4 | 大規模Markdown変換（10K行） | 20-35ms | 700ms-1.9s | Phase 2 | 未実装 |
+| 5 | JSONスキーマバリデーション | 15-30ms | 525ms-1.65s | Phase 1 | **実装済** |
+| 6 | テキスト類似度（Levenshtein） | 40-70ms | 1.4-3.85s | Phase 1 | **実装済** |
+
+> **除外: CSVパース** — フロントエンド直接実装が適切。
+> 詳細は「[Unzenに適さないユースケース](#unzenに適さないユースケース)」を参照。
 
 > **注**: 以前このテーブルに「年間節約額」列（合計$32,734/年）が記載されていたが、
 > 計算根拠が不透明であったため削除。実際の純CPU時間コストは
@@ -59,40 +61,79 @@ server.defineRaw('hashPassword', code, { timeout: 500 });
 - **Unzenに適する理由**: 高頻度操作（1セッションで複数回）、インタラクティブUI
 - **推奨理由**: 実装が容易で、汎用性が高い
 
-#### 3. CSVパース
-- **説明**: 5MB/50K行のCSVをブラウザでパースし、プレビュー・バリデーションを行う
-- **アルゴリズム**: 状態機械による1パスパース (RFC 4180準拠)
-- **メモリ**: ~15MB（16MB制限に近いが許容範囲）
-- **コード量**: ~150-200行
-- **追加効果**: 帯域を削減できる（5MB → パース後の必要データのみ送信）
-
-#### 4. 画像メタデータ抽出（EXIF）
+#### 3. 画像メタデータ抽出（EXIF）
 - **説明**: アップロード前に画像のEXIFデータを抽出し、GPS位置情報を除去する
 - **アルゴリズム**: JPEG APP1マーカー + TIFF形式のEXIF解析、PNGチャンク構造パース
 - **メモリ**: ~6MB
 - **コード量**: ~300-400行
 - **Unzenに適する理由**: プライバシー（GPS位置情報をサーバーに送信せず除去）
 
-#### 5. 大規模Markdown変換
+#### 4. 大規模Markdown変換
 - **説明**: 10,000行以上のMarkdownのGFM準拠レンダリングを行う
 - **アルゴリズム**: Lexer/Parser/Renderer パターン
 - **メモリ**: ~6MB (AST含む)
 - **コード量**: ~800-1000行
 - **Unzenに適する理由**: 最高頻度（エディタで数秒おきにプレビュー更新）
 
-#### 6. JSONスキーマバリデーション
+#### 5. JSONスキーマバリデーション
 - **説明**: JSON Schema Draft-07準拠の入力検証を行う（100プロパティ、50ルール）
 - **アルゴリズム**: 再帰的スキーマトラバーサル
 - **メモリ**: ~2MB
 - **コード量**: ~500-700行
 - **推奨理由**: 最大のコスト削減効果、不正リクエストがサーバーに到達しない
 
-#### 7. テキスト類似度計算（Levenshtein距離）
+#### 6. テキスト類似度計算（Levenshtein距離）
 - **説明**: 10,000文字×2テキストの編集距離を計算する（重複検出）
 - **アルゴリズム**: 動的計画法 O(n×m)、メモリ最適化版 O(min(n,m))
 - **メモリ**: ~100KB
 - **コード量**: ~50-80行
 - **Unzenに適する理由**: O(n²)アルゴリズムでサーバーCPU削減効果が大きい
+
+---
+
+## 1.5. Unzenに適するユースケースの判定基準
+
+Unzenの本質的な優位性は「サーバーがロジックのオーナーシップを持ちつつ、実行コストをクライアントに委任できる」点にある。以下の条件を**複数**満たすユースケースがUnzenに適する。
+
+### サーバー定義→ブラウザ委任の3つの優位性
+
+| 優位性 | 説明 | 具体例 |
+|--------|------|--------|
+| **ロジックの一元管理** | ビジネスルールの定義をサーバーに集約し、クライアントは実行のみ担当。ルール変更時にフロントエンドの再デプロイが不要 | 価格計算の税率変更、バリデーションルール追加 |
+| **改ざん耐性** | QuickJSサンドボックス（frozen prototypes, no eval）により、devtoolsでのロジック改ざんを防止。フロントエンド直接実装では不可能 | 価格計算、割引適用、フォーム検証 |
+| **透過的フォールバック** | ブラウザ実行が失敗した場合、同一ロジックがサーバーで自動実行される。開発者はフォールバック分岐を書く必要がない | 全ユースケース共通 |
+
+### 判定フロー
+
+```
+そのロジックはサーバーが定義・管理する必要があるか？
+  ├─ NO → フロントエンド直接実装（Unzen不要）
+  │        例: CSVパース、画像リサイズ、Base64エンコード
+  └─ YES
+      └─ 改ざんされると問題があるか？
+          ├─ YES → Unzenに最適（価格計算、バリデーション）
+          └─ NO
+              └─ ロジック変更頻度が高いか？
+                  ├─ YES → Unzenに適する（フロントエンド再デプロイ不要）
+                  └─ NO  → 費用対効果を検討
+```
+
+### Unzenに適さないユースケース
+
+以下の特徴を持つ処理は、フロントエンドで直接実装すべき。
+
+| 特徴 | 理由 | 例 |
+|------|------|-----|
+| 標準アルゴリズムで、ロジックが普遍的 | サーバーが定義を管理する必然性がない | CSVパース（RFC 4180）、Base64エンコード |
+| データが既にクライアント上にある | Unzenのネットワーク削減メリットが発生しない | ファイルアップロード前のパース・プレビュー |
+| パフォーマンスが重要 | QuickJS Wasmは V8の35-55倍遅い。ユーザー体感に直結する処理には不適 | リアルタイム画像処理、大規模CSVパース |
+| 成熟したフロントエンドライブラリがある | 再実装は車輪の再発明 | CSV→PapaParse、Base64→標準API(btoa/atob) |
+
+> **CSVパースが除外された経緯**: 当初Phase 2のheavy sampleとして計画されていたが、
+> (1) CSV(RFC 4180)は標準仕様でありサーバー定義の必然性がない、
+> (2) ファイルは既にクライアント上にありネットワーク削減効果がない、
+> (3) V8で30-50msの処理をQuickJS Wasmで1-2.75秒かけるメリットがない、
+> (4) PapaParse等の成熟ライブラリが存在する、以上の理由から除外。
 
 ---
 
@@ -138,18 +179,21 @@ const sortData = define('sortData', (data: any[], sortKeys: SortKey[]) => {
 import { define, useModule } from '@unzen/server';
 
 // npmパッケージをUnzen互換として読み込み（ビルド時にbundle）
-const csvParser = useModule('papaparse', {
+const validator = useModule('validator', {
   // ホワイトリスト必須（security-perf提言）
-  allowedExports: ['parse', 'unparse'],
+  allowedExports: ['isEmail', 'isURL', 'isCreditCard'],
   maxBundleSize: '100KB',
 });
 
-const parseCSV = define('parseCSV', (csvText: string) => {
-  const Papa = require('papaparse');
-  return Papa.parse(csvText);
+const validateInput = define('validateInput', (input: string, type: string) => {
+  const v = require('validator');
+  if (type === 'email') return v.isEmail(input);
+  if (type === 'url') return v.isURL(input);
+  if (type === 'creditCard') return v.isCreditCard(input);
+  return false;
 }, {
-  modules: [csvParser],
-  timeout: 2000,
+  modules: [validator],
+  timeout: 500,
 });
 ```
 
@@ -182,7 +226,7 @@ npm package → esbuild (tree-shake, bundle) → Unzen互換チェック
 | QuickJS Wasm 35-55x遅いのにサーバーからブラウザに移す価値があるか？ | 500ms-2sの遅延はローディング表示で許容可能。高頻度操作（ダッシュボードソート等）でサーバーCPU負荷を削減 |
 | サーバーCPU $0.05/hr vs 開発コスト | 単純なCPUコストではなくスパイク対応コスト（オートスケーリング設定、CDN等）も含めると差が広がる |
 | 既存技術（Edge Functions, PWA）で十分ではないか？ | Edge Functionsは**訪問者自身のブラウザ**では動かない。Unzenの差別化は「サーバーレスすら不要」 |
-| 純粋関数制約で重い処理は無理では？ | 上記7サンプルは全て純粋関数で実装可能。制約内で十分な実用性がある |
+| 純粋関数制約で重い処理は無理では？ | 上記6サンプルは全て純粋関数で実装可能。制約内で十分な実用性がある |
 | npmライクなモジュールシステムは車輪の再発明 | Phase 2に延期。Phase 1でまず価値を実証してから投資判断 |
 
 ### skepticが認めた有効ケース（5条件を全て満たす場合）
@@ -235,7 +279,7 @@ const sortData = define('sortData', (data: any[]) => {
 
 1. **"Your Server Bill, Halved"** - ダッシュボードソート + JSONバリデーションの組み合わせデモ
 2. **"Zero-Knowledge Form Validation"** - パスワードが平文でサーバーに送信されないデモ
-3. **"CSV Processing Without Upload"** - 5MBのCSVをブラウザのみで処理するデモ
+3. **"Hot-Update Business Rules"** - サーバー側の価格計算ルールを変更し、フロントエンド再デプロイなしで即座に反映されるデモ
 
 ---
 
@@ -288,7 +332,6 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 - [x] サンプル実装:
   - [x] 大規模配列ソート（sortData, ~40行）
   - [x] JSONスキーマバリデーション（jsonSchemaValidate, ~120行）
-  - [ ] CSVパース（~150-200行）
   - [x] テキスト類似度計算（levenshteinDistance, ~40行）
 - [ ] ベンチマーク付きデモサイト
 
@@ -302,10 +345,10 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 - [ ] サンプル実装:
   - 画像メタデータ抽出（~300-400行）
   - 大規模Markdown変換（~800-1000行）
-  - PBKDF2パスワードハッシュ（~200-300行）
 
 ### Phase 3: エコシステム拡張（Phase 2の採用実績後）
 
+- [ ] PBKDF2パスワードハッシュ（~200-300行）
 - [ ] フレームワーク統合プラグイン（Hono, Next.js, SvelteKit）
 - [ ] "unzen:" prefix でのnpmパッケージ指定
 - [ ] MoonBit wasm-gcランタイム統合（16MB制限緩和）
@@ -355,9 +398,10 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 | skeptic | Sonnet | 懐疑派エンジニア | 経済性批判、Phase 0提案、Go/No-Go基準 |
 | product-thinker | Haiku | PM/DX設計 | ペルソナ定義、DX改善、方向性ピボット提案 |
 | security-perf | Haiku | セキュリティ/パフォーマンス | メモリ制約分析、ホワイトリスト設計、キャッシュ戦略 |
-| researcher | Sonnet | 調査担当 | 7サンプルの詳細な実行時間・コスト推定 |
+| researcher | Sonnet | 調査担当 | 6サンプルの詳細な実行時間・コスト推定 |
 
 ---
 
 **作成日**: 2026年2月8日
 **ステータス**: Phase 1 一部実装済み（sortData, jsonSchemaValidate, levenshteinDistance の3サンプル + per-function timeout）
+**変更履歴**: 2026-02-15 CSVパースをheavy sampleから除外（フロントエンド直接実装が適切）。ユースケース判定基準を追加。

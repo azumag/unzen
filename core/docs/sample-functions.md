@@ -379,7 +379,7 @@ await client.call('levenshteinDistance', '', 'abc');
 |------|---------|----------|
 | default | 50ms | formValidate, calculatePrice, textStats |
 | medium | 500ms | jsonSchemaValidate, sortData, levenshteinDistance, markdownToHtml |
-| heavy | 2,000ms | (将来の大規模データ処理、暗号ハッシュ向け) |
+| heavy | 2,000ms | (将来の暗号ハッシュ、画像メタデータ抽出向け) |
 
 ```typescript
 // per-function timeout は defineRaw の第3引数で指定
