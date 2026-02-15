@@ -39,6 +39,13 @@ export interface FunctionDefinition {
   version: number;
   /** SHA-256 hash of function code for integrity verification */
   hash: string;
+  /**
+   * Per-function execution timeout in milliseconds (1-2000).
+   * Controls server-side fallback execution timeout only.
+   * Browser-side execution uses the WebWorkerSandboxExecutor's own timeout.
+   * Timeout tiers: 50ms (default), 500ms (medium), 2000ms (heavy).
+   */
+  timeout?: number;
 }
 
 /**
@@ -49,6 +56,12 @@ export interface FunctionDefinition {
  * @param def - Function definition to validate
  * @returns true if definition is valid
  */
+/**
+ * Maximum per-function timeout in milliseconds.
+ * Shared constant used by both type validation and server-side registration.
+ */
+export const MAX_FUNCTION_TIMEOUT = 2000;
+
 /**
  * Safe function name pattern
  * Only alphanumeric, underscore, and hyphen allowed.
@@ -64,6 +77,18 @@ export function isValidFunctionDefinition(def: unknown): def is FunctionDefiniti
 
   // Use Record<string, unknown> for safe property access without type assertion lies
   const d = def as Record<string, unknown>;
+
+  // Validate optional timeout: must be integer in range [1, 2000]
+  if (d.timeout !== undefined) {
+    if (
+      typeof d.timeout !== 'number' ||
+      !Number.isInteger(d.timeout) ||
+      d.timeout < 1 ||
+      d.timeout > MAX_FUNCTION_TIMEOUT
+    ) {
+      return false;
+    }
+  }
 
   return (
     typeof d.name === 'string' &&

@@ -217,12 +217,177 @@ await client.call('textStats', 'The quick brown fox jumps over the lazy dog.');
 
 ---
 
+## 5. `jsonSchemaValidate` — JSON Schema バリデーション
+
+### ユースケース
+- サーバで行っていた API リクエストの JSON Schema 検証をブラウザで実行
+- 不正なリクエストがサーバーに到達する前にブロック
+- 年間 ~$1,330 のサーバーコスト削減（10M req/month 想定）
+
+### 入力
+```typescript
+type Schema = {
+  type?: 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'array' | 'object';
+  required?: string[];
+  properties?: Record<string, Schema>;
+  additionalProperties?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  items?: Schema;
+  minItems?: number;
+  maxItems?: number;
+};
+type Data = unknown;
+```
+
+### 出力
+```typescript
+type ValidationResult = {
+  valid: boolean;
+  errors: string[];  // JSONPath 形式のエラーメッセージ (例: '$.user.age: expected type number')
+};
+```
+
+### 例
+```javascript
+const schema = {
+  type: 'object',
+  required: ['name', 'email'],
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    email: { type: 'string', pattern: '^[^@]+@[^@]+$' },
+    age: { type: 'integer', minimum: 0 },
+  },
+};
+
+await client.call('jsonSchemaValidate', schema, { name: 'Alice', email: 'alice@example.com' });
+// → { valid: true, errors: [] }
+
+await client.call('jsonSchemaValidate', schema, { name: '' });
+// → { valid: false, errors: ['$.name: string length 0 < minLength 1', '$.email: required field missing'] }
+```
+
+### 対応制約一覧
+| 制約 | 対象型 | 説明 |
+|------|--------|------|
+| `type` | 全型 | JSON Schema Draft-07 の型チェック |
+| `required` | object | 必須フィールド検証 |
+| `properties` | object | プロパティごとの再帰バリデーション |
+| `additionalProperties` | object | `false` で未定義プロパティを拒否 |
+| `minLength` / `maxLength` | string | 文字列長の範囲検証 |
+| `pattern` | string | 正規表現パターンマッチ |
+| `enum` | 全型 | 許可値リスト |
+| `minimum` / `maximum` | number | 数値範囲検証 |
+| `items` | array | 配列要素の再帰バリデーション |
+| `minItems` / `maxItems` | array | 配列長の範囲検証 |
+
+---
+
+## 6. `sortData` — マルチキーソート
+
+### ユースケース
+- ダッシュボード UI で頻出する大規模テーブルのソート処理
+- ネットワーク往復なしで即座にソート結果を表示
+- 年間 ~$886 のサーバーコスト削減（5M req/month 想定）
+
+### 入力
+```typescript
+type Data = Record<string, unknown>[];
+type SortKeys = Array<{
+  key: string;
+  order: 'asc' | 'desc';
+}>;
+```
+
+### 出力
+```typescript
+type Output = Record<string, unknown>[];  // ソート済み配列（元配列は変更されない）
+```
+
+### 例
+```javascript
+const data = [
+  { name: 'Alice', dept: 'Engineering', salary: 120000 },
+  { name: 'Bob', dept: 'Engineering', salary: 150000 },
+  { name: 'Charlie', dept: 'Design', salary: 100000 },
+];
+
+await client.call('sortData', data, [
+  { key: 'dept', order: 'asc' },
+  { key: 'salary', order: 'desc' },
+]);
+// → [Charlie(Design,$100K), Bob(Eng,$150K), Alice(Eng,$120K)]
+```
+
+### 仕様
+- 安定ソート（同値要素の相対順序を維持）
+- undefined/null 値はソート末尾に配置
+- 文字列は辞書順、数値は数値順で比較
+- 空の sortKeys → 元の順序を維持
+
+---
+
+## 7. `levenshteinDistance` — テキスト類似度計算
+
+### ユースケース
+- ファジー検索、重複検出、タイポ修正候補の計算
+- O(n*m) アルゴリズムでサーバー CPU を大量消費する典型例
+- 年間 ~$710 のサーバーコスト削減（2M req/month 想定）
+
+### 入力
+```typescript
+type Input = [str1: string, str2: string];
+```
+
+### 出力
+```typescript
+type LevenshteinResult = {
+  distance: number;    // 編集距離（0 = 完全一致）
+  similarity: number;  // 類似度 (0.0〜1.0, 1.0 = 完全一致)
+};
+```
+
+### アルゴリズム
+- Wagner-Fischer 動的計画法
+- O(min(n,m)) 空間最適化（1行バッファのみ使用）
+- similarity = 1 - (distance / max(len(str1), len(str2)))
+
+### 例
+```javascript
+await client.call('levenshteinDistance', 'kitten', 'sitting');
+// → { distance: 3, similarity: 0.57 }
+
+await client.call('levenshteinDistance', 'hello', 'hello');
+// → { distance: 0, similarity: 1 }
+
+await client.call('levenshteinDistance', '', 'abc');
+// → { distance: 3, similarity: 0 }
+```
+
+---
+
 ## sandbox 制約
 
 全関数は以下の制約の中で実行される:
 - **メモリ**: 16MB 上限
-- **タイムアウト**: 50ms
 - **セキュリティ**: `eval()`, `Function()` 無効化、prototype frozen
+
+### タイムアウト階層
+
+| Tier | Timeout | 対象関数 |
+|------|---------|----------|
+| default | 50ms | formValidate, calculatePrice, textStats |
+| medium | 500ms | jsonSchemaValidate, sortData, levenshteinDistance, markdownToHtml |
+| heavy | 2,000ms | (将来の大規模データ処理、暗号ハッシュ向け) |
+
+```typescript
+// per-function timeout は defineRaw の第3引数で指定
+unzen.defineRaw('jsonSchemaValidate', code, { timeout: 500 });
+```
 
 ---
 

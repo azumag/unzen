@@ -276,6 +276,94 @@ describe('UnzenServer', () => {
     });
   });
 
+  describe('defineRaw with timeout option', () => {
+    it('should store timeout in function definition', () => {
+      server.defineRaw('heavy', '(x) => x', { timeout: 500 });
+      const fn = server.getFunction('heavy');
+      expect(fn).toBeDefined();
+      expect(fn?.timeout).toBe(500);
+    });
+
+    it('should keep default timeout behavior when no options given', () => {
+      server.defineRaw('light', '(x) => x');
+      const fn = server.getFunction('light');
+      expect(fn).toBeDefined();
+      // timeout should be undefined (runtime defaults to 50ms)
+      expect(fn?.timeout).toBeUndefined();
+    });
+
+    it('should reject timeout > 2000', () => {
+      expect(() => {
+        server.defineRaw('bad', '(x) => x', { timeout: 3000 });
+      }).toThrow();
+    });
+
+    it('should reject timeout <= 0', () => {
+      expect(() => {
+        server.defineRaw('bad', '(x) => x', { timeout: 0 });
+      }).toThrow();
+      expect(() => {
+        server.defineRaw('bad', '(x) => x', { timeout: -1 });
+      }).toThrow();
+    });
+
+    it('should reject non-integer timeout', () => {
+      expect(() => {
+        server.defineRaw('bad', '(x) => x', { timeout: 50.5 });
+      }).toThrow();
+    });
+
+    it('should reject NaN timeout', () => {
+      expect(() => {
+        server.defineRaw('bad', '(x) => x', { timeout: NaN });
+      }).toThrow();
+    });
+
+    it('should reject Infinity timeout', () => {
+      expect(() => {
+        server.defineRaw('bad', '(x) => x', { timeout: Infinity });
+      }).toThrow();
+    });
+
+    it('should pass per-function timeout to runtime on exec', async () => {
+      // Register a function with 500ms timeout (heavy computation)
+      // A simple sleep-like busy loop that would fail at 50ms but succeed at 500ms
+      server.defineRaw('slowFunc', `function run() {
+        var start = Date.now();
+        while (Date.now() - start < 100) {} // busy-wait 100ms
+        return 'done';
+      }`, { timeout: 500 });
+
+      const app = server.middleware();
+      const res = await app.request('/exec/slowFunc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args: [] }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.result).toBe('done');
+    });
+
+    it('should timeout at default 50ms for functions without timeout option', async () => {
+      // A busy loop that takes > 50ms should timeout with default
+      server.defineRaw('slowNoTimeout', `function run() {
+        var start = Date.now();
+        while (Date.now() - start < 200) {} // busy-wait 200ms
+        return 'done';
+      }`);
+
+      const app = server.middleware();
+      const res = await app.request('/exec/slowNoTimeout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args: [] }),
+      });
+      // Should fail due to 50ms default timeout
+      expect(res.status).toBe(500);
+    });
+  });
+
   describe('initialize', () => {
     it('should initialize QuickJS runtime', async () => {
       const newServer = new UnzenServer();

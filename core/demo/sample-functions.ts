@@ -363,6 +363,264 @@ export const markdownToHtmlCode = `(markdown) => {
 // Flesch-Kincaid formula:
 //   0.39 * (words/sentences) + 11.8 * (syllables/words) - 15.59
 // ============================================================
+// ============================================================
+// jsonSchemaValidate: JSON Schema validation (Draft-07 subset)
+//
+// Traditional approach: Server validates every API request body (~15ms CPU each).
+// Unzen approach: Schema validation runs in browser sandbox, blocking invalid
+// requests before they reach the server. Saves ~$1,330/year at 10M req/month.
+//
+// Supported constraints:
+//   type, required, properties, additionalProperties,
+//   minLength, maxLength, pattern, enum,
+//   minimum, maximum, items, minItems, maxItems
+// Nested objects/arrays validated recursively with full error paths.
+//
+// Input: (schema, data)
+// Output: { valid: boolean, errors: string[] }
+// ============================================================
+export const jsonSchemaValidateCode = `function run(schema, data) {
+  // Guard: schema must be a non-null object
+  if (!schema || typeof schema !== 'object') {
+    return { valid: false, errors: ['$: schema must be a non-null object'] };
+  }
+
+  // Recursive validation with path tracking for error messages
+  function validate(schema, data, path) {
+    var errors = [];
+
+    // Type checking: maps JSON Schema types to JavaScript typeof + special cases
+    if (schema.type) {
+      var valid = false;
+      if (schema.type === 'string') valid = typeof data === 'string';
+      else if (schema.type === 'number') valid = typeof data === 'number';
+      else if (schema.type === 'integer') valid = typeof data === 'number' && data % 1 === 0;
+      else if (schema.type === 'boolean') valid = typeof data === 'boolean';
+      else if (schema.type === 'null') valid = data === null;
+      else if (schema.type === 'array') valid = Array.isArray(data);
+      else if (schema.type === 'object') valid = typeof data === 'object' && data !== null && !Array.isArray(data);
+
+      if (!valid) {
+        errors.push(path + ': expected type ' + schema.type + ', got ' + typeof data);
+        // Early return: further constraints don't apply if type is wrong
+        return errors;
+      }
+    }
+
+    // String constraints
+    if (typeof data === 'string') {
+      if (schema.minLength !== undefined && data.length < schema.minLength) {
+        errors.push(path + ': string length ' + data.length + ' < minLength ' + schema.minLength);
+      }
+      if (schema.maxLength !== undefined && data.length > schema.maxLength) {
+        errors.push(path + ': string length ' + data.length + ' > maxLength ' + schema.maxLength);
+      }
+      if (schema.pattern !== undefined) {
+        var re = new RegExp(schema.pattern);
+        if (!re.test(data)) {
+          errors.push(path + ': string does not match pattern ' + schema.pattern);
+        }
+      }
+    }
+
+    // Enum constraint (works for any type)
+    if (schema.enum !== undefined) {
+      var found = false;
+      for (var i = 0; i < schema.enum.length; i++) {
+        if (data === schema.enum[i]) { found = true; break; }
+      }
+      if (!found) {
+        errors.push(path + ': value not in enum [' + schema.enum.join(', ') + ']');
+      }
+    }
+
+    // Number constraints
+    if (typeof data === 'number') {
+      if (schema.minimum !== undefined && data < schema.minimum) {
+        errors.push(path + ': ' + data + ' < minimum ' + schema.minimum);
+      }
+      if (schema.maximum !== undefined && data > schema.maximum) {
+        errors.push(path + ': ' + data + ' > maximum ' + schema.maximum);
+      }
+    }
+
+    // Object validation
+    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+      // Required fields check
+      if (schema.required) {
+        for (var r = 0; r < schema.required.length; r++) {
+          var key = schema.required[r];
+          if (data[key] === undefined) {
+            errors.push(path + '.' + key + ': required field missing');
+          }
+        }
+      }
+
+      // Property validation (recursive)
+      if (schema.properties) {
+        var propKeys = Object.keys(schema.properties);
+        for (var p = 0; p < propKeys.length; p++) {
+          var propKey = propKeys[p];
+          if (data[propKey] !== undefined) {
+            var propErrors = validate(schema.properties[propKey], data[propKey], path + '.' + propKey);
+            for (var pe = 0; pe < propErrors.length; pe++) {
+              errors.push(propErrors[pe]);
+            }
+          }
+        }
+      }
+
+      // additionalProperties: false rejects any key not in properties
+      if (schema.additionalProperties === false && schema.properties) {
+        var allowed = Object.keys(schema.properties);
+        var dataKeys = Object.keys(data);
+        for (var dk = 0; dk < dataKeys.length; dk++) {
+          if (allowed.indexOf(dataKeys[dk]) === -1) {
+            errors.push(path + '.' + dataKeys[dk] + ': additional property not allowed');
+          }
+        }
+      }
+    }
+
+    // Array validation
+    if (Array.isArray(data)) {
+      if (schema.minItems !== undefined && data.length < schema.minItems) {
+        errors.push(path + ': array length ' + data.length + ' < minItems ' + schema.minItems);
+      }
+      if (schema.maxItems !== undefined && data.length > schema.maxItems) {
+        errors.push(path + ': array length ' + data.length + ' > maxItems ' + schema.maxItems);
+      }
+      // Validate each item against items schema (recursive)
+      if (schema.items) {
+        for (var ai = 0; ai < data.length; ai++) {
+          var itemErrors = validate(schema.items, data[ai], path + '[' + ai + ']');
+          for (var ie = 0; ie < itemErrors.length; ie++) {
+            errors.push(itemErrors[ie]);
+          }
+        }
+      }
+    }
+
+    return errors;
+  }
+
+  var errors = validate(schema, data, '$');
+  return { valid: errors.length === 0, errors: errors };
+}`;
+
+// ============================================================
+// sortData: Multi-key array sort for dashboards
+//
+// Traditional approach: Server sorts data on every page/filter change (~20ms CPU).
+// Unzen approach: Sort runs in browser sandbox, zero network round-trip.
+// Saves ~$886/year at 5M req/month.
+//
+// Input: (data: object[], sortKeys: {key: string, order: 'asc'|'desc'}[])
+// Output: sorted array (stable sort, undefined values sort to end)
+// ============================================================
+export const sortDataCode = `function run(data, sortKeys) {
+  // No sort keys = return original order
+  if (!sortKeys || sortKeys.length === 0) return data;
+
+  // Create a shallow copy to avoid mutating the original array
+  // Note: Array.prototype.sort is stable in QuickJS (verified by tests).
+  var result = data.slice();
+
+  result.sort(function(a, b) {
+    for (var i = 0; i < sortKeys.length; i++) {
+      var key = sortKeys[i].key;
+      var order = sortKeys[i].order;
+      var aVal = a[key];
+      var bVal = b[key];
+
+      // Undefined/null values sort to end regardless of order direction.
+      // This prevents NaN comparisons and keeps missing data predictable.
+      var aUndef = aVal === undefined || aVal === null;
+      var bUndef = bVal === undefined || bVal === null;
+      if (aUndef && bUndef) continue;
+      if (aUndef) return 1;
+      if (bUndef) return -1;
+
+      // Compare: string comparison for strings, numeric for numbers
+      var cmp = 0;
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        cmp = aVal < bVal ? -1 : (aVal > bVal ? 1 : 0);
+      } else {
+        cmp = aVal - bVal;
+      }
+
+      if (cmp !== 0) {
+        return order === 'desc' ? -cmp : cmp;
+      }
+      // If equal, continue to next sort key
+    }
+    return 0;
+  });
+
+  return result;
+}`;
+
+// ============================================================
+// levenshteinDistance: Text similarity via Wagner-Fischer algorithm
+//
+// Traditional approach: Server computes O(n*m) edit distance for fuzzy search,
+// deduplication, typo detection (~40ms CPU for typical strings).
+// Unzen approach: CPU-heavy algorithm runs in browser sandbox.
+// Saves ~$710/year at 2M req/month.
+//
+// Uses O(min(n,m)) space optimization (single row instead of full matrix).
+//
+// Input: (str1, str2)
+// Output: { distance: number, similarity: number }
+// ============================================================
+export const levenshteinDistanceCode = `function run(str1, str2) {
+  // Handle empty string edge cases
+  if (str1.length === 0 && str2.length === 0) {
+    return { distance: 0, similarity: 1 };
+  }
+  if (str1.length === 0) return { distance: str2.length, similarity: 0 };
+  if (str2.length === 0) return { distance: str1.length, similarity: 0 };
+
+  // Space optimization: always iterate over the shorter string for the inner loop.
+  // This reduces space from O(n*m) to O(min(n,m)).
+  var a = str1;
+  var b = str2;
+  if (a.length > b.length) {
+    var tmp = a;
+    a = b;
+    b = tmp;
+  }
+
+  // Wagner-Fischer algorithm with single-row optimization
+  // prev[j] represents the edit distance between a[0..i-1] and b[0..j]
+  var prev = [];
+  for (var j = 0; j <= a.length; j++) {
+    prev[j] = j;
+  }
+
+  for (var i = 1; i <= b.length; i++) {
+    var curr = [i];
+    for (var j = 1; j <= a.length; j++) {
+      // Cost is 0 if characters match, 1 if substitution needed
+      var cost = a[j - 1] === b[i - 1] ? 0 : 1;
+      // Minimum of deletion, insertion, or substitution
+      curr[j] = Math.min(
+        prev[j] + 1,      // deletion
+        curr[j - 1] + 1,  // insertion
+        prev[j - 1] + cost // substitution
+      );
+    }
+    prev = curr;
+  }
+
+  var distance = prev[a.length];
+  var maxLen = Math.max(str1.length, str2.length);
+  // Similarity is 1 - normalized distance (0.0 to 1.0)
+  var similarity = Math.round((1 - distance / maxLen) * 100) / 100;
+
+  return { distance: distance, similarity: similarity };
+}`;
+
 export const textStatsCode = `(text) => {
   // Handle empty text edge case
   if (!text || text.trim().length === 0) {

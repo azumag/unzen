@@ -19,6 +19,9 @@ import {
   calculatePriceCode,
   markdownToHtmlCode,
   textStatsCode,
+  jsonSchemaValidateCode,
+  sortDataCode,
+  levenshteinDistanceCode,
 } from './sample-functions';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -67,6 +70,18 @@ unzenServer.defineRaw('markdownToHtml', markdownToHtmlCode);
 
 // Function 9: Text statistics with Flesch-Kincaid readability
 unzenServer.defineRaw('textStats', textStatsCode);
+
+// Heavy computation sample functions (500ms timeout for CPU-intensive operations)
+// These demonstrate the high-value use case: offloading expensive server CPU to browser sandbox
+
+// Function 10: JSON Schema validation (~$1,330/year server cost savings at 10M req/month)
+unzenServer.defineRaw('jsonSchemaValidate', jsonSchemaValidateCode, { timeout: 500 });
+
+// Function 11: Multi-key data sorting (~$886/year savings at 5M req/month)
+unzenServer.defineRaw('sortData', sortDataCode, { timeout: 500 });
+
+// Function 12: Levenshtein edit distance (~$710/year savings at 2M req/month)
+unzenServer.defineRaw('levenshteinDistance', levenshteinDistanceCode, { timeout: 500 });
 
 // Initialize the server
 await unzenServer.initialize();

@@ -24,6 +24,7 @@ export {
   type ExecutionResult,
   isRuntimeType,
   isValidFunctionDefinition,
+  MAX_FUNCTION_TIMEOUT,
 } from './types';
 
 // Error classes

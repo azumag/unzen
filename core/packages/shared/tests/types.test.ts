@@ -87,6 +87,38 @@ describe('FunctionDefinition', () => {
       expect(isValidFunctionDefinition({ ...validDefinition, name: '123abc' })).toBe(false);
       expect(isValidFunctionDefinition({ ...validDefinition, name: '_private' })).toBe(false);
     });
+
+    describe('timeout validation', () => {
+      it('should accept definition without timeout (undefined)', () => {
+        expect(isValidFunctionDefinition(validDefinition)).toBe(true);
+      });
+
+      it('should accept valid timeout values', () => {
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 1 })).toBe(true);
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 50 })).toBe(true);
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 500 })).toBe(true);
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 2000 })).toBe(true);
+      });
+
+      it('should reject timeout <= 0', () => {
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 0 })).toBe(false);
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: -1 })).toBe(false);
+      });
+
+      it('should reject timeout > 2000', () => {
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 2001 })).toBe(false);
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 10000 })).toBe(false);
+      });
+
+      it('should reject non-integer timeout', () => {
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: 50.5 })).toBe(false);
+      });
+
+      it('should reject NaN and Infinity timeout', () => {
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: NaN })).toBe(false);
+        expect(isValidFunctionDefinition({ ...validDefinition, timeout: Infinity })).toBe(false);
+      });
+    });
   });
 });
 

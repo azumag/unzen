@@ -16,7 +16,7 @@
 import { createHash } from 'crypto';
 import { Hono } from 'hono';
 import type { FunctionDefinition, ExecutionRequest, ManifestResponse } from '@unzen/shared';
-import { createExecutionResponse, UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
+import { createExecutionResponse, UnzenFunctionError, UnzenRuntimeError, MAX_FUNCTION_TIMEOUT } from '@unzen/shared';
 import { FunctionRegistry } from './function-registry';
 import { ManifestBuilder } from './manifest-builder';
 import { QuickJSRuntime } from './quickjs-runtime';
@@ -86,6 +86,8 @@ export class UnzenServer {
     this.defineRaw(name, code);
   }
 
+  // MAX_FUNCTION_TIMEOUT is imported from @unzen/shared for single source of truth
+
   /**
    * Register a function from raw code string
    *
@@ -99,8 +101,21 @@ export class UnzenServer {
    *
    * @param name - Function name (used as identifier)
    * @param code - JavaScript code as string (function expression or arrow function)
+   * @param options - Optional settings (timeout: 1-2000ms for heavy computations)
    */
-  defineRaw(name: string, code: string): void {
+  defineRaw(name: string, code: string, options?: { timeout?: number }): void {
+    // Validate per-function timeout if provided
+    // Must be an integer in [1, 2000] to prevent abuse and match timeout tiers:
+    // 50ms (default), 500ms (medium), 2000ms (heavy)
+    if (options?.timeout !== undefined) {
+      const t = options.timeout;
+      if (!Number.isInteger(t) || t < 1 || t > MAX_FUNCTION_TIMEOUT) {
+        throw new Error(
+          `Invalid timeout ${t}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`
+        );
+      }
+    }
+
     // Warn if function code contains non-pure APIs that won't work in sandbox
     // This is a DX convenience: developers get early feedback during registration
     // rather than cryptic runtime errors in the sandbox
@@ -126,12 +141,14 @@ export class UnzenServer {
     const hash = this.generateHash(wrappedCode);
 
     // Create function definition
+    // Include per-function timeout only if explicitly set (undefined = use default 50ms)
     const definition: FunctionDefinition = {
       name,
       runtime: 'quickjs', // Only QuickJS is supported in Phase 1 MVP
       code: wrappedCode,
       version: this.versionCounter,
       hash,
+      ...(options?.timeout !== undefined && { timeout: options.timeout }),
     };
 
     // Register the function definition
@@ -266,7 +283,10 @@ export class UnzenServer {
 
         // Execute the function using shared runtime
         // The runtime creates a fresh context for each execution to ensure isolation
-        const result = await this.runtime.execute(fn.code, body.args);
+        // Pass per-function timeout if set; otherwise runtime uses default 50ms
+        const result = await this.runtime.execute(fn.code, body.args,
+          fn.timeout !== undefined ? { timeout: fn.timeout } : undefined
+        );
 
         return c.json(
           createExecutionResponse({
