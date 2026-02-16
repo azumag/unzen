@@ -54,4 +54,5 @@ LLMの各レイヤー（層）を「セグメント」として扱い、複数�
 |---|---|---|
 | [PLAN.md](./PLAN.md) | 計画書 v2.6（確定方針） | **確定** |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
+| [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
 | [docs/archive/](./docs/archive/ARCHIVE_INDEX.md) | 廃止ドキュメント一覧 | アーカイブ |
