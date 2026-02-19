@@ -17,7 +17,7 @@ LLMの各レイヤー（層）を「セグメント」として扱い、複数�
 
 1. **Prompt Input**: ユーザーがAPIにプロンプトを投げる。
 2. **Entry Node**: 最初のWorkerが「第1セグメント」を計算。
-3. **Relay (P2P)**: 計算後の中間データ（KVキャッシュ等）を、次のセグメント担当のWorkerへWebRTCで直接転送。
+3. **Relay (Coordinator経由)**: 計算後の中間データ（hidden states等）をCoordinatorに送信し、次のセグメント担当Workerへ中継（第三者通信禁止のため、Worker間の直接通信は行わない。PLAN.md 1.2項参照）。
 4. **Token Generation**: 最後のWorkerがトークンを生成し、クライアントへ返す。
 
 ## 3. 「10MBの壁」を突破する3つのコア技術
@@ -47,6 +47,59 @@ LLMの各レイヤー（層）を「セグメント」として扱い、複数�
 | **コスト構造** | 高価なH100/A100の維持費 | Webサイト閲覧者の余剰電力 |
 | **価格帯** | 高い | 既存の1/10〜1/100を目指せる |
 | **思想** | 中央集権・クローズド | 分散型・オープンウェイト |
+
+## 6. パイプライン実装（プロトタイプ）
+
+PLAN.md v2.6 Section 5 のチェックポイント・リジューム方式を TypeScript で実装したプロトタイプ。
+Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワーカー向けに設計している。
+
+### モジュール構成
+
+| モジュール | ファイル | 概要 |
+|---|---|---|
+| 型定義 | `src/types.ts` | WorkerId, SegmentConfig, Checkpoint 等のコア型 |
+| プロトコル | `src/protocol.ts` | Coordinator-Worker 間の WebSocket メッセージ定義（Span 対応含む） |
+| CheckpointStore | `src/checkpoint.ts` | セグメント間の中間状態（hidden states）を保存・取得 |
+| WorkerPool | `src/worker-pool.ts` | ブラウザワーカーのTier別管理・選択・死活監視 |
+| Pipeline | `src/pipeline.ts` | 基本パイプライン：1セグメント/1ワーカーでチェックポイント・リジューム実行 |
+| SpanRouter | `src/span-router.ts` | Petals 方式の貪欲ルーティング：ワーカーの VRAM に応じて連続セグメントを割り当て |
+| SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
+| Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
+| Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
+
+### アーキテクチャ
+
+#### 基本パイプライン（Pipeline）
+
+```
+API顧客 → Coordinator → [Seg0] → checkpoint → [Seg1] → ... → [Seg7] → 結果
+               ↕ WebSocket                ↕
+          WorkerPool (Tier 1/2/3)    CheckpointStore
+```
+
+#### Span パイプライン（SpanPipeline — Petals 方式）
+
+```
+API顧客 → Coordinator → SpanRouter でルート計算
+                          ↓
+           W1[Seg0-3] → checkpoint → W2[Seg4-5] → checkpoint → W3[Seg6-7] → 結果
+           (1スパン内はGPUメモリ上で処理、チェックポイント転送不要)
+```
+
+Petals の分散パイプライン並列を参考に、1ワーカーが VRAM の許す限り連続セグメントを「スパン」として処理する。
+これにより、例えば8セグメントを3スパンに統合すると、チェックポイント転送が7回→2回に削減される。
+
+- **Tier 1**: 24h稼働デバイス（サイネージ等） — 最優先、大きなスパンを担当
+- **Tier 2**: 長時間ワーカー（OBS、拡張機能、Electron） — 高優先
+- **Tier 3**: 通常Web訪問者 — バースト対応、1-2セグメントのスパン
+
+### テスト実行
+
+```bash
+cd LLM-proto
+npm install
+npm test
+```
 
 ## 関連ドキュメント
 
