@@ -23,6 +23,7 @@ import {
 import type { SegmentAssignment, SegmentResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
+import { withTimeout, delay } from './pipeline-utils.js';
 
 /**
  * Abstracts segment execution on a browser worker.
@@ -149,7 +150,7 @@ export class Pipeline {
       if (!worker) {
         // No available worker: wait before retrying to let busy workers finish.
         if (attempt < this.options.maxRetries) {
-          await this.delay(this.options.retryDelayMs);
+          await delay(this.options.retryDelayMs);
           continue;
         }
         return null;
@@ -183,33 +184,15 @@ export class Pipeline {
     return null;
   }
 
-  /**
-   * Execute a segment with a timeout. If the executor doesn't resolve
-   * within segmentTimeoutMs, the promise rejects with a timeout error.
-   *
-   * Known limitation: the underlying executor promise is not cancelled on timeout.
-   * In production, SegmentExecutor.execute() should accept an AbortSignal
-   * so the WebSocket call can be cancelled when the timeout fires.
-   */
   private executeWithTimeout(
     workerId: WorkerId,
     assignment: SegmentAssignment,
   ): Promise<SegmentResult> {
-    return new Promise<SegmentResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Segment ${assignment.segment.index} timed out after ${this.options.segmentTimeoutMs}ms`));
-      }, this.options.segmentTimeoutMs);
-
-      this.executor.execute(workerId, assignment).then(
-        (result) => { clearTimeout(timer); resolve(result); },
-        (error) => { clearTimeout(timer); reject(error); },
-      );
-    });
-  }
-
-  private delay(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return withTimeout(
+      this.executor.execute(workerId, assignment),
+      this.options.segmentTimeoutMs,
+      `Segment ${assignment.segment.index}`,
+    );
   }
 }
 

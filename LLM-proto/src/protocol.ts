@@ -107,3 +107,45 @@ export interface SegmentFailure {
   readonly workerId: WorkerId;
   readonly reason: string;
 }
+
+// --- Span-based assignments (Petals-inspired) ---
+// A span is a contiguous range of segments assigned to one worker.
+// This eliminates checkpoint transfers between segments within the same span.
+
+/**
+ * Assigns multiple contiguous segments to a single worker as a "span".
+ * Inspired by Petals' span-based pipeline parallelism where a single server
+ * hosts a contiguous range of transformer blocks.
+ *
+ * The worker processes all segments in the span sequentially, keeping hidden
+ * states in GPU memory between segments (no checkpoint serialization needed).
+ * A checkpoint is only created after the last segment in the span.
+ */
+export interface SpanAssignment {
+  readonly requestId: InferenceRequestId;
+  /** Contiguous segments this worker should process (ordered by index). */
+  readonly segments: readonly SegmentConfig[];
+  /** Checkpoint from the previous span's last segment. Undefined for the first span. */
+  readonly checkpoint?: Checkpoint;
+}
+
+/** Result of a span computation (multiple contiguous segments by one worker). */
+export interface SpanResult {
+  readonly requestId: InferenceRequestId;
+  readonly startSegment: number;
+  readonly endSegment: number;
+  readonly workerId: WorkerId;
+  /**
+   * Checkpoint from the last segment in the span.
+   * Present if this is not the final span of the pipeline.
+   */
+  readonly checkpoint?: Checkpoint;
+  /**
+   * Final output. Present only if this span includes the last segment.
+   */
+  readonly output?: {
+    readonly tokens: readonly number[];
+    readonly text: string;
+  };
+  readonly processingTimeMs: number;
+}

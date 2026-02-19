@@ -58,13 +58,18 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | モジュール | ファイル | 概要 |
 |---|---|---|
 | 型定義 | `src/types.ts` | WorkerId, SegmentConfig, Checkpoint 等のコア型 |
-| プロトコル | `src/protocol.ts` | Coordinator-Worker 間の WebSocket メッセージ定義 |
+| プロトコル | `src/protocol.ts` | Coordinator-Worker 間の WebSocket メッセージ定義（Span 対応含む） |
 | CheckpointStore | `src/checkpoint.ts` | セグメント間の中間状態（hidden states）を保存・取得 |
 | WorkerPool | `src/worker-pool.ts` | ブラウザワーカーのTier別管理・選択・死活監視 |
-| Pipeline | `src/pipeline.ts` | 推論リクエストを N セグメントに分割しチェックポイント・リジュームで実行 |
+| Pipeline | `src/pipeline.ts` | 基本パイプライン：1セグメント/1ワーカーでチェックポイント・リジューム実行 |
+| SpanRouter | `src/span-router.ts` | Petals 方式の貪欲ルーティング：ワーカーの VRAM に応じて連続セグメントを割り当て |
+| SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
+| Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
 
 ### アーキテクチャ
+
+#### 基本パイプライン（Pipeline）
 
 ```
 API顧客 → Coordinator → [Seg0] → checkpoint → [Seg1] → ... → [Seg7] → 結果
@@ -72,9 +77,21 @@ API顧客 → Coordinator → [Seg0] → checkpoint → [Seg1] → ... → [Seg7
           WorkerPool (Tier 1/2/3)    CheckpointStore
 ```
 
-- **Tier 1**: 24h稼働デバイス（サイネージ等） — 最優先
+#### Span パイプライン（SpanPipeline — Petals 方式）
+
+```
+API顧客 → Coordinator → SpanRouter でルート計算
+                          ↓
+           W1[Seg0-3] → checkpoint → W2[Seg4-5] → checkpoint → W3[Seg6-7] → 結果
+           (1スパン内はGPUメモリ上で処理、チェックポイント転送不要)
+```
+
+Petals の分散パイプライン並列を参考に、1ワーカーが VRAM の許す限り連続セグメントを「スパン」として処理する。
+これにより、例えば8セグメントを3スパンに統合すると、チェックポイント転送が7回→2回に削減される。
+
+- **Tier 1**: 24h稼働デバイス（サイネージ等） — 最優先、大きなスパンを担当
 - **Tier 2**: 長時間ワーカー（OBS、拡張機能、Electron） — 高優先
-- **Tier 3**: 通常Web訪問者 — バースト対応
+- **Tier 3**: 通常Web訪問者 — バースト対応、1-2セグメントのスパン
 
 ### テスト実行
 

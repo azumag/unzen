@@ -4,58 +4,13 @@ import { WorkerPool } from '../src/worker-pool.js';
 import { CheckpointStore } from '../src/checkpoint.js';
 import {
   workerId,
-  inferenceRequestId,
   WorkerTier,
   WorkerStatus,
   InferenceStatus,
 } from '../src/types.js';
-import type {
-  InferenceRequest,
-  SegmentConfig,
-  Checkpoint,
-  WorkerId,
-} from '../src/types.js';
+import type { WorkerId } from '../src/types.js';
 import type { SegmentAssignment, SegmentResult } from '../src/protocol.js';
-
-// --- Test helpers ---
-
-function makeSegments(count: number): SegmentConfig[] {
-  return Array.from({ length: count }, (_, i) => ({
-    index: i,
-    layerStart: i * 8,
-    layerEnd: (i + 1) * 8 - 1,
-    modelWeightHash: `sha256:seg-${i}`,
-    estimatedVramMB: 2100,
-  }));
-}
-
-function makeRequest(
-  totalSegments: number,
-  currentSegment = 0,
-): InferenceRequest {
-  return {
-    id: inferenceRequestId('req-test'),
-    prompt: 'test prompt',
-    createdAt: Date.now(),
-    status: InferenceStatus.QUEUED,
-    currentSegment,
-    totalSegments,
-  };
-}
-
-function makeCheckpoint(requestId: string, segmentIndex: number): Checkpoint {
-  return {
-    requestId: inferenceRequestId(requestId),
-    segmentIndex,
-    hiddenStates: new Uint8Array([segmentIndex]),
-    metadata: {
-      shape: [1, 128, 4096],
-      dtype: 'float16',
-      sequenceLength: 128,
-      timestamp: Date.now(),
-    },
-  };
-}
+import { makeSegments, makeRequest, makeCheckpoint } from './test-helpers.js';
 
 /**
  * Mock executor that succeeds for all segments.

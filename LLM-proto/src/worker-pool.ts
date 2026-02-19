@@ -138,4 +138,9 @@ export class WorkerPool {
     }
     return count;
   }
+
+  /** Iterate over all registered workers. Used by SpanRouter for routing decisions. */
+  allWorkers(): IterableIterator<WorkerInfo> {
+    return this.workers.values();
+  }
 }
