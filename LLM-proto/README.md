@@ -17,7 +17,7 @@ LLMの各レイヤー（層）を「セグメント」として扱い、複数�
 
 1. **Prompt Input**: ユーザーがAPIにプロンプトを投げる。
 2. **Entry Node**: 最初のWorkerが「第1セグメント」を計算。
-3. **Relay (P2P)**: 計算後の中間データ（KVキャッシュ等）を、次のセグメント担当のWorkerへWebRTCで直接転送。
+3. **Relay (Coordinator経由)**: 計算後の中間データ（hidden states等）をCoordinatorに送信し、次のセグメント担当Workerへ中継（第三者通信禁止のため、Worker間の直接通信は行わない。PLAN.md 1.2項参照）。
 4. **Token Generation**: 最後のWorkerがトークンを生成し、クライアントへ返す。
 
 ## 3. 「10MBの壁」を突破する3つのコア技術
@@ -47,6 +47,42 @@ LLMの各レイヤー（層）を「セグメント」として扱い、複数�
 | **コスト構造** | 高価なH100/A100の維持費 | Webサイト閲覧者の余剰電力 |
 | **価格帯** | 高い | 既存の1/10〜1/100を目指せる |
 | **思想** | 中央集権・クローズド | 分散型・オープンウェイト |
+
+## 6. パイプライン実装（プロトタイプ）
+
+PLAN.md v2.6 Section 5 のチェックポイント・リジューム方式を TypeScript で実装したプロトタイプ。
+Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワーカー向けに設計している。
+
+### モジュール構成
+
+| モジュール | ファイル | 概要 |
+|---|---|---|
+| 型定義 | `src/types.ts` | WorkerId, SegmentConfig, Checkpoint 等のコア型 |
+| プロトコル | `src/protocol.ts` | Coordinator-Worker 間の WebSocket メッセージ定義 |
+| CheckpointStore | `src/checkpoint.ts` | セグメント間の中間状態（hidden states）を保存・取得 |
+| WorkerPool | `src/worker-pool.ts` | ブラウザワーカーのTier別管理・選択・死活監視 |
+| Pipeline | `src/pipeline.ts` | 推論リクエストを N セグメントに分割しチェックポイント・リジュームで実行 |
+| Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
+
+### アーキテクチャ
+
+```
+API顧客 → Coordinator → [Seg0] → checkpoint → [Seg1] → ... → [Seg7] → 結果
+               ↕ WebSocket                ↕
+          WorkerPool (Tier 1/2/3)    CheckpointStore
+```
+
+- **Tier 1**: 24h稼働デバイス（サイネージ等） — 最優先
+- **Tier 2**: 長時間ワーカー（OBS、拡張機能、Electron） — 高優先
+- **Tier 3**: 通常Web訪問者 — バースト対応
+
+### テスト実行
+
+```bash
+cd LLM-proto
+npm install
+npm test
+```
 
 ## 関連ドキュメント
 

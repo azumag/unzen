@@ -1,0 +1,19 @@
+{
+  "name": "@unzen/llm-proto",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Distributed LLM inference pipeline: Petals-inspired checkpoint-resume architecture for browser WebGPU workers",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
