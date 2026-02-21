@@ -27,7 +27,7 @@
  */
 
 import { UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
-import type { SandboxExecutor } from './quickjs-sandbox';
+import type { SandboxExecutor } from './sandbox-executor';
 import type {
   WorkerMessage,
   WorkerResponse,

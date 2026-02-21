@@ -14,7 +14,9 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['**/test/**/*.ts', '**/*.test.ts'],
-    exclude: ['node_modules', 'dist'],
+    // Exclude macOS AppleDouble resource fork files (._*) that vitest would
+    // erroneously pick up as test files on external/network volumes.
+    exclude: ['node_modules', 'dist', '**/._*'],
     // Enable watch mode during development
     watch: false,
     // Coverage configuration (optional, requires @vitest/coverage-v8)

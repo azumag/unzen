@@ -19,6 +19,7 @@ import {
   type ManifestResponse,
 } from '@unzen/shared';
 import { UnzenClient } from '../src/unzen-client';
+import { MockSandboxExecutor } from '../src/quickjs-sandbox';
 
 describe('UnzenClient', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -45,14 +46,20 @@ describe('UnzenClient', () => {
   });
 
   describe('constructor', () => {
-    it('should create instance with endpoint', () => {
-      const client = new UnzenClient({ endpoint: 'https://example.com' });
+    it('should create instance with endpoint and sandbox', () => {
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox: new MockSandboxExecutor(),
+      });
       expect(client).toBeInstanceOf(UnzenClient);
       client.dispose();
     });
 
     it('should default to production mode', () => {
-      const client = new UnzenClient({ endpoint: 'https://example.com' });
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox: new MockSandboxExecutor(),
+      });
       expect(client).toBeInstanceOf(UnzenClient);
       client.dispose();
     });
@@ -61,9 +68,19 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'development',
+        sandbox: new MockSandboxExecutor(),
       });
       expect(client).toBeInstanceOf(UnzenClient);
       client.dispose();
+    });
+
+    it('should throw error when neither sandbox nor workerUrl is provided', () => {
+      // Constructor requires either workerUrl (for production browser execution)
+      // or sandbox (for testing / custom implementations).
+      // Omitting both is a configuration error that should fail fast.
+      expect(() => new UnzenClient({ endpoint: 'https://example.com' })).toThrow(
+        'UnzenClient requires either workerUrl or sandbox option'
+      );
     });
   });
 
@@ -79,6 +96,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'development',
+        sandbox: new MockSandboxExecutor(),
       });
 
       const result = await client.call('add', 1, 2);
@@ -104,6 +122,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'development',
+        sandbox: new MockSandboxExecutor(),
       });
 
       await expect(client.call('add', 1, 2)).rejects.toThrow(
@@ -137,6 +156,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       const result = await client.call<number>('add', 1, 2);
@@ -180,6 +200,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       // Should throw UnzenFunctionError without fallback
@@ -220,6 +241,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       // Should throw UnzenFunctionError without fallback
@@ -251,6 +273,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       // Should throw UnzenFunctionError (user error, not runtime error)
@@ -293,6 +316,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'browser-only',
+        sandbox: new MockSandboxExecutor(),
       });
 
       const result = await client.call<number>('add', 1, 2);
@@ -325,6 +349,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'browser-only',
+        sandbox: new MockSandboxExecutor(),
       });
 
       // Should throw error without fallback
@@ -361,6 +386,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       const result = await client.callWithDiagnostics<number>('add', 1, 2);
@@ -391,6 +417,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'development',
+        sandbox: new MockSandboxExecutor(),
       });
 
       const result = await client.callWithDiagnostics<number>('add', 1, 2);
@@ -424,6 +451,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       // First call populates cache
@@ -462,6 +490,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
 
       const result = await client.callWithDiagnostics('add', 1, 2);
@@ -487,6 +516,7 @@ describe('UnzenClient', () => {
       const client = new UnzenClient({
         endpoint: 'https://example.com',
         mode: 'production',
+        sandbox: new MockSandboxExecutor(),
       });
       client.dispose();
 
@@ -601,12 +631,18 @@ describe('UnzenClient', () => {
 
   describe('dispose', () => {
     it('should clean up resources', () => {
-      const client = new UnzenClient({ endpoint: 'https://example.com' });
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox: new MockSandboxExecutor(),
+      });
       expect(() => client.dispose()).not.toThrow();
     });
 
     it('should be safe to call multiple times', () => {
-      const client = new UnzenClient({ endpoint: 'https://example.com' });
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox: new MockSandboxExecutor(),
+      });
       client.dispose();
       expect(() => client.dispose()).not.toThrow();
     });
@@ -614,7 +650,10 @@ describe('UnzenClient', () => {
     it('should throw UnzenRuntimeError when call() is invoked after dispose', async () => {
       // Disposed client has released sandbox resources
       // Subsequent call() must fail immediately with clear error
-      const client = new UnzenClient({ endpoint: 'https://example.com' });
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox: new MockSandboxExecutor(),
+      });
       client.dispose();
 
       await expect(client.call('add', 1, 2)).rejects.toThrow(UnzenRuntimeError);
