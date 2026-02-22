@@ -105,6 +105,7 @@ npm test
 
 | ドキュメント | 内容 | ステータス |
 |---|---|---|
-| [PLAN.md](./PLAN.md) | 計画書 v2.6（確定方針） | **確定** |
+| [PLAN.md](./PLAN.md) | 計画書 v2.6（確定方針・パイプライン方式） | **確定** |
+| [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/archive/](./docs/archive/ARCHIVE_INDEX.md) | 廃止ドキュメント一覧 | アーカイブ |
