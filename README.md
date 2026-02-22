@@ -52,7 +52,7 @@ Webサイト閲覧者のブラウザを計算リソースとして活用し、�
     ├── SWARM.md        # 群知能方式の設計書
     ├── src/            # パイプライン実装（Coordinator, WorkerPool, Pipeline, SpanRouter, SpanPipeline等）
     ├── src/swarm/      # 群知能実装（SwarmPeer, GossipProtocol, SwarmConsensus, Swarm等）
-    └── tests/          # テスト（118テスト: パイプライン71 + 群知能47）
+    └── tests/          # テスト（125テスト: パイプライン71 + 群知能54）
 ```
 
 ## 今後の展望
