@@ -158,6 +158,7 @@ type Output = string; // HTML テキスト
 | `[text](url)`        | `<a href="url">text</a>`     |
 | `![alt](url)`        | `<img src="url" alt="alt" />`|
 | ```` ``` code ``` ````| `<pre><code>...</code></pre>` |
+| ```` ```mermaid ... ``` ````| `<pre class="mermaid">...</pre>` |
 | `- item`             | `<ul><li>item</li></ul>`      |
 | `1. item`            | `<ol><li>item</li></ol>`      |
 | 段落                 | `<p>...</p>`                  |
@@ -165,6 +166,7 @@ type Output = string; // HTML テキスト
 ### セキュリティ
 - すべてのインライン HTML は `&lt;`, `&gt;`, `&amp;`, `&quot;` にエスケープ
 - コードブロック内も同様にエスケープ（XSS防止）
+- `mermaid` フェンスも同様にエスケープし、安全な `<pre class="mermaid">` として出力
 
 ### 例
 ```javascript
