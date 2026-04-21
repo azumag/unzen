@@ -458,6 +458,24 @@ describe('markdownToHtml', () => {
       expect(result).toContain('some code');
       expect(result).toContain('<pre><code>');
     });
+
+    it('```mermaid code fence -> rendered as mermaid block', async () => {
+      const input = '```mermaid\ngraph TD\nA-->B\n```';
+      const { body } = await execFunction('markdownToHtml', input);
+      const result = body.result as string;
+      expect(result).toContain('<pre class="mermaid">');
+      expect(result).toContain('graph TD');
+      expect(result).not.toContain('<pre><code>');
+    });
+
+    it('mermaid block with HTML -> escaped to prevent XSS', async () => {
+      const input = '```mermaid\ngraph TD\nA["<img src=x onerror=alert(1)>"]-->B\n```';
+      const { body } = await execFunction('markdownToHtml', input);
+      const result = body.result as string;
+      expect(result).toContain('<pre class="mermaid">');
+      expect(result).toContain('&lt;img src=x onerror=alert(1)&gt;');
+      expect(result).not.toContain('<img src=x onerror=alert(1)>');
+    });
   });
 
   describe('lists', () => {

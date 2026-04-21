@@ -245,6 +245,7 @@ export const markdownToHtmlCode = `(markdown) => {
   var html = [];
   var inCodeBlock = false;
   var codeBlockContent = [];
+  var codeBlockLanguage = '';
   var inList = false;
   var listType = '';
   var paragraphLines = [];
@@ -276,9 +277,16 @@ export const markdownToHtmlCode = `(markdown) => {
         flushList();
         inCodeBlock = true;
         codeBlockContent = [];
+        var langMatch = line.trim().match(/^\\\`\\\`\\\`\\s*([a-zA-Z0-9_-]+)?/);
+        codeBlockLanguage = langMatch && langMatch[1] ? langMatch[1].toLowerCase() : '';
       } else {
-        html.push('<pre><code>' + escapeHtml(codeBlockContent.join('\\n')) + '</code></pre>');
+        if (codeBlockLanguage === 'mermaid') {
+          html.push('<pre class="mermaid">' + escapeHtml(codeBlockContent.join('\\n')) + '</pre>');
+        } else {
+          html.push('<pre><code>' + escapeHtml(codeBlockContent.join('\\n')) + '</code></pre>');
+        }
         inCodeBlock = false;
+        codeBlockLanguage = '';
       }
       continue;
     }
@@ -342,7 +350,11 @@ export const markdownToHtmlCode = `(markdown) => {
   // Flush any remaining content
   // If an unclosed code block exists, render what we have (graceful degradation)
   if (inCodeBlock && codeBlockContent.length > 0) {
-    html.push('<pre><code>' + escapeHtml(codeBlockContent.join('\\n')) + '</code></pre>');
+    if (codeBlockLanguage === 'mermaid') {
+      html.push('<pre class="mermaid">' + escapeHtml(codeBlockContent.join('\\n')) + '</pre>');
+    } else {
+      html.push('<pre><code>' + escapeHtml(codeBlockContent.join('\\n')) + '</code></pre>');
+    }
   }
   flushParagraph();
   flushList();
