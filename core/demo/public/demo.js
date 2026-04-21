@@ -12,7 +12,7 @@ import { UnzenClient } from '/client.js';
 const stats = {
   browserExecs: 0,
   serverExecs: 0,
-  errors: 0,
+  cacheHits: 0,
   execCount: 0,
   totalDurationMs: 0,
 };
@@ -50,12 +50,14 @@ function displayResult(elementId, result, isError, diagnostics) {
     } else {
       stats.browserExecs++;
     }
+    // Track cache hits from diagnostics
+    if (diagnostics?.cached) {
+      stats.cacheHits++;
+    }
     // Track total duration for average calculation
     if (diagnostics?.durationMs != null) {
       stats.totalDurationMs += diagnostics.durationMs;
     }
-  } else {
-    stats.errors++;
   }
   stats.execCount++;
   updateStats();
@@ -114,7 +116,7 @@ function displayError(elementId, message) {
 function updateStats() {
   document.getElementById('browserExecs').textContent = stats.browserExecs;
   document.getElementById('serverExecs').textContent = stats.serverExecs;
-  document.getElementById('cacheHits').textContent = stats.errors;
+  document.getElementById('cacheHits').textContent = stats.cacheHits;
 
   // Show average execution time from diagnostics
   const avgTime = stats.execCount > 0

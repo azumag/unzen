@@ -29,7 +29,7 @@ import { UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
 import { FallbackHandler } from './fallback-handler';
 import { ManifestFetcher } from './manifest-fetcher';
 import { CodeFetcher } from './code-fetcher';
-import { MockSandboxExecutor, type SandboxExecutor } from './quickjs-sandbox';
+import type { SandboxExecutor } from './sandbox-executor';
 import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 
 /**
@@ -145,14 +145,20 @@ export class UnzenClient {
     this.manifestFetcher = new ManifestFetcher(this.endpoint);
     this.codeFetcher = new CodeFetcher(this.endpoint);
 
-    // Select sandbox executor: explicit sandbox > workerUrl > MockSandboxExecutor fallback
+    // Select sandbox executor: explicit sandbox > workerUrl > error
     // - options.sandbox: Custom executor (advanced usage / testing)
     // - options.workerUrl: WebWorkerSandboxExecutor with 4-layer isolation (production)
-    // - fallback: MockSandboxExecutor (NOT secure, testing only)
-    this.sandboxExecutor = options.sandbox
-      ?? (options.workerUrl
-        ? new WebWorkerSandboxExecutor({ workerUrl: options.workerUrl })
-        : new MockSandboxExecutor());
+    // - error: No fallback — workerUrl or sandbox must be provided
+    if (options.sandbox) {
+      this.sandboxExecutor = options.sandbox;
+    } else if (options.workerUrl) {
+      this.sandboxExecutor = new WebWorkerSandboxExecutor({ workerUrl: options.workerUrl });
+    } else {
+      throw new Error(
+        'UnzenClient requires either workerUrl or sandbox option. '
+        + 'Use workerUrl for browser execution or provide a custom SandboxExecutor.'
+      );
+    }
   }
 
   /**

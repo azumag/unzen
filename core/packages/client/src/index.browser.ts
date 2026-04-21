@@ -1,28 +1,9 @@
 /**
- * @unzen/client
+ * @unzen/client — Browser entry point
  *
- * Browser client SDK for unzen core.
- *
- * Design principles:
- * - Zero runtime dependencies (besides @unzen/shared)
- * - Works in all modern browsers (ES2022+)
- * - Web Worker-based for non-blocking execution
- * - Transparent sandboxing via WASM
- *
- * Key responsibilities:
- * - Load and initialize WASM runtimes
- * - Execute code in sandboxed environment
- * - Communicate with server for coordination
- * - Handle function results and errors
- *
- * Main API:
- * ```typescript
- * import { UnzenClient } from '@unzen/client';
- *
- * const client = new UnzenClient({ endpoint: 'https://example.com' });
- * const result = await client.call('functionName', arg1, arg2);
- * client.dispose();
- * ```
+ * Self-contained bundle for direct <script type="module"> usage in browsers.
+ * Excludes MockSandboxExecutor (Node.js vm dependency) which is only for testing.
+ * Use this entry when importing via a script tag rather than a bundler.
  */
 
 // Main client class
@@ -39,12 +20,10 @@ export { FallbackHandler } from './fallback-handler';
 export { ManifestFetcher } from './manifest-fetcher';
 export { CodeFetcher } from './code-fetcher';
 
-// Sandbox interface (Node.js-safe, no vm dependency)
+// Sandbox interface (no Node.js dependency)
 export type { SandboxExecutor } from './sandbox-executor';
 
-// Mock implementation (Node.js only — uses vm module)
-export { MockSandboxExecutor } from './quickjs-sandbox';
-
+// Browser-only sandbox implementation
 export {
   WebWorkerSandboxExecutor,
   type WebWorkerSandboxOptions,
