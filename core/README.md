@@ -248,6 +248,7 @@ cd demo && npm run dev
 
 - [設計書](docs/design.md) - アーキテクチャ、サンドボックス、SDK設計
 - [サンプル関数リファレンス](docs/sample-functions.md) - 全サンプル関数の仕様・入出力・例
+- [Next.js App Router 統合ガイド](docs/nextjs-integration.md) - Next.js への組み込み手順
 - [モジュールバンドラー](docs/bundler.md) - @unzen/bundler の設計と使い方
 - [セキュリティ制約とユースケース](docs/use-cases-and-constraints.md) - 外部接続禁止ポリシー
 - [学術参考文献](docs/references.md) - Wasm セキュリティ、サンドボックス関連論文
