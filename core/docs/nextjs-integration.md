@@ -46,6 +46,7 @@ Next.js の API Route から提供し、ブラウザ側の `UnzenClient` は同�
 ```typescript
 // lib/unzen.ts
 import { UnzenServer } from '@unzen/server';
+import { Hono } from 'hono';
 
 const baseUrl = process.env.NEXT_PUBLIC_UNZEN_BASE_URL ?? 'http://localhost:3000/api/unzen';
 
@@ -66,12 +67,18 @@ server.defineRaw('jsonSchemaValidate', `function run(schema, data) {
   return { valid: errors.length === 0, errors };
 }`, { timeout: 500 });
 
-let initializePromise: Promise<void> | undefined;
+let appPromise: Promise<Hono> | undefined;
 
-export async function getUnzenMiddleware() {
-  initializePromise ??= server.initialize();
-  await initializePromise;
-  return server.middleware();
+export function getUnzenApp() {
+  appPromise ??= (async () => {
+    await server.initialize();
+
+    const app = new Hono();
+    app.route('/api/unzen', server.middleware());
+    return app;
+  })();
+
+  return appPromise;
 }
 ```
 
@@ -86,13 +93,13 @@ catch-all Route Handler にすることで、Unzen middleware 内の相対パス
 
 ```typescript
 // app/api/unzen/[[...route]]/route.ts
-import { getUnzenMiddleware } from '@/lib/unzen';
+import { getUnzenApp } from '@/lib/unzen';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 async function handle(request: Request) {
-  const app = await getUnzenMiddleware();
+  const app = await getUnzenApp();
   return app.fetch(request);
 }
 
