@@ -1,0 +1,47 @@
+# Unzen Next.js App Router Example
+
+This example verifies the integration path from `core/docs/nextjs-integration.md`.
+It mounts Unzen under a Next.js App Router Route Handler, serves the browser
+client and QuickJS worker from `public/unzen/`, and runs a function from a
+React Client Component with `callWithDiagnostics()`.
+
+## Run locally
+
+From this directory:
+
+```bash
+npm install
+npm run dev
+```
+
+Then check the API endpoint:
+
+```bash
+curl http://localhost:3000/api/unzen/manifest
+```
+
+Open `http://localhost:3000` and press **Run validation**. The result should
+include:
+
+- `success: true`
+- `result.valid: true`
+- `diagnostics.executedOn: "browser"` when the QuickJS worker loads correctly
+
+If `diagnostics.executedOn` is `"server"`, the server fallback is working but
+the browser worker path should be checked. Confirm that both files exist:
+
+```bash
+ls public/unzen/client.js public/unzen/worker.js
+```
+
+## What the sample covers
+
+- `app/api/unzen/[[...route]]/route.ts` forwards the full Next.js `Request` to
+  a Hono app.
+- `lib/unzen.ts` mounts `server.middleware()` at `/api/unzen` so
+  `/api/unzen/manifest`, `/api/unzen/code/:name`, and `/api/unzen/exec/:name`
+  match correctly.
+- `scripts/copy-unzen-assets.mjs` copies `@unzen/client` browser bundles into
+  `public/unzen/`.
+- `app/components/UnzenDemo.tsx` initializes `UnzenClient` with
+  `workerUrl: '/unzen/worker.js'` and calls `callWithDiagnostics()`.

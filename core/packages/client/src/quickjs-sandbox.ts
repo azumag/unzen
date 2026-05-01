@@ -21,6 +21,7 @@
 
 import { UnzenFunctionError } from '@unzen/shared';
 import { createContext, Script } from 'vm';
+import type { SandboxExecutor } from './sandbox-executor';
 
 // Re-export SandboxExecutor from its own file for backwards compatibility.
 // The interface is in a separate file so browser entry points can import it
