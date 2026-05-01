@@ -44,9 +44,12 @@ export class UnzenError extends Error {
     // Maintains proper stack trace for where our error was thrown (V8-only)
     // Uses this.constructor so subclass constructors are excluded from trace
     // (e.g., UnzenRuntimeError stack starts at throw site, not constructor)
-    if (typeof (Error as Record<string, unknown>).captureStackTrace === 'function') {
-      (Error as Record<string, unknown> & { captureStackTrace: (target: Error, ctor: Function) => void })
-        .captureStackTrace(this, this.constructor);
+    const errorConstructor = Error as unknown as {
+      captureStackTrace?: (target: Error, ctor: Function) => void;
+    };
+
+    if (typeof errorConstructor.captureStackTrace === 'function') {
+      errorConstructor.captureStackTrace(this, this.constructor);
     }
   }
 }

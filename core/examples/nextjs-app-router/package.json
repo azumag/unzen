@@ -1,0 +1,26 @@
+{
+  "name": "@unzen/example-nextjs-app-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run copy-unzen-assets && next dev",
+    "build": "npm run copy-unzen-assets && next build",
+    "start": "next start",
+    "copy-unzen-assets": "node scripts/copy-unzen-assets.mjs"
+  },
+  "dependencies": {
+    "@unzen/client": "file:../../packages/client",
+    "@unzen/server": "file:../../packages/server",
+    "hono": "^4.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.4.0"
+  }
+}

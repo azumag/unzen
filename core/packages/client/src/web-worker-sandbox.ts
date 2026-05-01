@@ -151,7 +151,7 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     this.disposed = true;
 
     // Reject all pending requests
-    for (const [requestId, pending] of this.pendingRequests) {
+    for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.hardKillTimer);
       pending.reject(new UnzenRuntimeError('Executor disposed while execution was pending'));
     }
@@ -273,7 +273,7 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     // Review finding H2: missing onerror caused silent hangs on worker crash.
     this.worker.onerror = () => {
       // Reject all pending requests — worker is in an unknown state
-      for (const [requestId, pending] of this.pendingRequests) {
+      for (const pending of this.pendingRequests.values()) {
         clearTimeout(pending.hardKillTimer);
         pending.reject(new UnzenRuntimeError('Worker crashed unexpectedly'));
       }
