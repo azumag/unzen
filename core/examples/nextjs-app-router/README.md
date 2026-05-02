@@ -34,6 +34,28 @@ the browser worker path should be checked. Confirm that both files exist:
 ls public/unzen/client.js public/unzen/worker.js
 ```
 
+## Runtime E2E
+
+After installing dependencies in `core/` and in this example, run the full
+runtime smoke test from this directory:
+
+```bash
+npm run test:e2e
+```
+
+The script builds the example, starts `next start`, checks
+`/api/unzen/manifest`, fetches the `jsonSchemaValidate` code URL, posts to
+`/api/unzen/exec/jsonSchemaValidate`, verifies `/unzen/worker.js`, and then
+uses Playwright Chromium to click **Run validation** in the browser. The test
+fails if the browser result is not `success: true`, if `result.valid` is not
+`true`, or if `diagnostics.executedOn` is not `"browser"`.
+
+If Playwright browsers have not been installed in the environment yet, run:
+
+```bash
+npx playwright install chromium
+```
+
 ## What the sample covers
 
 - `app/api/unzen/[[...route]]/route.ts` forwards the full Next.js `Request` to
@@ -45,3 +67,5 @@ ls public/unzen/client.js public/unzen/worker.js
   `public/unzen/`.
 - `app/components/UnzenDemo.tsx` initializes `UnzenClient` with
   `workerUrl: '/unzen/worker.js'` and calls `callWithDiagnostics()`.
+- `scripts/runtime-e2e.mjs` starts the production build and verifies the
+  manifest, code, exec, worker asset, and browser diagnostics path.

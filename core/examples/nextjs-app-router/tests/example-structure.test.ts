@@ -37,4 +37,18 @@ describe('Next.js App Router example', () => {
     expect(component).toContain("workerUrl: '/unzen/worker.js'");
     expect(component).toContain('callWithDiagnostics');
   });
+
+  it('documents and scripts the runtime E2E smoke test', async () => {
+    const packageJson = JSON.parse(await readExampleFile('package.json'));
+    const readme = await readExampleFile('README.md');
+    const e2eScript = await readExampleFile('scripts/runtime-e2e.mjs');
+
+    expect(packageJson.scripts['test:e2e']).toContain('scripts/runtime-e2e.mjs');
+    expect(readme).toContain('npm run test:e2e');
+    expect(e2eScript).toContain('/api/unzen/manifest');
+    expect(e2eScript).toContain('/api/unzen/exec/jsonSchemaValidate');
+    expect(e2eScript).toContain('/unzen/worker.js');
+    expect(e2eScript).toContain("getByRole('button', { name: 'Run validation' })");
+    expect(e2eScript).toContain("payload.diagnostics?.executedOn === 'browser'");
+  });
 });
