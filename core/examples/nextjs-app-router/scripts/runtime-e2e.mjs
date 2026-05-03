@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const port = Number(process.env.UNZEN_E2E_PORT ?? 3100);
@@ -109,10 +110,38 @@ async function verifyBrowserFlow() {
   }
 }
 
+async function stopServer(server) {
+  if (server.exitCode !== null || server.signalCode !== null) {
+    return;
+  }
+
+  const exited = new Promise((resolve) => {
+    server.once('exit', resolve);
+  });
+
+  server.kill('SIGTERM');
+
+  const stopped = await Promise.race([
+    exited.then(() => true),
+    delay(5_000).then(() => false),
+  ]);
+
+  if (!stopped) {
+    server.kill('SIGKILL');
+    await exited;
+  }
+}
+
 async function main() {
+  const timeout = setTimeout(() => {
+    console.error('Next.js runtime E2E timed out');
+    process.exit(1);
+  }, 90_000);
+  const nextCli = fileURLToPath(import.meta.resolve('next/dist/bin/next'));
+
   const server = spawn(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['next', 'start', '-p', String(port), '-H', '127.0.0.1'],
+    process.execPath,
+    [nextCli, 'start', '-p', String(port), '-H', '127.0.0.1'],
     {
       cwd: new URL('..', import.meta.url),
       env: {
@@ -132,7 +161,8 @@ async function main() {
     await verifyBrowserFlow();
     console.log('Next.js App Router runtime E2E passed');
   } finally {
-    server.kill('SIGTERM');
+    clearTimeout(timeout);
+    await stopServer(server);
   }
 }
 

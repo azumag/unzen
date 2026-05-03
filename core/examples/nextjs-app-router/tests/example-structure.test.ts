@@ -5,9 +5,14 @@ import { describe, expect, it } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const exampleRoot = join(__dirname, '..');
+const repoRoot = join(exampleRoot, '../../..');
 
 async function readExampleFile(path: string): Promise<string> {
   return readFile(join(exampleRoot, path), 'utf8');
+}
+
+async function readRepoFile(path: string): Promise<string> {
+  return readFile(join(repoRoot, path), 'utf8');
 }
 
 describe('Next.js App Router example', () => {
@@ -50,5 +55,20 @@ describe('Next.js App Router example', () => {
     expect(e2eScript).toContain('/unzen/worker.js');
     expect(e2eScript).toContain("getByRole('button', { name: 'Run validation' })");
     expect(e2eScript).toContain("payload.diagnostics?.executedOn === 'browser'");
+    expect(e2eScript).toContain('Next.js runtime E2E timed out');
+    expect(e2eScript).toContain("import.meta.resolve('next/dist/bin/next')");
+    expect(e2eScript).toContain("server.kill('SIGKILL')");
+  });
+
+  it('runs the runtime E2E smoke test from GitHub Actions', async () => {
+    const workflow = await readRepoFile('.github/workflows/nextjs-runtime-e2e.yml');
+    const readme = await readExampleFile('README.md');
+
+    expect(workflow).toContain('Next.js Runtime E2E');
+    expect(workflow).toContain("'core/packages/**'");
+    expect(workflow).toContain("'core/examples/nextjs-app-router/**'");
+    expect(workflow).toContain('npx playwright install --with-deps chromium');
+    expect(workflow).toContain('npm run test:e2e');
+    expect(readme).toContain('.github/workflows/nextjs-runtime-e2e.yml');
   });
 });
