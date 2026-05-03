@@ -1,0 +1,53 @@
+name: Next.js Runtime E2E
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/nextjs-runtime-e2e.yml'
+      - 'core/package*.json'
+      - 'core/packages/**'
+      - 'core/examples/nextjs-app-router/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/nextjs-runtime-e2e.yml'
+      - 'core/package*.json'
+      - 'core/packages/**'
+      - 'core/examples/nextjs-app-router/**'
+  workflow_dispatch:
+
+jobs:
+  runtime-e2e:
+    name: Next.js App Router runtime E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+
+      - name: Install core dependencies
+        working-directory: core
+        run: npm ci
+
+      - name: Install Next.js example dependencies
+        working-directory: core/examples/nextjs-app-router
+        run: npm install --package-lock=false
+
+      - name: Install Playwright Chromium
+        working-directory: core/examples/nextjs-app-router
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Next.js runtime E2E
+        working-directory: core/examples/nextjs-app-router
+        run: npm run test:e2e

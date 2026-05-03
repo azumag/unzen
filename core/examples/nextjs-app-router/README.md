@@ -56,6 +56,15 @@ If Playwright browsers have not been installed in the environment yet, run:
 npx playwright install chromium
 ```
 
+## CI
+
+GitHub Actions runs this smoke test through
+`.github/workflows/nextjs-runtime-e2e.yml` on pull requests and `main` pushes
+that touch `core/packages/**`, `core/package*.json`, this example, or the
+workflow itself. The job installs `core/` dependencies with `npm ci`, installs
+this example's dependencies without writing a lockfile, installs Playwright
+Chromium with system dependencies, and then runs `npm run test:e2e`.
+
 ## What the sample covers
 
 - `app/api/unzen/[[...route]]/route.ts` forwards the full Next.js `Request` to
