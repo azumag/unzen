@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -6,6 +8,8 @@ import { chromium } from 'playwright';
 const port = Number(process.env.UNZEN_E2E_PORT ?? 3100);
 const origin = `http://127.0.0.1:${port}`;
 const endpoint = `${origin}/api/unzen`;
+const artifactDir = process.env.UNZEN_E2E_ARTIFACT_DIR
+  ?? fileURLToPath(new URL('../test-results/nextjs-runtime-e2e', import.meta.url));
 
 function assert(condition, message) {
   if (!condition) {
@@ -79,32 +83,65 @@ async function verifyHttpEndpoints() {
   );
 }
 
+async function saveBrowserArtifacts(context, page) {
+  await mkdir(artifactDir, { recursive: true });
+
+  const screenshotPath = join(artifactDir, 'browser-failure.png');
+  const tracePath = join(artifactDir, 'trace.zip');
+
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    console.error(`Saved browser failure screenshot to ${screenshotPath}`);
+  } catch (error) {
+    console.error('Failed to save browser failure screenshot:', error);
+  }
+
+  try {
+    await context.tracing.stop({ path: tracePath });
+    console.error(`Saved Playwright trace to ${tracePath}`);
+  } catch (error) {
+    console.error('Failed to save Playwright trace:', error);
+  }
+}
+
 async function verifyBrowserFlow() {
   const browser = await chromium.launch();
 
   try {
-    const page = await browser.newPage();
-    await page.goto(origin, { waitUntil: 'networkidle' });
+    const context = await browser.newContext();
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+    const page = await context.newPage();
 
-    const button = page.getByRole('button', { name: 'Run validation' });
-    await button.waitFor({ state: 'visible' });
-    await button.click();
+    try {
+      await page.goto(origin, { waitUntil: 'networkidle' });
 
-    const result = page.getByTestId('unzen-result');
-    await result.waitFor({ state: 'visible' });
-    await page.waitForFunction(() => {
-      const text = document.querySelector('[data-testid="unzen-result"]')?.textContent;
-      return text?.includes('"success": true');
-    });
+      const button = page.getByRole('button', { name: 'Run validation' });
+      await button.waitFor({ state: 'visible' });
+      await button.click();
 
-    const payloadText = await result.textContent();
-    const payload = JSON.parse(payloadText ?? '');
-    assert(payload.success === true, 'browser validation should succeed');
-    assert(payload.result?.valid === true, 'browser validation result should be valid');
-    assert(
-      payload.diagnostics?.executedOn === 'browser',
-      `expected browser execution, got ${payload.diagnostics?.executedOn}`
-    );
+      const result = page.getByTestId('unzen-result');
+      await result.waitFor({ state: 'visible' });
+      await page.waitForFunction(() => {
+        const text = document.querySelector('[data-testid="unzen-result"]')?.textContent;
+        return text?.includes('"success": true');
+      });
+
+      const payloadText = await result.textContent();
+      const payload = JSON.parse(payloadText ?? '');
+      assert(payload.success === true, 'browser validation should succeed');
+      assert(payload.result?.valid === true, 'browser validation result should be valid');
+      assert(
+        payload.diagnostics?.executedOn === 'browser',
+        `expected browser execution, got ${payload.diagnostics?.executedOn}`
+      );
+
+      await context.tracing.stop();
+    } catch (error) {
+      await saveBrowserArtifacts(context, page);
+      throw error;
+    } finally {
+      await context.close();
+    }
   } finally {
     await browser.close();
   }

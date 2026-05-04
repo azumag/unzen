@@ -65,6 +65,16 @@ workflow itself. The job installs `core/` dependencies with `npm ci`, installs
 this example's dependencies without writing a lockfile, installs Playwright
 Chromium with system dependencies, and then runs `npm run test:e2e`.
 
+When the browser diagnostics step fails, the runtime E2E script writes
+`test-results/nextjs-runtime-e2e/browser-failure.png` and
+`test-results/nextjs-runtime-e2e/trace.zip`. The workflow uploads those files
+as the `nextjs-runtime-e2e-artifacts` artifact only on failed runs. Open the
+failed Actions run, download that artifact, and inspect the screenshot or run:
+
+```bash
+npx playwright show-trace trace.zip
+```
+
 ## What the sample covers
 
 - `app/api/unzen/[[...route]]/route.ts` forwards the full Next.js `Request` to

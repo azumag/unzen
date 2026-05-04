@@ -58,6 +58,10 @@ describe('Next.js App Router example', () => {
     expect(e2eScript).toContain('Next.js runtime E2E timed out');
     expect(e2eScript).toContain("import.meta.resolve('next/dist/bin/next')");
     expect(e2eScript).toContain("server.kill('SIGKILL')");
+    expect(e2eScript).toContain("context.tracing.start({ screenshots: true, snapshots: true, sources: true })");
+    expect(e2eScript).toContain("join(artifactDir, 'browser-failure.png')");
+    expect(e2eScript).toContain("join(artifactDir, 'trace.zip')");
+    expect(e2eScript).toContain('await context.tracing.stop()');
   });
 
   it('runs the runtime E2E smoke test from GitHub Actions', async () => {
@@ -69,6 +73,11 @@ describe('Next.js App Router example', () => {
     expect(workflow).toContain("'core/examples/nextjs-app-router/**'");
     expect(workflow).toContain('npx playwright install --with-deps chromium');
     expect(workflow).toContain('npm run test:e2e');
+    expect(workflow).toContain('if: failure()');
+    expect(workflow).toContain('actions/upload-artifact@v4');
+    expect(workflow).toContain('nextjs-runtime-e2e-artifacts');
+    expect(readme).toContain('test-results/nextjs-runtime-e2e/browser-failure.png');
+    expect(readme).toContain('npx playwright show-trace trace.zip');
     expect(readme).toContain('.github/workflows/nextjs-runtime-e2e.yml');
   });
 });
