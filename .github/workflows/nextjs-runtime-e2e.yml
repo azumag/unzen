@@ -51,3 +51,11 @@ jobs:
       - name: Run Next.js runtime E2E
         working-directory: core/examples/nextjs-app-router
         run: npm run test:e2e
+
+      - name: Upload runtime E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextjs-runtime-e2e-artifacts
+          path: core/examples/nextjs-app-router/test-results/nextjs-runtime-e2e
+          if-no-files-found: ignore
