@@ -107,6 +107,7 @@ npm test
 |---|---|---|
 | [PLAN.md](./PLAN.md) | 計画書 v2.6（確定方針・パイプライン方式） | **確定** |
 | [docs/2b-two-worker-prototype.md](./docs/2b-two-worker-prototype.md) | 2Bクラスモデルを2ワーカー分割で動かす最初の実行仕様 | **次の実装対象** |
+| [docs/adaptive-chunk-dispatcher.md](./docs/adaptive-chunk-dispatcher.md) | ワーカー能力・稼働時間・余剰負荷に基づく adaptive chunk dispatcher 仕様 | **2B検証後の次段階** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
