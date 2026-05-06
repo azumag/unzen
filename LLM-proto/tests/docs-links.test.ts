@@ -20,4 +20,16 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('docs/2b-two-worker-prototype.md');
     expect(plan).toContain('./docs/2b-two-worker-prototype.md');
   });
+
+  it('surfaces the adaptive chunk dispatcher specification from the LLM-proto entry points', () => {
+    const dispatcherSpec = readProjectFile('docs/adaptive-chunk-dispatcher.md');
+    const readme = readProjectFile('README.md');
+    const plan = readProjectFile('PLAN.md');
+
+    expect(dispatcherSpec).toContain('Keep additional PC load inside a 2-3% sustained budget');
+    expect(dispatcherSpec).toContain('uptime, spare capacity, heartbeat quality');
+    expect(dispatcherSpec).toContain('No scheduling path introduces worker-to-worker networking');
+    expect(readme).toContain('docs/adaptive-chunk-dispatcher.md');
+    expect(plan).toContain('./docs/adaptive-chunk-dispatcher.md');
+  });
 });

@@ -700,11 +700,12 @@ All-or-Nothing パイプライン:
 ### 7.1 技術検証(最優先)
 
 0. [2B / 2-worker prototype](./docs/2b-two-worker-prototype.md) で、2Bクラスモデルを2セグメント・2ワーカーに固定して、WebGPU実行、チェックポイント転送、IndexedDBキャッシュ、ワーカー喪失時のリジュームを先に実測する
-1. WebGPUでの30Bモデル部分推論が実現可能か検証
-2. チェックポイント(hidden states)のシリアライズ・転送サイズ・速度の実測
-3. ブラウザ離脱率の実測(実際のサイトでの測定、時間分布の分析)
-4. Coordinator プロトタイプ(Cloudflare Workers)
-5. 安全境界(CSP/サンドボックス/COOP-COEP)の実装検証
+1. [Adaptive chunk dispatcher](./docs/adaptive-chunk-dispatcher.md) で、ワーカーの演算能力・稼働時間・余剰負荷に基づいてチャンクサイズと連続チャンク割り当てを変える Coordinator 仕様を固める
+2. WebGPUでの30Bモデル部分推論が実現可能か検証
+3. チェックポイント(hidden states)のシリアライズ・転送サイズ・速度の実測
+4. ブラウザ離脱率の実測(実際のサイトでの測定、時間分布の分析)
+5. Coordinator プロトタイプ(Cloudflare Workers)
+6. 安全境界(CSP/サンドボックス/COOP-COEP)の実装検証
 
 ### 7.2 経済性の精緻化
 
