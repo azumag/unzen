@@ -11,6 +11,7 @@
 | [oss-value-proposition.md](oss-value-proposition.md) | OSSプロジェクトとしての価値と戦略 | プロジェクト関係者 |
 | [sample-functions.md](sample-functions.md) | 実践的サンプル関数のリファレンス | 開発者・利用者 |
 | [nextjs-integration.md](nextjs-integration.md) | Next.js App Router への統合手順 | 開発者 |
+| [fetch-only-container-site.md](fetch-only-container-site.md) | サーバを fetch のみに絞り、表示用計算を Unzen に任せるサイト構成 | 開発者・設計者 |
 | [Next.js App Router 実行サンプル](../examples/nextjs-app-router/README.md) | 統合手順を検証できる最小 Next.js サンプル | 開発者 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Phase 1 MVP 実装アーキテクチャ詳細 | 開発者・設計者 |
 | [heavy-samples-and-modules.md](heavy-samples-and-modules.md) | 重い処理サンプル6提案 + モジュールシステム設計 | 全員 |
@@ -23,7 +24,8 @@
 2. **use-cases-and-constraints.md** → 何ができて何ができないか
 3. **design.md** → 技術的な詳細
 4. **nextjs-integration.md** → Next.js App Router への組み込み方
-5. **Next.js App Router 実行サンプル** → 手元で manifest/code/exec とブラウザ実行を確認
+5. **fetch-only-container-site.md** → fetch 専用サーバコンテナのサイト構成
+6. **Next.js App Router 実行サンプル** → 手元で manifest/code/exec とブラウザ実行を確認
 
 ## アーカイブについて
 
