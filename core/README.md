@@ -118,6 +118,16 @@ await client.call('levenshteinDistance', 'kitten', 'sitting');
 
 詳細は [サンプル関数リファレンス](docs/sample-functions.md) を参照。
 
+## Fetch 専用サーバコンテナ構成
+
+外部 API の fetch だけをサーバコンテナに残し、正規化、検索、並び替え、集計、
+表示用 view model 生成を Unzen のブラウザ sandbox に任せるサイト構成を取れる。
+この場合、サーバは secret 境界、cache、rate limit、Unzen manifest/code/worker 配信を担当し、
+ページ固有の内部計算は `browser-only` mode の Unzen function で実行する。
+
+責務分離と Next.js App Router での最小構成は
+[Fetch 専用サーバコンテナ + Unzen サイト構成](docs/fetch-only-container-site.md) を参照。
+
 ## なぜ unzen？
 
 - **レスポンス向上**: ネットワーク往復なしで即座に結果を返す
