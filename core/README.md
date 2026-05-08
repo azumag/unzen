@@ -128,6 +128,11 @@ await client.call('levenshteinDistance', 'kitten', 'sitting');
 責務分離と Next.js App Router での最小構成は
 [Fetch 専用サーバコンテナ + Unzen サイト構成](docs/fetch-only-container-site.md) を参照。
 
+検索エンジン、SNS preview、リンク保存サービスなど JavaScript / Web Worker 実行を
+前提にできない取得者には、request-time に Unzen をサーバ実行へ戻さず、
+公開可能な canonical snapshot と structured data を返す。
+詳しくは [クローラーから取得できる Unzen ページ設計](docs/crawler-accessible-unzen-pages.md) を参照。
+
 ## なぜ unzen？
 
 - **レスポンス向上**: ネットワーク往復なしで即座に結果を返す
