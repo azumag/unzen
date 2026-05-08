@@ -23,4 +23,19 @@ describe('core documentation links', () => {
     expect(guide).toContain('/api/source');
     expect(guide).toContain('/api/unzen/manifest');
   });
+
+  it('surfaces crawler-accessible Unzen page guidance from the public docs', async () => {
+    const readme = await readCoreFile('README.md');
+    const index = await readCoreFile('docs/INDEX.md');
+    const guide = await readCoreFile('docs/crawler-accessible-unzen-pages.md');
+
+    expect(readme).toContain('docs/crawler-accessible-unzen-pages.md');
+    expect(readme).toContain('クローラーから取得できる Unzen ページ設計');
+    expect(index).toContain('crawler-accessible-unzen-pages.md');
+    expect(guide).toContain('canonical HTML snapshot');
+    expect(guide).toContain('structured data');
+    expect(guide).toContain('noindex');
+    expect(guide).toContain('projectionVersion');
+    expect(guide).toContain('server container は request-time');
+  });
 });
