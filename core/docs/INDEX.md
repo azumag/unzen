@@ -13,6 +13,7 @@
 | [nextjs-integration.md](nextjs-integration.md) | Next.js App Router への統合手順 | 開発者 |
 | [fetch-only-container-site.md](fetch-only-container-site.md) | サーバを fetch のみに絞り、表示用計算を Unzen に任せるサイト構成 | 開発者・設計者 |
 | [crawler-accessible-unzen-pages.md](crawler-accessible-unzen-pages.md) | Unzen ページをクローラーや link preview から取得可能にする設計 | 開発者・設計者 |
+| [ad-opt-out-participation.md](ad-opt-out-participation.md) | 広告 opt-out と Unzen 計算参加を分離する設計 | 開発者・設計者 |
 | [Next.js App Router 実行サンプル](../examples/nextjs-app-router/README.md) | 統合手順を検証できる最小 Next.js サンプル | 開発者 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Phase 1 MVP 実装アーキテクチャ詳細 | 開発者・設計者 |
 | [heavy-samples-and-modules.md](heavy-samples-and-modules.md) | 重い処理サンプル6提案 + モジュールシステム設計 | 全員 |
@@ -27,7 +28,8 @@
 4. **nextjs-integration.md** → Next.js App Router への組み込み方
 5. **fetch-only-container-site.md** → fetch 専用サーバコンテナのサイト構成
 6. **crawler-accessible-unzen-pages.md** → クローラー向け snapshot と noindex 境界
-7. **Next.js App Router 実行サンプル** → 手元で manifest/code/exec とブラウザ実行を確認
+7. **ad-opt-out-participation.md** → 広告 opt-out と計算参加の境界
+8. **Next.js App Router 実行サンプル** → 手元で manifest/code/exec とブラウザ実行を確認
 
 ## アーカイブについて
 
