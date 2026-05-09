@@ -133,6 +133,10 @@ await client.call('levenshteinDistance', 'kitten', 'sitting');
 公開可能な canonical snapshot と structured data を返す。
 詳しくは [クローラーから取得できる Unzen ページ設計](docs/crawler-accessible-unzen-pages.md) を参照。
 
+広告表示や広告計測に参加したくない訪問者には、広告 SDK / 計測の opt-out と
+Unzen browser sandbox での計算参加を別の状態として扱う。
+詳しくは [広告オプトアウトを選べる Unzen ページ設計](docs/ad-opt-out-participation.md) を参照。
+
 ## なぜ unzen？
 
 - **レスポンス向上**: ネットワーク往復なしで即座に結果を返す
