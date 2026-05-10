@@ -66,6 +66,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
+| TwoWorkerPrototypeRunner | `src/two-worker-prototype.ts` | 2B / 2-worker milestone の simulated harness、reference 比較、checkpoint resume、run report |
 
 ### アーキテクチャ
 
@@ -99,14 +100,18 @@ Petals の分散パイプライン並列を参考に、1ワーカーが VRAM の
 cd LLM-proto
 npm install
 npm test
+npm test -- --run tests/two-worker-prototype.test.ts
 ```
+
+`TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
+run report には segment latency、checkpoint byte size、cache hit、retry count、worker metadata、Coordinator/CDN 接続履歴が含まれる。
 
 ## 関連ドキュメント
 
 | ドキュメント | 内容 | ステータス |
 |---|---|---|
 | [PLAN.md](./PLAN.md) | 計画書 v2.6（確定方針・パイプライン方式） | **確定** |
-| [docs/2b-two-worker-prototype.md](./docs/2b-two-worker-prototype.md) | 2Bクラスモデルを2ワーカー分割で動かす最初の実行仕様 | **次の実装対象** |
+| [docs/2b-two-worker-prototype.md](./docs/2b-two-worker-prototype.md) | 2Bクラスモデルを2ワーカー分割で動かす最初の実行仕様 | **harness 追加済み** |
 | [docs/adaptive-chunk-dispatcher.md](./docs/adaptive-chunk-dispatcher.md) | ワーカー能力・稼働時間・余剰負荷に基づく adaptive chunk dispatcher 仕様 | **2B検証後の次段階** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |

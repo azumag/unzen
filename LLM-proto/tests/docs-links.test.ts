@@ -17,7 +17,10 @@ describe('LLM prototype documentation links', () => {
     expect(prototypeSpec).toContain('2B-class model');
     expect(prototypeSpec).toContain('two-worker split path');
     expect(prototypeSpec).toContain('No browser worker opens a network connection outside');
+    expect(prototypeSpec).toContain('TwoWorkerPrototypeRunner');
+    expect(prototypeSpec).toContain('PrototypeRunReport');
     expect(readme).toContain('docs/2b-two-worker-prototype.md');
+    expect(readme).toContain('tests/two-worker-prototype.test.ts');
     expect(plan).toContain('./docs/2b-two-worker-prototype.md');
   });
 
