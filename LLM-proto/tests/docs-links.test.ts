@@ -31,8 +31,13 @@ describe('LLM prototype documentation links', () => {
 
     expect(dispatcherSpec).toContain('Keep additional PC load inside a 2-3% sustained budget');
     expect(dispatcherSpec).toContain('uptime, spare capacity, heartbeat quality');
+    expect(dispatcherSpec).toContain('src/adaptive-chunk-dispatcher.ts');
+    expect(dispatcherSpec).toContain('tests/adaptive-chunk-dispatcher.test.ts');
+    expect(dispatcherSpec).toContain('selectedChunkLength');
     expect(dispatcherSpec).toContain('No scheduling path introduces worker-to-worker networking');
     expect(readme).toContain('docs/adaptive-chunk-dispatcher.md');
+    expect(readme).toContain('src/adaptive-chunk-dispatcher.ts');
+    expect(readme).toContain('tests/adaptive-chunk-dispatcher.test.ts');
     expect(plan).toContain('./docs/adaptive-chunk-dispatcher.md');
   });
 });
