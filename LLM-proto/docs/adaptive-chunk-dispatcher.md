@@ -11,6 +11,12 @@ the Coordinator should assign longer contiguous chunks to workers that can hold
 them safely, keep browser CPU/GPU pressure near the user-visible budget, and
 prefer long-lived workers for consecutive chunk loading.
 
+The first executable version is implemented in
+`src/adaptive-chunk-dispatcher.ts`. It is a simulated Coordinator-side
+dispatcher: it does not load model weights, but it computes worker-specific
+chunk length, dispatch score inputs, rolling consecutive assignment, load
+throttling, and the run report shape that later model execution will reuse.
+
 ## Scheduling Goals
 
 | Goal | Requirement |
@@ -146,6 +152,28 @@ true:
   load readings, cache-hit state, retry count, and checkpoint transfer timing.
 - No scheduling path introduces worker-to-worker networking or bypasses the
   Coordinator checkpoint boundary.
+
+## Executable Harness
+
+Run the adaptive dispatcher regression suite with:
+
+```bash
+cd LLM-proto
+npm test -- --run tests/adaptive-chunk-dispatcher.test.ts
+```
+
+The simulated harness exposes these report fields:
+
+| Report field | Acceptance criteria covered |
+|---|---|
+| `selectedChunkLength` | Adaptive chunk length per worker |
+| `scoreInputs` | Capacity, stability, cache, throughput, transfer, load, freshness, and rolling-consecutive scoring |
+| `loadReadings` | CPU/GPU load telemetry used for throttling |
+| `cacheHit` | Cached segment preference and warm resident state |
+| `retryCount` | Retry accounting placeholder kept compatible with the 2-worker harness |
+| `checkpointTransferMs` / `checkpointTransferBytes` | Coordinator-mediated checkpoint transfer timing and size |
+| `coldLoad` / `rollingConsecutive` | Long-lived consecutive chunk behavior without worker-to-worker networking |
+| `transport.connections` | Coordinator/CDN allowlist boundary |
 
 ## Relationship To Existing Designs
 
