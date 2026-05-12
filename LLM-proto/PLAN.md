@@ -701,7 +701,7 @@ All-or-Nothing パイプライン:
 
 0. [2B / 2-worker prototype](./docs/2b-two-worker-prototype.md) で、2Bクラスモデルを2セグメント・2ワーカーに固定して、WebGPU実行、チェックポイント転送、IndexedDBキャッシュ、ワーカー喪失時のリジュームを先に実測する
 1. [Adaptive chunk dispatcher](./docs/adaptive-chunk-dispatcher.md) で、ワーカーの演算能力・稼働時間・余剰負荷に基づいてチャンクサイズと連続チャンク割り当てを変える Coordinator 仕様を固める
-2. WebGPUでの30Bモデル部分推論が実現可能か検証
+2. [WebGPU 30B partial inference feasibility](./docs/webgpu-30b-partial-inference-feasibility.md) で、segment manifest、checkpoint tensor shape、runtime候補、AdaptiveChunkDispatcher の telemetry 前提を metadata/report gate として検証し、実ブラウザ WebGPU 計測へ進む条件を固める
 3. チェックポイント(hidden states)のシリアライズ・転送サイズ・速度の実測
 4. ブラウザ離脱率の実測(実際のサイトでの測定、時間分布の分析)
 5. Coordinator プロトタイプ(Cloudflare Workers)
