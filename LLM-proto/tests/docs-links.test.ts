@@ -40,4 +40,21 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('tests/adaptive-chunk-dispatcher.test.ts');
     expect(plan).toContain('./docs/adaptive-chunk-dispatcher.md');
   });
+
+  it('surfaces the WebGPU 30B feasibility gate from the LLM-proto entry points', () => {
+    const feasibilitySpec = readProjectFile('docs/webgpu-30b-partial-inference-feasibility.md');
+    const readme = readProjectFile('README.md');
+    const plan = readProjectFile('PLAN.md');
+
+    expect(feasibilitySpec).toContain('30B Partial Inference Feasibility Gate');
+    expect(feasibilitySpec).toContain('src/webgpu-30b-feasibility.ts');
+    expect(feasibilitySpec).toContain('tests/webgpu-30b-feasibility.test.ts');
+    expect(feasibilitySpec).toContain('checkpointTensorShape');
+    expect(feasibilitySpec).toContain('AdaptiveChunkDispatcher');
+    expect(feasibilitySpec).toContain('Manual Browser/WebGPU Checklist');
+    expect(readme).toContain('docs/webgpu-30b-partial-inference-feasibility.md');
+    expect(readme).toContain('src/webgpu-30b-feasibility.ts');
+    expect(readme).toContain('tests/webgpu-30b-feasibility.test.ts');
+    expect(plan).toContain('./docs/webgpu-30b-partial-inference-feasibility.md');
+  });
 });

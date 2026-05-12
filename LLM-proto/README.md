@@ -64,6 +64,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | Pipeline | `src/pipeline.ts` | 基本パイプライン：1セグメント/1ワーカーでチェックポイント・リジューム実行 |
 | SpanRouter | `src/span-router.ts` | Petals 方式の貪欲ルーティング：ワーカーの VRAM に応じて連続セグメントを割り当て |
 | AdaptiveChunkDispatcher | `src/adaptive-chunk-dispatcher.ts` | telemetry に基づく chunk length / dispatch score / rolling consecutive assignment の simulated 実行ロジック |
+| WebGPU30BFeasibility | `src/webgpu-30b-feasibility.ts` | 30B-class partial inference の segment manifest / checkpoint / runtime metadata gate |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -103,6 +104,7 @@ npm install
 npm test
 npm test -- --run tests/two-worker-prototype.test.ts
 npm test -- --run tests/adaptive-chunk-dispatcher.test.ts
+npm test -- --run tests/webgpu-30b-feasibility.test.ts
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -111,6 +113,9 @@ run report には segment latency、checkpoint byte size、cache hit、retry cou
 `AdaptiveChunkDispatcher` は実モデルを読み込まず、worker telemetry から selected chunk length と dispatch score を計算する。
 run report には selected chunk length、score inputs、load readings、cache hit、retry count、checkpoint transfer timing、cold load / rolling consecutive state、Coordinator/CDN 接続履歴が含まれる。
 
+`WebGPU30BFeasibility` は実モデルを読み込まず、30B-class segment manifest、checkpoint tensor shape、transfer timing、runtime candidate capability、AdaptiveChunkDispatcher の WorkerTelemetry 前提を metadata report として検証する。
+manual browser/WebGPU validation checklist は `docs/webgpu-30b-partial-inference-feasibility.md` に置く。
+
 ## 関連ドキュメント
 
 | ドキュメント | 内容 | ステータス |
@@ -118,6 +123,7 @@ run report には selected chunk length、score inputs、load readings、cache h
 | [PLAN.md](./PLAN.md) | 計画書 v2.6（確定方針・パイプライン方式） | **確定** |
 | [docs/2b-two-worker-prototype.md](./docs/2b-two-worker-prototype.md) | 2Bクラスモデルを2ワーカー分割で動かす最初の実行仕様 | **harness 追加済み** |
 | [docs/adaptive-chunk-dispatcher.md](./docs/adaptive-chunk-dispatcher.md) | ワーカー能力・稼働時間・余剰負荷に基づく adaptive chunk dispatcher 仕様 | **simulated dispatcher 追加済み** |
+| [docs/webgpu-30b-partial-inference-feasibility.md](./docs/webgpu-30b-partial-inference-feasibility.md) | 30B 部分推論に進めるかを判定する WebGPU metadata/report gate | **metadata gate 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
