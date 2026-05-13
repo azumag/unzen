@@ -57,4 +57,22 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('tests/webgpu-30b-feasibility.test.ts');
     expect(plan).toContain('./docs/webgpu-30b-partial-inference-feasibility.md');
   });
+
+  it('surfaces the checkpoint transfer measurement gate from the LLM-proto entry points', () => {
+    const checkpointSpec = readProjectFile('docs/checkpoint-transfer-measurement.md');
+    const readme = readProjectFile('README.md');
+    const plan = readProjectFile('PLAN.md');
+
+    expect(checkpointSpec).toContain('Checkpoint Transfer Measurement Gate');
+    expect(checkpointSpec).toContain('src/checkpoint-transfer-measurement.ts');
+    expect(checkpointSpec).toContain('tests/checkpoint-transfer-measurement.test.ts');
+    expect(checkpointSpec).toContain('serializationMs');
+    expect(checkpointSpec).toContain('observedTransferMs');
+    expect(checkpointSpec).toContain('failureReason');
+    expect(checkpointSpec).toContain('Manual Browser/WebGPU Measurement Path');
+    expect(readme).toContain('docs/checkpoint-transfer-measurement.md');
+    expect(readme).toContain('src/checkpoint-transfer-measurement.ts');
+    expect(readme).toContain('tests/checkpoint-transfer-measurement.test.ts');
+    expect(plan).toContain('./docs/checkpoint-transfer-measurement.md');
+  });
 });
