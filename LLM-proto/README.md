@@ -66,6 +66,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | AdaptiveChunkDispatcher | `src/adaptive-chunk-dispatcher.ts` | telemetry に基づく chunk length / dispatch score / rolling consecutive assignment の simulated 実行ロジック |
 | WebGPU30BFeasibility | `src/webgpu-30b-feasibility.ts` | 30B-class partial inference の segment manifest / checkpoint / runtime metadata gate |
 | CheckpointTransferMeasurement | `src/checkpoint-transfer-measurement.ts` | hidden states checkpoint の serialization / Coordinator transfer measurement gate |
+| BrowserWorkerRetention | `src/browser-worker-retention.ts` | browser worker の session duration / churn / checkpoint resume impact measurement gate |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -107,6 +108,7 @@ npm test -- --run tests/two-worker-prototype.test.ts
 npm test -- --run tests/adaptive-chunk-dispatcher.test.ts
 npm test -- --run tests/webgpu-30b-feasibility.test.ts
 npm test -- --run tests/checkpoint-transfer-measurement.test.ts
+npm test -- --run tests/browser-worker-retention.test.ts
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -121,6 +123,9 @@ manual browser/WebGPU validation checklist は `docs/webgpu-30b-partial-inferenc
 `CheckpointTransferMeasurement` は実モデルを読み込まず、hidden states tensor shape / dtype から deterministic checkpoint payload を生成し、serialization time、deserialization time、Coordinator transfer estimate / observed duration、retry count、failure reason を report する。
 manual browser/WebGPU checkpoint measurement path は `docs/checkpoint-transfer-measurement.md` に置く。
 
+`BrowserWorkerRetention` は実モデルを読み込まず、session duration sample と segment 中離脱イベントから retention curve、p50/p95、early abandon、retry/resume impact、AdaptiveChunkDispatcher telemetry comparison、failure reason を report する。
+manual browser retention measurement path は `docs/browser-worker-retention-measurement.md` に置く。
+
 ## 関連ドキュメント
 
 | ドキュメント | 内容 | ステータス |
@@ -130,6 +135,7 @@ manual browser/WebGPU checkpoint measurement path は `docs/checkpoint-transfer-
 | [docs/adaptive-chunk-dispatcher.md](./docs/adaptive-chunk-dispatcher.md) | ワーカー能力・稼働時間・余剰負荷に基づく adaptive chunk dispatcher 仕様 | **simulated dispatcher 追加済み** |
 | [docs/webgpu-30b-partial-inference-feasibility.md](./docs/webgpu-30b-partial-inference-feasibility.md) | 30B 部分推論に進めるかを判定する WebGPU metadata/report gate | **metadata gate 追加済み** |
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
+| [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
