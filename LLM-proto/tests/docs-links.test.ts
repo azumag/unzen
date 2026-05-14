@@ -75,4 +75,22 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('tests/checkpoint-transfer-measurement.test.ts');
     expect(plan).toContain('./docs/checkpoint-transfer-measurement.md');
   });
+
+  it('surfaces the browser worker retention measurement gate from the LLM-proto entry points', () => {
+    const retentionSpec = readProjectFile('docs/browser-worker-retention-measurement.md');
+    const readme = readProjectFile('README.md');
+    const plan = readProjectFile('PLAN.md');
+
+    expect(retentionSpec).toContain('Browser Worker Retention Measurement Gate');
+    expect(retentionSpec).toContain('src/browser-worker-retention.ts');
+    expect(retentionSpec).toContain('tests/browser-worker-retention.test.ts');
+    expect(retentionSpec).toContain('durationDistribution');
+    expect(retentionSpec).toContain('retentionCurve');
+    expect(retentionSpec).toContain('retryResumeImpact');
+    expect(retentionSpec).toContain('Manual Browser Measurement Path');
+    expect(readme).toContain('docs/browser-worker-retention-measurement.md');
+    expect(readme).toContain('src/browser-worker-retention.ts');
+    expect(readme).toContain('tests/browser-worker-retention.test.ts');
+    expect(plan).toContain('./docs/browser-worker-retention-measurement.md');
+  });
 });

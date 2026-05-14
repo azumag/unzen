@@ -703,7 +703,7 @@ All-or-Nothing パイプライン:
 1. [Adaptive chunk dispatcher](./docs/adaptive-chunk-dispatcher.md) で、ワーカーの演算能力・稼働時間・余剰負荷に基づいてチャンクサイズと連続チャンク割り当てを変える Coordinator 仕様を固める
 2. [WebGPU 30B partial inference feasibility](./docs/webgpu-30b-partial-inference-feasibility.md) で、segment manifest、checkpoint tensor shape、runtime候補、AdaptiveChunkDispatcher の telemetry 前提を metadata/report gate として検証し、実ブラウザ WebGPU 計測へ進む条件を固める
 3. [Checkpoint transfer measurement](./docs/checkpoint-transfer-measurement.md) で、checkpoint(hidden states)のシリアライズ・転送サイズ・速度・retry failure を report gate として検証し、manual browser/WebGPU 計測へ進む条件を固める
-4. ブラウザ離脱率の実測(実際のサイトでの測定、時間分布の分析)
+4. [Browser worker retention measurement](./docs/browser-worker-retention-measurement.md) で、session duration distribution、retention curve、Tier 3 early abandon、checkpoint resume / retry impact を report gate として検証し、実際のサイトでのブラウザ離脱率測定へ進む条件を固める
 5. Coordinator プロトタイプ(Cloudflare Workers)
 6. 安全境界(CSP/サンドボックス/COOP-COEP)の実装検証
 
