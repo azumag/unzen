@@ -67,6 +67,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | WebGPU30BFeasibility | `src/webgpu-30b-feasibility.ts` | 30B-class partial inference の segment manifest / checkpoint / runtime metadata gate |
 | CheckpointTransferMeasurement | `src/checkpoint-transfer-measurement.ts` | hidden states checkpoint の serialization / Coordinator transfer measurement gate |
 | BrowserWorkerRetention | `src/browser-worker-retention.ts` | browser worker の session duration / churn / checkpoint resume impact measurement gate |
+| CoordinatorPrototype | `src/coordinator-prototype.ts` | request lifecycle / heartbeat / adaptive assignment / checkpoint relay / retry-resume を束ねる simulated Coordinator gate |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -109,6 +110,7 @@ npm test -- --run tests/adaptive-chunk-dispatcher.test.ts
 npm test -- --run tests/webgpu-30b-feasibility.test.ts
 npm test -- --run tests/checkpoint-transfer-measurement.test.ts
 npm test -- --run tests/browser-worker-retention.test.ts
+npm test -- --run tests/coordinator-prototype.test.ts
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -126,6 +128,9 @@ manual browser/WebGPU checkpoint measurement path は `docs/checkpoint-transfer-
 `BrowserWorkerRetention` は実モデルを読み込まず、session duration sample と segment 中離脱イベントから retention curve、p50/p95、early abandon、retry/resume impact、AdaptiveChunkDispatcher telemetry comparison、failure reason を report する。
 manual browser retention measurement path は `docs/browser-worker-retention-measurement.md` に置く。
 
+`CoordinatorPrototype` は実モデルを読み込まず、API request lifecycle、worker heartbeat / eligibility、AdaptiveChunkDispatcher assignment、Coordinator-mediated checkpoint relay、worker loss 時の retry/resume impact、failure reason を 1 つの report に束ねる。
+Cloudflare Workers prototype へ進む前の focused gate と report fields は `docs/coordinator-prototype.md` に置く。
+
 ## 関連ドキュメント
 
 | ドキュメント | 内容 | ステータス |
@@ -136,6 +141,7 @@ manual browser retention measurement path は `docs/browser-worker-retention-mea
 | [docs/webgpu-30b-partial-inference-feasibility.md](./docs/webgpu-30b-partial-inference-feasibility.md) | 30B 部分推論に進めるかを判定する WebGPU metadata/report gate | **metadata gate 追加済み** |
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
 | [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
+| [docs/coordinator-prototype.md](./docs/coordinator-prototype.md) | API受付・worker heartbeat・assignment・checkpoint relay・retry/resume を束ねる Coordinator prototype gate | **simulated harness 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
