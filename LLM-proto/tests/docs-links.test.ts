@@ -93,4 +93,23 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('tests/browser-worker-retention.test.ts');
     expect(plan).toContain('./docs/browser-worker-retention-measurement.md');
   });
+
+  it('surfaces the Coordinator prototype gate from the LLM-proto entry points', () => {
+    const coordinatorSpec = readProjectFile('docs/coordinator-prototype.md');
+    const readme = readProjectFile('README.md');
+    const plan = readProjectFile('PLAN.md');
+
+    expect(coordinatorSpec).toContain('Coordinator Prototype Harness');
+    expect(coordinatorSpec).toContain('src/coordinator-prototype.ts');
+    expect(coordinatorSpec).toContain('tests/coordinator-prototype.test.ts');
+    expect(coordinatorSpec).toContain('requestLifecycle');
+    expect(coordinatorSpec).toContain('workerHeartbeats');
+    expect(coordinatorSpec).toContain('checkpointRelay');
+    expect(coordinatorSpec).toContain('retryResumeImpact');
+    expect(coordinatorSpec).toContain('Cloudflare Workers Prototype Handoff');
+    expect(readme).toContain('docs/coordinator-prototype.md');
+    expect(readme).toContain('src/coordinator-prototype.ts');
+    expect(readme).toContain('tests/coordinator-prototype.test.ts');
+    expect(plan).toContain('./docs/coordinator-prototype.md');
+  });
 });
