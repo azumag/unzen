@@ -68,6 +68,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | CheckpointTransferMeasurement | `src/checkpoint-transfer-measurement.ts` | hidden states checkpoint の serialization / Coordinator transfer measurement gate |
 | BrowserWorkerRetention | `src/browser-worker-retention.ts` | browser worker の session duration / churn / checkpoint resume impact measurement gate |
 | CoordinatorPrototype | `src/coordinator-prototype.ts` | request lifecycle / heartbeat / adaptive assignment / checkpoint relay / retry-resume を束ねる simulated Coordinator gate |
+| WorkersCoordinatorPrototype | `src/workers-coordinator-prototype.ts` | Cloudflare Workers 境界の API lifecycle / Durable Object single-writer state / checkpoint relay gate |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -111,6 +112,7 @@ npm test -- --run tests/webgpu-30b-feasibility.test.ts
 npm test -- --run tests/checkpoint-transfer-measurement.test.ts
 npm test -- --run tests/browser-worker-retention.test.ts
 npm test -- --run tests/coordinator-prototype.test.ts
+npm test -- --run tests/workers-coordinator-prototype.test.ts
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -131,6 +133,9 @@ manual browser retention measurement path は `docs/browser-worker-retention-mea
 `CoordinatorPrototype` は実モデルを読み込まず、API request lifecycle、worker heartbeat / eligibility、AdaptiveChunkDispatcher assignment、Coordinator-mediated checkpoint relay、worker loss 時の retry/resume impact、failure reason を 1 つの report に束ねる。
 Cloudflare Workers prototype へ進む前の focused gate と report fields は `docs/coordinator-prototype.md` に置く。
 
+`WorkersCoordinatorPrototype` は実 Cloudflare Workers runtime を起動せず、API request lifecycle、Durable Object 相当の single-writer worker state、AdaptiveChunkDispatcher assignment report、Coordinator-owned checkpoint relay、worker loss retry/resume impact、failure reason を report する。
+Workers boundary の実行手順と次 bottleneck は `docs/workers-coordinator-prototype.md` に置く。
+
 ## 関連ドキュメント
 
 | ドキュメント | 内容 | ステータス |
@@ -142,6 +147,7 @@ Cloudflare Workers prototype へ進む前の focused gate と report fields は 
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
 | [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
 | [docs/coordinator-prototype.md](./docs/coordinator-prototype.md) | API受付・worker heartbeat・assignment・checkpoint relay・retry/resume を束ねる Coordinator prototype gate | **simulated harness 追加済み** |
+| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / checkpoint relay gate | **prototype harness 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
