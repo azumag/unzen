@@ -16,15 +16,18 @@
     "clean": "rm -rf packages/*/dist demo/dist"
   },
   "devDependencies": {
-    "@vitest/ui": "^2.0.0",
-    "tsup": "^8.0.0",
+    "@vitest/ui": "^4.1.7",
+    "tsup": "^8.5.1",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.7"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "hono": "^4.0.0"
+    "hono": "^4.12.22"
+  },
+  "overrides": {
+    "rollup": "^4.60.4"
   }
 }
