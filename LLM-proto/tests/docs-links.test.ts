@@ -120,14 +120,21 @@ describe('LLM prototype documentation links', () => {
 
     expect(workersSpec).toContain('Workers Coordinator Prototype Gate');
     expect(workersSpec).toContain('src/workers-coordinator-prototype.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-miniflare-smoke.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
+    expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('requestLifecycle');
     expect(workersSpec).toContain('Durable Object');
+    expect(workersSpec).toContain('durableObjectStorageFields');
     expect(workersSpec).toContain('retryResumeImpact');
     expect(workersSpec).toContain('direct worker-to-worker URLs are rejected');
+    expect(workersSpec).toContain('load-shaped Wrangler preview');
     expect(readme).toContain('docs/workers-coordinator-prototype.md');
     expect(readme).toContain('src/workers-coordinator-prototype.ts');
+    expect(readme).toContain('src/workers-coordinator-miniflare-smoke.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
+    expect(readme).toContain('npm run test:workers-smoke');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
+    expect(plan).toContain('Miniflare/workerd');
   });
 });
