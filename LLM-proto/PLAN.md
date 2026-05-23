@@ -705,7 +705,7 @@ All-or-Nothing パイプライン:
 3. [Checkpoint transfer measurement](./docs/checkpoint-transfer-measurement.md) で、checkpoint(hidden states)のシリアライズ・転送サイズ・速度・retry failure を report gate として検証し、manual browser/WebGPU 計測へ進む条件を固める
 4. [Browser worker retention measurement](./docs/browser-worker-retention-measurement.md) で、session duration distribution、retention curve、Tier 3 early abandon、checkpoint resume / retry impact を report gate として検証し、実際のサイトでのブラウザ離脱率測定へ進む条件を固める
 5. [Coordinator prototype](./docs/coordinator-prototype.md) で、API受付、worker registration / heartbeat、AdaptiveChunkDispatcher assignment、Coordinator checkpoint relay、resume/retry report、Tier 3 churn eligibility を simulated report gate として束ねる
-6. [Workers Coordinator prototype](./docs/workers-coordinator-prototype.md) で、Cloudflare Workers 境界の API lifecycle、Durable Object single-writer worker state、AdaptiveChunkDispatcher assignment import、Coordinator-owned checkpoint relay、worker loss retry/resume impact を report gate として検証する
+6. [Workers Coordinator prototype](./docs/workers-coordinator-prototype.md) で、Cloudflare Workers 境界の API lifecycle、Durable Object single-writer worker state、AdaptiveChunkDispatcher assignment import、Coordinator-owned checkpoint relay、worker loss retry/resume impact、WebSocket heartbeat p95 fan-out、direct worker-to-worker rejection を report gate として検証する
 7. 安全境界(CSP/サンドボックス/COOP-COEP)の実装検証
 
 ### 7.2 経済性の精緻化

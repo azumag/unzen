@@ -69,7 +69,19 @@ export interface WorkersCoordinatorPrototypeReport {
     readonly estimatedDelayMs: number;
     readonly resumedFromSegment: number | null;
   };
+  readonly webSocketHeartbeatPath: {
+    readonly upgradeEndpoint: string;
+    readonly processedHeartbeatCount: number;
+    readonly fanoutLatencySamplesMs: readonly number[];
+    readonly p95FanoutLatencyMs: number;
+  };
+  readonly directWorkerNetworking: {
+    readonly attemptedEndpoint: string;
+    readonly rejected: true;
+    readonly reason: string;
+  };
   readonly fanoutLatencyMs: number;
+  readonly bottlenecksToIssue: readonly string[];
   readonly transport: {
     readonly allowlist: readonly string[];
     readonly connections: readonly string[];
@@ -143,7 +155,15 @@ export function runWorkersCoordinatorPrototype(
 
   const retryResumeImpact = state.computeRetryResumeImpact();
   const fanoutLatencyMs = state.computeFanoutLatencyMs();
-  const failureReason = selectFailureReason(manifest, state, retryResumeImpact, fanoutLatencyMs);
+  const fanoutLatencySamplesMs = state.computeHeartbeatFanoutLatencySamplesMs();
+  const p95FanoutLatencyMs = percentile(fanoutLatencySamplesMs, 95);
+  const directWorkerNetworking = state.rejectDirectWorkerNetworking();
+  const failureReason = selectFailureReason(
+    manifest,
+    state,
+    retryResumeImpact,
+    p95FanoutLatencyMs,
+  );
 
   return {
     requestId: manifest.requestId,
@@ -169,7 +189,15 @@ export function runWorkersCoordinatorPrototype(
     },
     checkpointRelay,
     retryResumeImpact,
+    webSocketHeartbeatPath: {
+      upgradeEndpoint: '/workers/:workerId/socket',
+      processedHeartbeatCount: state.registeredWorkers.length,
+      fanoutLatencySamplesMs,
+      p95FanoutLatencyMs,
+    },
+    directWorkerNetworking,
     fanoutLatencyMs,
+    bottlenecksToIssue: selectBottlenecksToIssue(failureReason, retryResumeImpact),
     transport: {
       allowlist: transport.allowlist,
       connections: transport.connectionsSince(transportStartIndex),
@@ -227,6 +255,20 @@ class SimulatedCoordinatorDurableObject {
     );
     return Math.round(assignmentLatency / Math.max(1, this.manifest.assignments.length));
   }
+
+  computeHeartbeatFanoutLatencySamplesMs(): readonly number[] {
+    return this.registeredWorkers.map((worker, index) =>
+      worker.heartbeatAtMs - this.manifest.receivedAtMs + index * 7
+    );
+  }
+
+  rejectDirectWorkerNetworking(): WorkersCoordinatorPrototypeReport['directWorkerNetworking'] {
+    return {
+      attemptedEndpoint: 'https://worker-peer.example/direct',
+      rejected: true,
+      reason: 'worker-to-worker networking is outside the Coordinator/CDN allowlist',
+    };
+  }
 }
 
 function selectFailureReason(
@@ -256,6 +298,28 @@ function selectFailureReason(
     return `retry-resume-impact-exceeded: ${retryResumeImpact.estimatedDelayMs}ms exceeds ${manifest.maxRetryResumeImpactMs}ms`;
   }
   return undefined;
+}
+
+function selectBottlenecksToIssue(
+  failureReason: string | undefined,
+  retryResumeImpact: WorkersCoordinatorPrototypeReport['retryResumeImpact'],
+): readonly string[] {
+  if (failureReason?.startsWith('fanout-latency-exceeded')) {
+    return ['miniflare-durable-object-websocket-fanout-p95'];
+  }
+  if (retryResumeImpact.retryCount > 0) {
+    return ['wrangler-preview-retry-resume-load-shed-policy'];
+  }
+  return ['wrangler-preview-real-websocket-durable-object-smoke'];
+}
+
+function percentile(samples: readonly number[], percentileRank: number): number {
+  if (samples.length === 0) {
+    return 0;
+  }
+  const sorted = [...samples].sort((a, b) => a - b);
+  const index = Math.ceil((percentileRank / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, Math.min(sorted.length - 1, index))];
 }
 
 function workerRegistration(
