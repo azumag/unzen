@@ -86,6 +86,20 @@ describe('Workers Coordinator prototype gate', () => {
       estimatedDelayMs: 470,
       resumedFromSegment: assignments[0].startSegment,
     });
+    expect(report.webSocketHeartbeatPath).toEqual({
+      upgradeEndpoint: '/workers/:workerId/socket',
+      processedHeartbeatCount: 3,
+      fanoutLatencySamplesMs: [100, 127, 154],
+      p95FanoutLatencyMs: 154,
+    });
+    expect(report.directWorkerNetworking).toEqual({
+      attemptedEndpoint: 'https://worker-peer.example/direct',
+      rejected: true,
+      reason: 'worker-to-worker networking is outside the Coordinator/CDN allowlist',
+    });
+    expect(report.bottlenecksToIssue).toContain(
+      'wrangler-preview-retry-resume-load-shed-policy',
+    );
     expect(report.failureReason).toBeUndefined();
   });
 
@@ -164,4 +178,20 @@ describe('Workers Coordinator prototype gate', () => {
     });
     expect(report.failureReason).toBe('retry-resume-impact-exceeded: 1055ms exceeds 1000ms');
   });
+});
+
+
+it('fails on p95 WebSocket heartbeat fan-out latency over budget', () => {
+  const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+  const report = runWorkersCoordinatorPrototype({
+    ...base,
+    maxFanoutLatencyMs: 120,
+  });
+
+  expect(report.status).toBe('fail');
+  expect(report.webSocketHeartbeatPath.p95FanoutLatencyMs).toBe(154);
+  expect(report.failureReason).toBe('fanout-latency-exceeded: 154ms exceeds 120ms');
+  expect(report.bottlenecksToIssue).toContain(
+    'miniflare-durable-object-websocket-fanout-p95',
+  );
 });
