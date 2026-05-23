@@ -12,8 +12,8 @@
   "dependencies": {
     "@unzen/server": "file:../packages/server",
     "@unzen/client": "file:../packages/client",
-    "@hono/node-server": "^1.0.0",
-    "hono": "^4.0.0"
+    "@hono/node-server": "^2.0.3",
+    "hono": "^4.12.22"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

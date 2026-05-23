@@ -10,6 +10,14 @@ export interface WorkersCoordinatorMiniflareSmokeOptions {
   readonly concurrentHeartbeatBursts?: number;
 }
 
+export interface WorkersCoordinatorLoadShapedSmokeOptions {
+  readonly manifests: readonly WorkersCoordinatorPrototypeManifest[];
+  readonly durableObjectsPersistRoot: string;
+  readonly heartbeatBursts?: number;
+  readonly churnWorkerIds?: readonly string[];
+  readonly maxP95FanoutLatencyMs?: number;
+}
+
 export interface WorkersCoordinatorMiniflareSmokeReport {
   readonly runtime: 'miniflare';
   readonly requestId: string;
@@ -52,6 +60,42 @@ export interface WorkersCoordinatorMiniflareSmokeReport {
   readonly failureReason?: string;
 }
 
+export interface WorkersCoordinatorLoadShapedSmokeReport {
+  readonly runtime: 'miniflare-load-shaped';
+  readonly status: 'pass' | 'fail';
+  readonly requestIds: readonly string[];
+  readonly customerTraffic: {
+    readonly concurrentApiRequests: number;
+    readonly acceptedApiRequests: number;
+    readonly heartbeatBursts: number;
+    readonly attemptedHeartbeatCount: number;
+    readonly acceptedHeartbeatCount: number;
+    readonly churnedHeartbeatCount: number;
+    readonly churnedWorkerIds: readonly string[];
+  };
+  readonly clientTiming: {
+    readonly source: 'client-performance-now';
+    readonly fanoutLatencySamplesMs: readonly number[];
+    readonly p95FanoutLatencyMs: number;
+  };
+  readonly restartPersistence: {
+    readonly persisted: boolean;
+    readonly durableObjectsPersistRoot: string;
+    readonly beforeRestartStorageKeyCount: number;
+    readonly afterRestartStorageKeyCount: number;
+    readonly persistedRequestIds: readonly string[];
+    readonly missingRequestIds: readonly string[];
+  };
+  readonly requestReports: readonly WorkersCoordinatorMiniflareSmokeReport[];
+  readonly directWorkerNetworking: WorkersCoordinatorMiniflareSmokeReport['directWorkerNetworking'];
+  readonly retryResumeImpact: {
+    readonly totalRetryCount: number;
+    readonly totalResumeCount: number;
+    readonly maxEstimatedDelayMs: number;
+  };
+  readonly failureReason?: string;
+}
+
 interface WebSocketUpgradeResponse extends Response {
   readonly webSocket?: MiniflareWebSocket | null;
 }
@@ -71,20 +115,20 @@ interface HeartbeatAck {
   readonly fanoutLatencyMs: number;
 }
 
+interface MeasuredHeartbeatAck extends HeartbeatAck {
+  readonly requestId: string;
+  readonly burst: number;
+  readonly clientMeasuredLatencyMs: number;
+}
+
 const DEFAULT_HEARTBEAT_BURSTS = 4;
+const DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS = 5;
 
 export async function runWorkersCoordinatorMiniflareSmoke(
   options: WorkersCoordinatorMiniflareSmokeOptions,
 ): Promise<WorkersCoordinatorMiniflareSmokeReport> {
   const heartbeatBursts = options.concurrentHeartbeatBursts ?? DEFAULT_HEARTBEAT_BURSTS;
-  const mf = new Miniflare({
-    modules: true,
-    script: createWorkersCoordinatorMiniflareScript(),
-    compatibilityDate: '2025-01-01',
-    durableObjects: {
-      COORDINATOR: 'WorkersCoordinatorDurableObject',
-    },
-  });
+  const mf = createWorkersCoordinatorMiniflare();
 
   try {
     const requestResponse = await mf.dispatchFetch('http://workers.local/api/requests', {
@@ -131,6 +175,163 @@ export async function runWorkersCoordinatorMiniflareSmoke(
   }
 }
 
+export async function runWorkersCoordinatorLoadShapedSmoke(
+  options: WorkersCoordinatorLoadShapedSmokeOptions,
+): Promise<WorkersCoordinatorLoadShapedSmokeReport> {
+  if (options.manifests.length === 0) {
+    throw new Error('Load-shaped Workers Coordinator smoke requires at least one manifest');
+  }
+
+  const heartbeatBursts = options.heartbeatBursts ?? DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS;
+  const fallbackChurnWorkerId = options.manifests[0].lostWorkerId;
+  const churnWorkerIds = new Set(
+    options.churnWorkerIds ?? (fallbackChurnWorkerId ? [fallbackChurnWorkerId] : []),
+  );
+  const requestIds = options.manifests.map((manifest) => manifest.requestId);
+  const maxP95FanoutLatencyMs = options.maxP95FanoutLatencyMs ?? Math.max(
+    ...options.manifests.map((manifest) => manifest.maxFanoutLatencyMs),
+  );
+
+  let mf = createWorkersCoordinatorMiniflare(options.durableObjectsPersistRoot);
+  let disposed = false;
+
+  try {
+    const requestResponses = await Promise.all(
+      options.manifests.map((manifest) =>
+        mf.dispatchFetch('http://workers.local/api/requests', {
+          method: 'POST',
+          body: JSON.stringify(manifest),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }),
+      ),
+    );
+    const acceptedApiRequests = requestResponses.filter((response) => response.status === 202).length;
+
+    const measuredHeartbeats: MeasuredHeartbeatAck[] = [];
+    let attemptedHeartbeatCount = 0;
+    let churnedHeartbeatCount = 0;
+    const churnStartBurst = Math.max(1, Math.floor(heartbeatBursts / 2));
+
+    for (let burst = 0; burst < heartbeatBursts; burst++) {
+      const burstHeartbeats: Promise<MeasuredHeartbeatAck>[] = [];
+      for (const manifest of options.manifests) {
+        for (const worker of manifest.workers) {
+          attemptedHeartbeatCount++;
+          if (churnWorkerIds.has(worker.id) && burst >= churnStartBurst) {
+            churnedHeartbeatCount++;
+            continue;
+          }
+          burstHeartbeats.push(dispatchMeasuredHeartbeat(mf, worker.id, {
+            requestId: manifest.requestId,
+            sentAtMs: Date.now(),
+            burst,
+          }));
+        }
+      }
+      measuredHeartbeats.push(...await Promise.all(burstHeartbeats));
+    }
+
+    const directResponse = await mf.dispatchFetch('http://workers.local/worker-peer/direct', {
+      method: 'POST',
+    });
+    if (directResponse.status !== 403) {
+      throw new Error(`direct worker networking was not rejected: ${directResponse.status}`);
+    }
+
+    const beforeRestartReports = await readSmokeReports(mf, requestIds);
+    const beforeRestartStorageKeyCount = countUniqueStorageKeys(beforeRestartReports);
+
+    await mf.dispose();
+    disposed = true;
+
+    mf = createWorkersCoordinatorMiniflare(options.durableObjectsPersistRoot);
+    disposed = false;
+
+    const afterRestartReports = await readSmokeReports(mf, requestIds);
+    const afterRestartStorageKeyCount = countUniqueStorageKeys(afterRestartReports);
+    const persistedRequestIds = afterRestartReports
+      .filter((report) => report.durableObjectStorageFields.storageKeys.includes(`manifest:${report.requestId}`))
+      .map((report) => report.requestId);
+    const missingRequestIds = requestIds.filter((requestId) => !persistedRequestIds.includes(requestId));
+    const persisted = missingRequestIds.length === 0 && afterRestartStorageKeyCount >= beforeRestartStorageKeyCount;
+
+    const fanoutLatencySamplesMs = measuredHeartbeats.map(
+      (heartbeat) => heartbeat.clientMeasuredLatencyMs,
+    );
+    const p95FanoutLatencyMs = percentileNumber(fanoutLatencySamplesMs, 95);
+    const totalRetryCount = afterRestartReports.reduce(
+      (sum, report) => sum + report.retryResumeImpact.retryCount,
+      0,
+    );
+    const totalResumeCount = afterRestartReports.reduce(
+      (sum, report) => sum + report.retryResumeImpact.resumeCount,
+      0,
+    );
+    const maxEstimatedDelayMs = afterRestartReports.reduce(
+      (max, report) => Math.max(max, report.retryResumeImpact.estimatedDelayMs),
+      0,
+    );
+    const directWorkerNetworking = afterRestartReports[0]?.directWorkerNetworking ?? {
+      attemptedEndpoint: 'https://worker-peer.example/direct',
+      rejected: false,
+      reason: 'direct worker-to-worker route was not exercised',
+      httpStatus: 200,
+    };
+    const nestedFailure = afterRestartReports.find((report) => report.failureReason)?.failureReason;
+    const failureReason = selectLoadShapedFailureReason({
+      nestedFailure,
+      persisted,
+      directWorkerNetworkingRejected: directWorkerNetworking.rejected,
+      p95FanoutLatencyMs,
+      maxP95FanoutLatencyMs,
+      acceptedApiRequests,
+      expectedApiRequests: options.manifests.length,
+    });
+
+    return {
+      runtime: 'miniflare-load-shaped',
+      status: failureReason ? 'fail' : 'pass',
+      requestIds,
+      customerTraffic: {
+        concurrentApiRequests: options.manifests.length,
+        acceptedApiRequests,
+        heartbeatBursts,
+        attemptedHeartbeatCount,
+        acceptedHeartbeatCount: measuredHeartbeats.length,
+        churnedHeartbeatCount,
+        churnedWorkerIds: [...churnWorkerIds],
+      },
+      clientTiming: {
+        source: 'client-performance-now',
+        fanoutLatencySamplesMs,
+        p95FanoutLatencyMs,
+      },
+      restartPersistence: {
+        persisted,
+        durableObjectsPersistRoot: options.durableObjectsPersistRoot,
+        beforeRestartStorageKeyCount,
+        afterRestartStorageKeyCount,
+        persistedRequestIds,
+        missingRequestIds,
+      },
+      requestReports: afterRestartReports,
+      directWorkerNetworking,
+      retryResumeImpact: {
+        totalRetryCount,
+        totalResumeCount,
+        maxEstimatedDelayMs,
+      },
+      failureReason,
+    };
+  } finally {
+    if (!disposed) {
+      await mf.dispose();
+    }
+  }
+}
+
 async function dispatchHeartbeat(
   mf: Miniflare,
   workerId: string,
@@ -168,6 +369,82 @@ async function dispatchHeartbeat(
   const result = await ack;
   socket.close(1000, 'heartbeat complete');
   return result;
+}
+
+async function dispatchMeasuredHeartbeat(
+  mf: Miniflare,
+  workerId: string,
+  payload: {
+    readonly requestId: string;
+    readonly sentAtMs: number;
+    readonly burst: number;
+  },
+): Promise<MeasuredHeartbeatAck> {
+  const response = await mf.dispatchFetch(`http://workers.local/workers/${workerId}/socket`, {
+    headers: {
+      Upgrade: 'websocket',
+    },
+  }) as unknown as WebSocketUpgradeResponse;
+
+  if (response.status !== 101 || !response.webSocket) {
+    throw new Error(`WebSocket upgrade failed for ${workerId}: ${response.status}`);
+  }
+
+  const socket = response.webSocket;
+  socket.accept();
+  const startedAt = performance.now();
+  const ack = new Promise<HeartbeatAck>((resolve, reject) => {
+    socket.addEventListener('message', (event) => {
+      resolve(JSON.parse(String(event.data)) as HeartbeatAck);
+    });
+    socket.addEventListener('error', (event) => {
+      reject(new Error(`WebSocket heartbeat failed for ${workerId}: ${String(event)}`));
+    });
+  });
+  socket.send(JSON.stringify({
+    type: 'heartbeat',
+    ...payload,
+  }));
+  const result = await ack;
+  const clientMeasuredLatencyMs = performance.now() - startedAt;
+  socket.close(1000, 'heartbeat complete');
+  return {
+    ...result,
+    requestId: payload.requestId,
+    burst: payload.burst,
+    clientMeasuredLatencyMs,
+  };
+}
+
+async function readSmokeReports(
+  mf: Miniflare,
+  requestIds: readonly string[],
+): Promise<WorkersCoordinatorMiniflareSmokeReport[]> {
+  return Promise.all(
+    requestIds.map(async (requestId) => {
+      const response = await mf.dispatchFetch(`http://workers.local/api/requests/${requestId}/report`);
+      if (!response.ok) {
+        throw new Error(`Miniflare report endpoint failed for ${requestId}: ${response.status}`);
+      }
+      return await response.json() as WorkersCoordinatorMiniflareSmokeReport;
+    }),
+  );
+}
+
+function countUniqueStorageKeys(reports: readonly WorkersCoordinatorMiniflareSmokeReport[]): number {
+  return new Set(reports.flatMap((report) => report.durableObjectStorageFields.storageKeys)).size;
+}
+
+function createWorkersCoordinatorMiniflare(durableObjectsPersistRoot?: string): Miniflare {
+  return new Miniflare({
+    modules: true,
+    script: createWorkersCoordinatorMiniflareScript(),
+    compatibilityDate: '2025-01-01',
+    durableObjects: {
+      COORDINATOR: 'WorkersCoordinatorDurableObject',
+    },
+    durableObjectsPersist: durableObjectsPersistRoot ?? false,
+  });
 }
 
 function createWorkersCoordinatorMiniflareScript(): string {
@@ -262,13 +539,18 @@ export class WorkersCoordinatorDurableObject {
         server.send(JSON.stringify({ ok: false, reason: 'unsupported-message' }));
         return;
       }
+      const serverReceivedAtMs = Date.now();
+      const fanoutLatencyMs = typeof message.fanoutLatencyMs === 'number'
+        ? message.fanoutLatencyMs
+        : Math.max(0, serverReceivedAtMs - message.sentAtMs);
       await this.state.storage.put(
         'worker:' + workerId + ':heartbeat:' + message.requestId + ':' + message.burst,
         {
           workerId,
           requestId: message.requestId,
           sentAtMs: message.sentAtMs,
-          fanoutLatencyMs: message.fanoutLatencyMs,
+          serverReceivedAtMs,
+          fanoutLatencyMs,
           burst: message.burst,
         },
       );
@@ -276,7 +558,10 @@ export class WorkersCoordinatorDurableObject {
         ok: true,
         type: 'heartbeat-ack',
         workerId,
-        fanoutLatencyMs: message.fanoutLatencyMs,
+        requestId: message.requestId,
+        burst: message.burst,
+        serverReceivedAtMs,
+        fanoutLatencyMs,
       }));
     });
     return new Response(null, {
@@ -304,6 +589,7 @@ export class WorkersCoordinatorDurableObject {
     const heartbeatSamples = storageKeys
       .filter((key) => key.includes(':heartbeat:' + requestId + ':'))
       .map((key) => storage.get(key).fanoutLatencyMs)
+      .filter((sample) => typeof sample === 'number')
       .sort((a, b) => a - b);
     const p95FanoutLatencyMs = percentile(heartbeatSamples, 95);
     const retryResumeImpact = computeRetryResumeImpact(manifest);
@@ -429,4 +715,40 @@ function percentile(samples, percentileRank) {
   return sorted[Math.max(0, Math.min(sorted.length - 1, index))];
 }
 `;
+}
+
+function selectLoadShapedFailureReason(input: {
+  readonly nestedFailure: string | undefined;
+  readonly persisted: boolean;
+  readonly directWorkerNetworkingRejected: boolean;
+  readonly p95FanoutLatencyMs: number;
+  readonly maxP95FanoutLatencyMs: number;
+  readonly acceptedApiRequests: number;
+  readonly expectedApiRequests: number;
+}): string | undefined {
+  if (input.acceptedApiRequests !== input.expectedApiRequests) {
+    return `api-request-acceptance-mismatch: ${input.acceptedApiRequests}/${input.expectedApiRequests}`;
+  }
+  if (!input.directWorkerNetworkingRejected) {
+    return 'direct-worker-networking-not-rejected';
+  }
+  if (!input.persisted) {
+    return 'durable-object-storage-not-persisted-across-restart';
+  }
+  if (input.nestedFailure) {
+    return input.nestedFailure;
+  }
+  if (input.p95FanoutLatencyMs > input.maxP95FanoutLatencyMs) {
+    return `client-timing-p95-exceeded: ${input.p95FanoutLatencyMs}ms exceeds ${input.maxP95FanoutLatencyMs}ms`;
+  }
+  return undefined;
+}
+
+function percentileNumber(samples: readonly number[], percentileRank: number): number {
+  if (samples.length === 0) {
+    return 0;
+  }
+  const sorted = [...samples].sort((a, b) => a - b);
+  const index = Math.ceil((percentileRank / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, Math.min(sorted.length - 1, index))];
 }
