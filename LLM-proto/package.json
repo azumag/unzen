@@ -7,13 +7,14 @@
   "scripts": {
     "test": "vitest run",
     "test:workers-smoke": "vitest run tests/workers-coordinator-miniflare-smoke.test.ts",
+    "test:workers-load-smoke": "vitest run tests/workers-coordinator-load-shaped-smoke.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "miniflare": "^4.20260521.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.7"
   },
   "engines": {
     "node": ">=22.0.0"

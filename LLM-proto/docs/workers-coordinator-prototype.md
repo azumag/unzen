@@ -11,6 +11,10 @@ Miniflare/workerd: `/api/requests` is dispatched as a real Worker fetch,
 registration and checkpoint metadata are persisted through Durable Object
 storage, `/workers/:workerId/socket` is opened as a real WebSocket upgrade, and
 direct worker-to-worker networking is rejected by the Worker route.
+The load-shaped smoke keeps that runtime boundary but drives multiple
+customer-like API requests, measures client-side WebSocket heartbeat timing,
+simulates worker churn, and recreates the Miniflare Worker against the same
+Durable Object persistence root to prove storage survives restart/reload.
 
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
@@ -50,6 +54,16 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorLoadShapedSmokeReport` includes:
+
+- `customerTraffic`
+- `clientTiming`
+- `restartPersistence`
+- `requestReports`
+- `directWorkerNetworking`
+- `retryResumeImpact`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -76,6 +90,7 @@ scale-up threshold.
 cd LLM-proto
 npm test -- --run tests/workers-coordinator-prototype.test.ts
 npm run test:workers-smoke
+npm run test:workers-load-smoke
 ```
 
 The full report gate remains:
@@ -87,8 +102,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the Miniflare smoke stays under the scale-up gate, the next issue should
-replace deterministic heartbeat samples with a load-shaped Wrangler preview or
-deployed Worker run that uses real client timing, storage persistence across
-Worker restarts, and customer-like request concurrency for retry/resume load
-shed policy.
+If the load-shaped Miniflare smoke stays under the scale-up gate, the next
+issue should run the same traffic shape against an authenticated Wrangler preview
+or deployed Worker URL with production-like Durable Object migrations, edge
+placement variance, and real browser WebSocket clients.
