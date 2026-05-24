@@ -16,6 +16,12 @@ customer-like API requests, measures client-side WebSocket heartbeat timing,
 simulates worker churn, and recreates the Miniflare Worker against the same
 Durable Object persistence root to prove storage survives restart/reload.
 
+`src/workers-coordinator-deployed-smoke.ts` lifts that contract to an
+authenticated Wrangler preview or deployed Worker URL. The runner is client
+injected so CI can verify the deployed smoke contract without Cloudflare secrets,
+while a real browser/WebSocket client can supply fetch latency, heartbeat p95,
+edge colo observations, and the deployed Worker report when credentials exist.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -64,6 +70,17 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `retryResumeImpact`
 - `failureReason`
 
+`WorkersCoordinatorDeployedSmokeReport` includes:
+
+- `target`
+- `requestLifecycle`
+- `browserWebSocketTiming`
+- `edgePlacement`
+- `directWorkerNetworking`
+- `upstreamReport`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -91,6 +108,7 @@ cd LLM-proto
 npm test -- --run tests/workers-coordinator-prototype.test.ts
 npm run test:workers-smoke
 npm run test:workers-load-smoke
+npm run test:workers-deployed-smoke
 ```
 
 The full report gate remains:
@@ -102,7 +120,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the load-shaped Miniflare smoke stays under the scale-up gate, the next
-issue should run the same traffic shape against an authenticated Wrangler preview
-or deployed Worker URL with production-like Durable Object migrations, edge
-placement variance, and real browser WebSocket clients.
+If the deployed smoke stays under the scale-up gate, the next issue should add
+production observability and canary release controls: durable per-request
+metrics export, alert thresholds for browser WebSocket p95 and edge placement
+variance, and a rollback path that preserves the Coordinator-owned checkpoint
+boundary.
