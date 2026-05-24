@@ -706,8 +706,9 @@ All-or-Nothing パイプライン:
 4. [Browser worker retention measurement](./docs/browser-worker-retention-measurement.md) で、session duration distribution、retention curve、Tier 3 early abandon、checkpoint resume / retry impact を report gate として検証し、実際のサイトでのブラウザ離脱率測定へ進む条件を固める
 5. [Coordinator prototype](./docs/coordinator-prototype.md) で、API受付、worker registration / heartbeat、AdaptiveChunkDispatcher assignment、Coordinator checkpoint relay、resume/retry report、Tier 3 churn eligibility を simulated report gate として束ねる
 6. [Workers Coordinator prototype](./docs/workers-coordinator-prototype.md) で、Cloudflare Workers 境界の API lifecycle、Durable Object single-writer worker state、AdaptiveChunkDispatcher assignment import、Coordinator-owned checkpoint relay、worker loss retry/resume impact、WebSocket heartbeat p95 fan-out、direct worker-to-worker rejection を report gate として検証する
-7. [Workers Coordinator Miniflare smoke](./docs/workers-coordinator-prototype.md) で、Miniflare/workerd の real Worker fetch、Durable Object storage、WebSocket upgrade、direct worker-to-worker rejection、load-shaped request concurrency、client-side heartbeat timing、restart persistence を focused smoke として検証し、次は authenticated Wrangler preview / deployed Worker bottleneck に進む
-8. 安全境界(CSP/サンドボックス/COOP-COEP)の実装検証
+7. [Workers Coordinator Miniflare smoke](./docs/workers-coordinator-prototype.md) で、Miniflare/workerd の real Worker fetch、Durable Object storage、WebSocket upgrade、direct worker-to-worker rejection、load-shaped request concurrency、client-side heartbeat timing、restart persistence を focused smoke として検証する
+8. [Workers Coordinator deployed smoke](./docs/workers-coordinator-prototype.md) で、authenticated Wrangler preview / deployed Worker URL の auth header presence、Durable Object migration tag、real browser WebSocket timing、edge placement variance、direct worker-to-worker rejection を focused smoke として検証し、次は production observability / canary release bottleneck に進む
+9. 安全境界(CSP/サンドボックス/COOP-COEP)の実装検証
 
 ### 7.2 経済性の精緻化
 
