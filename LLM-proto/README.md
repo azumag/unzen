@@ -71,6 +71,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | WorkersCoordinatorPrototype | `src/workers-coordinator-prototype.ts` | Cloudflare Workers 境界の API lifecycle / Durable Object state / WebSocket heartbeat p95 / checkpoint relay gate |
 | WorkersCoordinatorMiniflareSmoke | `src/workers-coordinator-miniflare-smoke.ts` | Miniflare runtime の fetch / Durable Object storage / WebSocket heartbeat / load-shaped restart smoke gate |
 | WorkersCoordinatorDeployedSmoke | `src/workers-coordinator-deployed-smoke.ts` | authenticated Wrangler preview / deployed Worker URL の fetch / browser WebSocket / edge placement smoke gate |
+| WorkersCoordinatorProductionObservabilityCanary | `src/workers-coordinator-production-observability-canary.ts` | deployed smoke report から production metrics export / alert threshold / canary rollback gate を検証 |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -118,6 +119,7 @@ npm test -- --run tests/workers-coordinator-prototype.test.ts
 npm run test:workers-smoke
 npm run test:workers-load-smoke
 npm run test:workers-deployed-smoke
+npm run test:workers-production-gate
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -144,6 +146,7 @@ Workers boundary の WebSocket heartbeat p95、direct worker-to-worker rejection
 `WorkersCoordinatorMiniflareSmoke` は Miniflare/workerd を起動し、`/api/requests` fetch endpoint、Durable Object storage、`/workers/:workerId/socket` WebSocket upgrade、direct worker-to-worker rejection を実ランタイムの smoke として検証する。
 `test:workers-load-smoke` では複数の `/api/requests`、worker heartbeat churn、client-side WebSocket timing、Durable Object storage の再起動後 persistence も検証する。
 `WorkersCoordinatorDeployedSmoke` は authenticated Wrangler preview / deployed Worker URL を対象に、auth header presence、Durable Object migration tag、real browser WebSocket timing、edge placement variance、direct worker-to-worker rejection を同じ report contract で検証する。
+`WorkersCoordinatorProductionObservabilityCanary` は deployed smoke report を入力に、durable per-request metrics export、browser WebSocket p95 / edge placement variance / direct worker-to-worker rejection / upstream failure reason の alert threshold、canary promote/hold/rollback decision、Coordinator-owned checkpoint boundary preservation を検証する。
 focused commands、report fields、次の real-runtime bottleneck は `docs/workers-coordinator-prototype.md` に置く。
 
 ## 関連ドキュメント
@@ -157,7 +160,7 @@ focused commands、report fields、次の real-runtime bottleneck は `docs/work
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
 | [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
 | [docs/coordinator-prototype.md](./docs/coordinator-prototype.md) | API受付・worker heartbeat・assignment・checkpoint relay・retry/resume を束ねる Coordinator prototype gate | **simulated harness 追加済み** |
-| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke gate | **deployed smoke 追加済み** |
+| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary gate | **production gate 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |

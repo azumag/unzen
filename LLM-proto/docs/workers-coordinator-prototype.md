@@ -22,6 +22,14 @@ injected so CI can verify the deployed smoke contract without Cloudflare secrets
 while a real browser/WebSocket client can supply fetch latency, heartbeat p95,
 edge colo observations, and the deployed Worker report when credentials exist.
 
+`src/workers-coordinator-production-observability-canary.ts` consumes the
+deployed smoke report as the production release contract. It exports durable
+per-request metrics, evaluates alert thresholds for browser WebSocket p95, edge
+placement variance, direct worker-to-worker rejection, upstream Worker failure
+reason, and retry count, then makes a deterministic canary promote/hold/rollback
+decision while proving rollback stays inside the Coordinator-owned checkpoint
+boundary.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -81,6 +89,15 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorProductionObservabilityCanaryReport` includes:
+
+- `metricsExport`
+- `alertThresholds`
+- `canaryRelease`
+- `rollbackCheckpointBoundary`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -109,6 +126,7 @@ npm test -- --run tests/workers-coordinator-prototype.test.ts
 npm run test:workers-smoke
 npm run test:workers-load-smoke
 npm run test:workers-deployed-smoke
+npm run test:workers-production-gate
 ```
 
 The full report gate remains:
@@ -120,8 +138,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the deployed smoke stays under the scale-up gate, the next issue should add
-production observability and canary release controls: durable per-request
-metrics export, alert thresholds for browser WebSocket p95 and edge placement
-variance, and a rollback path that preserves the Coordinator-owned checkpoint
-boundary.
+If the production observability canary gate promotes cleanly, the next issue
+should implement the signed runner safety boundary: CSP, sandbox iframe,
+COOP/COEP headers, and release blocking that proves the deployed Worker cannot
+ship a runner that opens non-Coordinator/CDN network paths.
