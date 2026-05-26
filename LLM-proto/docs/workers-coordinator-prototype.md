@@ -30,6 +30,13 @@ reason, and retry count, then makes a deterministic canary promote/hold/rollback
 decision while proving rollback stays inside the Coordinator-owned checkpoint
 boundary.
 
+`src/workers-coordinator-signed-runner-release-gate.ts` starts from a clean
+production canary report and validates the signed runner delivery boundary. It
+records the runner CSP `connect-src`, sandbox iframe flags, top-level DOM /
+Cookie / Storage isolation, COOP / COEP response headers, signature verification,
+allowed Coordinator / CDN origins, and a blocked non-Coordinator/CDN network
+attempt before release can proceed.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -98,6 +105,16 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorSignedRunnerReleaseGateReport` includes:
+
+- `csp`
+- `sandboxIframe`
+- `coopCoepHeaders`
+- `signature`
+- `networkBoundary`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -127,6 +144,7 @@ npm run test:workers-smoke
 npm run test:workers-load-smoke
 npm run test:workers-deployed-smoke
 npm run test:workers-production-gate
+npm run test:workers-signed-runner-gate
 ```
 
 The full report gate remains:
@@ -138,7 +156,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the production observability canary gate promotes cleanly, the next issue
-should implement the signed runner safety boundary: CSP, sandbox iframe,
-COOP/COEP headers, and release blocking that proves the deployed Worker cannot
-ship a runner that opens non-Coordinator/CDN network paths.
+If the signed runner release gate passes, the next issue should run the same CSP,
+sandbox iframe, COOP/COEP, signature, and network-boundary assertions against a
+real browser plus authenticated Wrangler preview URL so deterministic reports are
+covered by an end-to-end deployment path.
