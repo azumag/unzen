@@ -73,6 +73,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | WorkersCoordinatorDeployedSmoke | `src/workers-coordinator-deployed-smoke.ts` | authenticated Wrangler preview / deployed Worker URL の fetch / browser WebSocket / edge placement smoke gate |
 | WorkersCoordinatorProductionObservabilityCanary | `src/workers-coordinator-production-observability-canary.ts` | deployed smoke report から production metrics export / alert threshold / canary rollback gate を検証 |
 | WorkersCoordinatorSignedRunnerReleaseGate | `src/workers-coordinator-signed-runner-release-gate.ts` | signed runner の CSP / sandbox iframe / COOP-COEP / network allowlist release gate を検証 |
+| WorkersCoordinatorSignedRunnerBrowserPreview | `src/workers-coordinator-signed-runner-browser-preview.ts` | signed runner 境界を real browser harness と authenticated Wrangler preview / deployed Worker URL で検証 |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -122,6 +123,7 @@ npm run test:workers-load-smoke
 npm run test:workers-deployed-smoke
 npm run test:workers-production-gate
 npm run test:workers-signed-runner-gate
+npm run test:workers-signed-runner-browser-preview
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -150,6 +152,7 @@ Workers boundary の WebSocket heartbeat p95、direct worker-to-worker rejection
 `WorkersCoordinatorDeployedSmoke` は authenticated Wrangler preview / deployed Worker URL を対象に、auth header presence、Durable Object migration tag、real browser WebSocket timing、edge placement variance、direct worker-to-worker rejection を同じ report contract で検証する。
 `WorkersCoordinatorProductionObservabilityCanary` は deployed smoke report を入力に、durable per-request metrics export、browser WebSocket p95 / edge placement variance / direct worker-to-worker rejection / upstream failure reason の alert threshold、canary promote/hold/rollback decision、Coordinator-owned checkpoint boundary preservation を検証する。
 `WorkersCoordinatorSignedRunnerReleaseGate` は production canary の clean promote を前提に、signed runner delivery の CSP connect-src、sandbox iframe allow-scripts 境界、top-level DOM / Cookie / Storage 非依存、COOP / COEP header、Coordinator / CDN 以外への network attempt blocking を検証する。
+`WorkersCoordinatorSignedRunnerBrowserPreview` は同じ signed runner delivery 境界を real browser harness の authenticated Wrangler preview / deployed Worker URL evidence に通し、runner URL、CSP connect-src、sandbox flags、COOP / COEP headers、allowed origins、blocked non-Coordinator/CDN network attempt、failure reason を report 化する。
 focused commands、report fields、次の real-runtime bottleneck は `docs/workers-coordinator-prototype.md` に置く。
 
 ## 関連ドキュメント
@@ -163,7 +166,7 @@ focused commands、report fields、次の real-runtime bottleneck は `docs/work
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
 | [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
 | [docs/coordinator-prototype.md](./docs/coordinator-prototype.md) | API受付・worker heartbeat・assignment・checkpoint relay・retry/resume を束ねる Coordinator prototype gate | **simulated harness 追加済み** |
-| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary / signed runner release gate | **signed runner gate 追加済み** |
+| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary / signed runner browser preview gate | **browser preview gate 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
