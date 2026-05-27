@@ -11,6 +11,7 @@
     "test:workers-deployed-smoke": "vitest run tests/workers-coordinator-deployed-smoke.test.ts",
     "test:workers-production-gate": "vitest run tests/workers-coordinator-production-observability-canary.test.ts",
     "test:workers-signed-runner-gate": "vitest run tests/workers-coordinator-signed-runner-release-gate.test.ts",
+    "test:workers-signed-runner-browser-preview": "vitest run tests/workers-coordinator-signed-runner-browser-preview.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

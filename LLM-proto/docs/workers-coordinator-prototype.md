@@ -37,6 +37,13 @@ Cookie / Storage isolation, COOP / COEP response headers, signature verification
 allowed Coordinator / CDN origins, and a blocked non-Coordinator/CDN network
 attempt before release can proceed.
 
+`src/workers-coordinator-signed-runner-browser-preview.ts` takes the same signed
+runner boundary through a real-browser harness against an authenticated Wrangler
+preview or deployed Worker URL. It records the target URL and auth preflight,
+browser-captured runner headers, CSP `connect-src`, sandbox flags, COOP / COEP,
+allowed origins, and blocked non-Coordinator/CDN network attempts before routing
+to the next pilot bottleneck.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -115,6 +122,16 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorSignedRunnerBrowserPreviewReport` includes:
+
+- `target`
+- `browserHarness`
+- `releaseGateReport`
+- `allowedOrigins`
+- `blockedNonCoordinatorCdnNetworkAttempt`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -145,6 +162,7 @@ npm run test:workers-load-smoke
 npm run test:workers-deployed-smoke
 npm run test:workers-production-gate
 npm run test:workers-signed-runner-gate
+npm run test:workers-signed-runner-browser-preview
 ```
 
 The full report gate remains:
@@ -156,7 +174,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the signed runner release gate passes, the next issue should run the same CSP,
-sandbox iframe, COOP/COEP, signature, and network-boundary assertions against a
-real browser plus authenticated Wrangler preview URL so deterministic reports are
-covered by an end-to-end deployment path.
+If the signed runner browser preview gate passes, the next issue should attach a
+real WebGPU worker pilot to the preview URL and measure whether signed runner
+isolation still holds while model segment execution, IndexedDB cache use, and
+checkpoint relay are active.
