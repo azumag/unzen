@@ -125,6 +125,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('src/workers-coordinator-production-observability-canary.ts');
     expect(workersSpec).toContain('src/workers-coordinator-signed-runner-release-gate.ts');
     expect(workersSpec).toContain('src/workers-coordinator-signed-runner-browser-preview.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('npm run test:workers-load-smoke');
@@ -132,6 +133,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('npm run test:workers-production-gate');
     expect(workersSpec).toContain('npm run test:workers-signed-runner-gate');
     expect(workersSpec).toContain('npm run test:workers-signed-runner-browser-preview');
+    expect(workersSpec).toContain('npm run test:workers-signed-runner-webgpu-worker-pilot');
     expect(workersSpec).toContain('requestLifecycle');
     expect(workersSpec).toContain('Durable Object');
     expect(workersSpec).toContain('durableObjectStorageFields');
@@ -147,10 +149,13 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('networkBoundary');
     expect(workersSpec).toContain('browserHarness');
     expect(workersSpec).toContain('blockedNonCoordinatorCdnNetworkAttempt');
+    expect(workersSpec).toContain('segmentExecution');
+    expect(workersSpec).toContain('indexedDbCache');
+    expect(workersSpec).toContain('securityBoundaryDuringExecution');
     expect(workersSpec).toContain('retryResumeImpact');
     expect(workersSpec).toContain('direct worker-to-worker URLs are rejected');
     expect(workersSpec).toContain('authenticated Wrangler preview');
-    expect(workersSpec).toContain('real WebGPU worker pilot');
+    expect(workersSpec).toContain('WebGPU worker performance and fallback telemetry');
     expect(readme).toContain('docs/workers-coordinator-prototype.md');
     expect(readme).toContain('src/workers-coordinator-prototype.ts');
     expect(readme).toContain('src/workers-coordinator-miniflare-smoke.ts');
@@ -158,6 +163,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('src/workers-coordinator-production-observability-canary.ts');
     expect(readme).toContain('src/workers-coordinator-signed-runner-release-gate.ts');
     expect(readme).toContain('src/workers-coordinator-signed-runner-browser-preview.ts');
+    expect(readme).toContain('src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(readme).toContain('npm run test:workers-smoke');
     expect(readme).toContain('npm run test:workers-load-smoke');
@@ -165,6 +171,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-production-gate');
     expect(readme).toContain('npm run test:workers-signed-runner-gate');
     expect(readme).toContain('npm run test:workers-signed-runner-browser-preview');
+    expect(readme).toContain('npm run test:workers-signed-runner-webgpu-worker-pilot');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -173,5 +180,7 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('rollback checkpoint boundary');
     expect(plan).toContain('signed runner release gate');
     expect(plan).toContain('signed runner browser preview gate');
+    expect(plan).toContain('signed runner real WebGPU worker pilot gate');
+    expect(plan).toContain('WebGPU worker performance / fallback telemetry');
   });
 });

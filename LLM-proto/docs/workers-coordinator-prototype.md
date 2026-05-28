@@ -44,6 +44,13 @@ browser-captured runner headers, CSP `connect-src`, sandbox flags, COOP / COEP,
 allowed origins, and blocked non-Coordinator/CDN network attempts before routing
 to the next pilot bottleneck.
 
+`src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts` connects that
+preview runner to a real WebGPU dedicated worker pilot. The report keeps the
+preview runner URL, model segment execution state, IndexedDB segment cache
+evidence, Coordinator-owned checkpoint relay evidence, CSP `connect-src`,
+sandbox flags, COOP / COEP, allowed origins, and blocked non-Coordinator/CDN
+network attempts in one gate while the worker is actively executing a segment.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -132,6 +139,16 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport` includes:
+
+- `previewRunnerUrl`
+- `segmentExecution`
+- `indexedDbCache`
+- `checkpointRelay`
+- `securityBoundaryDuringExecution`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -163,6 +180,7 @@ npm run test:workers-deployed-smoke
 npm run test:workers-production-gate
 npm run test:workers-signed-runner-gate
 npm run test:workers-signed-runner-browser-preview
+npm run test:workers-signed-runner-webgpu-worker-pilot
 ```
 
 The full report gate remains:
@@ -174,7 +192,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the signed runner browser preview gate passes, the next issue should attach a
-real WebGPU worker pilot to the preview URL and measure whether signed runner
-isolation still holds while model segment execution, IndexedDB cache use, and
-checkpoint relay are active.
+If the signed runner real WebGPU worker pilot gate passes, the next issue should
+add WebGPU worker performance and fallback telemetry: segment latency
+distribution, cache hit/miss timing, checkpoint relay duration, WebGPU device
+loss handling, and CPU fallback routing while the same signed runner isolation
+and Coordinator/CDN network boundary remain active.
