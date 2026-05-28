@@ -711,7 +711,8 @@ All-or-Nothing パイプライン:
 9. [Workers Coordinator production observability canary gate](./docs/workers-coordinator-prototype.md) で、durable per-request metrics export、browser WebSocket p95 / edge placement variance / direct worker-to-worker rejection / upstream failure reason の alert threshold、canary release decision、rollback checkpoint boundary を deterministic report gate として検証する
 10. [Workers Coordinator signed runner release gate](./docs/workers-coordinator-prototype.md) で、signed runner の CSP connect-src、sandbox iframe allow-scripts 境界、top-level DOM / Cookie / Storage 非依存、COOP / COEP header、Coordinator / CDN 以外への network attempt blocking を deterministic release gate として検証する
 11. [Workers Coordinator signed runner browser preview gate](./docs/workers-coordinator-prototype.md) で、同じ signed runner safety boundary を real browser harness と authenticated Wrangler preview / deployed Worker URL の header/network evidence で検証する
-12. 実 WebGPU worker pilot で signed runner isolation と segment 実行 / IndexedDB cache / checkpoint relay の同時成立を検証する
+12. [Workers Coordinator signed runner real WebGPU worker pilot gate](./docs/workers-coordinator-prototype.md) で、preview runner URL 上の model segment execution、IndexedDB cache、Coordinator-owned checkpoint relay、CSP/sandbox/COOP-COEP/network boundary の同時成立を検証する
+13. WebGPU worker performance / fallback telemetry で、segment latency distribution、cache hit/miss timing、checkpoint relay duration、WebGPU device loss、CPU fallback routing を実測 report 化する
 
 ### 7.2 経済性の精緻化
 
