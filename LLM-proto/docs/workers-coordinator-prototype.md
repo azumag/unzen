@@ -51,6 +51,13 @@ evidence, Coordinator-owned checkpoint relay evidence, CSP `connect-src`,
 sandbox flags, COOP / COEP, allowed origins, and blocked non-Coordinator/CDN
 network attempts in one gate while the worker is actively executing a segment.
 
+`src/workers-coordinator-webgpu-worker-performance-telemetry.ts` turns the
+passing pilot into production decision telemetry. It reports segment latency
+distribution, IndexedDB cache hit/miss timing, Coordinator checkpoint relay
+duration/retry/failure reasons, WebGPU device loss handling, CPU fallback
+routing, and the same signed runner isolation / Coordinator-CDN network boundary
+while telemetry collection is active.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -149,6 +156,18 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport` includes:
+
+- `previewRunnerUrl`
+- `segmentLatencyDistribution`
+- `indexedDbCacheTiming`
+- `checkpointRelayTiming`
+- `webGpuDeviceLoss`
+- `cpuFallbackRouting`
+- `securityBoundaryDuringTelemetry`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -181,6 +200,7 @@ npm run test:workers-production-gate
 npm run test:workers-signed-runner-gate
 npm run test:workers-signed-runner-browser-preview
 npm run test:workers-signed-runner-webgpu-worker-pilot
+npm run test:workers-webgpu-telemetry
 ```
 
 The full report gate remains:
@@ -192,8 +212,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the signed runner real WebGPU worker pilot gate passes, the next issue should
-add WebGPU worker performance and fallback telemetry: segment latency
-distribution, cache hit/miss timing, checkpoint relay duration, WebGPU device
-loss handling, and CPU fallback routing while the same signed runner isolation
-and Coordinator/CDN network boundary remain active.
+If the WebGPU worker performance / fallback telemetry gate passes, the next
+issue should add a production worker fleet SLO and cost gate: aggregate p95
+segment latency by device tier, fallback rate, cache warmup cost, checkpoint
+relay spend, user opt-in impact, and promote/hold thresholds for moving beyond a
+single signed runner preview pilot.

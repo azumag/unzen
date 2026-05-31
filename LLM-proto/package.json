@@ -13,6 +13,7 @@
     "test:workers-signed-runner-gate": "vitest run tests/workers-coordinator-signed-runner-release-gate.test.ts",
     "test:workers-signed-runner-browser-preview": "vitest run tests/workers-coordinator-signed-runner-browser-preview.test.ts",
     "test:workers-signed-runner-webgpu-worker-pilot": "vitest run tests/workers-coordinator-signed-runner-webgpu-worker-pilot.test.ts",
+    "test:workers-webgpu-telemetry": "vitest run tests/workers-coordinator-webgpu-worker-performance-telemetry.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
