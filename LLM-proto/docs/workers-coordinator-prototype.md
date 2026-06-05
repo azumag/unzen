@@ -58,6 +58,14 @@ duration/retry/failure reasons, WebGPU device loss handling, CPU fallback
 routing, and the same signed runner isolation / Coordinator-CDN network boundary
 while telemetry collection is active.
 
+`src/workers-coordinator-production-worker-fleet-slo-cost.ts` aggregates that
+single-runner telemetry into a production worker fleet SLO and cost gate. It
+reports p95 segment latency by device tier, WebGPU device loss and CPU fallback
+rate, IndexedDB cache warmup cost and miss penalty, Coordinator checkpoint relay
+spend / retry / failure budget, user opt-in impact, promote/hold thresholds, and
+the signed runner isolation / Coordinator-CDN network boundary while fleet
+aggregation is active.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -168,6 +176,19 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorProductionWorkerFleetSloCostReport` includes:
+
+- `previewRunnerUrl`
+- `deviceTierP95Latency`
+- `fallbackBudget`
+- `cacheWarmupCost`
+- `checkpointRelaySpend`
+- `userOptInImpact`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringFleetAggregation`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -201,6 +222,7 @@ npm run test:workers-signed-runner-gate
 npm run test:workers-signed-runner-browser-preview
 npm run test:workers-signed-runner-webgpu-worker-pilot
 npm run test:workers-webgpu-telemetry
+npm run test:workers-fleet-slo-cost
 ```
 
 The full report gate remains:
@@ -212,8 +234,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the WebGPU worker performance / fallback telemetry gate passes, the next
-issue should add a production worker fleet SLO and cost gate: aggregate p95
-segment latency by device tier, fallback rate, cache warmup cost, checkpoint
-relay spend, user opt-in impact, and promote/hold thresholds for moving beyond a
-single signed runner preview pilot.
+If the production worker fleet SLO and cost gate passes, the next issue should
+add a publisher reward and abuse-resistant settlement gate: convert opt-in fleet
+contribution and Coordinator checkpoint relay evidence into publisher-facing
+reward accrual while detecting spoofed workers, replayed checkpoint claims, and
+cost-shifting abuse before production rollout.
