@@ -66,6 +66,14 @@ spend / retry / failure budget, user opt-in impact, promote/hold thresholds, and
 the signed runner isolation / Coordinator-CDN network boundary while fleet
 aggregation is active.
 
+`src/workers-coordinator-publisher-reward-settlement.ts` converts passing fleet
+SLO / cost evidence into publisher reward accrual inputs. It links each reward
+claim to Coordinator-owned checkpoint relay evidence and verified signed runner
+execution evidence, detects spoofed workers, replayed checkpoint claims,
+duplicate segment contribution claims, and cost-shifting abuse, and preserves
+the signed runner isolation / Coordinator-CDN network boundary while settlement
+aggregation is active.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -189,6 +197,20 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherRewardSettlementReport` includes:
+
+- `previewRunnerUrl`
+- `rewardAccrualInputs`
+- `checkpointRelayEvidence`
+- `signedRunnerExecutionLinkage`
+- `abuseDetectionResults`
+- `publisherSettlementHoldReasons`
+- `settlementBudget`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringSettlement`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -223,6 +245,7 @@ npm run test:workers-signed-runner-browser-preview
 npm run test:workers-signed-runner-webgpu-worker-pilot
 npm run test:workers-webgpu-telemetry
 npm run test:workers-fleet-slo-cost
+npm run test:workers-publisher-settlement
 ```
 
 The full report gate remains:
@@ -234,8 +257,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the production worker fleet SLO and cost gate passes, the next issue should
-add a publisher reward and abuse-resistant settlement gate: convert opt-in fleet
-contribution and Coordinator checkpoint relay evidence into publisher-facing
-reward accrual while detecting spoofed workers, replayed checkpoint claims, and
-cost-shifting abuse before production rollout.
+If the publisher reward and abuse-resistant settlement gate passes, the next
+issue should add a publisher reward pilot ledger and payout reconciliation gate:
+persist settlement decisions into an auditable ledger, reconcile payout batches
+against reward accrual, and surface publisher/operator dispute evidence before
+real-money rollout.

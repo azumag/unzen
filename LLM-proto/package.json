@@ -15,6 +15,7 @@
     "test:workers-signed-runner-webgpu-worker-pilot": "vitest run tests/workers-coordinator-signed-runner-webgpu-worker-pilot.test.ts",
     "test:workers-webgpu-telemetry": "vitest run tests/workers-coordinator-webgpu-worker-performance-telemetry.test.ts",
     "test:workers-fleet-slo-cost": "vitest run tests/workers-coordinator-production-worker-fleet-slo-cost.test.ts",
+    "test:workers-publisher-settlement": "vitest run tests/workers-coordinator-publisher-reward-settlement.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

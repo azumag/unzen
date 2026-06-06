@@ -128,6 +128,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts');
     expect(workersSpec).toContain('src/workers-coordinator-webgpu-worker-performance-telemetry.ts');
     expect(workersSpec).toContain('src/workers-coordinator-production-worker-fleet-slo-cost.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-publisher-reward-settlement.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('npm run test:workers-load-smoke');
@@ -138,6 +139,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('npm run test:workers-signed-runner-webgpu-worker-pilot');
     expect(workersSpec).toContain('npm run test:workers-webgpu-telemetry');
     expect(workersSpec).toContain('npm run test:workers-fleet-slo-cost');
+    expect(workersSpec).toContain('npm run test:workers-publisher-settlement');
     expect(workersSpec).toContain('requestLifecycle');
     expect(workersSpec).toContain('Durable Object');
     expect(workersSpec).toContain('durableObjectStorageFields');
@@ -169,10 +171,15 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('userOptInImpact');
     expect(workersSpec).toContain('promoteHoldThresholds');
     expect(workersSpec).toContain('securityBoundaryDuringFleetAggregation');
+    expect(workersSpec).toContain('rewardAccrualInputs');
+    expect(workersSpec).toContain('checkpointRelayEvidence');
+    expect(workersSpec).toContain('signedRunnerExecutionLinkage');
+    expect(workersSpec).toContain('abuseDetectionResults');
+    expect(workersSpec).toContain('securityBoundaryDuringSettlement');
     expect(workersSpec).toContain('retryResumeImpact');
     expect(workersSpec).toContain('direct worker-to-worker URLs are rejected');
     expect(workersSpec).toContain('authenticated Wrangler preview');
-    expect(workersSpec).toContain('publisher reward and abuse-resistant settlement gate');
+    expect(workersSpec).toContain('publisher reward pilot ledger and payout reconciliation gate');
     expect(readme).toContain('docs/workers-coordinator-prototype.md');
     expect(readme).toContain('src/workers-coordinator-prototype.ts');
     expect(readme).toContain('src/workers-coordinator-miniflare-smoke.ts');
@@ -183,6 +190,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts');
     expect(readme).toContain('src/workers-coordinator-webgpu-worker-performance-telemetry.ts');
     expect(readme).toContain('src/workers-coordinator-production-worker-fleet-slo-cost.ts');
+    expect(readme).toContain('src/workers-coordinator-publisher-reward-settlement.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(readme).toContain('npm run test:workers-smoke');
     expect(readme).toContain('npm run test:workers-load-smoke');
@@ -193,6 +201,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-signed-runner-webgpu-worker-pilot');
     expect(readme).toContain('npm run test:workers-webgpu-telemetry');
     expect(readme).toContain('npm run test:workers-fleet-slo-cost');
+    expect(readme).toContain('npm run test:workers-publisher-settlement');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -204,6 +213,7 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('signed runner real WebGPU worker pilot gate');
     expect(plan).toContain('WebGPU worker performance / fallback telemetry gate');
     expect(plan).toContain('Production worker fleet SLO / cost gate');
-    expect(plan).toContain('publisher reward and abuse-resistant settlement gate');
+    expect(plan).toContain('Publisher reward and abuse-resistant settlement gate');
+    expect(plan).toContain('publisher reward pilot ledger and payout reconciliation gate');
   });
 });

@@ -77,6 +77,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | WorkersCoordinatorSignedRunnerWebGpuWorkerPilot | `src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts` | signed runner preview URL 上の real WebGPU worker segment execution / IndexedDB cache / checkpoint relay gate を検証 |
 | WorkersCoordinatorWebGpuWorkerPerformanceTelemetry | `src/workers-coordinator-webgpu-worker-performance-telemetry.ts` | WebGPU worker の segment latency / cache timing / checkpoint relay duration / device loss / CPU fallback telemetry gate を検証 |
 | WorkersCoordinatorProductionWorkerFleetSloCost | `src/workers-coordinator-production-worker-fleet-slo-cost.ts` | production worker fleet の device tier p95 / fallback rate / cache cost / checkpoint relay spend / opt-in impact gate を検証 |
+| WorkersCoordinatorPublisherRewardSettlement | `src/workers-coordinator-publisher-reward-settlement.ts` | publisher reward accrual / checkpoint relay linkage / signed runner evidence / abuse-resistant settlement gate を検証 |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -130,6 +131,7 @@ npm run test:workers-signed-runner-browser-preview
 npm run test:workers-signed-runner-webgpu-worker-pilot
 npm run test:workers-webgpu-telemetry
 npm run test:workers-fleet-slo-cost
+npm run test:workers-publisher-settlement
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
