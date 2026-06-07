@@ -715,7 +715,8 @@ All-or-Nothing パイプライン:
 13. [WebGPU worker performance / fallback telemetry gate](./docs/workers-coordinator-prototype.md) で、segment latency distribution、cache hit/miss timing、checkpoint relay duration、WebGPU device loss、CPU fallback routing を実測 report 化する
 14. [Production worker fleet SLO / cost gate](./docs/workers-coordinator-prototype.md) で、device tier 別 p95 latency、fallback rate、cache warmup cost、checkpoint relay spend、user opt-in impact、promote/hold thresholds を report 化する
 15. [Publisher reward and abuse-resistant settlement gate](./docs/workers-coordinator-prototype.md) で、opt-in fleet contribution と Coordinator checkpoint relay evidence を publisher 報酬 accrual に変換し、spoofed worker / replayed checkpoint claim / cost-shifting abuse を検出する
-16. publisher reward pilot ledger and payout reconciliation gate で、settlement decision を監査可能 ledger に保存し、payout batch と reward accrual の差分・dispute evidence を検証する
+16. [Publisher reward pilot ledger and payout reconciliation gate](./docs/workers-coordinator-prototype.md) で、settlement decision を監査可能 ledger に保存し、payout batch と reward accrual の差分・dispute evidence を検証する
+17. publisher reward real-money payout pilot で、実決済前の payout provider dry-run、tax / invoice metadata、operator approval evidence、publisher-facing reconciliation export を検証する
 
 ### 7.2 経済性の精緻化
 
