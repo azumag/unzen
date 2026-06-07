@@ -74,6 +74,13 @@ duplicate segment contribution claims, and cost-shifting abuse, and preserves
 the signed runner isolation / Coordinator-CDN network boundary while settlement
 aggregation is active.
 
+`src/workers-coordinator-publisher-ledger-payout-reconciliation.ts` persists
+passing settlement decisions into a deterministic pilot ledger. It reconciles
+payout batches against reward accrual totals and Coordinator relay spend,
+excludes publisher-level holds from payout batches, surfaces publisher/operator
+dispute evidence, and preserves the signed runner isolation / Coordinator-CDN
+network boundary while ledger reconciliation is active.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -211,6 +218,19 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherPilotLedgerReport` includes:
+
+- `previewRunnerUrl`
+- `ledgerEntries`
+- `payoutBatchReconciliation`
+- `rewardAccrualTotals`
+- `disputeEvidence`
+- `settlementHoldReasons`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringLedgerReconciliation`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -246,6 +266,7 @@ npm run test:workers-signed-runner-webgpu-worker-pilot
 npm run test:workers-webgpu-telemetry
 npm run test:workers-fleet-slo-cost
 npm run test:workers-publisher-settlement
+npm run test:workers-publisher-ledger
 ```
 
 The full report gate remains:
@@ -257,8 +278,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward and abuse-resistant settlement gate passes, the next
-issue should add a publisher reward pilot ledger and payout reconciliation gate:
-persist settlement decisions into an auditable ledger, reconcile payout batches
-against reward accrual, and surface publisher/operator dispute evidence before
-real-money rollout.
+If the publisher reward pilot ledger and payout reconciliation gate passes, the
+next issue should add a real-money payout pilot dry-run: connect the reconciled
+ledger to payout provider dry-run evidence, tax / invoice metadata, operator
+approval evidence, and publisher-facing reconciliation exports before live
+money movement.
