@@ -130,6 +130,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('src/workers-coordinator-production-worker-fleet-slo-cost.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-reward-settlement.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-ledger-payout-reconciliation.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-publisher-payout-dry-run.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('npm run test:workers-load-smoke');
@@ -142,6 +143,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('npm run test:workers-fleet-slo-cost');
     expect(workersSpec).toContain('npm run test:workers-publisher-settlement');
     expect(workersSpec).toContain('npm run test:workers-publisher-ledger');
+    expect(workersSpec).toContain('npm run test:workers-publisher-payout-dry-run');
     expect(workersSpec).toContain('requestLifecycle');
     expect(workersSpec).toContain('Durable Object');
     expect(workersSpec).toContain('durableObjectStorageFields');
@@ -183,6 +185,12 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('rewardAccrualTotals');
     expect(workersSpec).toContain('disputeEvidence');
     expect(workersSpec).toContain('securityBoundaryDuringLedgerReconciliation');
+    expect(workersSpec).toContain('payoutProviderDryRunEvidence');
+    expect(workersSpec).toContain('payoutDryRunReconciliation');
+    expect(workersSpec).toContain('taxInvoiceMetadata');
+    expect(workersSpec).toContain('operatorApprovalEvidence');
+    expect(workersSpec).toContain('publisherFacingReconciliationExports');
+    expect(workersSpec).toContain('securityBoundaryDuringPayoutDryRun');
     expect(workersSpec).toContain('retryResumeImpact');
     expect(workersSpec).toContain('direct worker-to-worker URLs are rejected');
     expect(workersSpec).toContain('authenticated Wrangler preview');
@@ -199,6 +207,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('src/workers-coordinator-production-worker-fleet-slo-cost.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-reward-settlement.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-ledger-payout-reconciliation.ts');
+    expect(readme).toContain('src/workers-coordinator-publisher-payout-dry-run.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(readme).toContain('npm run test:workers-smoke');
     expect(readme).toContain('npm run test:workers-load-smoke');
@@ -211,6 +220,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-fleet-slo-cost');
     expect(readme).toContain('npm run test:workers-publisher-settlement');
     expect(readme).toContain('npm run test:workers-publisher-ledger');
+    expect(readme).toContain('npm run test:workers-publisher-payout-dry-run');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -224,6 +234,6 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('Production worker fleet SLO / cost gate');
     expect(plan).toContain('Publisher reward and abuse-resistant settlement gate');
     expect(plan).toContain('Publisher reward pilot ledger and payout reconciliation gate');
-    expect(plan).toContain('publisher reward real-money payout pilot');
+    expect(plan).toContain('Publisher reward real-money payout pilot dry-run gate');
   });
 });
