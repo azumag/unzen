@@ -81,6 +81,14 @@ excludes publisher-level holds from payout batches, surfaces publisher/operator
 dispute evidence, and preserves the signed runner isolation / Coordinator-CDN
 network boundary while ledger reconciliation is active.
 
+`src/workers-coordinator-publisher-payout-dry-run.ts` connects that reconciled
+pilot ledger to payout provider dry-run evidence before live money movement. It
+reconciles provider dry-run totals against ledger payout batches and Coordinator
+relay spend, requires tax / invoice metadata for payable publishers, records
+operator dry-run-only approval evidence, surfaces publisher-facing
+reconciliation exports, and preserves the signed runner isolation /
+Coordinator-CDN network boundary while payout dry-run evidence is collected.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -231,6 +239,19 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherPayoutDryRunReport` includes:
+
+- `previewRunnerUrl`
+- `payoutProviderDryRunEvidence`
+- `payoutDryRunReconciliation`
+- `taxInvoiceMetadata`
+- `operatorApprovalEvidence`
+- `publisherFacingReconciliationExports`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringPayoutDryRun`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -267,6 +288,7 @@ npm run test:workers-webgpu-telemetry
 npm run test:workers-fleet-slo-cost
 npm run test:workers-publisher-settlement
 npm run test:workers-publisher-ledger
+npm run test:workers-publisher-payout-dry-run
 ```
 
 The full report gate remains:
@@ -278,8 +300,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward pilot ledger and payout reconciliation gate passes, the
-next issue should add a real-money payout pilot dry-run: connect the reconciled
-ledger to payout provider dry-run evidence, tax / invoice metadata, operator
-approval evidence, and publisher-facing reconciliation exports before live
-money movement.
+If the publisher reward real-money payout pilot dry-run gate passes, the next
+issue should add a live-money payout pilot: execute the approved provider batch
+behind an operator-controlled release switch, reconcile provider settlement
+callbacks, capture publisher receipt evidence, and keep emergency hold /
+rollback controls outside the signed runner boundary.
