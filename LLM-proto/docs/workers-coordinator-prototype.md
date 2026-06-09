@@ -89,6 +89,14 @@ operator dry-run-only approval evidence, surfaces publisher-facing
 reconciliation exports, and preserves the signed runner isolation /
 Coordinator-CDN network boundary while payout dry-run evidence is collected.
 
+`src/workers-coordinator-publisher-live-money-payout-pilot.ts` executes the
+approved payout provider batch behind an operator-controlled release switch. It
+reconciles provider settlement callbacks against the dry-run provider batch,
+ledger payout totals, and publisher-level holds, captures publisher receipts and
+payout status transitions, keeps emergency hold / rollback controls outside the
+signed runner boundary, and preserves the signed runner isolation /
+Coordinator-CDN network boundary while live payout evidence is collected.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -252,6 +260,20 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherLiveMoneyPayoutPilotReport` includes:
+
+- `previewRunnerUrl`
+- `operatorReleaseSwitchEvidence`
+- `providerSettlementCallbacks`
+- `livePayoutReconciliation`
+- `publisherReceiptEvidence`
+- `payoutStatusTransitions`
+- `emergencyHoldRollbackControls`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringLivePayout`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -289,6 +311,7 @@ npm run test:workers-fleet-slo-cost
 npm run test:workers-publisher-settlement
 npm run test:workers-publisher-ledger
 npm run test:workers-publisher-payout-dry-run
+npm run test:workers-publisher-live-payout
 ```
 
 The full report gate remains:
@@ -300,8 +323,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward real-money payout pilot dry-run gate passes, the next
-issue should add a live-money payout pilot: execute the approved provider batch
-behind an operator-controlled release switch, reconcile provider settlement
-callbacks, capture publisher receipt evidence, and keep emergency hold /
-rollback controls outside the signed runner boundary.
+If the publisher reward live-money payout pilot gate passes, the next issue
+should add recurring payout operations: idempotent scheduled payout windows,
+provider retry/backoff ledgers, publisher support dispute routing, accounting
+export reconciliation, and post-pilot SLO/error-budget dashboards.

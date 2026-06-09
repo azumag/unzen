@@ -80,6 +80,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | WorkersCoordinatorPublisherRewardSettlement | `src/workers-coordinator-publisher-reward-settlement.ts` | publisher reward accrual / checkpoint relay linkage / signed runner evidence / abuse-resistant settlement gate を検証 |
 | WorkersCoordinatorPublisherPilotLedger | `src/workers-coordinator-publisher-ledger-payout-reconciliation.ts` | publisher reward pilot ledger / payout reconciliation / dispute evidence gate を検証 |
 | WorkersCoordinatorPublisherPayoutDryRun | `src/workers-coordinator-publisher-payout-dry-run.ts` | real-money payout pilot dry-run / provider evidence / tax invoice / operator approval gate を検証 |
+| WorkersCoordinatorPublisherLiveMoneyPayoutPilot | `src/workers-coordinator-publisher-live-money-payout-pilot.ts` | live-money payout pilot / release switch / provider settlement callback / receipt / emergency control gate を検証 |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -136,6 +137,7 @@ npm run test:workers-fleet-slo-cost
 npm run test:workers-publisher-settlement
 npm run test:workers-publisher-ledger
 npm run test:workers-publisher-payout-dry-run
+npm run test:workers-publisher-live-payout
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -171,6 +173,7 @@ Workers boundary の WebSocket heartbeat p95、direct worker-to-worker rejection
 `WorkersCoordinatorPublisherRewardSettlement` は production fleet SLO / cost gate を前提に、publisher reward accrual、checkpoint relay linkage、signed runner execution evidence、spoof / replay / duplicate / cost-shifting abuse detection、settlement 集計中の signed runner security boundary を report 化する。
 `WorkersCoordinatorPublisherPilotLedger` は publisher reward settlement gate を前提に、immutable pilot ledger entries、payout batch reconciliation、publisher-level holds、publisher/operator dispute evidence、real-money payout pilot へ進む promote/hold thresholds、ledger reconciliation 中の signed runner security boundary を report 化する。
 `WorkersCoordinatorPublisherPayoutDryRun` は publisher pilot ledger gate を前提に、payout provider dry-run evidence、ledger payout batch reconciliation、tax / invoice metadata、operator approval evidence、publisher-facing reconciliation export、live money movement へ進む promote/hold thresholds、payout dry-run 中の signed runner security boundary を report 化する。
+`WorkersCoordinatorPublisherLiveMoneyPayoutPilot` は publisher payout dry-run gate を前提に、operator release switch、provider settlement callback reconciliation、publisher receipt evidence、payout status transition、emergency hold / rollback controls、recurring payout operations へ進む promote/hold thresholds、live payout 中の signed runner security boundary を report 化する。
 focused commands、report fields、次の real-runtime bottleneck は `docs/workers-coordinator-prototype.md` に置く。
 
 ## 関連ドキュメント
@@ -184,7 +187,7 @@ focused commands、report fields、次の real-runtime bottleneck は `docs/work
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
 | [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
 | [docs/coordinator-prototype.md](./docs/coordinator-prototype.md) | API受付・worker heartbeat・assignment・checkpoint relay・retry/resume を束ねる Coordinator prototype gate | **simulated harness 追加済み** |
-| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary / signed runner browser preview / WebGPU worker telemetry / production fleet SLO-cost / publisher reward payout dry-run gate | **publisher payout dry-run gate 追加済み** |
+| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary / signed runner browser preview / WebGPU worker telemetry / production fleet SLO-cost / publisher reward live payout gate | **publisher live payout gate 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |

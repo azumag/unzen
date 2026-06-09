@@ -717,6 +717,7 @@ All-or-Nothing パイプライン:
 15. [Publisher reward and abuse-resistant settlement gate](./docs/workers-coordinator-prototype.md) で、opt-in fleet contribution と Coordinator checkpoint relay evidence を publisher 報酬 accrual に変換し、spoofed worker / replayed checkpoint claim / cost-shifting abuse を検出する
 16. [Publisher reward pilot ledger and payout reconciliation gate](./docs/workers-coordinator-prototype.md) で、settlement decision を監査可能 ledger に保存し、payout batch と reward accrual の差分・dispute evidence を検証する
 17. [Publisher reward real-money payout pilot dry-run gate](./docs/workers-coordinator-prototype.md) で、実決済前の payout provider dry-run、tax / invoice metadata、operator approval evidence、publisher-facing reconciliation export、live money movement へ進む promote/hold thresholds を検証する
+18. [Publisher reward live-money payout pilot gate](./docs/workers-coordinator-prototype.md) で、operator-controlled release switch、provider settlement callbacks、publisher receipt evidence、payout status transitions、emergency hold / rollback controls、recurring payout operations へ進む promote/hold thresholds を検証する
 
 ### 7.2 経済性の精緻化
 
