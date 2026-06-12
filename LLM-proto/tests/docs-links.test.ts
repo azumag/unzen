@@ -132,6 +132,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('src/workers-coordinator-publisher-ledger-payout-reconciliation.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-payout-dry-run.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-live-money-payout-pilot.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-publisher-recurring-payout-operations.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('npm run test:workers-load-smoke');
@@ -146,6 +147,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('npm run test:workers-publisher-ledger');
     expect(workersSpec).toContain('npm run test:workers-publisher-payout-dry-run');
     expect(workersSpec).toContain('npm run test:workers-publisher-live-payout');
+    expect(workersSpec).toContain('npm run test:workers-publisher-recurring-payout');
     expect(workersSpec).toContain('requestLifecycle');
     expect(workersSpec).toContain('Durable Object');
     expect(workersSpec).toContain('durableObjectStorageFields');
@@ -218,6 +220,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('src/workers-coordinator-publisher-ledger-payout-reconciliation.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-payout-dry-run.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-live-money-payout-pilot.ts');
+    expect(readme).toContain('src/workers-coordinator-publisher-recurring-payout-operations.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(readme).toContain('npm run test:workers-smoke');
     expect(readme).toContain('npm run test:workers-load-smoke');
@@ -232,6 +235,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-publisher-ledger');
     expect(readme).toContain('npm run test:workers-publisher-payout-dry-run');
     expect(readme).toContain('npm run test:workers-publisher-live-payout');
+    expect(readme).toContain('npm run test:workers-publisher-recurring-payout');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -247,5 +251,6 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('Publisher reward pilot ledger and payout reconciliation gate');
     expect(plan).toContain('Publisher reward real-money payout pilot dry-run gate');
     expect(plan).toContain('Publisher reward live-money payout pilot gate');
+    expect(plan).toContain('Publisher reward recurring payout operations gate');
   });
 });

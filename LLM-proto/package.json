@@ -19,6 +19,7 @@
     "test:workers-publisher-ledger": "vitest run tests/workers-coordinator-publisher-ledger-payout-reconciliation.test.ts",
     "test:workers-publisher-payout-dry-run": "vitest run tests/workers-coordinator-publisher-payout-dry-run.test.ts",
     "test:workers-publisher-live-payout": "vitest run tests/workers-coordinator-publisher-live-money-payout-pilot.test.ts",
+    "test:workers-publisher-recurring-payout": "vitest run tests/workers-coordinator-publisher-recurring-payout-operations.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
