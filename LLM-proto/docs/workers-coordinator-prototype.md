@@ -97,6 +97,15 @@ payout status transitions, keeps emergency hold / rollback controls outside the
 signed runner boundary, and preserves the signed runner isolation /
 Coordinator-CDN network boundary while live payout evidence is collected.
 
+`src/workers-coordinator-publisher-recurring-payout-operations.ts` turns the
+controlled live-money payout pilot into recurring payout operations. It validates
+idempotent scheduled payout windows, provider retry/backoff ledgers across
+settled, pending, failed, and delayed callbacks, publisher support dispute
+routing, accounting export reconciliation, post-pilot SLO/error-budget
+dashboards, emergency hold / rollback controls outside the signed runner
+boundary, and the same Coordinator-CDN network allowlist during recurring payout
+operations.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -274,6 +283,21 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherRecurringPayoutOperationsReport` includes:
+
+- `previewRunnerUrl`
+- `scheduledPayoutWindowIdempotency`
+- `providerRetryBackoffLedgers`
+- `publisherSupportDisputeRouting`
+- `accountingExportReconciliation`
+- `postPilotSloErrorBudgetDashboards`
+- `emergencyHoldRollbackControls`
+- `recurringPayoutReconciliation`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringRecurringOperations`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -312,6 +336,7 @@ npm run test:workers-publisher-settlement
 npm run test:workers-publisher-ledger
 npm run test:workers-publisher-payout-dry-run
 npm run test:workers-publisher-live-payout
+npm run test:workers-publisher-recurring-payout
 ```
 
 The full report gate remains:
@@ -323,7 +348,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward live-money payout pilot gate passes, the next issue
-should add recurring payout operations: idempotent scheduled payout windows,
-provider retry/backoff ledgers, publisher support dispute routing, accounting
-export reconciliation, and post-pilot SLO/error-budget dashboards.
+If the publisher reward recurring payout operations gate passes, the next issue
+should add payout operations revenue reporting: publisher-facing monthly
+statements, platform fee / relay spend margin reporting, refund and clawback
+adjustments, and audit-ready payout operations exports.
