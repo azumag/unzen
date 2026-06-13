@@ -106,6 +106,17 @@ dashboards, emergency hold / rollback controls outside the signed runner
 boundary, and the same Coordinator-CDN network allowlist during recurring payout
 operations.
 
+`src/workers-coordinator-publisher-revenue-reporting.ts` turns recurring payout
+operations into payout operations revenue reporting. It validates
+publisher-facing monthly statements that link recurring payout windows, ledger
+entries, receipts, disputes, and provider payout IDs, reconciles platform fee
+revenue and Coordinator relay spend margin against accounting exports and
+provider settlements, appends refund / reversal / clawback adjustments without
+mutating immutable payout ledger history, emits audit-ready finance and operator
+exports, keeps emergency hold / rollback controls outside the signed runner
+boundary, and preserves the same Coordinator-CDN network allowlist during
+revenue reporting.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -298,6 +309,20 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherRevenueReportingReport` includes:
+
+- `previewRunnerUrl`
+- `publisherMonthlyStatements`
+- `platformFeeRelaySpendMarginReconciliation`
+- `refundReversalClawbackAdjustments`
+- `auditReadyPayoutOperationsExports`
+- `emergencyHoldRollbackControls`
+- `revenueReportingSummary`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringRevenueReporting`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -337,6 +362,7 @@ npm run test:workers-publisher-ledger
 npm run test:workers-publisher-payout-dry-run
 npm run test:workers-publisher-live-payout
 npm run test:workers-publisher-recurring-payout
+npm run test:workers-publisher-revenue-reporting
 ```
 
 The full report gate remains:
