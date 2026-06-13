@@ -719,6 +719,7 @@ All-or-Nothing パイプライン:
 17. [Publisher reward real-money payout pilot dry-run gate](./docs/workers-coordinator-prototype.md) で、実決済前の payout provider dry-run、tax / invoice metadata、operator approval evidence、publisher-facing reconciliation export、live money movement へ進む promote/hold thresholds を検証する
 18. [Publisher reward live-money payout pilot gate](./docs/workers-coordinator-prototype.md) で、operator-controlled release switch、provider settlement callbacks、publisher receipt evidence、payout status transitions、emergency hold / rollback controls、recurring payout operations へ進む promote/hold thresholds を検証する
 19. [Publisher reward recurring payout operations gate](./docs/workers-coordinator-prototype.md) で、idempotent scheduled payout windows、provider retry/backoff ledgers、publisher support dispute routing、accounting export reconciliation、post-pilot SLO/error-budget dashboards、payout ops revenue reporting へ進む promote/hold thresholds を検証する
+20. [Publisher reward payout operations revenue reporting gate](./docs/workers-coordinator-prototype.md) で、publisher monthly statements、platform fee / Coordinator relay spend margin reconciliation、refund / reversal / clawback adjustments、audit-ready payout operations exports、tax reporting export へ進む promote/hold thresholds を検証する
 
 ### 7.2 経済性の精緻化
 
