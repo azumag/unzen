@@ -117,6 +117,14 @@ exports, keeps emergency hold / rollback controls outside the signed runner
 boundary, and preserves the same Coordinator-CDN network allowlist during
 revenue reporting.
 
+`src/workers-coordinator-publisher-tax-reporting.ts` turns payout operations
+revenue reporting into tax reporting and 1099-K export readiness. It validates
+payable publisher tax profiles, tax-year publisher summaries, 1099-K export
+records, revenue reporting / accounting export reconciliation, finance and
+operator review exports, emergency hold / rollback controls outside the signed
+runner boundary, and the same Coordinator-CDN network allowlist during tax
+reporting.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -363,6 +371,7 @@ npm run test:workers-publisher-payout-dry-run
 npm run test:workers-publisher-live-payout
 npm run test:workers-publisher-recurring-payout
 npm run test:workers-publisher-revenue-reporting
+npm run test:workers-publisher-tax-reporting
 ```
 
 The full report gate remains:
@@ -374,7 +383,7 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward recurring payout operations gate passes, the next issue
-should add payout operations revenue reporting: publisher-facing monthly
-statements, platform fee / relay spend margin reporting, refund and clawback
-adjustments, and audit-ready payout operations exports.
+If the publisher reward tax reporting / 1099-K export gate passes, the next
+issue should add a tax filing drill and publisher delivery workflow: provider
+filing packet handoff, publisher portal document delivery, corrected-form
+workflow, filing deadline alerts, and post-filing audit evidence.

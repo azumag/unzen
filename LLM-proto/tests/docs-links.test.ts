@@ -245,6 +245,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-publisher-live-payout');
     expect(readme).toContain('npm run test:workers-publisher-recurring-payout');
     expect(readme).toContain('npm run test:workers-publisher-revenue-reporting');
+    expect(readme).toContain('npm run test:workers-publisher-tax-reporting');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -262,5 +263,6 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('Publisher reward live-money payout pilot gate');
     expect(plan).toContain('Publisher reward recurring payout operations gate');
     expect(plan).toContain('Publisher reward payout operations revenue reporting gate');
+    expect(plan).toContain('Publisher reward tax reporting / 1099-K export gate');
   });
 });

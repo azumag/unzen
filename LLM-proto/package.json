@@ -21,6 +21,7 @@
     "test:workers-publisher-live-payout": "vitest run tests/workers-coordinator-publisher-live-money-payout-pilot.test.ts",
     "test:workers-publisher-recurring-payout": "vitest run tests/workers-coordinator-publisher-recurring-payout-operations.test.ts",
     "test:workers-publisher-revenue-reporting": "vitest run tests/workers-coordinator-publisher-revenue-reporting.test.ts",
+    "test:workers-publisher-tax-reporting": "vitest run tests/workers-coordinator-publisher-tax-reporting.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
