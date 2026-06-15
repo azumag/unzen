@@ -721,6 +721,7 @@ All-or-Nothing パイプライン:
 19. [Publisher reward recurring payout operations gate](./docs/workers-coordinator-prototype.md) で、idempotent scheduled payout windows、provider retry/backoff ledgers、publisher support dispute routing、accounting export reconciliation、post-pilot SLO/error-budget dashboards、payout ops revenue reporting へ進む promote/hold thresholds を検証する
 20. [Publisher reward payout operations revenue reporting gate](./docs/workers-coordinator-prototype.md) で、publisher monthly statements、platform fee / Coordinator relay spend margin reconciliation、refund / reversal / clawback adjustments、audit-ready payout operations exports、tax reporting export へ進む promote/hold thresholds を検証する
 21. [Publisher reward tax reporting / 1099-K export gate](./docs/workers-coordinator-prototype.md) で、publisher tax profiles、tax-year summaries、1099-K export records、revenue reporting / accounting export reconciliation、finance / operator review exports、tax filing drill へ進む promote/hold thresholds を検証する
+22. [Publisher reward tax filing drill / publisher delivery gate](./docs/workers-coordinator-prototype.md) で、provider filing packet handoff、accepted / rejected filing attempt、retry evidence、publisher portal document delivery、corrected-form workflow、deadline alert、post-filing audit evidence、real provider sandbox run へ進む promote/hold thresholds を検証する
 
 ### 7.2 経済性の精緻化
 

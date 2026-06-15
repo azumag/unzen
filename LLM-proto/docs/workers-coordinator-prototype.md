@@ -125,6 +125,16 @@ operator review exports, emergency hold / rollback controls outside the signed
 runner boundary, and the same Coordinator-CDN network allowlist during tax
 reporting.
 
+`src/workers-coordinator-publisher-tax-filing-delivery.ts` turns tax reporting
+readiness into an end-to-end tax filing drill and publisher delivery workflow.
+It validates provider filing packet handoff for generated 1099-K records,
+accepted and rejected filing attempts, retry evidence, publisher portal document
+delivery with acknowledgement and download evidence, corrected-form workflow for
+post-filing refund / reversal / clawback adjustments, filing deadline alerts,
+post-filing audit evidence, emergency hold / rollback controls outside the
+signed runner boundary, and the same Coordinator-CDN network allowlist during
+tax filing delivery.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -331,6 +341,37 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherTaxReportingReport` includes:
+
+- `previewRunnerUrl`
+- `publisherTaxProfiles`
+- `taxYearPublisherSummaries`
+- `tax1099KExportRecords`
+- `taxExportReconciliation`
+- `financeOperatorReviewExports`
+- `taxHolds`
+- `emergencyHoldRollbackControls`
+- `taxReportingSummary`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringTaxReporting`
+- `bottlenecksToIssue`
+- `failureReason`
+
+`WorkersCoordinatorPublisherTaxFilingDeliveryReport` includes:
+
+- `previewRunnerUrl`
+- `providerFilingPackets`
+- `publisherDocumentDeliveries`
+- `correctedFormWorkflows`
+- `filingDeadlineAlerts`
+- `postFilingAuditEvidence`
+- `emergencyHoldRollbackControls`
+- `taxFilingDeliverySummary`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringTaxFilingDelivery`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -372,6 +413,7 @@ npm run test:workers-publisher-live-payout
 npm run test:workers-publisher-recurring-payout
 npm run test:workers-publisher-revenue-reporting
 npm run test:workers-publisher-tax-reporting
+npm run test:workers-publisher-tax-filing-delivery
 ```
 
 The full report gate remains:
@@ -383,7 +425,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward tax reporting / 1099-K export gate passes, the next
-issue should add a tax filing drill and publisher delivery workflow: provider
-filing packet handoff, publisher portal document delivery, corrected-form
-workflow, filing deadline alerts, and post-filing audit evidence.
+If the publisher reward tax filing drill / publisher delivery gate passes, the
+next issue should add a real provider sandbox filing run: connect the filing
+packet contract to a sandbox provider response capture, preserve publisher
+delivery evidence from the portal, and reconcile sandbox provider IDs against
+post-filing audit exports without expanding the signed runner network boundary.

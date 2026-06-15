@@ -134,6 +134,8 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('src/workers-coordinator-publisher-live-money-payout-pilot.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-recurring-payout-operations.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-revenue-reporting.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-publisher-tax-reporting.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-publisher-tax-filing-delivery.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('npm run test:workers-load-smoke');
@@ -209,6 +211,16 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('refundReversalClawbackAdjustments');
     expect(workersSpec).toContain('auditReadyPayoutOperationsExports');
     expect(workersSpec).toContain('securityBoundaryDuringRevenueReporting');
+    expect(workersSpec).toContain('publisherTaxProfiles');
+    expect(workersSpec).toContain('taxYearPublisherSummaries');
+    expect(workersSpec).toContain('tax1099KExportRecords');
+    expect(workersSpec).toContain('securityBoundaryDuringTaxReporting');
+    expect(workersSpec).toContain('providerFilingPackets');
+    expect(workersSpec).toContain('publisherDocumentDeliveries');
+    expect(workersSpec).toContain('correctedFormWorkflows');
+    expect(workersSpec).toContain('filingDeadlineAlerts');
+    expect(workersSpec).toContain('postFilingAuditEvidence');
+    expect(workersSpec).toContain('securityBoundaryDuringTaxFilingDelivery');
     expect(workersSpec).toContain('retryResumeImpact');
     expect(workersSpec).toContain('direct worker-to-worker URLs are rejected');
     expect(workersSpec).toContain('authenticated Wrangler preview');
@@ -229,6 +241,8 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('src/workers-coordinator-publisher-live-money-payout-pilot.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-recurring-payout-operations.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-revenue-reporting.ts');
+    expect(readme).toContain('src/workers-coordinator-publisher-tax-reporting.ts');
+    expect(readme).toContain('src/workers-coordinator-publisher-tax-filing-delivery.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(readme).toContain('npm run test:workers-smoke');
     expect(readme).toContain('npm run test:workers-load-smoke');
@@ -246,6 +260,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-publisher-recurring-payout');
     expect(readme).toContain('npm run test:workers-publisher-revenue-reporting');
     expect(readme).toContain('npm run test:workers-publisher-tax-reporting');
+    expect(readme).toContain('npm run test:workers-publisher-tax-filing-delivery');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -264,5 +279,6 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('Publisher reward recurring payout operations gate');
     expect(plan).toContain('Publisher reward payout operations revenue reporting gate');
     expect(plan).toContain('Publisher reward tax reporting / 1099-K export gate');
+    expect(plan).toContain('Publisher reward tax filing drill / publisher delivery gate');
   });
 });
