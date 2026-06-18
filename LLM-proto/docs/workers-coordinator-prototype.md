@@ -135,6 +135,14 @@ post-filing audit evidence, emergency hold / rollback controls outside the
 signed runner boundary, and the same Coordinator-CDN network allowlist during
 tax filing delivery.
 
+`src/workers-coordinator-publisher-tax-provider-sandbox-filing.ts` turns the tax
+filing delivery drill into a real provider sandbox filing run. It validates
+sandbox provider request and response IDs, accepted and rejected submission
+states, signed provider callbacks, publisher delivery evidence linked to sandbox
+provider IDs, corrected-form and post-filing audit reconciliation, emergency
+hold / rollback controls outside the signed runner boundary, and the same
+Coordinator-CDN network allowlist during provider sandbox filing.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -372,6 +380,21 @@ Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 - `bottlenecksToIssue`
 - `failureReason`
 
+`WorkersCoordinatorPublisherTaxProviderSandboxFilingReport` includes:
+
+- `previewRunnerUrl`
+- `sandboxRuns`
+- `sandboxReconciliations`
+- `taxExportRecordIds`
+- `accountingExportIds`
+- `correctedFormWorkflowIds`
+- `emergencyControlIds`
+- `sandboxFilingSummary`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringProviderSandboxFiling`
+- `bottlenecksToIssue`
+- `failureReason`
+
 ## Report Fields
 
 `WorkersCoordinatorPrototypeReport` includes:
@@ -414,6 +437,7 @@ npm run test:workers-publisher-recurring-payout
 npm run test:workers-publisher-revenue-reporting
 npm run test:workers-publisher-tax-reporting
 npm run test:workers-publisher-tax-filing-delivery
+npm run test:workers-publisher-tax-provider-sandbox
 ```
 
 The full report gate remains:
@@ -425,8 +449,8 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher reward tax filing drill / publisher delivery gate passes, the
-next issue should add a real provider sandbox filing run: connect the filing
-packet contract to a sandbox provider response capture, preserve publisher
-delivery evidence from the portal, and reconcile sandbox provider IDs against
-post-filing audit exports without expanding the signed runner network boundary.
+If the publisher tax filing real provider sandbox run gate passes, the next
+issue should add production filing cutover readiness: promote sandbox provider
+IDs into an operator-approved production filing window, capture live-provider
+preflight evidence without moving money or filing duplicate forms, and verify
+rollback / emergency hold controls before enabling production filing callbacks.
