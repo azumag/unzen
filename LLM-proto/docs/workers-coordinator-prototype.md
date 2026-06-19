@@ -143,6 +143,15 @@ provider IDs, corrected-form and post-filing audit reconciliation, emergency
 hold / rollback controls outside the signed runner boundary, and the same
 Coordinator-CDN network allowlist during provider sandbox filing.
 
+`src/workers-coordinator-publisher-tax-production-cutover-readiness.ts` turns the
+provider sandbox filing run into production filing cutover readiness. It
+validates sandbox provider filing IDs, operator approval evidence, production
+filing window metadata, live-provider preflight evidence without moving money or
+submitting duplicate forms, duplicate-filing suppression, preserved accepted and
+rejected sandbox evidence, rollback / emergency hold controls before production
+callbacks are enabled, and the same Coordinator-CDN network allowlist during
+production cutover readiness.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -438,6 +447,7 @@ npm run test:workers-publisher-revenue-reporting
 npm run test:workers-publisher-tax-reporting
 npm run test:workers-publisher-tax-filing-delivery
 npm run test:workers-publisher-tax-provider-sandbox
+npm run test:workers-publisher-tax-production-cutover
 ```
 
 The full report gate remains:
@@ -449,8 +459,21 @@ npm test -- --run
 
 ## Next Bottleneck
 
-If the publisher tax filing real provider sandbox run gate passes, the next
-issue should add production filing cutover readiness: promote sandbox provider
-IDs into an operator-approved production filing window, capture live-provider
-preflight evidence without moving money or filing duplicate forms, and verify
-rollback / emergency hold controls before enabling production filing callbacks.
+`WorkersCoordinatorPublisherTaxProductionCutoverReadinessReport` includes:
+
+- `sandboxProviderFilingIds`
+- `operatorApprovalEvidence`
+- `productionFilingWindow`
+- `liveProviderPreflightEvidence`
+- `preservedSandboxEvidence`
+- `productionCutoverSummary`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringProductionCutover`
+- `failureReason`
+- `bottlenecksToIssue`
+
+If the publisher tax filing production cutover readiness gate passes, the next
+issue should add production callbacks readiness: enable signed production
+provider callbacks only after cutover approval, reconcile callback IDs against
+the approved filing window, prove duplicate filing suppression stays active, and
+preserve rollback / emergency hold controls during callback ingestion.
