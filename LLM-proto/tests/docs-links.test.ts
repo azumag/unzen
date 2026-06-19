@@ -137,6 +137,7 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('src/workers-coordinator-publisher-tax-reporting.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-tax-filing-delivery.ts');
     expect(workersSpec).toContain('src/workers-coordinator-publisher-tax-provider-sandbox-filing.ts');
+    expect(workersSpec).toContain('src/workers-coordinator-publisher-tax-production-cutover-readiness.ts');
     expect(workersSpec).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(workersSpec).toContain('npm run test:workers-smoke');
     expect(workersSpec).toContain('npm run test:workers-load-smoke');
@@ -153,6 +154,10 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('npm run test:workers-publisher-live-payout');
     expect(workersSpec).toContain('npm run test:workers-publisher-recurring-payout');
     expect(workersSpec).toContain('npm run test:workers-publisher-revenue-reporting');
+    expect(workersSpec).toContain('npm run test:workers-publisher-tax-reporting');
+    expect(workersSpec).toContain('npm run test:workers-publisher-tax-filing-delivery');
+    expect(workersSpec).toContain('npm run test:workers-publisher-tax-provider-sandbox');
+    expect(workersSpec).toContain('npm run test:workers-publisher-tax-production-cutover');
     expect(workersSpec).toContain('requestLifecycle');
     expect(workersSpec).toContain('Durable Object');
     expect(workersSpec).toContain('durableObjectStorageFields');
@@ -230,6 +235,13 @@ describe('LLM prototype documentation links', () => {
     expect(workersSpec).toContain('emergencyControlIds');
     expect(workersSpec).toContain('sandboxFilingSummary');
     expect(workersSpec).toContain('securityBoundaryDuringProviderSandboxFiling');
+    expect(workersSpec).toContain('sandboxProviderFilingIds');
+    expect(workersSpec).toContain('operatorApprovalEvidence');
+    expect(workersSpec).toContain('productionFilingWindow');
+    expect(workersSpec).toContain('liveProviderPreflightEvidence');
+    expect(workersSpec).toContain('preservedSandboxEvidence');
+    expect(workersSpec).toContain('productionCutoverSummary');
+    expect(workersSpec).toContain('securityBoundaryDuringProductionCutover');
     expect(workersSpec).toContain('retryResumeImpact');
     expect(workersSpec).toContain('direct worker-to-worker URLs are rejected');
     expect(workersSpec).toContain('authenticated Wrangler preview');
@@ -253,6 +265,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('src/workers-coordinator-publisher-tax-reporting.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-tax-filing-delivery.ts');
     expect(readme).toContain('src/workers-coordinator-publisher-tax-provider-sandbox-filing.ts');
+    expect(readme).toContain('src/workers-coordinator-publisher-tax-production-cutover-readiness.ts');
     expect(readme).toContain('tests/workers-coordinator-prototype.test.ts');
     expect(readme).toContain('npm run test:workers-smoke');
     expect(readme).toContain('npm run test:workers-load-smoke');
@@ -272,6 +285,7 @@ describe('LLM prototype documentation links', () => {
     expect(readme).toContain('npm run test:workers-publisher-tax-reporting');
     expect(readme).toContain('npm run test:workers-publisher-tax-filing-delivery');
     expect(readme).toContain('npm run test:workers-publisher-tax-provider-sandbox');
+    expect(readme).toContain('npm run test:workers-publisher-tax-production-cutover');
     expect(plan).toContain('./docs/workers-coordinator-prototype.md');
     expect(plan).toContain('Miniflare/workerd');
     expect(plan).toContain('client-side heartbeat timing');
@@ -292,5 +306,6 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('Publisher reward tax reporting / 1099-K export gate');
     expect(plan).toContain('Publisher reward tax filing drill / publisher delivery gate');
     expect(plan).toContain('Publisher tax filing real provider sandbox run gate');
+    expect(plan).toContain('Publisher tax filing production cutover readiness gate');
   });
 });
