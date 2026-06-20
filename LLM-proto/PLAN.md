@@ -724,6 +724,7 @@ All-or-Nothing パイプライン:
 22. [Publisher reward tax filing drill / publisher delivery gate](./docs/workers-coordinator-prototype.md) で、provider filing packet handoff、accepted / rejected filing attempt、retry evidence、publisher portal document delivery、corrected-form workflow、deadline alert、post-filing audit evidence、real provider sandbox run へ進む promote/hold thresholds を検証する
 23. [Publisher tax filing real provider sandbox run gate](./docs/workers-coordinator-prototype.md) で、sandbox provider request / response ID、accepted / rejected submission、signed callback、publisher delivery evidence、corrected-form / post-filing audit reconciliation、production filing cutover readiness へ進む promote/hold thresholds を検証する
 24. [Publisher tax filing production cutover readiness gate](./docs/workers-coordinator-prototype.md) で、sandbox provider filing IDs、operator approval evidence、production filing window、live-provider preflight evidence、duplicate-filing suppression、rollback / emergency hold controls、production callbacks readiness へ進む promote/hold thresholds を検証する
+25. [Publisher tax filing production callbacks readiness gate](./docs/workers-coordinator-prototype.md) で、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production monitoring reconciliation へ進む promote/hold thresholds を検証する
 
 ### 7.2 経済性の精緻化
 
