@@ -88,6 +88,7 @@ Petals の分散パイプライン並列を参考に、ブラウザ WebGPU ワ�
 | WorkersCoordinatorPublisherTaxProviderSandboxFiling | `src/workers-coordinator-publisher-tax-provider-sandbox-filing.ts` | real provider sandbox filing run / provider response capture / reconciliation gate を検証 |
 | WorkersCoordinatorPublisherTaxProductionCutoverReadiness | `src/workers-coordinator-publisher-tax-production-cutover-readiness.ts` | production filing cutover readiness / live-provider preflight / rollback control gate を検証 |
 | WorkersCoordinatorPublisherTaxProductionCallbacksReadiness | `src/workers-coordinator-publisher-tax-production-callbacks-readiness.ts` | production callbacks readiness / signed callback reconciliation / duplicate suppression gate を検証 |
+| WorkersCoordinatorPublisherTaxProductionMonitoringReconciliation | `src/workers-coordinator-publisher-tax-production-monitoring-reconciliation.ts` | production monitoring reconciliation / publisher export / alert traceability / replay control gate を検証 |
 | SpanPipeline | `src/span-pipeline.ts` | Span パイプライン：SpanRouter でルート計算し、スパン単位で実行 |
 | Pipeline Utils | `src/pipeline-utils.ts` | Pipeline/SpanPipeline 共通ユーティリティ（タイムアウト、遅延） |
 | Coordinator | `src/coordinator.ts` | API受付・ワーカー管理・パイプライン実行を統括 |
@@ -152,6 +153,7 @@ npm run test:workers-publisher-tax-filing-delivery
 npm run test:workers-publisher-tax-provider-sandbox
 npm run test:workers-publisher-tax-production-cutover
 npm run test:workers-publisher-tax-production-callbacks
+npm run test:workers-publisher-tax-production-monitoring
 ```
 
 `TwoWorkerPrototypeRunner` は実モデルを読み込まず、mock segment artifact と allowlist transport で 2-worker split path の制御フローを固定する。
@@ -195,7 +197,8 @@ Workers boundary の WebSocket heartbeat p95、direct worker-to-worker rejection
 `WorkersCoordinatorPublisherTaxProviderSandboxFiling` は publisher tax filing delivery gate を前提に、real provider sandbox run の request / response ID、accepted / rejected submission、signed callback、publisher delivery evidence、corrected-form / post-filing audit reconciliation、emergency hold / rollback controls、provider sandbox filing 中の signed runner security boundary を report 化する。
 `WorkersCoordinatorPublisherTaxProductionCutoverReadiness` は publisher tax provider sandbox filing gate を前提に、sandbox provider filing IDs、operator approval evidence、production filing window、live-provider preflight evidence、duplicate-filing suppression、rollback / emergency hold controls、production cutover 中の signed runner security boundary を report 化する。
 `WorkersCoordinatorPublisherTaxProductionCallbacksReadiness` は publisher tax production cutover readiness gate を前提に、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production callbacks 中の signed runner security boundary を report 化する。
-focused commands、report fields、次の production monitoring reconciliation bottleneck は `docs/workers-coordinator-prototype.md` に置く。
+`WorkersCoordinatorPublisherTaxProductionMonitoringReconciliation` は publisher tax production callbacks readiness gate を前提に、accepted / rejected / corrected / duplicate-suppressed callback streams、operator monitoring records、publisher monitoring exports、alert traceability、duplicate-filing suppression replay、rollback / emergency hold replay controls、production monitoring 中の signed runner security boundary を report 化する。
+focused commands、report fields、次の exception operations runbook bottleneck は `docs/workers-coordinator-prototype.md` に置く。
 
 ## 関連ドキュメント
 
@@ -208,7 +211,7 @@ focused commands、report fields、次の production monitoring reconciliation b
 | [docs/checkpoint-transfer-measurement.md](./docs/checkpoint-transfer-measurement.md) | hidden states checkpoint の serialization / Coordinator transfer measurement gate | **measurement harness 追加済み** |
 | [docs/browser-worker-retention-measurement.md](./docs/browser-worker-retention-measurement.md) | browser worker retention / churn / checkpoint resume impact measurement gate | **measurement harness 追加済み** |
 | [docs/coordinator-prototype.md](./docs/coordinator-prototype.md) | API受付・worker heartbeat・assignment・checkpoint relay・retry/resume を束ねる Coordinator prototype gate | **simulated harness 追加済み** |
-| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary / signed runner browser preview / WebGPU worker telemetry / production fleet SLO-cost / publisher reward tax production callbacks readiness gate | **publisher tax production callbacks readiness gate 追加済み** |
+| [docs/workers-coordinator-prototype.md](./docs/workers-coordinator-prototype.md) | Cloudflare Workers Coordinator boundary の API lifecycle / Durable Object state / WebSocket heartbeat p95 / deployed runtime smoke / production observability canary / signed runner browser preview / WebGPU worker telemetry / production fleet SLO-cost / publisher reward tax production monitoring reconciliation gate | **publisher tax production monitoring reconciliation gate 追加済み** |
 | [SWARM.md](./SWARM.md) | 群知能方式の設計書（軽量LLM × 分散合意） | 初版・実験的 |
 | [docs/strategy-ensemble-inference.md](./docs/strategy-ensemble-inference.md) | 並列アンサンブル推論戦略案 | 検討中 |
 | [docs/report-transformers-js-v4.md](./docs/report-transformers-js-v4.md) | Transformers.js v4 適用可能性調査レポート | 調査完了 |
