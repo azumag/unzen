@@ -26,6 +26,7 @@
     "test:workers-publisher-tax-provider-sandbox": "vitest run tests/workers-coordinator-publisher-tax-provider-sandbox-filing.test.ts",
     "test:workers-publisher-tax-production-cutover": "vitest run tests/workers-coordinator-publisher-tax-production-cutover-readiness.test.ts",
     "test:workers-publisher-tax-production-callbacks": "vitest run tests/workers-coordinator-publisher-tax-production-callbacks-readiness.test.ts",
+    "test:workers-publisher-tax-production-monitoring": "vitest run tests/workers-coordinator-publisher-tax-production-monitoring-reconciliation.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

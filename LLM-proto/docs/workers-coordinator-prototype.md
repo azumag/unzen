@@ -160,6 +160,14 @@ duplicate-filing suppression, rollback / emergency hold controls during
 callback ingestion, and the same Coordinator-CDN network allowlist during
 production callbacks readiness.
 
+`src/workers-coordinator-publisher-tax-production-monitoring-reconciliation.ts`
+turns passing production callbacks readiness into production monitoring
+reconciliation. It reconciles accepted, rejected, corrected, and
+duplicate-suppressed callback streams into operator monitoring records,
+publisher monitoring exports, alert traceability, duplicate-filing suppression
+replay, rollback / emergency hold replay controls, and the same Coordinator-CDN
+network allowlist during production monitoring reconciliation.
+
 The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
@@ -457,6 +465,7 @@ npm run test:workers-publisher-tax-filing-delivery
 npm run test:workers-publisher-tax-provider-sandbox
 npm run test:workers-publisher-tax-production-cutover
 npm run test:workers-publisher-tax-production-callbacks
+npm run test:workers-publisher-tax-production-monitoring
 ```
 
 The full report gate remains:
@@ -492,8 +501,24 @@ npm test -- --run
 - `failureReason`
 - `bottlenecksToIssue`
 
-If the publisher tax filing production callbacks readiness gate passes, the next
-issue should add production monitoring reconciliation: reconcile accepted,
-rejected, corrected, and duplicate-suppressed callback streams into operator and
-publisher monitoring, prove alert IDs map back to production filing window IDs,
-and preserve rollback / emergency hold controls through monitoring replay.
+`WorkersCoordinatorPublisherTaxProductionMonitoringReconciliationReport` includes:
+
+- `cutoverApprovalEvidence`
+- `productionProviderCallbacks`
+- `operatorMonitoringRecords`
+- `publisherMonitoringExports`
+- `monitoringAlerts`
+- `productionMonitoringSummary`
+- `approvedWindowReconciliation`
+- `duplicateFilingSuppressionReplay`
+- `rollbackEmergencyControlsDuringReplay`
+- `promoteHoldThresholds`
+- `securityBoundaryDuringProductionMonitoring`
+- `failureReason`
+- `bottlenecksToIssue`
+
+If the publisher tax filing production monitoring reconciliation gate passes,
+the next issue should add the production exception operations runbook: convert
+rejected, corrected, duplicate-suppressed, and replay-detected monitoring events
+into operator runbook actions, support escalation records, publisher-facing
+status updates, and rollback / emergency hold decision evidence.
