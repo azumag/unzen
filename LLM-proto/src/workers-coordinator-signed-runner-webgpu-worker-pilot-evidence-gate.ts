@@ -1,7 +1,6 @@
 import {
   evidenceSupportsReadiness,
   validateEvidenceEnvelope,
-  type EvidenceEnvelope,
   type EvidenceLevel,
   type EvidenceValidationOptions,
   type EvidenceValidationResult,
@@ -31,9 +30,8 @@ export type WorkersCoordinatorSignedRunnerWebGpuWorkerPilotMinimumReadiness = Ex
 
 export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidenceGateOptions {
   readonly previewReport: WorkersCoordinatorSignedRunnerBrowserPreviewReport;
-  readonly evidenceEnvelope:
-    | EvidenceEnvelope<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence>
-    | unknown;
+  /** Untrusted input. Trust anchors must come from validationOptions. */
+  readonly evidenceEnvelope: unknown;
   readonly validationOptions: EvidenceValidationOptions;
   readonly minimumReadiness?: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotMinimumReadiness;
 }
