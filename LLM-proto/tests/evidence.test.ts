@@ -108,6 +108,15 @@ const verificationOptions = {
     expect(locator).toBe('artifact://browser-run-1/report.json');
     return ARTIFACT_CONTENT;
   },
+  verifyArtifact: async ({ actualSha256 }: { actualSha256: string }) => {
+    expect(actualSha256).toBe(ARTIFACT_SHA256);
+    return {
+      verifier: 'unzen-ci-evidence-verifier',
+      version: '1.0.0',
+      verifiedAt: '2026-07-10T13:05:00.000Z',
+      result: 'pass' as const,
+    };
+  },
 } as const;
 
 describe('validateEvidenceEnvelope', () => {
@@ -153,7 +162,23 @@ describe('validateEvidenceEnvelope', () => {
     expect(evidenceSupportsReadiness(result)).toBe(false);
   });
 
-  it('accepts captured evidence only after trusted verifier, freshness, and digest checks pass', async () => {
+  it('does not accept a matching digest without an independent verifier callback', async () => {
+    const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
+      now: NOW,
+      trustedVerifiers: verificationOptions.trustedVerifiers,
+      loadArtifact: verificationOptions.loadArtifact,
+    });
+
+    expect(result.status).toBe('not-evaluated');
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'verification-unavailable',
+      }),
+    );
+    expect(evidenceSupportsReadiness(result)).toBe(false);
+  });
+
+  it('accepts captured evidence only after trusted verifier, freshness, digest, and attestation checks pass', async () => {
     const result = await validateEvidenceEnvelope(
       createVerifiedEnvelope(),
       verificationOptions,
@@ -164,6 +189,25 @@ describe('validateEvidenceEnvelope', () => {
     expect(result.effectiveReadinessStatus).toBe('production-candidate');
     expect(result.issues).toEqual([]);
     expect(evidenceSupportsReadiness(result)).toBe(true);
+  });
+
+  it('rejects an independent attestation that does not match the envelope', async () => {
+    const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
+      ...verificationOptions,
+      verifyArtifact: async () => ({
+        verifier: 'unzen-ci-evidence-verifier',
+        version: '1.0.0',
+        verifiedAt: '2026-07-10T13:06:00.000Z',
+        result: 'pass',
+      }),
+    });
+
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'verification-attestation-mismatch',
+      }),
+    );
   });
 
   it('rejects a digest mismatch even when the envelope claims verification passed', async () => {
