@@ -97,11 +97,54 @@ const canPromote = evidenceSupportsReadiness(
 
 synthetic fixtureやself-reported runtimeは、readiness文字列を偽装してもproduction判断に利用できない。
 
+## 最初の適用先: signed runner WebGPU pilot
+
+`workers-coordinator-signed-runner-webgpu-worker-pilot.ts`は、payloadの構造とsecurity boundaryを判定する同期contract runnerとして維持する。このrunnerへ手書きobjectを渡して得た`pass`は、引き続き`contract-tested`の結果であり、実ブラウザ実行の証拠ではない。
+
+verified evidenceを必要とする呼び出し側は、次の非同期gateを使用する。
+
+- `runWorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidenceGate()`
+- evidence kind: `signed-runner-webgpu-worker-pilot`
+- default minimum readiness: `verified-pilot`
+
+```ts
+const report = await runWorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidenceGate({
+  previewReport,
+  evidenceEnvelope,
+  validationOptions: {
+    trustedVerifiers,
+    loadArtifact,
+    verifyArtifact,
+  },
+});
+```
+
+このgateは次の順序でfail closedする。
+
+1. envelope schema・freshness・digest・attestationを検証する
+2. evidence kindがWebGPU pilot用であることを確認する
+3. requested minimum readinessを満たすことを確認する
+4. scenario featureがWebGPU pilot用であることを確認する
+5. verified envelopeのpayloadに対して既存contract runnerを実行する
+
+verified provenanceがあっても、segment未完了、top-level storage依存、direct Worker networking、CSP違反等があれば`fail`となる。
+
+### Gate status
+
+| Status | 意味 |
+|---|---|
+| `pass` | verified evidenceと既存pilot contractの両方が成功 |
+| `fail` | evidenceがinvalid、対象kind不一致、scenario不一致、またはcontract違反 |
+| `not-evaluated` | artifact/verifier不足、または要求readinessを満たすevidenceがない |
+
+synthetic fixtureは既存contract runnerのunit testには利用できるが、このverified evidence gateでは`pass`にならない。
+
 ## テスト
 
 ```bash
 cd LLM-proto
 npm run test:evidence
+npm run test:workers-signed-runner-webgpu-evidence-gate
 ```
 
 unit testでは以下を確認する。
@@ -113,13 +156,17 @@ unit testでは以下を確認する。
 - trusted verifier、freshness、digest、独立attestationが揃ったartifactを受理する
 - attestation不一致、digest不一致、期限切れ、schema不一致、unknown verifierを拒否する
 - browser evidenceにbrowser metadataを必須とする
+- verified evidenceとWebGPU pilot contractを別々に判定する
+- synthetic payloadをverified pilotとして扱わない
+- verified provenanceがあってもcontract違反payloadを拒否する
 
-## このPRの範囲外
+## 今後の移行範囲
 
-- 既存`workers-coordinator-*` report型の一括migration
-- downstream gateへのenvelope伝播
+- browser preview report自体のEvidenceEnvelope化
+- WebGPU performance telemetryへのverified evidence level伝播
+- fleet SLO / settlement / payout / tax gateへのeffective evidence伝播
 - artifact store / CI uploader / verifier serviceの実装
-- 既存test・script名のrename
+- legacy `real` / `production` test・script名の整理
 - real-browser integration artifactの生成
 
 これらはIssue #101の後続PRで段階的に対応する。
