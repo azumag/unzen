@@ -19,22 +19,12 @@ export interface EvidenceProducer {
   commitSha?: string;
 }
 
-export interface EvidenceBrowserEnvironment {
-  name: string;
-  version: string;
-}
-
-export interface EvidenceOperatingSystem {
-  name: string;
-  version: string;
-}
-
 export interface EvidenceEnvironment {
   runtime: string;
   runtimeVersion: string;
   executionSurface: string;
-  os?: EvidenceOperatingSystem;
-  browser?: EvidenceBrowserEnvironment;
+  os?: { name: string; version: string };
+  browser?: { name: string; version: string };
   metadata?: Record<string, string>;
 }
 
@@ -49,11 +39,6 @@ export interface EvidenceVerification {
   version: string;
   verifiedAt: string;
   result: 'pass' | 'fail';
-}
-
-export interface EvidenceRedaction {
-  applied: boolean;
-  policyVersion: string;
 }
 
 export interface EvidenceScenario {
@@ -71,7 +56,7 @@ interface EvidenceEnvelopeBase<TPayload> {
   runId: string;
   capturedAt: string;
   environment: EvidenceEnvironment;
-  redaction: EvidenceRedaction;
+  redaction: { applied: boolean; policyVersion: string };
   scenario?: EvidenceScenario;
   payload: TPayload;
 }
@@ -95,9 +80,8 @@ export interface SelfReportedEvidenceEnvelope<TPayload = unknown>
 export interface CapturedAndVerifiedEvidenceEnvelope<TPayload = unknown>
   extends EvidenceEnvelopeBase<TPayload> {
   evidenceLevel: 'captured-and-verified';
-  readinessStatus: ReadinessStatus;
   producer: EvidenceProducer & { commitSha: string };
-  environment: EvidenceEnvironment & { os: EvidenceOperatingSystem };
+  environment: EvidenceEnvironment & { os: { name: string; version: string } };
   scenario: EvidenceScenario;
   artifact: EvidenceArtifact;
   verification: EvidenceVerification;
@@ -115,11 +99,28 @@ export interface TrustedEvidenceVerifier {
   version?: string;
 }
 
+export interface IndependentEvidenceVerification {
+  verifier: string;
+  version: string;
+  verifiedAt: string;
+  result: 'pass' | 'fail';
+  reason?: string;
+}
+
+export interface ArtifactVerificationContext<TPayload = unknown> {
+  envelope: CapturedAndVerifiedEvidenceEnvelope<TPayload>;
+  artifactContent: ArtifactContent;
+  actualSha256: string;
+}
+
 export interface EvidenceValidationOptions {
   now?: Date | string | number;
   supportedSchemaVersions?: readonly string[];
   trustedVerifiers?: readonly TrustedEvidenceVerifier[];
   loadArtifact?: (locator: string) => Promise<ArtifactContent>;
+  verifyArtifact?: (
+    context: ArtifactVerificationContext,
+  ) => Promise<IndependentEvidenceVerification>;
 }
 
 export type EvidenceValidationStatus = 'valid' | 'invalid' | 'not-evaluated';
@@ -145,7 +146,10 @@ export type EvidenceValidationIssueCode =
   | 'untrusted-verifier'
   | 'artifact-unavailable'
   | 'artifact-load-failed'
-  | 'artifact-digest-mismatch';
+  | 'artifact-digest-mismatch'
+  | 'verification-unavailable'
+  | 'verification-execution-failed'
+  | 'verification-attestation-mismatch';
 
 export interface EvidenceValidationIssue {
   code: EvidenceValidationIssueCode;
@@ -168,7 +172,6 @@ const EVIDENCE_LEVELS: readonly EvidenceLevel[] = [
   'self-reported-runtime',
   'captured-and-verified',
 ];
-
 const READINESS_STATUSES: readonly ReadinessStatus[] = [
   'design-only',
   'contract-tested',
@@ -177,7 +180,6 @@ const READINESS_STATUSES: readonly ReadinessStatus[] = [
   'production-candidate',
   'production-approved',
 ];
-
 const READINESS_RANK: Record<ReadinessStatus, number> = {
   'design-only': 0,
   'contract-tested': 1,
@@ -186,13 +188,11 @@ const READINESS_RANK: Record<ReadinessStatus, number> = {
   'production-candidate': 4,
   'production-approved': 5,
 };
-
-const MAX_READINESS_BY_EVIDENCE_LEVEL: Record<EvidenceLevel, ReadinessStatus> = {
+const MAX_READINESS: Record<EvidenceLevel, ReadinessStatus> = {
   'synthetic-fixture': 'contract-tested',
   'self-reported-runtime': 'runtime-observed',
   'captured-and-verified': 'production-approved',
 };
-
 const SHA256_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -201,45 +201,28 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   options: EvidenceValidationOptions = {},
 ): Promise<EvidenceValidationResult<TPayload>> {
   const issues: EvidenceValidationIssue[] = [];
-
   if (!isRecord(input)) {
-    addIssue(issues, 'invalid-envelope', '$', 'evidence envelope must be an object');
-    return { status: 'invalid', issues };
+    issue(issues, 'invalid-envelope', '$', 'evidence envelope must be an object');
+    return result<TPayload>('invalid', issues);
   }
 
-  const claimedEvidenceLevel = isEvidenceLevel(input.evidenceLevel)
-    ? input.evidenceLevel
-    : undefined;
-  const claimedReadinessStatus = isReadinessStatus(input.readinessStatus)
+  const level = isEvidenceLevel(input.evidenceLevel) ? input.evidenceLevel : undefined;
+  const readiness = isReadinessStatus(input.readinessStatus)
     ? input.readinessStatus
     : undefined;
+  const nowMs = resolveNow(options.now);
+  const capturedAtMs = validateBase(input, issues, nowMs);
 
-  validateBaseEnvelope(input, issues);
-
-  if (!claimedEvidenceLevel) {
-    addIssue(
-      issues,
-      'invalid-evidence-level',
-      '$.evidenceLevel',
-      `evidenceLevel must be one of: ${EVIDENCE_LEVELS.join(', ')}`,
-    );
+  if (!level) {
+    issue(issues, 'invalid-evidence-level', '$.evidenceLevel', 'invalid evidence level');
+  }
+  if (!readiness) {
+    issue(issues, 'invalid-readiness-status', '$.readinessStatus', 'invalid readiness status');
   }
 
-  if (!claimedReadinessStatus) {
-    addIssue(
-      issues,
-      'invalid-readiness-status',
-      '$.readinessStatus',
-      `readinessStatus must be one of: ${READINESS_STATUSES.join(', ')}`,
-    );
-  }
-
-  const supportedSchemaVersions = options.supportedSchemaVersions ?? [EVIDENCE_SCHEMA_VERSION];
-  if (
-    typeof input.schemaVersion === 'string' &&
-    !supportedSchemaVersions.includes(input.schemaVersion)
-  ) {
-    addIssue(
+  const supported = options.supportedSchemaVersions ?? [EVIDENCE_SCHEMA_VERSION];
+  if (typeof input.schemaVersion === 'string' && !supported.includes(input.schemaVersion)) {
+    issue(
       issues,
       'unsupported-schema-version',
       '$.schemaVersion',
@@ -247,159 +230,171 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     );
   }
 
-  if (claimedEvidenceLevel && claimedReadinessStatus) {
-    const maximumReadiness = MAX_READINESS_BY_EVIDENCE_LEVEL[claimedEvidenceLevel];
-    if (READINESS_RANK[claimedReadinessStatus] > READINESS_RANK[maximumReadiness]) {
-      addIssue(
-        issues,
-        'readiness-exceeds-evidence-level',
-        '$.readinessStatus',
-        `${claimedEvidenceLevel} evidence cannot claim ${claimedReadinessStatus}; maximum is ${maximumReadiness}`,
-      );
-    }
-  }
-
-  const nowMs = resolveNowMs(options.now);
-  const capturedAtMs = parseTimestamp(input.capturedAt);
-  if (capturedAtMs !== undefined && capturedAtMs > nowMs + MAX_CLOCK_SKEW_MS) {
-    addIssue(
+  if (
+    level &&
+    readiness &&
+    READINESS_RANK[readiness] > READINESS_RANK[MAX_READINESS[level]]
+  ) {
+    issue(
       issues,
-      'future-captured-at',
-      '$.capturedAt',
-      'capturedAt is later than the allowed clock skew',
+      'readiness-exceeds-evidence-level',
+      '$.readinessStatus',
+      `${level} evidence cannot claim ${readiness}`,
     );
   }
 
-  if (claimedEvidenceLevel === 'captured-and-verified') {
-    validateCapturedAndVerifiedShape(input, issues, nowMs, capturedAtMs, options);
+  if (level === 'captured-and-verified') {
+    validateCaptured(input, issues, nowMs, capturedAtMs, options.trustedVerifiers ?? []);
   }
 
   if (issues.length > 0) {
-    return {
-      status: issues.some((issue) => issue.code === 'artifact-unavailable')
-        ? 'not-evaluated'
-        : 'invalid',
-      claimedEvidenceLevel,
-      claimedReadinessStatus,
-      issues,
-    };
+    return result<TPayload>('invalid', issues, level, readiness);
   }
 
   const envelope = input as unknown as EvidenceEnvelope<TPayload>;
-
-  if (claimedEvidenceLevel !== 'captured-and-verified') {
+  if (level !== 'captured-and-verified') {
     return {
       status: 'valid',
-      claimedEvidenceLevel,
-      effectiveEvidenceLevel: claimedEvidenceLevel,
-      claimedReadinessStatus,
-      effectiveReadinessStatus: claimedReadinessStatus,
+      claimedEvidenceLevel: level,
+      effectiveEvidenceLevel: level,
+      claimedReadinessStatus: readiness,
+      effectiveReadinessStatus: readiness,
       issues,
       envelope,
     };
   }
 
-  const capturedEnvelope = envelope as CapturedAndVerifiedEvidenceEnvelope<TPayload>;
+  const captured = envelope as CapturedAndVerifiedEvidenceEnvelope<TPayload>;
   if (!options.loadArtifact) {
-    addIssue(
+    issue(
       issues,
       'artifact-unavailable',
       '$.artifact.locator',
       'captured-and-verified evidence requires an external artifact loader',
     );
-    return {
-      status: 'not-evaluated',
-      claimedEvidenceLevel,
-      claimedReadinessStatus,
-      issues,
-    };
+    return result<TPayload>('not-evaluated', issues, level, readiness);
   }
 
   let artifactContent: ArtifactContent;
   try {
-    artifactContent = await options.loadArtifact(capturedEnvelope.artifact.locator);
+    artifactContent = await options.loadArtifact(captured.artifact.locator);
   } catch (error) {
-    addIssue(
+    issue(
       issues,
       'artifact-load-failed',
       '$.artifact.locator',
       `artifact could not be loaded: ${formatError(error)}`,
     );
-    return {
-      status: 'not-evaluated',
-      claimedEvidenceLevel,
-      claimedReadinessStatus,
-      issues,
-    };
+    return result<TPayload>('not-evaluated', issues, level, readiness);
   }
 
-  const actualDigest = await sha256Hex(artifactContent);
-  const expectedDigest = normalizeSha256(capturedEnvelope.artifact.sha256);
-  if (actualDigest !== expectedDigest) {
-    addIssue(
+  const actualSha256 = await sha256Hex(artifactContent);
+  const expectedSha256 = normalizeSha256(captured.artifact.sha256);
+  if (actualSha256 !== expectedSha256) {
+    issue(
       issues,
       'artifact-digest-mismatch',
       '$.artifact.sha256',
-      `artifact digest mismatch: expected ${expectedDigest}, got ${actualDigest}`,
+      `artifact digest mismatch: expected ${expectedSha256}, got ${actualSha256}`,
     );
-    return {
-      status: 'invalid',
-      claimedEvidenceLevel,
-      claimedReadinessStatus,
+    return result<TPayload>('invalid', issues, level, readiness);
+  }
+
+  if (!options.verifyArtifact) {
+    issue(
       issues,
-    };
+      'verification-unavailable',
+      '$.verification',
+      'captured-and-verified evidence requires an independent verifier callback',
+    );
+    return result<TPayload>('not-evaluated', issues, level, readiness);
+  }
+
+  let attestation: IndependentEvidenceVerification;
+  try {
+    attestation = await options.verifyArtifact({
+      envelope: captured,
+      artifactContent,
+      actualSha256,
+    });
+  } catch (error) {
+    issue(
+      issues,
+      'verification-execution-failed',
+      '$.verification',
+      `independent verification could not be completed: ${formatError(error)}`,
+    );
+    return result<TPayload>('not-evaluated', issues, level, readiness);
+  }
+
+  if (
+    attestation.result !== 'pass' ||
+    attestation.verifier !== captured.verification.verifier ||
+    attestation.version !== captured.verification.version ||
+    attestation.verifiedAt !== captured.verification.verifiedAt
+  ) {
+    issue(
+      issues,
+      'verification-attestation-mismatch',
+      '$.verification',
+      attestation.reason ?? 'independent verifier attestation does not match the envelope',
+    );
+    return result<TPayload>('invalid', issues, level, readiness);
+  }
+
+  if (!isTrustedVerifier(attestation.verifier, attestation.version, options.trustedVerifiers ?? [])) {
+    issue(
+      issues,
+      'untrusted-verifier',
+      '$.verification.verifier',
+      `verifier is not trusted: ${attestation.verifier}@${attestation.version}`,
+    );
+    return result<TPayload>('invalid', issues, level, readiness);
   }
 
   return {
     status: 'valid',
-    claimedEvidenceLevel,
-    effectiveEvidenceLevel: 'captured-and-verified',
-    claimedReadinessStatus,
-    effectiveReadinessStatus: claimedReadinessStatus,
+    claimedEvidenceLevel: level,
+    effectiveEvidenceLevel: level,
+    claimedReadinessStatus: readiness,
+    effectiveReadinessStatus: readiness,
     issues,
     envelope,
   };
 }
 
 export function evidenceSupportsReadiness(
-  result: EvidenceValidationResult,
-  minimumReadiness: ReadinessStatus = 'production-candidate',
+  validation: EvidenceValidationResult,
+  minimum: ReadinessStatus = 'production-candidate',
 ): boolean {
   return (
-    result.status === 'valid' &&
-    result.effectiveEvidenceLevel === 'captured-and-verified' &&
-    result.effectiveReadinessStatus !== undefined &&
-    READINESS_RANK[result.effectiveReadinessStatus] >= READINESS_RANK[minimumReadiness]
+    validation.status === 'valid' &&
+    validation.effectiveEvidenceLevel === 'captured-and-verified' &&
+    validation.effectiveReadinessStatus !== undefined &&
+    READINESS_RANK[validation.effectiveReadinessStatus] >= READINESS_RANK[minimum]
   );
 }
 
-function validateBaseEnvelope(
+function validateBase(
   input: Record<string, unknown>,
   issues: EvidenceValidationIssue[],
-): void {
-  requireNonEmptyString(input, 'schemaVersion', '$.schemaVersion', issues);
-  requireNonEmptyString(input, 'evidenceKind', '$.evidenceKind', issues);
-  requireNonEmptyString(input, 'runId', '$.runId', issues);
-  requireTimestamp(input, 'capturedAt', '$.capturedAt', issues);
-
-  if (!isRecord(input.producer)) {
-    addIssue(issues, 'invalid-envelope', '$.producer', 'producer must be an object');
-  } else {
-    requireNonEmptyString(input.producer, 'name', '$.producer.name', issues);
-    requireNonEmptyString(input.producer, 'version', '$.producer.version', issues);
+  nowMs: number,
+): number | undefined {
+  requiredString(input, 'schemaVersion', '$.schemaVersion', issues);
+  requiredString(input, 'evidenceKind', '$.evidenceKind', issues);
+  requiredString(input, 'runId', '$.runId', issues);
+  const capturedAtMs = requiredTimestamp(input, 'capturedAt', '$.capturedAt', issues);
+  if (capturedAtMs !== undefined && capturedAtMs > nowMs + MAX_CLOCK_SKEW_MS) {
+    issue(issues, 'future-captured-at', '$.capturedAt', 'capturedAt exceeds clock skew');
   }
 
+  validateNamedVersion(input.producer, '$.producer', issues);
   if (!isRecord(input.environment)) {
-    addIssue(issues, 'invalid-envelope', '$.environment', 'environment must be an object');
+    issue(issues, 'invalid-envelope', '$.environment', 'environment must be an object');
   } else {
-    requireNonEmptyString(input.environment, 'runtime', '$.environment.runtime', issues);
-    requireNonEmptyString(
-      input.environment,
-      'runtimeVersion',
-      '$.environment.runtimeVersion',
-      issues,
-    );
-    requireNonEmptyString(
+    requiredString(input.environment, 'runtime', '$.environment.runtime', issues);
+    requiredString(input.environment, 'runtimeVersion', '$.environment.runtimeVersion', issues);
+    requiredString(
       input.environment,
       'executionSurface',
       '$.environment.executionSurface',
@@ -408,79 +403,53 @@ function validateBaseEnvelope(
   }
 
   if (!isRecord(input.redaction)) {
-    addIssue(issues, 'invalid-envelope', '$.redaction', 'redaction must be an object');
+    issue(issues, 'invalid-envelope', '$.redaction', 'redaction must be an object');
   } else {
     if (typeof input.redaction.applied !== 'boolean') {
-      addIssue(
-        issues,
-        'invalid-envelope',
-        '$.redaction.applied',
-        'redaction.applied must be a boolean',
-      );
+      issue(issues, 'invalid-envelope', '$.redaction.applied', 'applied must be boolean');
     }
-    requireNonEmptyString(
-      input.redaction,
-      'policyVersion',
-      '$.redaction.policyVersion',
-      issues,
-    );
+    requiredString(input.redaction, 'policyVersion', '$.redaction.policyVersion', issues);
   }
 
   if (!Object.prototype.hasOwnProperty.call(input, 'payload')) {
-    addIssue(issues, 'invalid-envelope', '$.payload', 'payload is required');
+    issue(issues, 'invalid-envelope', '$.payload', 'payload is required');
   }
+  return capturedAtMs;
 }
 
-function validateCapturedAndVerifiedShape(
+function validateCaptured(
   input: Record<string, unknown>,
   issues: EvidenceValidationIssue[],
   nowMs: number,
   capturedAtMs: number | undefined,
-  options: EvidenceValidationOptions,
+  trustedVerifiers: readonly TrustedEvidenceVerifier[],
 ): void {
   if (!isRecord(input.producer) || !isNonEmptyString(input.producer.commitSha)) {
-    addIssue(
+    issue(
       issues,
       'missing-producer-commit-sha',
       '$.producer.commitSha',
-      'captured-and-verified evidence requires producer.commitSha',
+      'producer.commitSha is required',
     );
   }
 
-  if (!isRecord(input.environment)) {
-    addIssue(
+  if (!isRecord(input.environment) || !isNamedVersion(input.environment.os)) {
+    issue(
       issues,
       'missing-environment-metadata',
-      '$.environment',
-      'captured-and-verified evidence requires environment metadata',
+      '$.environment.os',
+      'OS name and version are required',
     );
-  } else {
-    if (
-      !isRecord(input.environment.os) ||
-      !isNonEmptyString(input.environment.os.name) ||
-      !isNonEmptyString(input.environment.os.version)
-    ) {
-      addIssue(
-        issues,
-        'missing-environment-metadata',
-        '$.environment.os',
-        'captured-and-verified evidence requires OS name and version',
-      );
-    }
-
-    if (
-      isBrowserExecutionSurface(input.environment.executionSurface) &&
-      (!isRecord(input.environment.browser) ||
-        !isNonEmptyString(input.environment.browser.name) ||
-        !isNonEmptyString(input.environment.browser.version))
-    ) {
-      addIssue(
-        issues,
-        'missing-browser-metadata',
-        '$.environment.browser',
-        'browser execution evidence requires browser name and version',
-      );
-    }
+  } else if (
+    isBrowserSurface(input.environment.executionSurface) &&
+    !isNamedVersion(input.environment.browser)
+  ) {
+    issue(
+      issues,
+      'missing-browser-metadata',
+      '$.environment.browser',
+      'browser name and version are required',
+    );
   }
 
   if (
@@ -489,177 +458,140 @@ function validateCapturedAndVerifiedShape(
     !isNonEmptyString(input.scenario.scenario) ||
     !isNonEmptyString(input.scenario.expectedResult)
   ) {
-    addIssue(
+    issue(
       issues,
       'missing-scenario-metadata',
       '$.scenario',
-      'captured-and-verified evidence requires feature, scenario, and expectedResult',
+      'feature, scenario, and expectedResult are required',
     );
   }
 
   if (!isRecord(input.artifact)) {
-    addIssue(
-      issues,
-      'missing-artifact',
-      '$.artifact',
-      'captured-and-verified evidence requires an artifact',
-    );
+    issue(issues, 'missing-artifact', '$.artifact', 'artifact is required');
   } else {
-    requireNonEmptyString(input.artifact, 'locator', '$.artifact.locator', issues);
-
+    requiredString(input.artifact, 'locator', '$.artifact.locator', issues);
     if (!isNonEmptyString(input.artifact.sha256) || !SHA256_PATTERN.test(input.artifact.sha256)) {
-      addIssue(
+      issue(
         issues,
         'invalid-artifact-digest',
         '$.artifact.sha256',
-        'artifact.sha256 must be a 64-character hexadecimal SHA-256 digest',
+        'sha256 must be a hexadecimal SHA-256 digest',
       );
     }
-
-    const expiresAtMs = requireTimestamp(
+    const expiresAtMs = requiredTimestamp(
       input.artifact,
       'expiresAt',
       '$.artifact.expiresAt',
       issues,
     );
     if (expiresAtMs !== undefined && expiresAtMs <= nowMs) {
-      addIssue(
-        issues,
-        'expired-artifact',
-        '$.artifact.expiresAt',
-        'artifact evidence has expired',
-      );
+      issue(issues, 'expired-artifact', '$.artifact.expiresAt', 'artifact has expired');
     }
   }
 
   if (!isRecord(input.verification)) {
-    addIssue(
+    issue(issues, 'missing-verification', '$.verification', 'verification is required');
+    return;
+  }
+
+  requiredString(input.verification, 'verifier', '$.verification.verifier', issues);
+  requiredString(input.verification, 'version', '$.verification.version', issues);
+  const verifiedAtMs = requiredTimestamp(
+    input.verification,
+    'verifiedAt',
+    '$.verification.verifiedAt',
+    issues,
+  );
+  if (input.verification.result !== 'pass') {
+    issue(issues, 'verification-failed', '$.verification.result', 'verification must pass');
+  }
+  if (capturedAtMs !== undefined && verifiedAtMs !== undefined && verifiedAtMs < capturedAtMs) {
+    issue(
       issues,
-      'missing-verification',
-      '$.verification',
-      'captured-and-verified evidence requires verification metadata',
-    );
-  } else {
-    requireNonEmptyString(input.verification, 'verifier', '$.verification.verifier', issues);
-    requireNonEmptyString(input.verification, 'version', '$.verification.version', issues);
-    const verifiedAtMs = requireTimestamp(
-      input.verification,
-      'verifiedAt',
+      'verification-before-capture',
       '$.verification.verifiedAt',
-      issues,
+      'verification cannot predate capture',
     );
-
-    if (input.verification.result !== 'pass') {
-      addIssue(
-        issues,
-        'verification-failed',
-        '$.verification.result',
-        'captured-and-verified evidence requires verification.result=pass',
-      );
-    }
-
-    if (
-      capturedAtMs !== undefined &&
-      verifiedAtMs !== undefined &&
-      verifiedAtMs < capturedAtMs
-    ) {
-      addIssue(
-        issues,
-        'verification-before-capture',
-        '$.verification.verifiedAt',
-        'verification cannot occur before artifact capture',
-      );
-    }
-
-    if (
-      isNonEmptyString(input.verification.verifier) &&
-      isNonEmptyString(input.verification.version) &&
-      !isTrustedVerifier(
-        input.verification.verifier,
-        input.verification.version,
-        options.trustedVerifiers ?? [],
-      )
-    ) {
-      addIssue(
-        issues,
-        'untrusted-verifier',
-        '$.verification.verifier',
-        `verifier is not trusted: ${input.verification.verifier}@${input.verification.version}`,
-      );
-    }
+  }
+  if (
+    isNonEmptyString(input.verification.verifier) &&
+    isNonEmptyString(input.verification.version) &&
+    !isTrustedVerifier(input.verification.verifier, input.verification.version, trustedVerifiers)
+  ) {
+    issue(
+      issues,
+      'untrusted-verifier',
+      '$.verification.verifier',
+      `verifier is not trusted: ${input.verification.verifier}@${input.verification.version}`,
+    );
   }
 }
 
-function isTrustedVerifier(
-  name: string,
-  version: string,
-  trustedVerifiers: readonly TrustedEvidenceVerifier[],
-): boolean {
-  return trustedVerifiers.some(
-    (trusted) => trusted.name === name && (trusted.version === undefined || trusted.version === version),
-  );
+function result<TPayload = unknown>(
+  status: EvidenceValidationStatus,
+  issues: EvidenceValidationIssue[],
+  claimedEvidenceLevel?: EvidenceLevel,
+  claimedReadinessStatus?: ReadinessStatus,
+): EvidenceValidationResult<TPayload> {
+  return { status, claimedEvidenceLevel, claimedReadinessStatus, issues };
 }
 
-function isBrowserExecutionSurface(value: unknown): boolean {
-  return (
-    typeof value === 'string' &&
-    (value.startsWith('browser-') || value.startsWith('extension-'))
-  );
+function issue(
+  issues: EvidenceValidationIssue[],
+  code: EvidenceValidationIssueCode,
+  path: string,
+  message: string,
+): void {
+  issues.push({ code, path, message });
 }
 
-function resolveNowMs(now: EvidenceValidationOptions['now']): number {
-  if (now === undefined) {
-    return Date.now();
-  }
-  if (now instanceof Date) {
-    return now.getTime();
-  }
-  if (typeof now === 'number') {
-    return now;
-  }
-  const parsed = Date.parse(now);
-  return Number.isNaN(parsed) ? Date.now() : parsed;
-}
-
-function requireTimestamp(
-  record: Record<string, unknown>,
-  key: string,
+function validateNamedVersion(
+  value: unknown,
   path: string,
   issues: EvidenceValidationIssue[],
-): number | undefined {
-  const value = record[key];
-  const parsed = parseTimestamp(value);
-  if (parsed === undefined) {
-    addIssue(issues, 'invalid-timestamp', path, `${key} must be a valid ISO-8601 timestamp`);
+): void {
+  if (!isRecord(value)) {
+    issue(issues, 'invalid-envelope', path, `${path} must be an object`);
+    return;
   }
-  return parsed;
+  requiredString(value, 'name', `${path}.name`, issues);
+  requiredString(value, 'version', `${path}.version`, issues);
 }
 
-function parseTimestamp(value: unknown): number | undefined {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return undefined;
-  }
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? undefined : parsed;
-}
-
-function requireNonEmptyString(
+function requiredString(
   record: Record<string, unknown>,
   key: string,
   path: string,
   issues: EvidenceValidationIssue[],
 ): void {
   if (!isNonEmptyString(record[key])) {
-    addIssue(issues, 'invalid-envelope', path, `${key} must be a non-empty string`);
+    issue(issues, 'invalid-envelope', path, `${key} must be a non-empty string`);
   }
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
+function requiredTimestamp(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+  issues: EvidenceValidationIssue[],
+): number | undefined {
+  const value = record[key];
+  const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(parsed)) {
+    issue(issues, 'invalid-timestamp', path, `${key} must be a valid timestamp`);
+    return undefined;
+  }
+  return parsed;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function isTrustedVerifier(
+  name: string,
+  version: string,
+  trusted: readonly TrustedEvidenceVerifier[],
+): boolean {
+  return trusted.some(
+    (entry) => entry.name === name && (entry.version === undefined || entry.version === version),
+  );
 }
 
 function isEvidenceLevel(value: unknown): value is EvidenceLevel {
@@ -670,13 +602,30 @@ function isReadinessStatus(value: unknown): value is ReadinessStatus {
   return typeof value === 'string' && READINESS_STATUSES.includes(value as ReadinessStatus);
 }
 
-function addIssue(
-  issues: EvidenceValidationIssue[],
-  code: EvidenceValidationIssueCode,
-  path: string,
-  message: string,
-): void {
-  issues.push({ code, path, message });
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isNamedVersion(value: unknown): boolean {
+  return isRecord(value) && isNonEmptyString(value.name) && isNonEmptyString(value.version);
+}
+
+function isBrowserSurface(value: unknown): boolean {
+  return typeof value === 'string' && (value.startsWith('browser-') || value.startsWith('extension-'));
+}
+
+function resolveNow(value: EvidenceValidationOptions['now']): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
 }
 
 function normalizeSha256(value: string): string {
@@ -684,19 +633,14 @@ function normalizeSha256(value: string): string {
 }
 
 async function sha256Hex(content: ArtifactContent): Promise<string> {
-  const bytes = toUint8Array(content);
+  const bytes =
+    typeof content === 'string'
+      ? new TextEncoder().encode(content)
+      : content instanceof Uint8Array
+        ? content
+        : new Uint8Array(content);
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function toUint8Array(content: ArtifactContent): Uint8Array {
-  if (typeof content === 'string') {
-    return new TextEncoder().encode(content);
-  }
-  if (content instanceof Uint8Array) {
-    return content;
-  }
-  return new Uint8Array(content);
 }
 
 function formatError(error: unknown): string {
