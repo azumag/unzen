@@ -4,9 +4,10 @@
 
 1. [`../README.md`](../README.md) — 実装トラックと現在の成熟度
 2. [`evidence-readiness.md`](./evidence-readiness.md) — evidence levelとproduction readinessの規約
-3. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
-4. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
-5. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
+3. [`evidence-validation.md`](./evidence-validation.md) — TypeScript validator、trust boundary、利用方法
+4. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
+5. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
+6. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
 
 ## 読み方
 
