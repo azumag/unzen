@@ -1,67 +1,79 @@
-# 分散コンピューティング実験プロジェクト
+# Unzen — ブラウザ分散コンピューティング実験プロジェクト
 
-Webサイト閲覧者のブラウザを計算リソースとして活用し、従来の中央集権型クラウドに代わる**民主的でオープンな分散コンピューティング基盤**を構想する実験プロジェクトです。
+Webブラウザやクライアント端末の余剰計算資源を活用し、中央集権型クラウドとは異なる計算基盤を検証する実験プロジェクトです。
 
-## プロジェクトの思想
+> [!IMPORTANT]
+> 現在は設計、制御フロー、セキュリティ境界、運用ゲートのプロトタイプが中心です。テストが通ることと、実ブラウザ・実モデル・実決済等で本番運用可能であることは同義ではありません。
 
-### 中央集権から分散へ
+## 現在の実装トラック
 
-従来のコンピューティングは、高価なデータセンターと専用ハードウェアに依存していました。しかし、世界中のWeb閲覧者が持つデバイスには**巨大な余剰計算リソース**が眠っています。
+| トラック | 目的 | 現在の状態 |
+|---|---|---|
+| [`core`](./core/) | QuickJS/Wasmを利用したブラウザ委譲型の汎用コード実行 | ブラウザ実行・サーバーフォールバックのプロトタイプとE2Eデモあり |
+| [`LLM-proto`](./LLM-proto/) — segmented WebGPU | モデルをセグメント分割し、Coordinator経由のcheckpoint relayで推論する方式 | TypeScriptの制御フロー、metadata、Miniflare smoke、各種gateを実装中。実モデル・実ブラウザ証拠は別途検証が必要 |
+| [`LLM-proto`](./LLM-proto/) — Chrome Built-in AI | Chromeが管理する端末内モデルをfull-model Workerとして利用する方式 | Issue #92配下でfeasibility・Backend抽象化・UI/UX・E2Eを設計中 |
+| [`LLM-proto/SWARM.md`](./LLM-proto/SWARM.md) | 軽量モデルを複数ノードで実行し、分散合意する実験方式 | 探索的・実験的 |
 
-このプロジェクトは、ブラウザという「普遍的な実行環境」を舞台に、閲覧者同士が直接リソースを共有し合う**P2P分散コンピューティング**の実現を目指します。
+## Evidenceとreadiness
 
-### 3つの実装方向
+このリポジトリでは、今後の文書とreportで証拠レベルを区別します。
 
-| プロトタイプ | 計算対象 | 技術的特徴 |
-|------------|---------|-----------|
-| **core** | 汎用コード実行 | QuickJS (Wasm) をブラウザ上で動かし、サーバーレス関数を分散実行 |
-| **LLM-proto** (パイプライン) | LLM推論 (30B) | モデルを8セグメントに分割し、Petals方式のスパンルーティングでチェックポイント転送を最小化するパイプライン並列推論 |
-| **LLM-proto** (群知能) | LLM推論 (1.2B) | 軽量モデルを各ノードで完全実行し、Gossipベースの分散合意で集合知を創発。中央集権ノード不要 |
+1. **synthetic fixture / contract test** — 手書きfixtureやmockでschema・判定ロジック・制御フローを確認
+2. **self-reported runtime evidence** — 実行環境自身が生成したreport。外部検証やartifact provenanceは未確立
+3. **captured and verified evidence** — environment metadata、artifact、digest、verifier、freshnessを伴う検証済み証拠
 
-## 共通の技術基盤
+本番readiness、SLO、精算・支払等の判断根拠には、原則として3が必要です。詳細は [`LLM-proto/docs/evidence-readiness.md`](./LLM-proto/docs/evidence-readiness.md) を参照してください。
 
-### 1. Webブラウザを実行環境として活用
+## 共通方針
 
-- **サンドボックス化**: 既存のセキュリティモデルを活用する
-- **普遍的アクセス**: インストール不要で誰でも参加できる
-- **WebGPU/WebAssembly**: ネイティブに近い速度で実行できる
+### ブラウザを実行環境として利用
 
-### 2. P2P通信による直接連携
+- WebGPU、WebAssembly、Web Worker等を用途に応じて利用する
+- ユーザーの明示的なオプトインを前提とする
+- リソース使用量、準備状態、停止方法を利用者へ表示する
+- 非対応環境や処理失敗時には安全なフォールバックを用意する
 
-- **WebRTC**: Worker同士が直接データを転送する
-- **IndexedDB**: 重み・コードを永続的にキャッシュする
-- **冗長実行**: 信頼性のために重複計算と検証を行う
+### 通信とセキュリティ境界
 
-### 3. インセンティブ不要のリソース共有
+LLMパイプラインではWorker同士の任意な直接通信を許可せず、CoordinatorとUnzen管理CDNを通信境界とします。sandbox iframe、CSP、COOP/COEP、署名検証等の設計はありますが、各境界が実ブラウザで検証済みかはevidence levelと併記します。
 
-- **余剰リソース活用**: 閲覧中のブラウザの休眠CPU/GPUを使用する
-- **低コスト**: 既存のクラウドの1/10〜1/100のコストを目標とする
-- **オープン**: 誰でもインフラに参加・利用できる
+### 報酬と運用
+
+LLMトラックではWorker・サイト運営者への報酬が必要という方針です。精算、支払、税務関連の実装は現時点では主にcontract/report gateであり、実際のprovider・資金移動・法令対応が完了したことを意味しません。
 
 ## プロジェクト構成
 
-```
+```text
 .
-├── core/               # 分散型サーバーレス実行環境
-│   ├── README.md       # 概要と設計思想
-│   └── DESIGN.md       # 詳細設計
-│
-└── LLM-proto/          # 分散型LLM推論API
-    ├── README.md       # 詳細設計書
-    ├── PLAN.md         # 計画書 v2.6（確定方針・パイプライン方式）
-    ├── SWARM.md        # 群知能方式の設計書
-    ├── src/            # パイプライン実装（Coordinator, WorkerPool, Pipeline, SpanRouter, SpanPipeline等）
-    ├── src/swarm/      # 群知能実装（SwarmPeer, GossipProtocol, SwarmConsensus, Swarm等）
-    └── tests/          # テスト（125テスト: パイプライン71 + 群知能54）
+├── core/                       # ブラウザ委譲型の汎用コード実行
+│   ├── README.md
+│   ├── docs/
+│   ├── packages/
+│   ├── demo/
+│   └── examples/
+└── LLM-proto/                  # 分散型LLM推論の設計・プロトタイプ
+    ├── README.md               # 実装概要と現在の成熟度
+    ├── PLAN.md                 # 計画書 v2.6
+    ├── SWARM.md                # 群知能方式
+    ├── docs/
+    ├── src/
+    └── tests/
 ```
 
-## 今後の展望
+## 主要Issue
 
-- 実世界での検証と性能測定を行う
-- セキュリティモデルを強化する
-- インセンティブ設計を検討する（オプション）
-- より大規模なモデル・タスクへ展開する
+- [#92 Chrome Built-in AI（Prompt API / Gemini Nano）をUnzen Workerとして利用する](https://github.com/azumag/unzen/issues/92)
+- [#101 simulated evidenceと実測evidenceを分離しreadiness表現を是正](https://github.com/azumag/unzen/issues/101)
+- [#102 hard-coded model geometry・placeholder hashをmodel manifestに置換](https://github.com/azumag/unzen/issues/102)
+- [#103 Coordinatorの永続性・request identity・retry/cancellation semanticsを修正](https://github.com/azumag/unzen/issues/103)
+- [#104 core E2E demoのUI/UXを改善](https://github.com/azumag/unzen/issues/104)
 
----
+## 現時点で保証しないもの
 
-**注意**: 現時点では設計と技術検証が中心であり、商用利用やSLAは未検証です。
+- 商用SLA、可用性、性能、費用優位性
+- 30Bモデルの実ブラウザ分割推論が成立すること
+- READMEに記載された仮定値が実測値であること
+- Chrome Built-in AIが全Chrome環境で利用できること
+- payout・税務gateが実際の資金移動や申告完了を証明すること
+
+各トラックは、実測artifactと再現可能な手順が揃った段階で成熟度表示を更新します。
