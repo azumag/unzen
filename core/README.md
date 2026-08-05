@@ -3,7 +3,7 @@
 サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
 QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行する。
 
-> **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。447テスト通過。
+> **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。489テスト通過。
 
 ## コンセプト
 
@@ -250,7 +250,7 @@ core/
 # インストール
 npm install
 
-# テスト実行 (447テスト)
+# テスト実行
 npx vitest run
 
 # ビルド
@@ -266,6 +266,7 @@ cd demo && npm run dev
 詳細は `docs/` ディレクトリにまとめています。[ドキュメント一覧](docs/INDEX.md) を参照。
 
 - [設計書](docs/design.md) - アーキテクチャ、サンドボックス、SDK設計
+- [アーキテクチャ](docs/ARCHITECTURE.md) - `WebWorkerSandboxExecutor` の single-flight / queue / timeout / cancel / generation ライフサイクル (issue #106)、`UnzenClient` の AbortSignal / 実行イベント / fallback diagnostics (issue #105)
 - [サンプル関数リファレンス](docs/sample-functions.md) - 全サンプル関数の仕様・入出力・例
 - [Next.js App Router 統合ガイド](docs/nextjs-integration.md) - Next.js への組み込み手順
 - [Next.js App Router 実行サンプル](examples/nextjs-app-router/README.md) - manifest/code/exec と browser diagnostics を確認できる最小構成
@@ -273,6 +274,7 @@ cd demo && npm run dev
 - [セキュリティ制約とユースケース](docs/use-cases-and-constraints.md) - 外部接続禁止ポリシー
 - [学術参考文献](docs/references.md) - Wasm セキュリティ、サンドボックス関連論文
 - [MoonBit wasm-gc PoC](moonbit-poc/README.md) - Phase 3 MoonBit ランタイム検証 (ビルド済み、ブラウザベンチマーク付き)
+- [E2E デモ](demo/README.md) - デモページの UI アーキテクチャ・状態機械・統計・テストの説明
 
 ## ライセンス
 

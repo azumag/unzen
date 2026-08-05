@@ -161,3 +161,38 @@ export class UnzenNetworkError extends UnzenError {
     this.name = 'UnzenNetworkError';
   }
 }
+
+/**
+ * Cancellation errors raised when the caller aborts execution
+ *
+ * These errors occur when the caller deliberately cancels a request via an
+ * AbortSignal. They are semantically distinct from runtime errors:
+ * cancellation is an intentional caller decision, not an environment failure.
+ *
+ * The distinct code ('CANCELLED') lets orchestrators (e.g. UnzenClient) skip
+ * server fallback for cancelled requests — a user who pressed "cancel" does not
+ * want the work silently continued elsewhere.
+ *
+ * @example
+ * ```ts
+ * const controller = new AbortController();
+ * try {
+ *   await unzen.call('myFunction', args, { signal: controller.signal });
+ * } catch (e) {
+ *   if (e instanceof UnzenCancelledError) {
+ *     // Caller aborted — do NOT retry or fallback
+ *   }
+ * }
+ * ```
+ */
+export class UnzenCancelledError extends UnzenError {
+  /**
+   * Create a new cancellation error
+   *
+   * @param message - Human-readable error message
+   */
+  constructor(message: string) {
+    super(message, 'CANCELLED');
+    this.name = 'UnzenCancelledError';
+  }
+}

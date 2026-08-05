@@ -30,8 +30,14 @@ const __dirname = dirname(__filename);
 const app = new Hono();
 
 // Initialize UnzenServer
+// baseUrl is ORIGIN-RELATIVE ('/unzen') so the manifest's codeUrl stays on the
+// same origin/scheme as the page that requested it. A hard-coded
+// 'http://localhost:3000/unzen' would be blocked as mixed content when the
+// demo is served over HTTPS (issue #104). createManifestResponse() appends
+// "/code/<name>?v=..." to this value, which fetch() resolves against the
+// current origin.
 const unzenServer = new UnzenServer({
-  baseUrl: 'http://localhost:3000/unzen',
+  baseUrl: '/unzen',
 });
 
 // Register demo functions

@@ -23,9 +23,11 @@
  */
 
 import {
+  UnzenCancelledError,
   UnzenNetworkError,
   type FunctionManifestEntry,
 } from '@unzen/shared';
+import { isAbortError, throwIfAborted } from './abort';
 
 export class CodeFetcher {
   /**
@@ -54,7 +56,10 @@ export class CodeFetcher {
    * Fetch function source code (or return cached value)
    *
    * @param entry - Manifest entry containing codeUrl and hash
+   * @param signal - Optional AbortSignal that cancels the network fetch.
+   *   When the signal aborts, the promise rejects with UnzenCancelledError.
    * @returns JavaScript source code
+   * @throws {UnzenCancelledError} When the caller aborts via signal
    * @throws {UnzenNetworkError} When network or server error occurs
    *
    * Implementation note:
@@ -62,7 +67,11 @@ export class CodeFetcher {
    * - Caches result using entry.hash as key
    * - Hash-based caching allows code reuse across functions
    */
-  async fetch(entry: FunctionManifestEntry): Promise<string> {
+  async fetch(entry: FunctionManifestEntry, signal?: AbortSignal): Promise<string> {
+    // Reject immediately if the caller already aborted before calling — even
+    // cached code must not be handed out after cancellation.
+    throwIfAborted(signal);
+
     // Check cache first
     // Rationale: Hash represents content identity, so cache hit is safe
     const cached = this.cache.get(entry.hash);
@@ -71,10 +80,11 @@ export class CodeFetcher {
     }
 
     try {
-      // Fetch code from URL
+      // Fetch code from URL (signal cancels the request on abort)
       // Note: codeUrl is absolute URL from manifest, not relative to endpoint
       const response = await globalThis.fetch(entry.codeUrl, {
         method: 'GET',
+        signal,
       });
 
       // Check HTTP status
@@ -96,6 +106,12 @@ export class CodeFetcher {
       // Re-throw UnzenNetworkError as-is
       if (error instanceof UnzenNetworkError) {
         throw error;
+      }
+
+      // Cancellation must surface as UnzenCancelledError, never as a network
+      // error (which would look recoverable and trigger server fallback).
+      if (isAbortError(error) || signal?.aborted) {
+        throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
       // Wrap other errors as network error

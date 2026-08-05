@@ -4,382 +4,366 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>unzen core E2E Demo</title>
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      line-height: 1.6;
-      padding: 2rem;
-      max-width: 1200px;
-      margin: 0 auto;
-      background: #f5f5f5;
-    }
-
-    h1 {
-      color: #333;
-      margin-bottom: 0.5rem;
-    }
-
-    .subtitle {
-      color: #666;
-      margin-bottom: 2rem;
-      font-size: 1.1rem;
-    }
-
-    .demo-section {
-      background: white;
-      padding: 2rem;
-      margin-bottom: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-
-    h2 {
-      color: #333;
-      margin-bottom: 1rem;
-      border-bottom: 2px solid #4CAF50;
-      padding-bottom: 0.5rem;
-    }
-
-    .form-group {
-      margin-bottom: 1rem;
-    }
-
-    label {
-      display: block;
-      margin-bottom: 0.5rem;
-      font-weight: 600;
-      color: #555;
-    }
-
-    input[type="text"],
-    textarea {
-      width: 100%;
-      padding: 0.75rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 1rem;
-      font-family: inherit;
-    }
-
-    textarea {
-      min-height: 100px;
-      resize: vertical;
-    }
-
-    button {
-      background: #4CAF50;
-      color: white;
-      padding: 0.75rem 1.5rem;
-      border: none;
-      border-radius: 4px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.3s;
-    }
-
-    button:hover {
-      background: #45a049;
-    }
-
-    button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-
-    .result {
-      margin-top: 1rem;
-      padding: 1rem;
-      border-radius: 4px;
-      background: #f9f9f9;
-      border-left: 4px solid #4CAF50;
-    }
-
-    .result.error {
-      background: #ffebee;
-      border-left-color: #f44336;
-    }
-
-    .result h3 {
-      margin-bottom: 0.5rem;
-      font-size: 1rem;
-      color: #333;
-    }
-
-    .result pre {
-      background: #f5f5f5;
-      padding: 0.75rem;
-      border-radius: 4px;
-      overflow-x: auto;
-      font-size: 0.9rem;
-    }
-
-    .metadata {
-      margin-top: 0.5rem;
-      font-size: 0.9rem;
-      color: #666;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.85rem;
-      font-weight: 600;
-      margin-right: 0.5rem;
-    }
-
-    .badge.browser {
-      background: #E3F2FD;
-      color: #1976D2;
-    }
-
-    .badge.server {
-      background: #FFF3E0;
-      color: #F57C00;
-    }
-
-    .badge.cached {
-      background: #F3E5F5;
-      color: #7B1FA2;
-    }
-
-    .info-box {
-      background: #E3F2FD;
-      border-left: 4px solid #2196F3;
-      padding: 1rem;
-      margin-bottom: 1rem;
-      border-radius: 4px;
-    }
-
-    .info-box h3 {
-      margin-bottom: 0.5rem;
-      color: #1976D2;
-    }
-
-    .info-box ul {
-      margin-left: 1.5rem;
-    }
-
-    .info-box li {
-      margin-bottom: 0.25rem;
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-top: 1rem;
-    }
-
-    .stat-card {
-      background: #f9f9f9;
-      padding: 1rem;
-      border-radius: 4px;
-      text-align: center;
-    }
-
-    .stat-value {
-      font-size: 2rem;
-      font-weight: bold;
-      color: #4CAF50;
-    }
-
-    .stat-label {
-      font-size: 0.9rem;
-      color: #666;
-      margin-top: 0.25rem;
-    }
-  </style>
+  <link rel="stylesheet" href="/demo.css">
 </head>
 <body>
-  <h1>🚀 unzen core E2E Demo</h1>
-  <p class="subtitle">Browser-delegated function execution with server-side fallback</p>
+  <header class="page-header">
+    <h1 data-i18n="common.title">unzen core E2E Demo</h1>
+    <p class="subtitle" data-i18n="common.subtitle">
+      Run registered functions in your browser sandbox, with automatic server-side fallback.
+    </p>
+    <div class="lang-switch" role="group" aria-label="Language">
+      <button type="button" class="lang-btn is-active" data-lang="en" aria-pressed="true">English</button>
+      <button type="button" class="lang-btn" data-lang="ja" aria-pressed="false">日本語</button>
+    </div>
+    <p class="notice" role="note" data-i18n="common.demoNotice">
+      Demo only. This page is not a production system and makes no production guarantees.
+      Timings and statistics are measured in this session and reset on reload.
+    </p>
+  </header>
 
-  <div class="info-box">
-    <h3>How it works (Phase 2: 4-Layer Isolation)</h3>
+  <section class="info-box" aria-labelledby="how-it-works-heading">
+    <h2 id="how-it-works-heading" data-i18n="common.howItWorksHeading">How it works</h2>
     <ul>
-      <li><strong>Browser First:</strong> Functions execute in your browser via Web Worker + QuickJS Wasm sandbox</li>
-      <li><strong>4-Layer Isolation:</strong> Web Worker thread &rarr; Wasm memory sandbox &rarr; QuickJS interpreter &rarr; API restrictions</li>
-      <li><strong>Automatic Fallback:</strong> If browser execution fails (runtime error), the server handles it</li>
-      <li><strong>Same Security:</strong> Server and browser use identical security hardening (frozen prototypes, no eval/Function)</li>
+      <li data-i18n="common.howItWorks.item1">
+        Browser first: the manifest and function source are fetched, then the function runs in a
+        QuickJS interpreter over WebAssembly inside a Web Worker — off your page's main thread.
+      </li>
+      <li data-i18n="common.howItWorks.item2">
+        Automatic fallback: if the browser attempt fails (e.g. a runtime error), the same function
+        is executed server-side.
+      </li>
+      <li data-i18n="common.howItWorks.item3">
+        Cancellation is yours: cancel aborts the run immediately and never triggers a server fallback.
+      </li>
     </ul>
-  </div>
+    <h3 data-i18n="common.securityHeading">Security boundaries (what this demo actually shows)</h3>
+    <p class="security-note" role="note" data-i18n="common.securityNote">
+      The sandbox isolates untrusted function code from your page: it runs in a separate Web Worker
+      thread in a QuickJS interpreter with eval/Function/Proxy removed and built-in prototypes frozen.
+      That protects your page from the function code. It does NOT replace a server-side trust
+      boundary, a Content Security Policy, or authentication.
+    </p>
+  </section>
 
-  <!-- Spam Check Demo -->
-  <div class="demo-section">
-    <h2>1. Spam Detection</h2>
-    <div class="form-group">
-      <label for="spamText">Enter text to check for spam:</label>
-      <textarea id="spamText" placeholder="Try: 'Buy now and get free money!' or 'Hello, how are you?'">Buy now and get free money!</textarea>
-    </div>
-    <button onclick="checkSpam()">Check for Spam</button>
-    <div id="spamResult"></div>
-  </div>
+  <main id="demos">
+    <!-- ============================================================
+         1. Spam Detection
+         ============================================================ -->
+    <section class="demo" id="demo-spam" data-state="idle" aria-labelledby="spam-heading">
+      <h2 id="spam-heading" data-i18n="demos.spam.title">1. Spam Detection</h2>
+      <p class="demo-desc" data-i18n="demos.spam.description">
+        Detect spam keywords in text with a regex-based function.
+      </p>
+      <form class="demo-form" id="spam-form" novalidate>
+        <div class="field">
+          <label for="spam-text" data-i18n="labels.spamText">Text to check for spam</label>
+          <textarea id="spam-text" name="spamText" placeholder="Try: 'Buy now and get free money!' or 'Hello, how are you?'">Buy now and get free money!</textarea>
+          <p class="field-error" id="spam-text-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="spam-run">Run</button>
+          <button type="button" class="cancel-btn" id="spam-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="spam-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="spam-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="spam-result" tabindex="-1" hidden></div>
+    </section>
 
-  <!-- Math Demo -->
-  <div class="demo-section">
-    <h2>2. Multiply Numbers</h2>
-    <div class="form-group">
-      <label for="num1">First Number:</label>
-      <input type="text" id="num1" value="5">
-    </div>
-    <div class="form-group">
-      <label for="num2">Second Number:</label>
-      <input type="text" id="num2" value="7">
-    </div>
-    <button onclick="multiplyNumbers()">Multiply</button>
-    <div id="multiplyResult"></div>
-  </div>
+    <!-- ============================================================
+         2. Multiply Numbers
+         ============================================================ -->
+    <section class="demo" id="demo-multiply" data-state="idle" aria-labelledby="multiply-heading">
+      <h2 id="multiply-heading" data-i18n="demos.multiply.title">2. Multiply Numbers</h2>
+      <p class="demo-desc" data-i18n="demos.multiply.description">
+        Multiply two numbers in the sandbox.
+      </p>
+      <form class="demo-form" id="multiply-form" novalidate>
+        <div class="field">
+          <label for="num1" data-i18n="labels.num1">First number</label>
+          <input type="text" id="num1" name="num1" inputmode="decimal" value="5">
+          <p class="field-error" id="num1-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="num2" data-i18n="labels.num2">Second number</label>
+          <input type="text" id="num2" name="num2" inputmode="decimal" value="7">
+          <p class="field-error" id="num2-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="multiply-run">Run</button>
+          <button type="button" class="cancel-btn" id="multiply-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="multiply-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="multiply-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="multiply-result" tabindex="-1" hidden></div>
+    </section>
 
-  <!-- Array Demo -->
-  <div class="demo-section">
-    <h2>3. Double Array Values</h2>
-    <div class="form-group">
-      <label for="arrayInput">Enter comma-separated numbers:</label>
-      <input type="text" id="arrayInput" value="1, 2, 3, 4, 5">
-    </div>
-    <button onclick="doubleArray()">Double Array</button>
-    <div id="arrayResult"></div>
-  </div>
+    <!-- ============================================================
+         3. Double Array Values
+         ============================================================ -->
+    <section class="demo" id="demo-array" data-state="idle" aria-labelledby="array-heading">
+      <h2 id="array-heading" data-i18n="demos.array.title">3. Double Array Values</h2>
+      <p class="demo-desc" data-i18n="demos.array.description">
+        Double each element of a comma-separated number list. Invalid tokens are flagged, not dropped.
+      </p>
+      <form class="demo-form" id="array-form" novalidate>
+        <div class="field">
+          <label for="array-input" data-i18n="labels.arrayInput">Numbers, comma-separated</label>
+          <input type="text" id="array-input" name="arrayInput" inputmode="decimal" value="1, 2, 3, 4, 5">
+          <p class="field-error" id="array-input-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="array-run">Run</button>
+          <button type="button" class="cancel-btn" id="array-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="array-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="array-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="array-result" tabindex="-1" hidden></div>
+    </section>
 
-  <!-- Object Demo -->
-  <div class="demo-section">
-    <h2>4. User Info Transformer</h2>
-    <div class="form-group">
-      <label for="firstName">First Name:</label>
-      <input type="text" id="firstName" value="John">
-    </div>
-    <div class="form-group">
-      <label for="lastName">Last Name:</label>
-      <input type="text" id="lastName" value="Doe">
-    </div>
-    <div class="form-group">
-      <label for="age">Age:</label>
-      <input type="text" id="age" value="25">
-    </div>
-    <button onclick="transformUser()">Transform User</button>
-    <div id="userResult"></div>
-  </div>
+    <!-- ============================================================
+         4. User Info Transformer
+         ============================================================ -->
+    <section class="demo" id="demo-user" data-state="idle" aria-labelledby="user-heading">
+      <h2 id="user-heading" data-i18n="demos.user.title">4. User Info Transformer</h2>
+      <p class="demo-desc" data-i18n="demos.user.description">
+        Build a display profile from name and age.
+      </p>
+      <form class="demo-form" id="user-form" novalidate>
+        <div class="field">
+          <label for="firstName" data-i18n="labels.firstName">First name</label>
+          <input type="text" id="firstName" name="firstName" autocomplete="off" value="John">
+          <p class="field-error" id="firstName-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="lastName" data-i18n="labels.lastName">Last name</label>
+          <input type="text" id="lastName" name="lastName" autocomplete="off" value="Doe">
+          <p class="field-error" id="lastName-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="age" data-i18n="labels.age">Age</label>
+          <input type="text" id="age" name="age" inputmode="numeric" value="25">
+          <p class="field-error" id="age-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="user-run">Run</button>
+          <button type="button" class="cancel-btn" id="user-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="user-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="user-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="user-result" tabindex="-1" hidden></div>
+    </section>
 
-  <!-- ============================================================ -->
-  <!-- Practical Server-Side Delegation Demos -->
-  <!-- These demonstrate the core value: server computation → browser sandbox -->
-  <!-- ============================================================ -->
+    <!-- ============================================================
+         5. Form Validation (fictional samples only)
+         ============================================================ -->
+    <section class="demo" id="demo-form" data-state="idle" aria-labelledby="form-heading">
+      <h2 id="form-heading" data-i18n="demos.form.title">5. Form Validation</h2>
+      <p class="demo-desc" data-i18n="demos.form.description">
+        Email, credit card (Luhn), phone and password checks run inside the sandbox.
+      </p>
+      <p class="sample-note" role="note" data-i18n="common.sampleNote">
+        Fictional sample data only — do not enter real credit card numbers, phone numbers, or passwords.
+      </p>
+      <form class="demo-form" id="form-form" novalidate>
+        <div class="field">
+          <label for="form-email" data-i18n="labels.email">Email (fictional sample)</label>
+          <input type="text" id="form-email" name="email" autocomplete="off" value="user@example.com">
+          <p class="field-error" id="form-email-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="form-card" data-i18n="labels.card">Credit card (fictional sample)</label>
+          <input type="text" id="form-card" name="card" autocomplete="off" inputmode="numeric" value="4111 1111 1111 1111">
+          <p class="field-error" id="form-card-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="form-phone" data-i18n="labels.phone">Phone (fictional sample)</label>
+          <input type="text" id="form-phone" name="phone" autocomplete="off" value="+1-555-123-4567">
+          <p class="field-error" id="form-phone-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="form-password" data-i18n="labels.password">Password (fictional sample)</label>
+          <input type="text" id="form-password" name="password" autocomplete="off" value="MyP@ssw0rd!23">
+          <p class="field-error" id="form-password-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="button" class="sample-btn" id="form-sample" data-i18n="common.loadSample">Load sample data</button>
+          <button type="submit" class="run-btn" id="form-run">Run</button>
+          <button type="button" class="cancel-btn" id="form-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="form-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="form-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="form-result" tabindex="-1" hidden></div>
+    </section>
 
-  <!-- Form Validation Demo -->
-  <div class="demo-section">
-    <h2>5. Form Validation (Tamper-Proof)</h2>
-    <p style="color: #666; margin-bottom: 1rem;">Traditionally server-side to prevent devtools bypass. QuickJS sandbox provides the same tamper-proof guarantee in the browser.</p>
-    <div class="form-group">
-      <label for="validateEmail">Email:</label>
-      <input type="text" id="validateEmail" value="user@example.com">
-    </div>
-    <div class="form-group">
-      <label for="validateCard">Credit Card (Luhn check):</label>
-      <input type="text" id="validateCard" value="4111 1111 1111 1111">
-    </div>
-    <div class="form-group">
-      <label for="validatePhone">Phone:</label>
-      <input type="text" id="validatePhone" value="+1-555-123-4567">
-    </div>
-    <div class="form-group">
-      <label for="validatePassword">Password:</label>
-      <input type="text" id="validatePassword" value="MyP@ssw0rd!23">
-    </div>
-    <button onclick="validateForm()">Validate</button>
-    <div id="formResult"></div>
-  </div>
+    <!-- ============================================================
+         6. Price Calculator
+         ============================================================ -->
+    <section class="demo" id="demo-price" data-state="idle" aria-labelledby="price-heading">
+      <h2 id="price-heading" data-i18n="demos.price.title">6. Price Calculator</h2>
+      <p class="demo-desc" data-i18n="demos.price.description">
+        Subtotal, discount, tax and shipping are computed in the sandbox.
+      </p>
+      <form class="demo-form" id="price-form" novalidate>
+        <div class="field">
+          <label for="price-items" data-i18n="labels.priceItems">Items (JSON array of {name, price, quantity, weight?})</label>
+          <textarea id="price-items" name="items">[{"name":"Widget","price":50,"quantity":2,"weight":1},{"name":"Gadget","price":25,"quantity":1,"weight":0.5}]</textarea>
+          <p class="field-error" id="price-items-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="price-region" data-i18n="labels.priceRegion">Region (e.g. JP, US-CA)</label>
+          <input type="text" id="price-region" name="region" value="JP">
+          <p class="field-error" id="price-region-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="price-discount" data-i18n="labels.priceDiscount">Discount (JSON, optional)</label>
+          <input type="text" id="price-discount" name="discount" value='{"type":"percentage","value":10}'>
+          <p class="field-error" id="price-discount-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="price-run">Run</button>
+          <button type="button" class="cancel-btn" id="price-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="price-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="price-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="price-result" tabindex="-1" hidden></div>
+    </section>
 
-  <!-- Price Calculator Demo -->
-  <div class="demo-section">
-    <h2>6. Price Calculator (Tamper-Proof)</h2>
-    <p style="color: #666; margin-bottom: 1rem;">Traditionally server-side to prevent price manipulation. Sandbox prevents tampering while reducing latency from ~100ms to ~2ms.</p>
-    <div class="form-group">
-      <label for="priceItems">Items (JSON):</label>
-      <textarea id="priceItems" style="min-height: 60px;">[{"name":"Widget","price":50,"quantity":2,"weight":1},{"name":"Gadget","price":25,"quantity":1,"weight":0.5}]</textarea>
-    </div>
-    <div class="form-group">
-      <label for="priceRegion">Region:</label>
-      <input type="text" id="priceRegion" value="JP">
-    </div>
-    <div class="form-group">
-      <label for="priceDiscount">Discount (JSON, optional):</label>
-      <input type="text" id="priceDiscount" value='{"type":"percentage","value":10}'>
-    </div>
-    <button onclick="calculatePrice()">Calculate Price</button>
-    <div id="priceResult"></div>
-  </div>
-
-  <!-- Markdown to HTML Demo -->
-  <div class="demo-section">
-    <h2>7. Markdown to HTML (CPU Offload)</h2>
-    <p style="color: #666; margin-bottom: 1rem;">Traditionally SSR renders Markdown on server. Offloading to client sandbox frees server CPU for other tasks.</p>
-    <div class="form-group">
-      <label for="markdownInput">Markdown:</label>
-      <textarea id="markdownInput" style="min-height: 120px;"># Hello World
+    <!-- ============================================================
+         7. Markdown to HTML
+         ============================================================ -->
+    <section class="demo" id="demo-markdown" data-state="idle" aria-labelledby="markdown-heading">
+      <h2 id="markdown-heading" data-i18n="demos.markdown.title">7. Markdown to HTML</h2>
+      <p class="demo-desc" data-i18n="demos.markdown.description">
+        Render Markdown to HTML in the sandbox. The preview is shown in a sandboxed iframe (scripts disabled).
+      </p>
+      <form class="demo-form" id="markdown-form" novalidate>
+        <div class="field">
+          <label for="markdown-input" data-i18n="labels.markdownInput">Markdown</label>
+          <textarea id="markdown-input" name="markdown"># Hello World
 
 This is **bold** and *italic* text with `inline code`.
 
 ## Features
 
 - Browser-side execution
-- Tamper-proof sandbox
+- Sandboxed isolation
 - Automatic fallback
 
-Visit [Example](https://example.com) for more.
+Visit [Example](https://example.com) for more.</textarea>
+          <p class="field-error" id="markdown-input-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="markdown-run">Run</button>
+          <button type="button" class="cancel-btn" id="markdown-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="markdown-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="markdown-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="markdown-result" tabindex="-1" hidden></div>
+    </section>
 
-```
-const x = 1;
-console.log(x);
-```</textarea>
-    </div>
-    <button onclick="convertMarkdown()">Convert to HTML</button>
-    <div id="markdownResult"></div>
-    <div id="markdownPreview" style="margin-top: 1rem; padding: 1rem; border: 1px solid #ddd; border-radius: 4px; display: none;"></div>
-  </div>
-
-  <!-- Text Statistics Demo -->
-  <div class="demo-section">
-    <h2>8. Text Statistics (Pure Computation)</h2>
-    <p style="color: #666; margin-bottom: 1rem;">Readability scoring and text analysis — pure computation ideal for sandbox. Includes Flesch-Kincaid grade level.</p>
-    <div class="form-group">
-      <label for="textInput">Text to analyze:</label>
-      <textarea id="textInput" style="min-height: 120px;">The quick brown fox jumps over the lazy dog. This is a simple sentence for testing readability analysis.
+    <!-- ============================================================
+         8. Text Statistics
+         ============================================================ -->
+    <section class="demo" id="demo-text" data-state="idle" aria-labelledby="text-heading">
+      <h2 id="text-heading" data-i18n="demos.text.title">8. Text Statistics</h2>
+      <p class="demo-desc" data-i18n="demos.text.description">
+        Word count, sentence count and a Flesch–Kincaid grade level.
+      </p>
+      <form class="demo-form" id="text-form" novalidate>
+        <div class="field">
+          <label for="text-input" data-i18n="labels.textInput">Text to analyze</label>
+          <textarea id="text-input" name="text">The quick brown fox jumps over the lazy dog. This is a simple sentence for testing readability analysis.
 
 More complex sentences with sophisticated vocabulary demonstrate how the Flesch-Kincaid algorithm measures text difficulty. Longer words and complex sentence structures increase the grade level.</textarea>
-    </div>
-    <button onclick="analyzeText()">Analyze Text</button>
-    <div id="textResult"></div>
-  </div>
+          <p class="field-error" id="text-input-error" hidden></p>
+        </div>
+        <div class="controls">
+          <button type="submit" class="run-btn" id="text-run">Run</button>
+          <button type="button" class="cancel-btn" id="text-cancel" hidden>Cancel</button>
+          <button type="button" class="retry-btn" id="text-retry" hidden>Retry</button>
+        </div>
+      </form>
+      <div class="status" id="text-status" role="status" aria-live="polite">
+        <span class="status-text"></span>
+        <ol class="live-chain" hidden></ol>
+      </div>
+      <div class="result" id="text-result" tabindex="-1" hidden></div>
+    </section>
+  </main>
 
-  <!-- Statistics -->
-  <div class="demo-section">
-    <h2>📊 Execution Statistics</h2>
-    <div class="stats">
-      <div class="stat-card">
-        <div class="stat-value" id="browserExecs">0</div>
-        <div class="stat-label">Browser Executions</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="serverExecs">0</div>
-        <div class="stat-label">Server Fallbacks</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="cacheHits">0</div>
-        <div class="stat-label">Cache Hits</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="avgTime">0ms</div>
-        <div class="stat-label">Avg Execution Time</div>
-      </div>
+  <!-- ============================================================
+       Session statistics
+       ============================================================ -->
+  <section class="stats-section" aria-labelledby="stats-heading">
+    <h2 id="stats-heading" data-i18n="stats.heading">Session statistics</h2>
+    <p class="stats-note" data-i18n="stats.note">
+      Counted in this browser tab only. Values reset on reload or when you press Reset.
+    </p>
+    <div class="stats-grid" id="stats-grid" aria-label="Statistics"></div>
+    <div class="stats-controls">
+      <button type="button" class="reset-btn" id="reset-all" data-i18n="common.reset">Reset all</button>
     </div>
-  </div>
+    <details class="stats-definitions">
+      <summary data-i18n="stats.definitions">Definitions</summary>
+      <dl>
+        <dt data-i18n="stats.browserSuccess">Browser success</dt>
+        <dd data-i18n="stats.definitionBrowserSuccess">A function finished in the browser sandbox without server fallback.</dd>
+        <dt data-i18n="stats.fallbackSuccess">Fallback success</dt>
+        <dd data-i18n="stats.definitionFallbackSuccess">The browser attempt failed and the server produced the result.</dd>
+        <dt data-i18n="stats.inputError">Input error</dt>
+        <dd data-i18n="stats.definitionInputError">Input was rejected before execution by this demo's validation.</dd>
+        <dt data-i18n="stats.functionError">Function error</dt>
+        <dd data-i18n="stats.definitionFunctionError">The function code threw an error.</dd>
+        <dt data-i18n="stats.runtimeError">Runtime error</dt>
+        <dd data-i18n="stats.definitionRuntimeError">The browser sandbox itself failed to execute (e.g. a Wasm/worker problem).</dd>
+        <dt data-i18n="stats.serverError">Server error</dt>
+        <dd data-i18n="stats.definitionServerError">The server-side fallback failed.</dd>
+        <dt data-i18n="stats.networkError">Network error</dt>
+        <dd data-i18n="stats.definitionNetworkError">Could not reach the server (manifest/code fetch or fallback HTTP request).</dd>
+        <dt data-i18n="stats.cancelled">Cancelled</dt>
+        <dd data-i18n="stats.definitionCancelled">The user cancelled the run.</dd>
+        <dt data-i18n="stats.cacheHit">Cache hit</dt>
+        <dd data-i18n="stats.definitionCacheHit">The manifest was already cached in this session.</dd>
+        <dt data-i18n="stats.unknown">Unknown</dt>
+        <dd data-i18n="stats.definitionUnknown">Unexpected / unclassified outcome.</dd>
+        <dt data-i18n="stats.avgTotal">Avg total time</dt>
+        <dd data-i18n="stats.definitionAvgTotal">Mean wall-clock time per completed execution. Sample count shown.</dd>
+        <dt data-i18n="stats.avgBrowser">Avg browser attempt</dt>
+        <dd data-i18n="stats.definitionAvgBrowser">Mean duration of browser attempts. Sample count shown.</dd>
+        <dt data-i18n="stats.avgServer">Avg server attempt</dt>
+        <dd data-i18n="stats.definitionAvgServer">Mean duration of server fallback attempts. Sample count shown.</dd>
+      </dl>
+    </details>
+  </section>
 
   <script type="module" src="/demo.js"></script>
 </body>

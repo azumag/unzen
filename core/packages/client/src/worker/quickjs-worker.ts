@@ -31,6 +31,7 @@ import {
   createInitResultMessage,
   createExecuteResultMessage,
   createExecuteErrorMessage,
+  createCancelResultMessage,
 } from './worker-protocol';
 
 // Default timeout: 50ms (same as server-side QuickJSRuntime)
@@ -39,11 +40,19 @@ const DEFAULT_TIMEOUT_MS = 50;
 const MEMORY_LIMIT_BYTES = 16 * 1024 * 1024;
 
 /**
- * Worker state — holds the QuickJS Wasm module singleton.
+ * Worker state — holds the QuickJS Wasm module singleton and the set of
+ * cancelled request ids.
  * Exported for testability (tests inject mock modules).
  */
 export interface WorkerState {
   quickJS: QuickJSModule | null;
+  /**
+   * Request ids that have been cooperatively cancelled via a CancelMessage.
+   * The running execution's interrupt handler checks this set so a cancelled
+   * request stops computing as soon as the next interrupt point is reached.
+   * Created lazily on the first cancel message.
+   */
+  cancelled?: Set<string>;
 }
 
 /**
@@ -88,20 +97,33 @@ export async function handleWorkerMessage(
   const msg = event.data;
 
   if (msg.type === 'init') {
-    await handleInit(state, postMessage, loader);
+    await handleInit(state, postMessage, loader, msg.generationId);
   } else if (msg.type === 'execute') {
-    await handleExecute(msg.requestId, msg.code, msg.args, msg.timeout, state, postMessage);
+    await handleExecute(
+      msg.requestId,
+      msg.code,
+      msg.args,
+      msg.timeout,
+      msg.generationId,
+      state,
+      postMessage,
+    );
+  } else if (msg.type === 'cancel') {
+    handleCancel(msg, state, postMessage);
   }
 }
 
 /**
  * Initialize QuickJS Wasm module.
  * Called once on first use — subsequent calls are no-ops if already initialized.
+ * The generationId is echoed back so the main thread can reject stale init
+ * results from old Worker generations.
  */
 async function handleInit(
   state: WorkerState,
   postMessage: (msg: WorkerResponse) => void,
   loader?: () => Promise<QuickJSModule>,
+  generationId?: number,
 ): Promise<void> {
   try {
     if (!state.quickJS) {
@@ -109,11 +131,27 @@ async function handleInit(
       const load = loader ?? loadQuickJS;
       state.quickJS = await load();
     }
-    postMessage(createInitResultMessage(true));
+    postMessage(createInitResultMessage(true, undefined, generationId));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    postMessage(createInitResultMessage(false, message));
+    postMessage(createInitResultMessage(false, message, generationId));
   }
+}
+
+/**
+ * Record a cooperative cancellation request.
+ * The request id is added to the cancelled set, which the running execution's
+ * interrupt handler consults. The acknowledgement lets the main thread know
+ * the worker received the cancel without needing to force-terminate.
+ */
+function handleCancel(
+  msg: { requestId: string; generationId?: number },
+  state: WorkerState,
+  postMessage: (msg: WorkerResponse) => void,
+): void {
+  if (!state.cancelled) state.cancelled = new Set();
+  state.cancelled.add(msg.requestId);
+  postMessage(createCancelResultMessage(msg.requestId, true, undefined, msg.generationId));
 }
 
 /**
@@ -127,6 +165,7 @@ async function handleExecute(
   code: string,
   args: unknown[],
   timeout: number | undefined,
+  generationId: number | undefined,
   state: WorkerState,
   postMessage: (msg: WorkerResponse) => void,
 ): Promise<void> {
@@ -136,6 +175,7 @@ async function handleExecute(
       requestId,
       'runtime_error',
       'QuickJS not initialized. Send init message first.',
+      generationId,
     ));
     return;
   }
@@ -156,6 +196,7 @@ async function handleExecute(
         requestId,
         'runtime_error',
         `Failed to apply security hardening: ${JSON.stringify(error)}`,
+        generationId,
       ));
       return;
     }
@@ -169,6 +210,7 @@ async function handleExecute(
         requestId,
         'function_error',
         `Failed to load function code: ${JSON.stringify(error)}`,
+        generationId,
       ));
       return;
     }
@@ -184,19 +226,32 @@ async function handleExecute(
         requestId,
         'runtime_error',
         `Failed to inject arguments: ${JSON.stringify(error)}`,
+        generationId,
       ));
       return;
     }
     argsResult.value!.consume(() => {});
 
     // Step 4: Set timeout via interrupt handler
-    // QuickJS checks this periodically during execution
+    // QuickJS checks this periodically during execution. The handler also
+    // returns true when the request has been cooperatively cancelled, so a
+    // cancelled execution unwinds at the next interrupt point instead of
+    // running to completion.
+    //
+    // NOTE: while `evalCode` runs synchronously the worker's event loop is
+    // blocked, so a CancelMessage cannot be dispatched mid-loop. This check
+    // only helps when the cancel was registered before execution began (or
+    // between steps); cancelling a CPU-bound running request is handled on
+    // the main thread via the cancel-ack timeout and force-termination.
     const startTime = Date.now();
     let timeoutTriggered = false;
+    let cancelledTriggered = false;
     context.runtime.setInterruptHandler(() => {
+      const isCancelled = state.cancelled?.has(requestId) ?? false;
       const exceeded = Date.now() - startTime > effectiveTimeout;
+      if (isCancelled) cancelledTriggered = true;
       if (exceeded) timeoutTriggered = true;
-      return exceeded;
+      return isCancelled || exceeded;
     });
 
     // Step 5: Execute run() with spread arguments
@@ -204,12 +259,25 @@ async function handleExecute(
     if (execResult.error) {
       const error = execResult.error.consume((handle) => context.dump(handle));
 
+      // Cancellation is reported distinctly (the main thread turns it into
+      // UnzenCancelledError; it must NOT trigger server fallback).
+      if (cancelledTriggered) {
+        postMessage(createExecuteErrorMessage(
+          requestId,
+          'runtime_error',
+          'Execution cancelled',
+          generationId,
+        ));
+        return;
+      }
+
       // Timeout errors are runtime errors (trigger fallback)
       if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
         postMessage(createExecuteErrorMessage(
           requestId,
           'runtime_error',
           `Execution timeout exceeded (${effectiveTimeout}ms)`,
+          generationId,
         ));
         return;
       }
@@ -219,16 +287,20 @@ async function handleExecute(
         requestId,
         'function_error',
         `Function execution failed: ${JSON.stringify(error)}`,
+        generationId,
       ));
       return;
     }
 
     // Step 6: Extract result value
     const value = execResult.value!.consume((handle) => context.dump(handle));
-    postMessage(createExecuteResultMessage(requestId, value));
+    postMessage(createExecuteResultMessage(requestId, value, generationId));
   } finally {
     // Always dispose context — QuickJS uses manual memory management (C model)
     context.dispose();
+    // Prune the cancelled-set entry for this request so a long-lived worker
+    // does not accumulate stale request ids.
+    state.cancelled?.delete(requestId);
   }
 }
 

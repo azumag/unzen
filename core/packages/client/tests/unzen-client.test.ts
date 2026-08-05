@@ -14,12 +14,28 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  UnzenCancelledError,
   UnzenFunctionError,
   UnzenRuntimeError,
   type ManifestResponse,
 } from '@unzen/shared';
-import { UnzenClient } from '../src/unzen-client';
+import { UnzenClient, type UnzenExecutionEvent } from '../src/unzen-client';
 import { MockSandboxExecutor } from '../src/quickjs-sandbox';
+
+/** Create an AbortError-compatible rejection for mocked fetch/sandbox */
+function abortError(): Error {
+  return Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+}
+
+/** Helper: fetch mock that resolves a JSON body for a URL */
+function jsonResponse(data: unknown) {
+  return Promise.resolve({ ok: true, json: async () => data });
+}
+
+/** Helper: fetch mock that resolves a text body for a URL */
+function textResponse(data: string) {
+  return Promise.resolve({ ok: true, text: async () => data });
+}
 
 describe('UnzenClient', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -658,6 +674,394 @@ describe('UnzenClient', () => {
 
       await expect(client.call('add', 1, 2)).rejects.toThrow(UnzenRuntimeError);
       await expect(client.call('add', 1, 2)).rejects.toThrow('disposed');
+    });
+  });
+
+  // === issue #105 execution lifecycle (signal / events / diagnostics) ===
+  describe('issue #105 execution lifecycle', () => {
+    const endpoint = 'https://example.com';
+
+    it('should reject immediately when signal is already aborted (no fetch, no fallback)', async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        client.execute({ name: 'add', args: [1, 2], signal: controller.signal }),
+      ).rejects.toThrow(UnzenCancelledError);
+      expect(fetchMock).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
+    it('should cancel during manifest fetch and never fall back', async () => {
+      // Manifest fetch hangs until the signal aborts (then rejects as AbortError)
+      const fetchMock = vi.fn((url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(abortError());
+          return;
+        }
+        init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+      }));
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const controller = new AbortController();
+      const p = client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      const execCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes('/exec/'));
+      expect(execCalls).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should cancel during browser execution without fallback', async () => {
+      // Sandbox that only settles when its signal aborts → cancelled
+      const hangingSandbox = new MockSandboxExecutor();
+      hangingSandbox.execute = (_code, _args, options) => new Promise((resolve, reject) => {
+        if (options?.signal?.aborted) {
+          reject(new UnzenCancelledError('cancelled'));
+          return;
+        }
+        options?.signal?.addEventListener('abort', () => reject(new UnzenCancelledError('cancelled')), { once: true });
+      });
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: hangingSandbox });
+      const controller = new AbortController();
+      const p = client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      const execCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes('/exec/'));
+      expect(execCalls).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should not start server fallback when cancelled after a browser failure', async () => {
+      // Browser fails with a runtime error and cancels the signal in the same
+      // breath — the fallback must be skipped entirely.
+      const failingSandbox = new MockSandboxExecutor();
+      const controller = new AbortController();
+      failingSandbox.execute = async (_code, _args, options) => {
+        if (options?.signal?.aborted) throw new UnzenCancelledError('cancelled');
+        controller.abort();
+        throw new UnzenRuntimeError('browser down');
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        if (url.includes('/exec/add')) return jsonResponse({ result: 3 });
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
+      const p = client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      const execCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes('/exec/'));
+      expect(execCalls).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should cancel in-flight executions on dispose (no unsettled promises)', async () => {
+      const hangingSandbox = new MockSandboxExecutor();
+      hangingSandbox.execute = (_code, _args, options) => new Promise((resolve, reject) => {
+        if (options?.signal?.aborted) {
+          reject(new UnzenCancelledError('cancelled'));
+          return;
+        }
+        options?.signal?.addEventListener('abort', () => reject(new UnzenCancelledError('cancelled')), { once: true });
+      });
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: hangingSandbox });
+      const p = client.execute({ name: 'add', args: [1, 2] });
+      await new Promise((r) => setTimeout(r, 10));
+
+      client.dispose();
+
+      await expect(p).rejects.toThrow(); // settles (cancelled), never hangs
+      client.dispose();
+    });
+
+    it('should record the full attempt chain when a server fallback is used', async () => {
+      const failingSandbox = new MockSandboxExecutor();
+      failingSandbox.execute = async () => {
+        throw new UnzenRuntimeError('browser down');
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        if (url.includes('/exec/add')) return jsonResponse({ result: 3 });
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
+      const result = await client.executeWithDiagnostics<number>({ name: 'add', args: [1, 2] });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.result).toBe(3);
+        expect(result.diagnostics.finalRoute).toBe('server');
+        expect(result.diagnostics.fallbackUsed).toBe(true);
+        expect(result.diagnostics.attempts).toHaveLength(2);
+        expect(result.diagnostics.attempts[0]).toMatchObject({
+          kind: 'browser',
+          outcome: 'failed',
+          errorCode: 'browser_runtime_failed',
+        });
+        expect(result.diagnostics.attempts[1]).toMatchObject({ kind: 'server', outcome: 'succeeded' });
+      }
+      client.dispose();
+    });
+
+    it('should emit lifecycle events with monotonic sequence and one terminal event', async () => {
+      const events: Array<{ type: UnzenExecutionEvent['type']; sequence: number; executionId: string }> = [];
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const result = await client.executeWithDiagnostics<number>({
+        name: 'add',
+        args: [1, 2],
+        onEvent: (e) => events.push({ type: e.type, sequence: e.sequence, executionId: e.executionId }),
+      });
+
+      expect(result.success).toBe(true);
+      const terminals = events.filter((e) =>
+        ['completed', 'cancelled', 'failed'].includes(e.type),
+      );
+      expect(terminals).toHaveLength(1);
+      expect(terminals[0].type).toBe('completed');
+
+      // Sequence must be monotonic 1..N and executionId stable.
+      const sequences = events.map((e) => e.sequence);
+      expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+      expect(new Set(events.map((e) => e.executionId)).size).toBe(1);
+      client.dispose();
+    });
+
+    it('should return stable error codes from executeWithDiagnostics', async () => {
+      // function error → 'function_failed'
+      const errorCode = 'function run() { throw new Error("User error"); }';
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(errorCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const result = await client.executeWithDiagnostics({ name: 'add', args: [1, 2] });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('function_failed');
+      }
+
+      // manifest failure → 'manifest_fetch_failed'
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+      const client2 = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const result2 = await client2.executeWithDiagnostics({ name: 'add', args: [1, 2] });
+      expect(result2.success).toBe(false);
+      if (!result2.success) {
+        expect(result2.error.code).toBe('manifest_fetch_failed');
+      }
+
+      // cancelled → 'cancelled'
+      const controller = new AbortController();
+      controller.abort();
+      const result3 = await client2.executeWithDiagnostics({ name: 'add', args: [], signal: controller.signal });
+      expect(result3.success).toBe(false);
+      if (!result3.success) {
+        expect(result3.error.code).toBe('cancelled');
+      }
+
+      client.dispose();
+      client2.dispose();
+    });
+
+    it('should NOT commit a late sandbox result after cancellation (AC #5)', async () => {
+      // Sandbox resolves ONLY when the signal aborts — simulating a result
+      // arriving after the caller cancelled. It must not be committed.
+      const lateSandbox = new MockSandboxExecutor();
+      lateSandbox.execute = (_code, _args, options) => new Promise((resolve) => {
+        options?.signal?.addEventListener('abort', () => resolve(999), { once: true });
+      });
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: lateSandbox });
+      const controller = new AbortController();
+      const p = client.execute<number>({ name: 'add', args: [1, 2], signal: controller.signal });
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      client.dispose();
+    });
+
+    it('should cancel during code fetch without fallback', async () => {
+      const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) {
+          return new Promise((_resolve, reject) => {
+            if (init?.signal?.aborted) {
+              reject(abortError());
+              return;
+            }
+            init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+          });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const controller = new AbortController();
+      const p = client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      const execCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes('/exec/'));
+      expect(execCalls).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should cancel during server fallback execution', async () => {
+      const failingSandbox = new MockSandboxExecutor();
+      failingSandbox.execute = async () => {
+        throw new UnzenRuntimeError('browser down');
+      };
+
+      const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        if (url.includes('/exec/add')) {
+          return new Promise((_resolve, reject) => {
+            if (init?.signal?.aborted) {
+              reject(abortError());
+              return;
+            }
+            init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+          });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
+      const controller = new AbortController();
+      const p = client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
+      setTimeout(() => controller.abort(), 20);
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      client.dispose();
+    });
+
+    it('should emit only the cancelled terminal on pre-abort', async () => {
+      const events: string[] = [];
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await client.executeWithDiagnostics({
+        name: 'add',
+        args: [],
+        signal: controller.signal,
+        onEvent: (e) => events.push(e.type),
+      });
+
+      expect(result.success).toBe(false);
+      expect(events).toEqual(['cancelled']);
+      client.dispose();
+    });
+
+    it('should emit a terminal event when the client is disposed', async () => {
+      const events: string[] = [];
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      client.dispose();
+
+      await client.executeWithDiagnostics({
+        name: 'add',
+        args: [],
+        onEvent: (e) => events.push(e.type),
+      });
+
+      const terminals = events.filter((t) => ['completed', 'cancelled', 'failed'].includes(t));
+      expect(terminals).toHaveLength(1);
+      expect(terminals[0]).toBe('failed');
+    });
+
+    it('should report executedOn=browser for legacy diagnostics on manifest failure', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+
+      const result = await client.callWithDiagnostics('add', 1, 2);
+
+      expect(result.success).toBe(false);
+      expect(result.diagnostics.executedOn).toBe('browser');
+      client.dispose();
+    });
+
+    it('should settle a cancelled caller that shares a deduplicated manifest fetch', async () => {
+      // The shared manifest fetch is not bound to any single caller's signal:
+      // cancelling one caller must settle only that caller, not the others.
+      const fetchMock = vi.fn((url: string) => {
+        if (url.includes('/manifest')) {
+          return new Promise((resolve) => {
+            setTimeout(() => resolve({ ok: true, json: async () => mockManifest }), 40);
+          });
+        }
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+
+      const controllerA = new AbortController();
+      const pA = client.execute<number>({ name: 'add', args: [1, 2], signal: controllerA.signal });
+      await new Promise((r) => setTimeout(r, 5)); // A now owns the shared manifest fetch
+
+      const controllerB = new AbortController();
+      const pB = client.execute<number>({ name: 'add', args: [1, 2], signal: controllerB.signal });
+      controllerB.abort();
+
+      // B settles as cancelled immediately even though the shared fetch is in flight
+      await expect(pB).rejects.toThrow(UnzenCancelledError);
+
+      // A is unaffected by B's cancel and completes normally once the manifest arrives
+      const resultA = await pA;
+      expect(resultA).toBe(3);
+      client.dispose();
     });
   });
 });

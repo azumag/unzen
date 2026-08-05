@@ -4,9 +4,16 @@ import type {
 } from '../src/workers-coordinator-production-observability-canary.js';
 import {
   runWorkersCoordinatorSignedRunnerBrowserPreviewVerification,
-  type WorkersCoordinatorSignedRunnerBrowserEvidence,
+  type WorkersCoordinatorSignedRunnerBrowserEvidencePayload,
+  type WorkersCoordinatorSignedRunnerBrowserPreviewReport,
   type WorkersCoordinatorSignedRunnerBrowserPreviewTarget,
 } from '../src/workers-coordinator-signed-runner-browser-preview.js';
+import {
+  createCapturedAndVerifiedEnvelope,
+  createProductionClaimingSyntheticEnvelope,
+  createSyntheticEnvelope,
+  createVerifiedValidationOptions,
+} from './evidence-envelope-helpers.js';
 
 function createProductionGateReport(
   overrides: Partial<WorkersCoordinatorProductionObservabilityCanaryReport> = {},
@@ -69,11 +76,10 @@ function createTarget(
   };
 }
 
-function createBrowserEvidence(
-  overrides: Partial<WorkersCoordinatorSignedRunnerBrowserEvidence> = {},
-): WorkersCoordinatorSignedRunnerBrowserEvidence {
+function createBrowserEvidencePayload(
+  overrides: Partial<WorkersCoordinatorSignedRunnerBrowserEvidencePayload> = {},
+): WorkersCoordinatorSignedRunnerBrowserEvidencePayload {
   return {
-    source: 'real-browser-harness',
     runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
     responseHeaders: {
       'content-security-policy': [
@@ -118,18 +124,29 @@ function createBrowserEvidence(
         reason: 'browser CSP connect-src rejected non-Coordinator/CDN origin',
       },
     ],
-    capturedAtMs: 1_779_580_860_000,
     ...overrides,
   };
 }
 
-describe('Workers Coordinator signed runner browser preview verification', () => {
-  it('passes real-browser Wrangler preview evidence through the signed runner release gate', () => {
-    const report = runWorkersCoordinatorSignedRunnerBrowserPreviewVerification({
-      target: createTarget(),
-      productionGateReport: createProductionGateReport(),
-      browserEvidence: createBrowserEvidence(),
-    });
+async function runPreviewVerification(options: {
+  target?: WorkersCoordinatorSignedRunnerBrowserPreviewTarget;
+  productionGateReport?: WorkersCoordinatorProductionObservabilityCanaryReport;
+  browserEvidencePayload?: WorkersCoordinatorSignedRunnerBrowserEvidencePayload;
+  browserEvidenceEnvelope?: Parameters<typeof runWorkersCoordinatorSignedRunnerBrowserPreviewVerification>[0]['browserEvidenceEnvelope'];
+  evidenceValidation?: Parameters<typeof runWorkersCoordinatorSignedRunnerBrowserPreviewVerification>[0]['evidenceValidation'];
+} = {}): Promise<WorkersCoordinatorSignedRunnerBrowserPreviewReport> {
+  return runWorkersCoordinatorSignedRunnerBrowserPreviewVerification({
+    target: options.target ?? createTarget(),
+    productionGateReport: options.productionGateReport ?? createProductionGateReport(),
+    browserEvidenceEnvelope: options.browserEvidenceEnvelope
+      ?? createSyntheticEnvelope(options.browserEvidencePayload ?? createBrowserEvidencePayload()),
+    evidenceValidation: options.evidenceValidation ?? { now: '2026-07-10T14:00:00.000Z' },
+  });
+}
+
+describe('Workers Coordinator signed runner browser preview verification contract', () => {
+  it('passes a synthetic-fixture envelope at contract-tested without claiming production readiness', async () => {
+    const report = await runPreviewVerification();
 
     expect(report.runtime).toBe('signed-runner-browser-preview-verification');
     expect(report.status).toBe('pass');
@@ -137,8 +154,16 @@ describe('Workers Coordinator signed runner browser preview verification', () =>
       runtime: 'wrangler-preview',
       authHeaderPresent: true,
     });
+    // Provenance comes from the validator: synthetic fixtures stay capped at
+    // contract-tested and are never reported as production-ready.
+    expect(report.evidence).toMatchObject({
+      validationStatus: 'valid',
+      evidenceLevel: 'synthetic-fixture',
+      readinessStatus: 'contract-tested',
+      runId: 'synthetic-run-1',
+      issueCodes: [],
+    });
     expect(report.browserHarness).toMatchObject({
-      source: 'real-browser-harness',
       runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
       cspConnectSrc: ['https://coordinator.unzen.dev', 'wss://coordinator.unzen.dev', 'https://cdn.unzen.dev'],
       sandboxFlags: ['allow-scripts'],
@@ -155,39 +180,33 @@ describe('Workers Coordinator signed runner browser preview verification', () =>
       blocked: true,
       reason: 'browser CSP connect-src rejected non-Coordinator/CDN origin',
     });
-    expect(report.releaseGateReport.sandboxIframe).toMatchObject({
+    expect(report.releaseGateReport?.sandboxIframe).toMatchObject({
       allowScriptsOnly: true,
       topLevelDomAccessDenied: true,
       topLevelCookieAccessDenied: true,
       topLevelStorageAccessDenied: true,
     });
-    expect(report.releaseGateReport.coopCoepHeaders).toMatchObject({
+    expect(report.releaseGateReport?.coopCoepHeaders).toMatchObject({
       isolated: true,
     });
     expect(report.failureReason).toBeUndefined();
     expect(report.bottlenecksToIssue).toEqual(['signed-runner-real-webgpu-worker-pilot']);
   });
 
-  it('fails before release-gate promotion when the authenticated preview header is missing', () => {
-    const report = runWorkersCoordinatorSignedRunnerBrowserPreviewVerification({
-      target: createTarget({
-        authHeaderPresent: false,
-      }),
-      productionGateReport: createProductionGateReport(),
-      browserEvidence: createBrowserEvidence(),
+  it('fails before release-gate promotion when the authenticated preview header is missing', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({ authHeaderPresent: false }),
     });
 
     expect(report.status).toBe('fail');
-    expect(report.releaseGateReport.status).toBe('pass');
+    expect(report.releaseGateReport?.status).toBe('pass');
     expect(report.failureReason).toBe('authenticated-preview-header-missing: Authorization');
     expect(report.bottlenecksToIssue).toEqual(['signed-runner-preview-auth-preflight']);
   });
 
-  it('fails when browser-captured CSP omits an allowed Coordinator or CDN origin', () => {
-    const report = runWorkersCoordinatorSignedRunnerBrowserPreviewVerification({
-      target: createTarget(),
-      productionGateReport: createProductionGateReport(),
-      browserEvidence: createBrowserEvidence({
+  it('fails when browser-captured CSP omits an allowed Coordinator or CDN origin', async () => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({
         responseHeaders: {
           'content-security-policy': "connect-src https://coordinator.unzen.dev; script-src 'self'",
           'cross-origin-opener-policy': 'same-origin',
@@ -197,18 +216,16 @@ describe('Workers Coordinator signed runner browser preview verification', () =>
     });
 
     expect(report.status).toBe('fail');
-    expect(report.browserHarness.cspConnectSrc).toEqual(['https://coordinator.unzen.dev']);
+    expect(report.browserHarness?.cspConnectSrc).toEqual(['https://coordinator.unzen.dev']);
     expect(report.failureReason).toBe('csp-connect-src-missing-coordinator-or-cdn-origin');
     expect(report.bottlenecksToIssue).toEqual([
       'signed-runner-browser-preview-failure: csp-connect-src-missing-coordinator-or-cdn-origin',
     ]);
   });
 
-  it('fails when a browser network attempt escapes the Coordinator/CDN boundary', () => {
-    const report = runWorkersCoordinatorSignedRunnerBrowserPreviewVerification({
-      target: createTarget(),
-      productionGateReport: createProductionGateReport(),
-      browserEvidence: createBrowserEvidence({
+  it('fails when a browser network attempt escapes the Coordinator/CDN boundary', async () => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({
         networkAttempts: [
           {
             url: 'https://coordinator.unzen.dev/api/requests',
@@ -225,7 +242,7 @@ describe('Workers Coordinator signed runner browser preview verification', () =>
     });
 
     expect(report.status).toBe('fail');
-    expect(report.releaseGateReport.networkBoundary.attempts).toContainEqual({
+    expect(report.releaseGateReport?.networkBoundary.attempts).toContainEqual({
       url: 'https://collector.example.test/leak',
       initiator: 'dedicated-worker',
       blocked: false,
@@ -235,5 +252,103 @@ describe('Workers Coordinator signed runner browser preview verification', () =>
     expect(report.failureReason).toBe(
       'non-coordinator-cdn-network-attempt-not-blocked: https://collector.example.test',
     );
+  });
+});
+
+describe('Workers Coordinator signed runner browser preview integration gate', () => {
+  it('rejects a hand-written captured-and-verified envelope without artifact loader and verifier callbacks', async () => {
+    // A fixture that writes evidenceLevel/readinessStatus by hand must not pass
+    // production readiness: without an external loader + verifier the validator
+    // returns not-evaluated and the gate refuses the evidence.
+    const report = await runPreviewVerification({
+      browserEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createBrowserEvidencePayload(),
+      ),
+      evidenceValidation: {
+        now: '2026-07-10T14:00:00.000Z',
+        trustedVerifiers: [{ name: 'unzen-ci-evidence-verifier', version: '1.0.0' }],
+      },
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe(
+      'signed-runner-preview-evidence-not-validated: artifact-unavailable',
+    );
+    expect(report.evidence.validationStatus).toBe('not-evaluated');
+    expect(report.evidence.evidenceLevel).toBe('captured-and-verified');
+    expect(report.evidence.readinessStatus).toBe('production-candidate');
+    expect(report.evidence.issueCodes).toContain('artifact-unavailable');
+    // Payload-derived fields are absent because the evidence was not trusted.
+    expect(report.browserHarness).toBeUndefined();
+    expect(report.releaseGateReport).toBeUndefined();
+  });
+
+  it('rejects a synthetic-fixture envelope that claims production readiness', async () => {
+    const report = await runPreviewVerification({
+      browserEvidenceEnvelope: createProductionClaimingSyntheticEnvelope(
+        createBrowserEvidencePayload(),
+      ),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe(
+      'signed-runner-preview-evidence-not-validated: readiness-exceeds-evidence-level',
+    );
+    expect(report.evidence.issueCodes).toContain('readiness-exceeds-evidence-level');
+  });
+
+  it('accepts captured-and-verified evidence only with trusted loader, verifier, and attestation', async () => {
+    const report = await runPreviewVerification({
+      browserEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createBrowserEvidencePayload(),
+      ),
+      evidenceValidation: createVerifiedValidationOptions(),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.evidence).toMatchObject({
+      validationStatus: 'valid',
+      evidenceLevel: 'captured-and-verified',
+      readinessStatus: 'production-candidate',
+      producerName: 'unzen-browser-harness',
+    });
+    expect(report.failureReason).toBeUndefined();
+  });
+
+  it('keeps the contract decision independent of the evidence provenance', async () => {
+    // The same clean contract input must fail the same way regardless of
+    // whether the envelope is synthetic or captured-and-verified.
+    const synthetic = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({
+        networkAttempts: [
+          {
+            url: 'https://collector.example.test/leak',
+            initiator: 'dedicated-worker',
+            blocked: false,
+          },
+        ],
+      }),
+    });
+    const captured = await runPreviewVerification({
+      browserEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createBrowserEvidencePayload({
+          networkAttempts: [
+            {
+              url: 'https://collector.example.test/leak',
+              initiator: 'dedicated-worker',
+              blocked: false,
+            },
+          ],
+        }),
+      ),
+      evidenceValidation: createVerifiedValidationOptions(),
+    });
+
+    expect(synthetic.status).toBe('fail');
+    expect(captured.status).toBe('fail');
+    expect(synthetic.failureReason).toBe(
+      'non-coordinator-cdn-network-attempt-not-blocked: https://collector.example.test',
+    );
+    expect(captured.failureReason).toBe(synthetic.failureReason);
   });
 });

@@ -432,9 +432,42 @@ interface SandboxExecutor {
 - 最小限のグローバルを提供する (Array, Object, String, Number, Boolean, Math, JSON, Error)
 - **同期関数のみサポートする** (Phase 1 制約: async/Promise は未対応)
 
-**Phase 2 (計画)**: `WebWorkerSandboxExecutor`
+**Phase 2 (実装済み)**: `WebWorkerSandboxExecutor`
 - Web Worker 内で QuickJS Wasm を実行する
 - 4層サンドボックスで隔離する: Worker → Wasm → QuickJS → API制限
+
+### 6.x WebWorkerSandboxExecutor の実行ライフサイクル (issue #106)
+
+状態機械は `empty → initializing → ready → empty` を遷移し、どの状態からも `disposed` へ遷移できる。
+
+| 項目 | 方針 |
+|------|------|
+| 並行実行 | **single-flight**。1つの Worker generation につき実行中 request は1件のみ。超過分は有界 FIFO queue (`maxQueueSize`、既定4) で待機。溢れた request は即時 `RUNTIME_ERROR` で拒否 |
+| 実行タイムアウト | 協調 timeout (QuickJS interrupt handler、`timeout`) と hard kill (`timeout × hardKillMultiplier`) の2段階。**hard-kill timer は実行開始時点から計測**するため、queue 待ち時間を実行タイムアウトと誤認しない |
+| 初期化タイムアウト | `initTimeoutMs` (既定10000) 以内に `init-result` が返らない場合、init waiter を `RUNTIME_ERROR` で settle し Worker を終了 |
+| キャンセル | `execute(code, args, { signal })` で AbortSignal を受け付ける。queued 中は queue から除去して即時 `UnzenCancelledError` (`CANCELLED`) で reject。実行中は worker protocol へ cancel を送信し、`cancelAckTimeoutMs` 内に acknowledgement がなければ generation を強制終了 |
+| Generation 管理 | Worker を (再)生成するたびに `generationId` を採番。全 response を protocol version / generation id で検証し、旧 generation の late response・duplicate completion・malformed response を拒否して diagnostics に集計 |
+| Generation-fatal 失敗 | hard timeout / worker crash / protocol violation は generation-fatal。実行中 request を即時 settle → Worker 終了 → queue の残りを新 generation で再開 (各 request の AbortSignal を再確認) |
+| エラー分類 | `function_error` → `UnzenFunctionError` (fallback なし)、`runtime_error` → `UnzenRuntimeError` (fallback あり)、キャンセル → `UnzenCancelledError` (fallback なし) |
+
+### 6.y UnzenClient の実行ライフサイクル (issue #105)
+
+`execute(request)` / `executeWithDiagnostics(request)` は明示的な request object を受け取る。
+
+```ts
+interface UnzenExecutionRequest {
+  name: string;
+  args: unknown[];
+  signal?: AbortSignal;   // manifest fetch → sandbox → server fallback まで伝播
+  onEvent?: (event: UnzenExecutionEvent) => void;
+}
+```
+
+- **イベント**: `accepted` / `manifest-fetch-started|completed` / `code-fetch-started|completed` / `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、`completed` / `cancelled` / `failed` の terminal event は1実行につき正確に1回。
+- **キャンセル**: 1つの AbortSignal が manifest/code fetch・sandbox・fallback へ一貫して伝播する。`UnzenCancelledError` (code `CANCELLED`) は **server fallback を開始しない**。dispose() は進行中 execution を cancel して settle させる。
+- **診断**: `ExecutionDiagnostics` は browser/server の attempt chain (`attempts`)、`fallbackUsed`、`finalRoute`、`totalDurationMs`、`manifestCache` を保持。browser 失敗→server 成功の経緯を確認できる。
+- **エラーコード**: `cancelled` / `manifest_fetch_failed` / `code_fetch_failed` / `browser_runtime_failed` / `function_failed` / `server_fallback_failed` / `client_disposed`。UI 状態は message 解析ではなく code で判定する。
+- **互換**: 既存 `call(name, ...args)` / `callWithDiagnostics(name, ...args)` は signal なしの compatibility wrapper として維持。`execution` 本文・args・raw stack は event / diagnostics に含めない。
 
 ---
 

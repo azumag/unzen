@@ -4,6 +4,17 @@ import type {
 import type {
   WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport,
 } from './workers-coordinator-signed-runner-webgpu-worker-pilot.js';
+import {
+  capSignedRunnerReadiness,
+  deriveSignedRunnerEvidenceProvenance,
+  evidenceValidationFailureReason,
+  type WorkersCoordinatorSignedRunnerEvidenceProvenance,
+} from './workers-coordinator-signed-runner-evidence.js';
+import {
+  validateEvidenceEnvelope,
+  type EvidenceEnvelope,
+  type EvidenceValidationOptions,
+} from './evidence.js';
 
 export interface WorkersCoordinatorWebGpuWorkerLatencyDistribution {
   readonly sampleCount: number;
@@ -43,10 +54,11 @@ export interface WorkersCoordinatorCpuFallbackRouting {
   readonly targetRuntime?: 'cpu-worker';
 }
 
-export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence {
-  readonly source: 'real-browser-webgpu-worker-performance-telemetry';
+// Contract fields captured during telemetry collection. They are carried inside
+// an EvidenceEnvelope payload; provenance is decided by the validator rather
+// than a hand-written `source` field.
+export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload {
   readonly runnerUrl: string;
-  readonly capturedAtMs: number;
   readonly segmentLatencySamplesMs: readonly number[];
   readonly indexedDbCacheTiming: WorkersCoordinatorWebGpuWorkerCacheTiming;
   readonly checkpointRelayTiming: WorkersCoordinatorWebGpuWorkerCheckpointRelayTiming;
@@ -62,19 +74,26 @@ export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence {
 
 export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryOptions {
   readonly pilotReport: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport;
-  readonly telemetryEvidence: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence;
+  readonly telemetryEvidenceEnvelope: EvidenceEnvelope<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload>;
+  // Trust boundary for captured-and-verified evidence: trustedVerifiers,
+  // loadArtifact, verifyArtifact, and now must come from outside the envelope.
+  readonly evidenceValidation: EvidenceValidationOptions;
 }
 
 export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport {
   readonly runtime: 'webgpu-worker-performance-fallback-telemetry';
   readonly status: 'pass' | 'fail';
   readonly previewRunnerUrl: string;
-  readonly segmentLatencyDistribution: WorkersCoordinatorWebGpuWorkerLatencyDistribution | null;
-  readonly indexedDbCacheTiming: WorkersCoordinatorWebGpuWorkerCacheTiming;
-  readonly checkpointRelayTiming: WorkersCoordinatorWebGpuWorkerCheckpointRelayTiming;
-  readonly webGpuDeviceLoss: WorkersCoordinatorWebGpuDeviceLossState;
-  readonly cpuFallbackRouting: WorkersCoordinatorCpuFallbackRouting;
-  readonly securityBoundaryDuringTelemetry: {
+  // Provenance is capped by the webgpu-worker-pilot upstream so synthetic
+  // evidence cannot be promoted to production root cause downstream.
+  readonly evidence: WorkersCoordinatorSignedRunnerEvidenceProvenance;
+  // Present only when the envelope validated (see browser-preview gate).
+  readonly segmentLatencyDistribution?: WorkersCoordinatorWebGpuWorkerLatencyDistribution | null;
+  readonly indexedDbCacheTiming?: WorkersCoordinatorWebGpuWorkerCacheTiming;
+  readonly checkpointRelayTiming?: WorkersCoordinatorWebGpuWorkerCheckpointRelayTiming;
+  readonly webGpuDeviceLoss?: WorkersCoordinatorWebGpuDeviceLossState;
+  readonly cpuFallbackRouting?: WorkersCoordinatorCpuFallbackRouting;
+  readonly securityBoundaryDuringTelemetry?: {
     readonly cspConnectSrc: readonly string[];
     readonly sandboxFlags: readonly string[];
     readonly coop: string | null;
@@ -86,17 +105,51 @@ export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport {
   readonly bottlenecksToIssue: readonly string[];
 }
 
-export function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
+export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
   options: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryOptions,
-): WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport {
+): Promise<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport> {
+  // The gate only trusts the telemetry fields once the envelope has been
+  // validated; a hand-written fixture cannot reach captured-and-verified.
+  const validation = await validateEvidenceEnvelope<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload>(
+    options.telemetryEvidenceEnvelope,
+    options.evidenceValidation,
+  );
+  const ownProvenance = deriveSignedRunnerEvidenceProvenance(validation);
+  // Cap by the upstream pilot report so a synthetic pilot cannot become the
+  // production root cause of this telemetry gate.
+  const evidence: WorkersCoordinatorSignedRunnerEvidenceProvenance = {
+    ...ownProvenance,
+    readinessStatus: capSignedRunnerReadiness(
+      ownProvenance.readinessStatus,
+      options.pilotReport.evidence.readinessStatus,
+    ),
+  };
+  const evidenceFailure = evidenceValidationFailureReason(
+    'webgpu-worker-telemetry-evidence-not-validated',
+    validation,
+  );
+
+  if (evidenceFailure) {
+    return {
+      runtime: 'webgpu-worker-performance-fallback-telemetry',
+      status: 'fail',
+      previewRunnerUrl: options.pilotReport.previewRunnerUrl,
+      evidence,
+      failureReason: evidenceFailure,
+      bottlenecksToIssue: selectBottlenecksToIssue(evidenceFailure),
+    };
+  }
+
+  // validation.status === 'valid' guarantees the envelope was returned.
+  const telemetryEvidence = validation.envelope!.payload;
   const blockedNonCoordinatorCdnNetworkAttempt =
-    selectBlockedNonCoordinatorCdnNetworkAttempt(options.telemetryEvidence);
+    selectBlockedNonCoordinatorCdnNetworkAttempt(telemetryEvidence);
   const segmentLatencyDistribution = buildLatencyDistribution(
-    options.telemetryEvidence.segmentLatencySamplesMs,
+    telemetryEvidence.segmentLatencySamplesMs,
   );
   const failureReason = selectFailureReason({
     pilotReport: options.pilotReport,
-    telemetryEvidence: options.telemetryEvidence,
+    telemetryEvidence,
     segmentLatencyDistribution,
     blockedNonCoordinatorCdnNetworkAttempt,
   });
@@ -105,17 +158,18 @@ export function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
     runtime: 'webgpu-worker-performance-fallback-telemetry',
     status: failureReason ? 'fail' : 'pass',
     previewRunnerUrl: options.pilotReport.previewRunnerUrl,
+    evidence,
     segmentLatencyDistribution,
-    indexedDbCacheTiming: options.telemetryEvidence.indexedDbCacheTiming,
-    checkpointRelayTiming: options.telemetryEvidence.checkpointRelayTiming,
-    webGpuDeviceLoss: options.telemetryEvidence.webGpuDeviceLoss,
-    cpuFallbackRouting: options.telemetryEvidence.cpuFallbackRouting,
+    indexedDbCacheTiming: telemetryEvidence.indexedDbCacheTiming,
+    checkpointRelayTiming: telemetryEvidence.checkpointRelayTiming,
+    webGpuDeviceLoss: telemetryEvidence.webGpuDeviceLoss,
+    cpuFallbackRouting: telemetryEvidence.cpuFallbackRouting,
     securityBoundaryDuringTelemetry: {
-      cspConnectSrc: options.telemetryEvidence.cspConnectSrc,
-      sandboxFlags: options.telemetryEvidence.sandboxFlags,
-      coop: options.telemetryEvidence.coop,
-      coep: options.telemetryEvidence.coep,
-      allowedOrigins: options.telemetryEvidence.allowedOrigins,
+      cspConnectSrc: telemetryEvidence.cspConnectSrc,
+      sandboxFlags: telemetryEvidence.sandboxFlags,
+      coop: telemetryEvidence.coop,
+      coep: telemetryEvidence.coep,
+      allowedOrigins: telemetryEvidence.allowedOrigins,
       blockedNonCoordinatorCdnNetworkAttempt,
     },
     failureReason,
@@ -125,15 +179,12 @@ export function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
 
 function selectFailureReason(input: {
   readonly pilotReport: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport;
-  readonly telemetryEvidence: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence;
+  readonly telemetryEvidence: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload;
   readonly segmentLatencyDistribution: WorkersCoordinatorWebGpuWorkerLatencyDistribution | null;
   readonly blockedNonCoordinatorCdnNetworkAttempt: WorkersCoordinatorRunnerNetworkAttempt | null;
 }): string | undefined {
   if (input.pilotReport.status === 'fail') {
     return `webgpu-worker-pilot-not-clean: ${input.pilotReport.failureReason ?? 'unknown'}`;
-  }
-  if (input.telemetryEvidence.source !== 'real-browser-webgpu-worker-performance-telemetry') {
-    return 'webgpu-worker-telemetry-must-use-real-browser-evidence';
   }
   if (input.telemetryEvidence.runnerUrl !== input.pilotReport.previewRunnerUrl) {
     return 'webgpu-worker-telemetry-runner-url-mismatch';
@@ -234,7 +285,7 @@ function percentile(sortedSamples: readonly number[], percentileValue: number): 
 }
 
 function selectBlockedNonCoordinatorCdnNetworkAttempt(
-  evidence: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence,
+  evidence: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload,
 ): WorkersCoordinatorRunnerNetworkAttempt | null {
   return evidence.networkAttempts.find((attempt) =>
     !evidence.allowedOrigins.includes(originOf(attempt.url)) && attempt.blocked,

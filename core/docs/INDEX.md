@@ -19,6 +19,7 @@
 | [heavy-samples-and-modules.md](heavy-samples-and-modules.md) | 重い処理サンプル6提案 + モジュールシステム設計 | 全員 |
 | [bundler.md](bundler.md) | @unzen/bundler モジュールバンドラー設計・API | 開発者 |
 | [MoonBit PoC](../moonbit-poc/README.md) | Phase 3 MoonBit wasm-gc ランタイム検証・ベンチマーク | 開発者・設計者 |
+| [E2E デモ README](../demo/README.md) | デモページの UI アーキテクチャ・状態機械・統計・テスト | 開発者・利用者 |
 
 ## 推奨読み順
 

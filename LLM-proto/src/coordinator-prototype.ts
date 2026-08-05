@@ -7,6 +7,8 @@ import {
 import type { BrowserRetentionMeasurementReport } from './browser-worker-retention.js';
 import { AllowlistedPrototypeTransport } from './two-worker-prototype.js';
 import { type SegmentConfig, WorkerTier, workerId, type WorkerId } from './types.js';
+import { segmentConfigsFromManifest } from './model-manifest.js';
+import { createFixtureModelManifest } from './model-manifest-fixtures.js';
 
 export interface CoordinatorPrototypeWorkerRegistration {
   readonly id: string;
@@ -211,15 +213,15 @@ export function runCoordinatorPrototype(
 }
 
 export function buildCoordinatorPrototypeSegments(totalSegments: number): SegmentConfig[] {
-  const totalLayers = 48;
-  const layersPerSegment = Math.ceil(totalLayers / totalSegments);
-  return Array.from({ length: totalSegments }, (_, index) => ({
-    index,
-    layerStart: index * layersPerSegment,
-    layerEnd: Math.min((index + 1) * layersPerSegment - 1, totalLayers - 1),
-    modelWeightHash: `sha256:coordinator-prototype-segment-${index}`,
-    estimatedVramMB: 1_800,
-  }));
+  // Prototype geometry is derived from a fixture model manifest (issue #102) so
+  // the harness never fabricates layer ranges or placeholder hashes itself.
+  const manifest = createFixtureModelManifest({
+    modelId: 'coordinator-prototype-fixture',
+    totalLayers: 48,
+    totalSegments,
+    estimatedMemoryMB: 1_800,
+  });
+  return segmentConfigsFromManifest(manifest);
 }
 
 function prototypeWorker(

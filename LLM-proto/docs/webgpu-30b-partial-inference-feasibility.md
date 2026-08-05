@@ -15,7 +15,7 @@ consistent. Manual browser validation remains a separate local gate.
 |---|---|
 | Model class | 28B-34B parameters |
 | Quantization | 4-bit or smaller for the first 30B WebGPU attempt |
-| Segment count | 8 contiguous layer ranges |
+| Segment count | Contiguous layer ranges declared by the `SegmentedModelManifest` (the 30B example uses 8) |
 | Segment size | Each segment must fit the declared worker memory budget |
 | Dispatcher fit | Each segment must fit `WorkerTelemetry.vramFreeMB` used by `AdaptiveChunkDispatcher` |
 | Checkpoint tensor | `[batchSize, sequenceLength, hiddenSize]` plus dtype |
@@ -28,7 +28,15 @@ The default metadata manifest is:
 createDefault30BFeasibilityManifest()
 ```
 
-It models an 8-segment 30B-class q4 split, 2.1GB per segment, a
+> [!IMPORTANT]
+> The model geometry now comes from a `SegmentedModelManifest`
+> (see [model-manifest.md](./model-manifest.md), issue #102). The default
+> 30B / 8-segment / ~2.1GB values are an **EXAMPLE fixture** for planning, not
+> measured fact: the fixture manifest is marked `source: 'fixture'`, its memory
+> basis is `budgeted`, and the report carries the manifest's `modelRevision`
+> and `manifestDigest` so any run is traceable to a concrete model artifact.
+
+It models an 8-segment 30B-class q4 split, ~2.1GB per segment, a
 `[1, 512, 6656]` float16 checkpoint tensor, and dispatcher telemetry that stays
 within the 2-3% load budget from `docs/adaptive-chunk-dispatcher.md`.
 
@@ -54,6 +62,7 @@ failure reasons should become the next implementation issue.
 
 | Field | Purpose |
 |---|---|
+| `modelId` / `modelRevision` / `manifestDigest` | Trace the report to a concrete model manifest (issue #102) |
 | `checkpointTensorShape` | Exact checkpoint tensor shape to reproduce in browser tests |
 | `checkpointBytes` | Estimated hidden-state transfer size |
 | `checkpointTransferMs` | Transfer estimate used by the Scale-Up Gate |

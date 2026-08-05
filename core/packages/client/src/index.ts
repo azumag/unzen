@@ -32,6 +32,12 @@ export {
   type DiagnosticResult,
   type DiagnosticInfo,
   type PartialDiagnosticInfo,
+  type UnzenExecutionRequest,
+  type UnzenExecutionEvent,
+  type ExecutionAttemptDiagnostic,
+  type ExecutionDiagnostics,
+  type ExecutionDiagnosticResult,
+  type ExecutionErrorCode,
 } from './unzen-client';
 
 // Component classes (advanced usage)
@@ -40,7 +46,7 @@ export { ManifestFetcher } from './manifest-fetcher';
 export { CodeFetcher } from './code-fetcher';
 
 // Sandbox interface (Node.js-safe, no vm dependency)
-export type { SandboxExecutor } from './sandbox-executor';
+export type { SandboxExecutor, ExecuteOptions } from './sandbox-executor';
 
 // Mock implementation (Node.js only — uses vm module)
 export { MockSandboxExecutor } from './quickjs-sandbox';
@@ -48,6 +54,7 @@ export { MockSandboxExecutor } from './quickjs-sandbox';
 export {
   WebWorkerSandboxExecutor,
   type WebWorkerSandboxOptions,
+  type ExecutorDiagnostics,
 } from './web-worker-sandbox';
 
 // Re-export commonly used types from @unzen/shared for convenience
@@ -68,4 +75,5 @@ export {
   UnzenRuntimeError,
   UnzenFunctionError,
   UnzenNetworkError,
+  UnzenCancelledError,
 } from '@unzen/shared';

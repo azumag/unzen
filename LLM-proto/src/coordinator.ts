@@ -28,6 +28,11 @@ import type {
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
 import { Pipeline, type SegmentExecutor } from './pipeline.js';
+import {
+  type SegmentedModelManifest,
+  segmentConfigsFromManifest,
+} from './model-manifest.js';
+import { assertValidModelManifest } from './model-manifest-validator.js';
 
 export interface CoordinatorOptions {
   /** Heartbeat check interval in ms (default: 5000). */
@@ -40,8 +45,17 @@ export interface CoordinatorOptions {
   readonly segmentTimeoutMs: number;
   /** Delay between retry attempts when no worker is available (ms). */
   readonly retryDelayMs: number;
-  /** Total number of segments the model is split into (default: 8). */
-  readonly totalSegments: number;
+  /**
+   * Expected segment count. When provided it must match the validated
+   * manifest's segment count, otherwise the Coordinator fails fast (default:
+   * derived from the manifest).
+   */
+  readonly totalSegments?: number;
+  /**
+   * Test-only escape hatch that allows fixture-namespace manifests
+   * (source: 'fixture'). Production code must never set this. Default: false.
+   */
+  readonly allowFixtureManifest?: boolean;
 }
 
 const DEFAULT_OPTIONS: CoordinatorOptions = {
@@ -50,46 +64,47 @@ const DEFAULT_OPTIONS: CoordinatorOptions = {
   maxRetries: 2,
   segmentTimeoutMs: 30_000,
   retryDelayMs: 1_000,
-  totalSegments: 8,
 };
 
 export class Coordinator {
   private readonly workerPool: WorkerPool;
   private readonly checkpointStore: CheckpointStore;
   private readonly options: CoordinatorOptions;
+  private readonly manifest: SegmentedModelManifest;
   private readonly segments: SegmentConfig[];
+  private readonly segmentCountValue: number;
   private readonly activeRequests = new Map<InferenceRequestId, InferenceRequest>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private requestCounter = 0;
 
   constructor(
     private readonly executor: SegmentExecutor,
+    manifest: SegmentedModelManifest,
     options?: Partial<CoordinatorOptions>,
   ) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+
+    // Fail fast at startup (issue #102): an invalid, placeholder-hash, or
+    // non-production manifest must never drive an execution plan.
+    const validated = assertValidModelManifest(manifest, {
+      allowedSources: this.options.allowFixtureManifest ? undefined : ['production'],
+    });
+    this.manifest = validated;
+    // SegmentConfig geometry now comes exclusively from the validated manifest.
+    this.segments = segmentConfigsFromManifest(validated);
+    this.segmentCountValue = this.segments.length;
+    if (
+      this.options.totalSegments !== undefined &&
+      this.options.totalSegments !== this.segmentCountValue
+    ) {
+      throw new Error(
+        `Coordinator options declare ${this.options.totalSegments} segments but the ` +
+          `model manifest declares ${this.segmentCountValue}`,
+      );
+    }
+
     this.workerPool = new WorkerPool();
     this.checkpointStore = new CheckpointStore();
-    this.segments = this.buildSegmentConfigs(this.options.totalSegments);
-  }
-
-  /**
-   * Build default segment configurations for a 30B 4-bit quantized model.
-   * Each segment covers a contiguous range of transformer layers.
-   * VRAM per segment: ~2100MB (17GB total / 8 segments) per PLAN.md 5.3.
-   */
-  private buildSegmentConfigs(totalSegments: number): SegmentConfig[] {
-    // 30B model typically has ~60 transformer layers (varies by architecture)
-    const totalLayers = 60;
-    const layersPerSegment = Math.ceil(totalLayers / totalSegments);
-    const vramPerSegment = Math.ceil(17_000 / totalSegments);
-
-    return Array.from({ length: totalSegments }, (_, i) => ({
-      index: i,
-      layerStart: i * layersPerSegment,
-      layerEnd: Math.min((i + 1) * layersPerSegment - 1, totalLayers - 1),
-      modelWeightHash: `sha256:segment-${i}`, // placeholder
-      estimatedVramMB: vramPerSegment,
-    }));
   }
 
   // --- Worker management ---
@@ -187,7 +202,7 @@ export class Coordinator {
       createdAt: Date.now(),
       status: InferenceStatus.QUEUED,
       currentSegment: 0,
-      totalSegments: this.options.totalSegments,
+      totalSegments: this.segmentCountValue,
     };
   }
 
@@ -207,5 +222,20 @@ export class Coordinator {
 
   get checkpointCount(): number {
     return this.checkpointStore.size;
+  }
+
+  /** Segment count derived from the validated model manifest. */
+  get segmentCount(): number {
+    return this.segmentCountValue;
+  }
+
+  /** Model revision of the validated manifest (for run reports). */
+  get modelRevision(): string {
+    return this.manifest.modelRevision;
+  }
+
+  /** Manifest digest of the validated manifest (for run reports). */
+  get manifestDigest(): string {
+    return this.manifest.manifestDigest;
   }
 }

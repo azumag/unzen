@@ -4,6 +4,17 @@ import type {
 import type {
   WorkersCoordinatorSignedRunnerBrowserPreviewReport,
 } from './workers-coordinator-signed-runner-browser-preview.js';
+import {
+  capSignedRunnerReadiness,
+  deriveSignedRunnerEvidenceProvenance,
+  evidenceValidationFailureReason,
+  type WorkersCoordinatorSignedRunnerEvidenceProvenance,
+} from './workers-coordinator-signed-runner-evidence.js';
+import {
+  validateEvidenceEnvelope,
+  type EvidenceEnvelope,
+  type EvidenceValidationOptions,
+} from './evidence.js';
 
 export interface WorkersCoordinatorSignedRunnerWebGpuSegmentExecution {
   readonly modelId: string;
@@ -36,10 +47,11 @@ export interface WorkersCoordinatorSignedRunnerWebGpuCheckpointRelayEvidence {
   readonly topLevelStorageAccessed: boolean;
 }
 
-export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence {
-  readonly source: 'real-browser-webgpu-worker-pilot';
+// Contract fields captured from the WebGPU dedicated worker pilot. They are
+// carried inside an EvidenceEnvelope payload; provenance is decided by the
+// validator rather than a hand-written `source` field.
+export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload {
   readonly runnerUrl: string;
-  readonly capturedAtMs: number;
   readonly segmentExecution: WorkersCoordinatorSignedRunnerWebGpuSegmentExecution;
   readonly indexedDbCache: WorkersCoordinatorSignedRunnerWebGpuCacheEvidence;
   readonly checkpointRelay: WorkersCoordinatorSignedRunnerWebGpuCheckpointRelayEvidence;
@@ -53,17 +65,24 @@ export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence {
 
 export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotOptions {
   readonly previewReport: WorkersCoordinatorSignedRunnerBrowserPreviewReport;
-  readonly pilotEvidence: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence;
+  readonly pilotEvidenceEnvelope: EvidenceEnvelope<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload>;
+  // Trust boundary for captured-and-verified evidence: trustedVerifiers,
+  // loadArtifact, verifyArtifact, and now must come from outside the envelope.
+  readonly evidenceValidation: EvidenceValidationOptions;
 }
 
 export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport {
-  readonly runtime: 'signed-runner-real-webgpu-worker-pilot';
+  readonly runtime: 'signed-runner-webgpu-worker-pilot';
   readonly status: 'pass' | 'fail';
   readonly previewRunnerUrl: string;
-  readonly segmentExecution: WorkersCoordinatorSignedRunnerWebGpuSegmentExecution;
-  readonly indexedDbCache: WorkersCoordinatorSignedRunnerWebGpuCacheEvidence;
-  readonly checkpointRelay: WorkersCoordinatorSignedRunnerWebGpuCheckpointRelayEvidence;
-  readonly securityBoundaryDuringExecution: {
+  // Provenance is capped by the browser-preview upstream so synthetic-fixture
+  // evidence can never be promoted to production root cause downstream.
+  readonly evidence: WorkersCoordinatorSignedRunnerEvidenceProvenance;
+  // Present only when the envelope validated (see browser-preview gate).
+  readonly segmentExecution?: WorkersCoordinatorSignedRunnerWebGpuSegmentExecution;
+  readonly indexedDbCache?: WorkersCoordinatorSignedRunnerWebGpuCacheEvidence;
+  readonly checkpointRelay?: WorkersCoordinatorSignedRunnerWebGpuCheckpointRelayEvidence;
+  readonly securityBoundaryDuringExecution?: {
     readonly cspConnectSrc: readonly string[];
     readonly sandboxFlags: readonly string[];
     readonly coop: string | null;
@@ -75,30 +94,67 @@ export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport {
   readonly bottlenecksToIssue: readonly string[];
 }
 
-export function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
+export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
   options: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotOptions,
-): WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport {
+): Promise<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport> {
+  // The gate only trusts the segment/cache/relay fields once the envelope has
+  // been validated; a hand-written fixture cannot reach captured-and-verified.
+  const validation = await validateEvidenceEnvelope<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload>(
+    options.pilotEvidenceEnvelope,
+    options.evidenceValidation,
+  );
+  const ownProvenance = deriveSignedRunnerEvidenceProvenance(validation);
+  // Cap by the upstream browser-preview report so a synthetic preview cannot
+  // become the production root cause of this pilot gate.
+  const evidence: WorkersCoordinatorSignedRunnerEvidenceProvenance = {
+    ...ownProvenance,
+    readinessStatus: capSignedRunnerReadiness(
+      ownProvenance.readinessStatus,
+      options.previewReport.evidence.readinessStatus,
+    ),
+  };
+  const evidenceFailure = evidenceValidationFailureReason(
+    'webgpu-pilot-evidence-not-validated',
+    validation,
+  );
+
+  if (evidenceFailure) {
+    return {
+      runtime: 'signed-runner-webgpu-worker-pilot',
+      status: 'fail',
+      previewRunnerUrl: options.previewReport.browserHarness?.runnerUrl
+        ?? options.previewReport.target.baseUrl,
+      evidence,
+      failureReason: evidenceFailure,
+      bottlenecksToIssue: selectBottlenecksToIssue(evidenceFailure),
+    };
+  }
+
+  // validation.status === 'valid' guarantees the envelope was returned.
+  const pilotEvidence = validation.envelope!.payload;
   const blockedNonCoordinatorCdnNetworkAttempt =
-    selectBlockedNonCoordinatorCdnNetworkAttempt(options.pilotEvidence);
+    selectBlockedNonCoordinatorCdnNetworkAttempt(pilotEvidence);
   const failureReason = selectFailureReason({
     previewReport: options.previewReport,
-    pilotEvidence: options.pilotEvidence,
+    pilotEvidence,
     blockedNonCoordinatorCdnNetworkAttempt,
   });
 
   return {
-    runtime: 'signed-runner-real-webgpu-worker-pilot',
+    runtime: 'signed-runner-webgpu-worker-pilot',
     status: failureReason ? 'fail' : 'pass',
-    previewRunnerUrl: options.previewReport.browserHarness.runnerUrl,
-    segmentExecution: options.pilotEvidence.segmentExecution,
-    indexedDbCache: options.pilotEvidence.indexedDbCache,
-    checkpointRelay: options.pilotEvidence.checkpointRelay,
+    previewRunnerUrl: options.previewReport.browserHarness?.runnerUrl
+      ?? options.previewReport.target.baseUrl,
+    evidence,
+    segmentExecution: pilotEvidence.segmentExecution,
+    indexedDbCache: pilotEvidence.indexedDbCache,
+    checkpointRelay: pilotEvidence.checkpointRelay,
     securityBoundaryDuringExecution: {
-      cspConnectSrc: options.pilotEvidence.cspConnectSrc,
-      sandboxFlags: options.pilotEvidence.sandboxFlags,
-      coop: options.pilotEvidence.coop,
-      coep: options.pilotEvidence.coep,
-      allowedOrigins: options.pilotEvidence.allowedOrigins,
+      cspConnectSrc: pilotEvidence.cspConnectSrc,
+      sandboxFlags: pilotEvidence.sandboxFlags,
+      coop: pilotEvidence.coop,
+      coep: pilotEvidence.coep,
+      allowedOrigins: pilotEvidence.allowedOrigins,
       blockedNonCoordinatorCdnNetworkAttempt,
     },
     failureReason,
@@ -108,16 +164,13 @@ export function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
 
 function selectFailureReason(input: {
   readonly previewReport: WorkersCoordinatorSignedRunnerBrowserPreviewReport;
-  readonly pilotEvidence: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence;
+  readonly pilotEvidence: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload;
   readonly blockedNonCoordinatorCdnNetworkAttempt: WorkersCoordinatorRunnerNetworkAttempt | null;
 }): string | undefined {
   if (input.previewReport.status === 'fail') {
     return `browser-preview-gate-not-clean: ${input.previewReport.failureReason ?? 'unknown'}`;
   }
-  if (input.pilotEvidence.source !== 'real-browser-webgpu-worker-pilot') {
-    return 'webgpu-pilot-must-use-real-browser-worker-evidence';
-  }
-  if (input.pilotEvidence.runnerUrl !== input.previewReport.browserHarness.runnerUrl) {
+  if (input.pilotEvidence.runnerUrl !== input.previewReport.browserHarness?.runnerUrl) {
     return 'webgpu-pilot-runner-url-mismatch';
   }
   if (input.pilotEvidence.segmentExecution.runtime !== 'webgpu-dedicated-worker') {
@@ -170,7 +223,7 @@ function selectFailureReason(input: {
 }
 
 function selectBlockedNonCoordinatorCdnNetworkAttempt(
-  evidence: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence,
+  evidence: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload,
 ): WorkersCoordinatorRunnerNetworkAttempt | null {
   return evidence.networkAttempts.find((attempt) =>
     !evidence.allowedOrigins.includes(originOf(attempt.url)) && attempt.blocked,

@@ -1,4 +1,6 @@
-import type { SegmentConfig } from './types.js';
+import type { SegmentArtifact, SegmentedModelManifest } from './model-manifest.js';
+import { parseQuantizationBits } from './model-manifest.js';
+import { createFixtureModelManifest } from './model-manifest-fixtures.js';
 
 export type WebGpuRuntimeName = 'transformers-js-v4' | 'webllm' | 'onnxruntime-web';
 export type FeasibilityStatus = 'pass' | 'fail';
@@ -19,11 +21,13 @@ export interface DispatcherAssumptions {
   readonly loadBudgetRatio: number;
 }
 
+/**
+ * Feasibility input. The model geometry comes from a `SegmentedModelManifest`
+ * (issue #102) instead of synthetic hard-coded values; the 30B / 8-segment
+ * values are an EXAMPLE fixture, not measured fact.
+ */
 export interface WebGpu30BFeasibilityManifest {
-  readonly modelId: string;
-  readonly parameterCountB: number;
-  readonly quantizationBits: number;
-  readonly segments: readonly SegmentConfig[];
+  readonly model: SegmentedModelManifest;
   readonly checkpointTensor: {
     readonly batchSize: number;
     readonly sequenceLength: number;
@@ -53,6 +57,8 @@ export interface SegmentFeasibilityReport {
 
 export interface WebGpu30BFeasibilityReport {
   readonly modelId: string;
+  readonly modelRevision: string;
+  readonly manifestDigest: string;
   readonly status: FeasibilityStatus;
   readonly segmentCount: number;
   readonly quantizationBits: number;
@@ -77,6 +83,7 @@ const BYTES_PER_DTYPE = {
 export function evaluateWebGpu30BFeasibility(
   manifest: WebGpu30BFeasibilityManifest,
 ): WebGpu30BFeasibilityReport {
+  const model = manifest.model;
   const checkpointTensorShape = [
     manifest.checkpointTensor.batchSize,
     manifest.checkpointTensor.sequenceLength,
@@ -87,23 +94,24 @@ export function evaluateWebGpu30BFeasibility(
   const checkpointTransferMs = Math.ceil(
     (checkpointBytes / manifest.dispatcherAssumptions.checkpointBytesPerSecond) * 1000,
   );
-  const segments = manifest.segments.map((segment) => ({
-    index: segment.index,
-    layerStart: segment.layerStart,
-    layerEnd: segment.layerEnd,
-    estimatedVramMB: segment.estimatedVramMB,
-    fitsWorkerMemoryBudget: segment.estimatedVramMB <= manifest.workerMemoryBudgetMB,
-    fitsDispatcherWorkerTelemetry: segment.estimatedVramMB <=
+  const quantizationBits = parseQuantizationBits(model.quantization);
+  const segments = model.segments.map((artifact) => ({
+    index: artifact.index,
+    layerStart: artifact.layerStart,
+    layerEnd: artifact.layerEnd,
+    estimatedVramMB: artifact.estimatedMemoryMB,
+    fitsWorkerMemoryBudget: artifact.estimatedMemoryMB <= manifest.workerMemoryBudgetMB,
+    fitsDispatcherWorkerTelemetry: artifact.estimatedMemoryMB <=
       manifest.dispatcherAssumptions.workerVramFreeMB,
   }));
   const runtimes = manifest.runtimeCandidates.map((runtime) => evaluateRuntime(
     runtime,
-    manifest.quantizationBits,
+    quantizationBits,
   ));
   const scaleUpGates = [
-    evaluateParameterGate(manifest.parameterCountB),
-    evaluateSegmentGate(manifest.segments),
-    evaluateQuantizationGate(manifest.quantizationBits),
+    evaluateParameterGate(model.parameterCount / 1e9),
+    evaluateSegmentGate(model.segments),
+    evaluateQuantizationGate(quantizationBits),
     evaluateMemoryGate(segments),
     evaluateLoadGate(manifest.dispatcherAssumptions),
     evaluateCheckpointGate(checkpointTransferMs, manifest.maxCheckpointTransferMs),
@@ -114,10 +122,12 @@ export function evaluateWebGpu30BFeasibility(
     .map((gate) => `${gate.name}: ${gate.reason}`);
 
   return {
-    modelId: manifest.modelId,
+    modelId: model.modelId,
+    modelRevision: model.modelRevision,
+    manifestDigest: model.manifestDigest,
     status: failureReasons.length === 0 ? 'pass' : 'fail',
-    segmentCount: manifest.segments.length,
-    quantizationBits: manifest.quantizationBits,
+    segmentCount: model.segments.length,
+    quantizationBits,
     checkpointTensorShape,
     checkpointBytes,
     checkpointTransferMs,
@@ -130,16 +140,7 @@ export function evaluateWebGpu30BFeasibility(
 
 export function createDefault30BFeasibilityManifest(): WebGpu30BFeasibilityManifest {
   return {
-    modelId: 'unzen-30b-q4-8seg-feasibility',
-    parameterCountB: 30,
-    quantizationBits: 4,
-    segments: Array.from({ length: 8 }, (_, index) => ({
-      index,
-      layerStart: index * 8,
-      layerEnd: (index + 1) * 8 - 1,
-      modelWeightHash: `sha256:30b-q4-seg-${index}`,
-      estimatedVramMB: 2100,
-    })),
+    model: createFixtureModelManifest(),
     checkpointTensor: {
       batchSize: 1,
       sequenceLength: 512,
@@ -212,8 +213,8 @@ function evaluateParameterGate(parameterCountB: number) {
   };
 }
 
-function evaluateSegmentGate(segments: readonly SegmentConfig[]) {
-  const pass = segments.length === 8 && segments.every((segment, index) => (
+function evaluateSegmentGate(segments: readonly SegmentArtifact[]) {
+  const pass = segments.length > 0 && segments.every((segment, index) => (
     segment.index === index &&
     segment.layerStart <= segment.layerEnd &&
     (index === 0 || segment.layerStart === segments[index - 1].layerEnd + 1)
@@ -222,8 +223,8 @@ function evaluateSegmentGate(segments: readonly SegmentConfig[]) {
     name: 'segment-layer-boundaries',
     status: pass ? 'pass' as const : 'fail' as const,
     reason: pass
-      ? '8 contiguous layer segments are declared'
-      : 'segments must be 8 contiguous layer ranges with stable indexes',
+      ? 'contiguous layer segments with stable indexes are declared'
+      : 'segments must be contiguous layer ranges with stable indexes',
   };
 }
 

@@ -38,25 +38,36 @@ allowed Coordinator / CDN origins, and a blocked non-Coordinator/CDN network
 attempt before release can proceed.
 
 `src/workers-coordinator-signed-runner-browser-preview.ts` takes the same signed
-runner boundary through a real-browser harness against an authenticated Wrangler
+runner boundary through a browser harness against an authenticated Wrangler
 preview or deployed Worker URL. It records the target URL and auth preflight,
 browser-captured runner headers, CSP `connect-src`, sandbox flags, COOP / COEP,
 allowed origins, and blocked non-Coordinator/CDN network attempts before routing
-to the next pilot bottleneck.
+to the next pilot bottleneck. The contract fields are carried inside an
+`EvidenceEnvelope` payload: the gate runs `validateEvidenceEnvelope()` first and
+only reports readiness from the validator result. A hand-written fixture that
+claims `captured-and-verified` is rejected as `not-evaluated` unless an external
+artifact loader, independent verifier, and trusted verifier list are supplied.
 
 `src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts` connects that
-preview runner to a real WebGPU dedicated worker pilot. The report keeps the
-preview runner URL, model segment execution state, IndexedDB segment cache
-evidence, Coordinator-owned checkpoint relay evidence, CSP `connect-src`,
-sandbox flags, COOP / COEP, allowed origins, and blocked non-Coordinator/CDN
-network attempts in one gate while the worker is actively executing a segment.
+preview runner to a WebGPU dedicated worker pilot. The report keeps the preview
+runner URL, model segment execution state, IndexedDB segment cache evidence,
+Coordinator-owned checkpoint relay evidence, CSP `connect-src`, sandbox flags,
+COOP / COEP, allowed origins, and blocked non-Coordinator/CDN network attempts
+in one gate while the worker is actively executing a segment. Evidence is
+accepted only via a validated `EvidenceEnvelope`, and the reported readiness is
+capped by the browser-preview upstream so synthetic evidence cannot be promoted
+to production root cause downstream. Despite the gate name, a contract-tested
+envelope is reported as `contract-tested`, not as verified execution.
 
 `src/workers-coordinator-webgpu-worker-performance-telemetry.ts` turns the
 passing pilot into production decision telemetry. It reports segment latency
 distribution, IndexedDB cache hit/miss timing, Coordinator checkpoint relay
 duration/retry/failure reasons, WebGPU device loss handling, CPU fallback
 routing, and the same signed runner isolation / Coordinator-CDN network boundary
-while telemetry collection is active.
+while telemetry collection is active. The telemetry fields are validated through
+an `EvidenceEnvelope`, and the reported readiness is capped by the pilot
+upstream. `captured-and-verified` is reached only when the artifact loader,
+independent verifier, and trusted verifier list are present.
 
 `src/workers-coordinator-production-worker-fleet-slo-cost.ts` aggregates that
 single-runner telemetry into a production worker fleet SLO and cost gate. It

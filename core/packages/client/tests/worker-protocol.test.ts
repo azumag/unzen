@@ -16,8 +16,13 @@ import {
   createInitResultMessage,
   createExecuteResultMessage,
   createExecuteErrorMessage,
+  createCancelMessage,
+  createCancelResultMessage,
+  validateWorkerResponse,
+  WORKER_PROTOCOL_VERSION,
   isInitResultMessage,
   isExecuteResultMessage,
+  isCancelResultMessage,
 } from '../src/worker/worker-protocol';
 
 describe('WorkerProtocol', () => {
@@ -121,6 +126,100 @@ describe('WorkerProtocol', () => {
     it('isExecuteResultMessage should return false for init-result', () => {
       const msg = createInitResultMessage(true);
       expect(isExecuteResultMessage(msg)).toBe(false);
+    });
+
+    it('isCancelResultMessage should return true for cancel-result', () => {
+      const msg = createCancelResultMessage('req-1', true);
+      expect(isCancelResultMessage(msg)).toBe(true);
+    });
+  });
+
+  describe('generation id and protocol version', () => {
+    it('createInitMessage should carry the protocol version and generation id', () => {
+      const msg = createInitMessage(7);
+      expect(msg.protocolVersion).toBe(WORKER_PROTOCOL_VERSION);
+      expect(msg.generationId).toBe(7);
+    });
+
+    it('createExecuteMessage should carry generation id', () => {
+      const msg = createExecuteMessage('req-1', 'code', [], 100, 3);
+      expect(msg.generationId).toBe(3);
+      expect(msg.protocolVersion).toBe(WORKER_PROTOCOL_VERSION);
+    });
+
+    it('createExecuteErrorMessage should echo generation id', () => {
+      const msg = createExecuteErrorMessage('req-1', 'runtime_error', 'boom', 2);
+      expect(msg.generationId).toBe(2);
+    });
+  });
+
+  describe('cancel messages', () => {
+    it('createCancelMessage should create a cancel message', () => {
+      const msg = createCancelMessage('req-1', 5);
+      expect(msg.type).toBe('cancel');
+      expect(msg.requestId).toBe('req-1');
+      expect(msg.generationId).toBe(5);
+    });
+
+    it('createCancelResultMessage should create an ack', () => {
+      const msg = createCancelResultMessage('req-1', true, undefined, 5);
+      expect(msg.type).toBe('cancel-result');
+      expect(msg.requestId).toBe('req-1');
+      expect(msg.success).toBe(true);
+      expect(msg.generationId).toBe(5);
+    });
+  });
+
+  describe('validateWorkerResponse', () => {
+    it('should accept a valid init-result', () => {
+      const result = validateWorkerResponse({ type: 'init-result', success: true });
+      expect(result.ok).toBe(true);
+    });
+
+    it('should accept a valid execute-result', () => {
+      const result = validateWorkerResponse({
+        type: 'execute-result',
+        requestId: 'req-1',
+        success: true,
+      });
+      expect(result.ok).toBe(true);
+    });
+
+    it('should accept a valid cancel-result', () => {
+      const result = validateWorkerResponse({
+        type: 'cancel-result',
+        requestId: 'req-1',
+        success: true,
+      });
+      expect(result.ok).toBe(true);
+    });
+
+    it('should reject non-object responses', () => {
+      const result = validateWorkerResponse(null);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('not an object');
+    });
+
+    it('should reject a protocol version mismatch', () => {
+      const result = validateWorkerResponse({
+        type: 'init-result',
+        success: true,
+        protocolVersion: 999,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('protocol version mismatch');
+    });
+
+    it('should reject unknown message types', () => {
+      const result = validateWorkerResponse({ type: 'bogus' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('unknown message type');
+    });
+
+    it('should reject execute-result missing required fields', () => {
+      const result = validateWorkerResponse({ type: 'execute-result', success: true });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('requestId');
     });
   });
 });

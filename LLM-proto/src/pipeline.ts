@@ -23,15 +23,25 @@ import {
 import type { SegmentAssignment, SegmentResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
-import { withTimeout, delay } from './pipeline-utils.js';
+import { withAbortableTimeout, delay } from './pipeline-utils.js';
 
 /**
  * Abstracts segment execution on a browser worker.
  * Production: WebSocket-based message exchange with the assigned browser.
  * Tests: Mock implementation that returns synthetic results.
+ *
+ * `options.signal` mirrors the `core/packages/client` cancellation contract
+ * (issue #106): when the signal aborts the executor MUST settle (typically by
+ * rejecting with AbortError, surfaced as user cancellation) and must never
+ * trigger fallback/retry on its own. Existing callers that omit the option are
+ * unaffected.
  */
 export interface SegmentExecutor {
-  execute(workerId: WorkerId, assignment: SegmentAssignment): Promise<SegmentResult>;
+  execute(
+    workerId: WorkerId,
+    assignment: SegmentAssignment,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<SegmentResult>;
 }
 
 export interface PipelineOptions {
@@ -188,8 +198,10 @@ export class Pipeline {
     workerId: WorkerId,
     assignment: SegmentAssignment,
   ): Promise<SegmentResult> {
-    return withTimeout(
-      this.executor.execute(workerId, assignment),
+    // Issue #103: the timeout must abort the underlying execution, not just
+    // orphan the promise, so the worker receives the signal via the executor.
+    return withAbortableTimeout(
+      (signal) => this.executor.execute(workerId, assignment, { signal }),
       this.options.segmentTimeoutMs,
       `Segment ${assignment.segment.index}`,
     );

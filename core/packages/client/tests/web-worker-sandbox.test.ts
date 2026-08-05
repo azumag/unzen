@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
+import { UnzenCancelledError, UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
 import { WebWorkerSandboxExecutor } from '../src/web-worker-sandbox';
 import type { WorkerMessage, WorkerResponse } from '../src/worker/worker-protocol';
 
@@ -586,6 +586,502 @@ describe('WebWorkerSandboxExecutor', () => {
         executor.dispose();
         executor.dispose();
       }).not.toThrow();
+    });
+  });
+
+  // === issue #106 lifecycle (init / queue / timeout / cancel / generation) ===
+  describe('init timeout', () => {
+    it('should settle init waiters when init-result never arrives', async () => {
+      const worker = new MockWorker();
+      // Never respond to init — simulates a hung Wasm load
+      worker.onPostMessage(() => {
+        // Intentionally drop all messages
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 30,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const p = executor.execute('function run() { return 1; }', []);
+      await expect(p).rejects.toThrow(UnzenRuntimeError);
+      await expect(p).rejects.toThrow('initialization timed out');
+      expect(executor.diagnostics.initTimeoutCount).toBe(1);
+
+      // Executor must be able to start a fresh generation afterwards.
+      executor.dispose();
+    });
+  });
+
+  describe('single-flight concurrency and queueing', () => {
+    it('should run at most one request per generation (single-flight)', async () => {
+      const worker = new MockWorker();
+      let inFlight = 0;
+      let maxInFlight = 0;
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          // Simulate async execution, then respond
+          queueMicrotask(() => {
+            inFlight--;
+            worker.respond({
+              type: 'execute-result',
+              requestId: msg.requestId,
+              success: true,
+              value: msg.requestId,
+            });
+          });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const results = await Promise.all([
+        executor.execute('a', []),
+        executor.execute('b', []),
+        executor.execute('c', []),
+      ]);
+
+      expect(new Set(results).size).toBe(3);
+      expect(maxInFlight).toBe(1); // never more than one running at a time
+      executor.dispose();
+    });
+
+    it('should reject when the bounded queue overflows', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        }
+        // execute messages intentionally dropped → first request keeps running
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        maxQueueSize: 2,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const running = executor.execute('hang', []);
+      await new Promise((r) => setTimeout(r, 10));
+      const queued1 = executor.execute('q1', []);
+      const queued2 = executor.execute('q2', []);
+      const overflow = executor.execute('q3', []);
+
+      await expect(overflow).rejects.toThrow('queue is full');
+      expect(executor.diagnostics.queueOverflowCount).toBe(1);
+
+      executor.dispose();
+      await expect(running).rejects.toThrow(UnzenRuntimeError);
+      await expect(queued1).rejects.toThrow(UnzenRuntimeError);
+      await expect(queued2).rejects.toThrow(UnzenRuntimeError);
+    });
+
+    it('should not count queue wait time against the execution timeout', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          if (msg.code === 'hang') {
+            // First request hangs → hard timeout after 1.5 * timeout
+          } else {
+            // Second request completes immediately once it starts
+            worker.respond({
+              type: 'execute-result',
+              requestId: msg.requestId,
+              success: true,
+              value: 'ok',
+            });
+          }
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 40,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const hanging = executor.execute('hang', []);
+      // Queued while the first request runs (and hard-times-out)
+      const queued = executor.execute('quick', []);
+
+      await expect(hanging).rejects.toThrow(UnzenRuntimeError);
+
+      // The queued request waited longer than `timeout` before starting, but
+      // its own execution timer begins at execution start, so it must succeed.
+      const result = await queued;
+      expect(result).toBe('ok');
+      executor.dispose();
+    });
+  });
+
+  describe('cancellation via AbortSignal', () => {
+    it('should cancel a queued request without touching the running request', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        }
+        // execute messages dropped → first keeps running
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const running = executor.execute('hang', []);
+      await new Promise((r) => setTimeout(r, 10));
+
+      const controller = new AbortController();
+      const queued = executor.execute('queued', [], { signal: controller.signal });
+      await new Promise((r) => setTimeout(r, 10));
+
+      controller.abort();
+
+      // Cancellation must surface as UnzenCancelledError (NOT a runtime error,
+      // so it never triggers server fallback).
+      await expect(queued).rejects.toThrow(UnzenCancelledError);
+      expect(executor.diagnostics.cancelCount).toBe(1);
+
+      executor.dispose();
+      await expect(running).rejects.toThrow(UnzenRuntimeError);
+    });
+
+    it('should cancel a running request via cooperative worker cancel', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'cancel') {
+          worker.respond({ type: 'cancel-result', requestId: msg.requestId, success: true });
+        }
+        // execute messages dropped → request stays running until cancelled
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        cancelAckTimeoutMs: 1000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const p = executor.execute('hang', [], { signal: controller.signal });
+      await new Promise((r) => setTimeout(r, 10));
+
+      controller.abort();
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      expect(executor.diagnostics.cancelCount).toBe(1);
+      expect(executor.diagnostics.cancelLatencyMs).not.toBeNull();
+      executor.dispose();
+    });
+
+    it('should force-terminate the generation when the worker never acks cancel', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        }
+        // execute AND cancel messages both dropped → unresponsive worker
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        cancelAckTimeoutMs: 30,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const p = executor.execute('hang', [], { signal: controller.signal });
+      await new Promise((r) => setTimeout(r, 10));
+
+      controller.abort();
+
+      // Cancellation intent must surface as UnzenCancelledError even when the
+      // worker never acknowledges — it must NOT become a server-fallback runtime error.
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      expect(executor.diagnostics.cancelAckTimeoutCount).toBe(1);
+      executor.dispose();
+    });
+
+    it('should reject immediately when signal is already aborted', async () => {
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(createAutoRespondingMockWorker()),
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        executor.execute('function run() { return 1; }', [], { signal: controller.signal }),
+      ).rejects.toThrow(UnzenCancelledError);
+      executor.dispose();
+    });
+  });
+
+  describe('generation lifecycle', () => {
+    it('should ignore stale responses from an old generation after recreate', async () => {
+      let workerCount = 0;
+      const workers: MockWorker[] = [];
+      const createWorker = () => {
+        workerCount++;
+        const w = new MockWorker();
+        workers.push(w);
+        if (workerCount === 1) {
+          // First worker: init OK, execute hangs → hard timeout kills generation
+          w.onPostMessage((msg) => {
+            if (msg.type === 'init') w.respond({ type: 'init-result', success: true });
+          });
+        } else {
+          // Second worker: fully functional
+          w.onPostMessage((msg) => {
+            if (msg.type === 'init') w.respond({ type: 'init-result', success: true });
+            else if (msg.type === 'execute') {
+              w.respond({
+                type: 'execute-result',
+                requestId: msg.requestId,
+                success: true,
+                value: 'new-gen',
+              });
+            }
+          });
+        }
+        return w as unknown as Worker;
+      };
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 40,
+        createWorker,
+      });
+
+      // First request hard-times-out → generation 1 is torn down
+      await expect(executor.execute('hang', [])).rejects.toThrow(UnzenRuntimeError);
+      expect(workerCount).toBe(1);
+
+      // Second request recreates the worker on generation 2
+      const result = await executor.execute('ok', []);
+      expect(result).toBe('new-gen');
+      expect(workerCount).toBe(2);
+
+      // Feed a stale response tagged with the OLD generation through the live
+      // worker's handler — it must be rejected and counted, not acted upon.
+      const before = executor.diagnostics.lateResponseCount;
+      workers[1].respond({
+        type: 'execute-result',
+        requestId: 'stale-req',
+        generationId: 1,
+        success: true,
+        value: 'stale',
+      });
+      expect(executor.diagnostics.lateResponseCount).toBe(before + 1);
+
+      // Executor must remain functional.
+      const r2 = await executor.execute('ok2', []);
+      expect(r2).toBe('new-gen');
+      executor.dispose();
+    });
+
+    it('should ignore duplicate completions for an already-settled request', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          const rid = msg.requestId;
+          worker.respond({ type: 'execute-result', requestId: rid, success: true, value: 'first' });
+          // Duplicate completion for the same requestId
+          worker.respond({ type: 'execute-result', requestId: rid, success: true, value: 'dup' });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const result = await executor.execute('code', []);
+      expect(result).toBe('first');
+      expect(executor.diagnostics.duplicateCompletionCount).toBe(1);
+      executor.dispose();
+    });
+
+    it('should treat a malformed worker response as generation-fatal', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          worker.respond({ type: 'unknown-type' } as unknown as WorkerResponse);
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      await expect(executor.execute('code', [])).rejects.toThrow('Malformed worker response');
+      expect(executor.diagnostics.malformedResponseCount).toBe(1);
+      executor.dispose();
+    });
+
+    it('should settle all affected requests on dispose (running + queued + init)', async () => {
+      const workers: MockWorker[] = [];
+      const createWorker = () => {
+        const w = new MockWorker();
+        workers.push(w);
+        // First generation: init OK, execute hangs
+        w.onPostMessage((msg) => {
+          if (msg.type === 'init') w.respond({ type: 'init-result', success: true });
+        });
+        return w as unknown as Worker;
+      };
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        createWorker,
+      });
+
+      const running = executor.execute('hang', []);
+      await new Promise((r) => setTimeout(r, 10));
+      const queued = executor.execute('q', []);
+      const queued2 = executor.execute('q2', []);
+
+      executor.dispose();
+
+      await expect(running).rejects.toThrow(UnzenRuntimeError);
+      await expect(queued).rejects.toThrow(UnzenRuntimeError);
+      await expect(queued2).rejects.toThrow(UnzenRuntimeError);
+      expect(executor.diagnostics.forcedTerminationCount).toBe(0);
+    });
+  });
+
+  // === issue #106 regression fixes (found by strict review) ===
+  describe('regression fixes', () => {
+    it('should not leak a queued request when re-init fails after a generation failure', async () => {
+      let workerCount = 0;
+      const createWorker = () => {
+        workerCount++;
+        const w = new MockWorker();
+        if (workerCount === 1) {
+          // Generation 1: init OK, execute hangs → hard timeout kills it
+          w.onPostMessage((msg) => {
+            if (msg.type === 'init') w.respond({ type: 'init-result', success: true });
+          });
+        } else {
+          // Generation 2: init FAILS → drainQueue must reject the shifted `next`
+          w.onPostMessage((msg) => {
+            if (msg.type === 'init') {
+              w.respond({ type: 'init-result', success: false, error: 're-init failed' });
+            }
+          });
+        }
+        return w as unknown as Worker;
+      };
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 30,
+        createWorker,
+      });
+
+      const first = executor.execute('hang', []);
+      const queued = executor.execute('queued', []);
+
+      await expect(first).rejects.toThrow(UnzenRuntimeError);
+
+      // The queued request was shifted out of the queue before re-init failed;
+      // it must be rejected too, never left pending.
+      await expect(queued).rejects.toThrow(UnzenRuntimeError);
+      expect(workerCount).toBe(2);
+      executor.dispose();
+    });
+
+    it('should not resurrect a disposed executor after dispose during init', async () => {
+      const worker = new MockWorker();
+      // Init never responds
+      worker.onPostMessage(() => {
+        // Intentionally drop all messages
+      });
+      const createWorker = vi.fn(() => worker as unknown as Worker);
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 1000,
+        createWorker,
+      });
+
+      const p = executor.execute('code', []);
+      await new Promise((r) => setTimeout(r, 10));
+      executor.dispose();
+      await expect(p).rejects.toThrow(UnzenRuntimeError);
+
+      // Executing after dispose must throw, NOT spawn a brand-new worker.
+      await expect(executor.execute('code2', [])).rejects.toThrow('disposed');
+      expect(createWorker).toHaveBeenCalledTimes(1);
+    });
+
+    it('should post exactly one cancel message when aborting a queued->running request', async () => {
+      let cancelCount = 0;
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          if (msg.code === 'first') {
+            // First request completes quickly so the second can start
+            queueMicrotask(() => {
+              worker.respond({
+                type: 'execute-result',
+                requestId: msg.requestId,
+                success: true,
+                value: 'first',
+              });
+            });
+          }
+          // second request stays running until cancelled
+        } else if (msg.type === 'cancel') {
+          cancelCount++;
+          worker.respond({ type: 'cancel-result', requestId: msg.requestId, success: true });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const first = executor.execute('first', []);
+      const controller = new AbortController();
+      const second = executor.execute('second', [], { signal: controller.signal });
+
+      // Wait until the second request is running (queued->running transition).
+      await new Promise((r) => setTimeout(r, 20));
+      controller.abort();
+
+      await expect(second).rejects.toThrow(UnzenCancelledError);
+      expect(cancelCount).toBe(1); // double abort listener would post 2
+      await expect(first).resolves.toBe('first');
+      executor.dispose();
     });
   });
 });

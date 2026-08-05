@@ -19,7 +19,7 @@
  * - Real implementation will be added in Phase 2
  */
 
-import { UnzenFunctionError } from '@unzen/shared';
+import { UnzenCancelledError, UnzenFunctionError } from '@unzen/shared';
 import { createContext, Script } from 'vm';
 import type { SandboxExecutor } from './sandbox-executor';
 
@@ -61,10 +61,21 @@ export class MockSandboxExecutor implements SandboxExecutor {
    *
    * @param code - JavaScript code defining 'run' function
    * @param args - Arguments for 'run' function
+   * @param options - Optional per-execution controls (signal is accepted and
+   *   honoured for interface parity, though vm execution is synchronous)
    * @returns Result from 'run' function
    * @throws {UnzenFunctionError} On any execution error
    */
-  async execute(code: string, args: unknown[]): Promise<unknown> {
+  async execute(
+    code: string,
+    args: unknown[],
+    options?: { signal?: AbortSignal },
+  ): Promise<unknown> {
+    // Honour caller cancellation even for the synchronous mock executor:
+    // a request that was already aborted must not start executing.
+    if (options?.signal?.aborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
     try {
       // Create fresh context for this execution
       // Rationale: Each execution should be isolated from others

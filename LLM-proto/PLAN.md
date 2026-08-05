@@ -594,11 +594,16 @@ All-or-Nothing パイプライン:
 
 ### 5.3 パラメータ設計
 
-**ターゲットモデル: 30Bクラス(4-bit量子化, ~17GB)**
+**ターゲットモデル: 30Bクラス(4-bit量子化, ~17GB) ※EXAMPLE**
+
+> [!IMPORTANT]
+> 下記の30B / 8 segment / ~2.1GB / ~4秒は計画のための**EXAMPLE（仮定値）**であり、実測値ではありません。
+> 権威あるmodel geometry（layer範囲・artifact hash・VRAM estimate）は[`SegmentedModelManifest`](./docs/model-manifest.md)が唯一のsource of truthであり、
+> `Coordinator`とfeasibility gateは検証済みmanifestを消費します（#102対応済み）。placeholder hashはvalidatorがrejectします。
 
 | パラメータ | 値 | 根拠 | 確度 |
 |-----------|-----|------|------|
-| セグメント数 | 8 | 1ノードあたり~2.1GBでWebGPU現実的 | 仮定(要検証) |
+| セグメント数 | 8 | 1ノードあたり~2.1GBでWebGPU現実的（EXAMPLE） | 仮定(要検証) |
 | 1セグメント処理時間 | ~4秒 | 30Bの部分推論想定 | 仮定(要実測) |
 | 全体推論時間 | ~35秒 | 推論30秒+チェックポイント転送 | 仮定(要実測) |
 | 中間状態サイズ | 数MB | hidden states + KV cache部分 | 仮定(要実測) |
@@ -701,18 +706,19 @@ All-or-Nothing パイプライン:
 
 0. [2B / 2-worker prototype](./docs/2b-two-worker-prototype.md) で、2Bクラスモデルを2セグメント・2ワーカーに固定して、WebGPU実行、チェックポイント転送、IndexedDBキャッシュ、ワーカー喪失時のリジュームを先に実測する
 1. [Adaptive chunk dispatcher](./docs/adaptive-chunk-dispatcher.md) で、ワーカーの演算能力・稼働時間・余剰負荷に基づいてチャンクサイズと連続チャンク割り当てを変える Coordinator 仕様を固める
-2. [WebGPU 30B partial inference feasibility](./docs/webgpu-30b-partial-inference-feasibility.md) で、segment manifest、checkpoint tensor shape、runtime候補、AdaptiveChunkDispatcher の telemetry 前提を metadata/report gate として検証し、実ブラウザ WebGPU 計測へ進む条件を固める
+2. [WebGPU 30B partial inference feasibility](./docs/webgpu-30b-partial-inference-feasibility.md) で、[`SegmentedModelManifest`](./docs/model-manifest.md)、checkpoint tensor shape、runtime候補、AdaptiveChunkDispatcher の telemetry 前提を metadata/report gate として検証し、実ブラウザ WebGPU 計測へ進む条件を固める
 3. [Checkpoint transfer measurement](./docs/checkpoint-transfer-measurement.md) で、checkpoint(hidden states)のシリアライズ・転送サイズ・速度・retry failure を report gate として検証し、manual browser/WebGPU 計測へ進む条件を固める
 4. [Browser worker retention measurement](./docs/browser-worker-retention-measurement.md) で、session duration distribution、retention curve、Tier 3 early abandon、checkpoint resume / retry impact を report gate として検証し、実際のサイトでのブラウザ離脱率測定へ進む条件を固める
 5. [Coordinator prototype](./docs/coordinator-prototype.md) で、API受付、worker registration / heartbeat、AdaptiveChunkDispatcher assignment、Coordinator checkpoint relay、resume/retry report、Tier 3 churn eligibility を simulated report gate として束ねる
+6. [Coordinator durability (#103)](./docs/coordinator-durability.md) で、durable request state、idempotency、request/attempt/lease identity、retry/cancellation、checkpoint envelope、worker generation policy を in-memory repository + durable Coordinator の contract test として検証する
 6. [Workers Coordinator prototype](./docs/workers-coordinator-prototype.md) で、Cloudflare Workers 境界の API lifecycle、Durable Object single-writer worker state、AdaptiveChunkDispatcher assignment import、Coordinator-owned checkpoint relay、worker loss retry/resume impact、WebSocket heartbeat p95 fan-out、direct worker-to-worker rejection を report gate として検証する
 7. [Workers Coordinator Miniflare smoke](./docs/workers-coordinator-prototype.md) で、Miniflare/workerd の real Worker fetch、Durable Object storage、WebSocket upgrade、direct worker-to-worker rejection、load-shaped request concurrency、client-side heartbeat timing、restart persistence を focused smoke として検証する
 8. [Workers Coordinator deployed smoke](./docs/workers-coordinator-prototype.md) で、authenticated Wrangler preview / deployed Worker URL の auth header presence、Durable Object migration tag、real browser WebSocket timing、edge placement variance、direct worker-to-worker rejection を focused smoke として検証する
 9. [Workers Coordinator production observability canary gate](./docs/workers-coordinator-prototype.md) で、durable per-request metrics export、browser WebSocket p95 / edge placement variance / direct worker-to-worker rejection / upstream failure reason の alert threshold、canary release decision、rollback checkpoint boundary を deterministic report gate として検証する
 10. [Workers Coordinator signed runner release gate](./docs/workers-coordinator-prototype.md) で、signed runner の CSP connect-src、sandbox iframe allow-scripts 境界、top-level DOM / Cookie / Storage 非依存、COOP / COEP header、Coordinator / CDN 以外への network attempt blocking を deterministic release gate として検証する
-11. [Workers Coordinator signed runner browser preview gate](./docs/workers-coordinator-prototype.md) で、同じ signed runner safety boundary を real browser harness と authenticated Wrangler preview / deployed Worker URL の header/network evidence で検証する
-12. [Workers Coordinator signed runner real WebGPU worker pilot gate](./docs/workers-coordinator-prototype.md) で、preview runner URL 上の model segment execution、IndexedDB cache、Coordinator-owned checkpoint relay、CSP/sandbox/COOP-COEP/network boundary の同時成立を検証する
-13. [WebGPU worker performance / fallback telemetry gate](./docs/workers-coordinator-prototype.md) で、segment latency distribution、cache hit/miss timing、checkpoint relay duration、WebGPU device loss、CPU fallback routing を実測 report 化する
+11. [Workers Coordinator signed runner browser preview gate](./docs/workers-coordinator-prototype.md) で、同じ signed runner safety boundary を browser evidence envelope と authenticated Wrangler preview / deployed Worker URL の header/network contract で検証し、`validateEvidenceEnvelope()` を通った場合のみ provenance を報告する
+12. [Workers Coordinator signed runner WebGPU worker pilot gate](./docs/workers-coordinator-prototype.md) で、preview runner URL 上の model segment execution、IndexedDB cache、Coordinator-owned checkpoint relay、CSP/sandbox/COOP-COEP/network boundary の同時成立を evidence envelope で検証する。`real`という名称でも入力がenvelope未検証なら`contract-tested`に留まる
+13. [WebGPU worker performance / fallback telemetry gate](./docs/workers-coordinator-prototype.md) で、segment latency distribution、cache hit/miss timing、checkpoint relay duration、WebGPU device loss、CPU fallback routing を evidence envelope で検証し、upstream pilotのreadinessを超えて昇格させない
 14. [Production worker fleet SLO / cost gate](./docs/workers-coordinator-prototype.md) で、device tier 別 p95 latency、fallback rate、cache warmup cost、checkpoint relay spend、user opt-in impact、promote/hold thresholds を report 化する
 15. [Publisher reward and abuse-resistant settlement gate](./docs/workers-coordinator-prototype.md) で、opt-in fleet contribution と Coordinator checkpoint relay evidence を publisher 報酬 accrual に変換し、spoofed worker / replayed checkpoint claim / cost-shifting abuse を検出する
 16. [Publisher reward pilot ledger and payout reconciliation gate](./docs/workers-coordinator-prototype.md) で、settlement decision を監査可能 ledger に保存し、payout batch と reward accrual の差分・dispute evidence を検証する
@@ -726,6 +732,7 @@ All-or-Nothing パイプライン:
 24. [Publisher tax filing production cutover readiness gate](./docs/workers-coordinator-prototype.md) で、sandbox provider filing IDs、operator approval evidence、production filing window、live-provider preflight evidence、duplicate-filing suppression、rollback / emergency hold controls、production callbacks readiness へ進む promote/hold thresholds を検証する
 25. [Publisher tax filing production callbacks readiness gate](./docs/workers-coordinator-prototype.md) で、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production monitoring reconciliation へ進む promote/hold thresholds を検証する
 26. [Publisher tax filing production monitoring reconciliation gate](./docs/workers-coordinator-prototype.md) で、accepted / rejected / corrected / duplicate-suppressed callback streams、operator monitoring records、publisher monitoring exports、alert traceability、duplicate-filing suppression replay、rollback / emergency hold replay controls、exception operations runbook へ進む promote/hold thresholds を検証する
+27. [Chrome Prompt API feasibility harness (#93)](./docs/chrome-prompt-api-harness.md) で、`browser-harness/chrome-prompt-api/` の実ブラウザ計測（availability・user activation・初回download・日本語入出力・abort・context・session lifecycle・concurrent・surface matrix）を `captured-and-verified` envelope で検証し、Go / Conditional Go / No-Go / 未解決条件 を記録する。実ブラウザ計測が完了するまで判定は `not-evaluated`（未解決条件）に留まり、手書きfixtureは昇格できない（7.5項）
 
 ### 7.2 経済性の精緻化
 
@@ -751,6 +758,33 @@ All-or-Nothing パイプライン:
 - オプトイン率: 現実のサイトで20-30%は達成可能か?
 - ユーザー体験: バックグラウンド推論は実際に「影響最小」か?
 - 低スペック端末: CPU推論・軽量タスクで実用的な参加が可能か?
+
+### 7.5 Chrome Prompt API feasibility のGo/No-Go記録（#93）
+
+standalone browser harness（`browser-harness/chrome-prompt-api/`）が実ブラウザで計測し、
+`src/chrome-prompt-api-report.ts` のvalidatorが証明力を判定します。判定は
+`evaluateChromePromptApiFeasibilityDecision()` が導出し、**現時点では全項目
+pending real-browser measurement（未解決条件）です。実測結果は主張しません。**
+
+| 条件 | 現在の記録 | `met`になる条件 |
+|---|---|---|
+| real-browser-evidence | **pending real-browser measurement** | artifact loader + independent verifierで検証された`captured-and-verified` envelope |
+| prompt-api-availability | **pending real-browser measurement** | top-levelでavailabilityが`available` |
+| create-after-user-activation | **pending real-browser measurement** | user activation内で`create()`成功 |
+| first-download-preparation | **pending real-browser measurement** | 初回download完了と`downloadprogress`観測 |
+| prompt-non-streaming | **pending real-browser measurement** | `prompt()`が計測付きで成功 |
+| prompt-streaming | **pending real-browser measurement** | `promptStreaming()`がchunk計測付きで成功 |
+| japanese-input-output | **pending real-browser measurement** | 日本語入力受付と日本語出力 |
+| abort-interruption | **pending real-browser measurement** | `AbortSignal`で生成中断 |
+| context-usage-and-overflow | **pending real-browser measurement** | context window取得とoverflow/quota処理 |
+| session-lifecycle | **pending real-browser measurement** | destroy + re-create成功 |
+| concurrent-sessions | **pending real-browser measurement** | 同時session実行エラーなし |
+| surface-matrix | **pending real-browser measurement** | top-level / same-origin / sandbox iframeの記録 |
+
+判定: `not-evaluated`（未解決条件）＝実ブラウザ検証済みevidenceなし（現状）。
+`go`＝全条件met（captured-and-verified必須）。`conditional-go`＝一部pending/not-applicable。
+`no-go`＝シナリオ失敗。手書きfixtureは`not-evaluated`から昇格できません
+（`validateEvidenceEnvelope()` はtrusted loader・verifierなしではcaptured-and-verifiedを受理しない）。
 
 ---
 

@@ -16,6 +16,20 @@
  * 3. Execute in browser sandbox
  * 4. If UnzenRuntimeError → fallback to server
  * 5. If UnzenFunctionError → throw immediately (no fallback)
+ * 6. If UnzenCancelledError → cancel immediately (no fallback)
+ *
+ * Execution lifecycle (issue #105):
+ * - `execute(request)` / `executeWithDiagnostics(request)` accept an explicit
+ *   request object with an AbortSignal and an onEvent listener, exposing the
+ *   full lifecycle (manifest/code fetch → browser attempt → fallback → result)
+ *   instead of only the final outcome.
+ * - A single AbortSignal propagates through manifest/code fetch, the sandbox
+ *   executor, and server fallback. User cancellation is surfaced as
+ *   UnzenCancelledError and NEVER triggers server fallback.
+ * - Diagnostics keep a per-attempt chain (browser + server) with outcomes and
+ *   error codes, so the caller can see why and where a fallback happened.
+ * - `dispose()` rejects new executions and cancels in-flight ones so no
+ *   promise is left unsettled.
  *
  * Design rationale:
  * - Development mode speeds up iteration (no browser execution overhead)
@@ -23,9 +37,14 @@
  * - Browser-only mode for scenarios where server is unavailable
  * - Function errors don't fallback (user code bugs should be fixed, not masked)
  * - Runtime errors fallback (environment issues are recoverable)
+ * - Cancellation is a deliberate caller decision — it never falls back
  */
 
-import { UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
+import {
+  UnzenCancelledError,
+  UnzenFunctionError,
+  UnzenRuntimeError,
+} from '@unzen/shared';
 import { FallbackHandler } from './fallback-handler';
 import { ManifestFetcher } from './manifest-fetcher';
 import { CodeFetcher } from './code-fetcher';
@@ -35,6 +54,9 @@ import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
  * Provides transparency about where, how fast, and whether caching was used.
+ *
+ * @deprecated Use executeWithDiagnostics()'s ExecutionDiagnostics (issue #105).
+ *   Kept for backwards compatibility with callWithDiagnostics().
  */
 export interface DiagnosticInfo {
   /** Where the function was executed: browser sandbox or server fallback */
@@ -49,6 +71,8 @@ export interface DiagnosticInfo {
  * Partial diagnostic info included with error results.
  * Always includes durationMs and cached (measurable regardless of success/failure).
  * executedOn is included when we know where the error occurred.
+ *
+ * @deprecated Use executeWithDiagnostics()'s ExecutionDiagnostics (issue #105).
  */
 export interface PartialDiagnosticInfo {
   /** Where the error occurred, if determinable */
@@ -65,19 +89,154 @@ export interface PartialDiagnosticInfo {
  * Success case: { success: true, result: T, diagnostics: DiagnosticInfo }
  * Error case: { success: false, error: {type, message}, diagnostics: PartialDiagnosticInfo }
  *
- * Both success and error cases include diagnostics. On error, diagnostics
- * always include durationMs and cached; executedOn is included when the
- * error location is determinable.
- *
- * Error types:
- * - 'function_error': User code bug (e.g., throw in function, function not found)
- * - 'browser_runtime_error': Browser sandbox failure (Wasm issue, timeout, etc.)
- * - 'server_runtime_error': Server fallback failure (network, endpoint down)
- * - 'client_disposed': Client was disposed before this call
+ * @deprecated Use executeWithDiagnostics() (issue #105).
  */
 export type DiagnosticResult<T = unknown> =
   | { success: true; result: T; diagnostics: DiagnosticInfo; error?: never }
   | { success: false; result?: never; error: { type: string; message: string }; diagnostics: PartialDiagnosticInfo };
+
+// ============================================================
+// issue #105 — explicit execution request / events / diagnostics
+// ============================================================
+
+/**
+ * Explicit execution request.
+ *
+ * Kept unambiguous: function arguments are arbitrary objects, so the trailing
+ * argument is never silently treated as options.
+ */
+export interface UnzenExecutionRequest {
+  /** Function name */
+  name: string;
+  /** Function arguments */
+  args: unknown[];
+  /** Optional AbortSignal that cancels the whole execution (fetch → sandbox → fallback) */
+  signal?: AbortSignal;
+  /** Optional lifecycle event listener */
+  onEvent?: (event: UnzenExecutionEvent) => void;
+}
+
+/** Fields every execution event carries */
+export interface UnzenExecutionEventBase {
+  /** Unique id for this execution */
+  executionId: string;
+  /** Monotonic sequence within the execution (1, 2, 3, …) */
+  sequence: number;
+  /** Epoch millisecond timestamp */
+  timestamp: number;
+}
+
+/**
+ * Execution lifecycle events (discriminated union).
+ *
+ * Exactly one terminal event is emitted per execution:
+ * - `completed` — a result was produced
+ * - `cancelled` — the caller cancelled (or dispose() cancelled the client)
+ * - `failed` — a non-cancellation failure ended the execution
+ *
+ * Event payloads deliberately exclude args/result bodies and raw stack traces
+ * to avoid leaking sensitive data to listeners.
+ */
+export type UnzenExecutionEvent =
+  | (UnzenExecutionEventBase & { type: 'accepted' })
+  | (UnzenExecutionEventBase & { type: 'manifest-fetch-started' })
+  | (UnzenExecutionEventBase & { type: 'manifest-fetch-completed' })
+  | (UnzenExecutionEventBase & { type: 'code-fetch-started' })
+  | (UnzenExecutionEventBase & { type: 'code-fetch-completed' })
+  | (UnzenExecutionEventBase & { type: 'browser-execution-started' })
+  | (UnzenExecutionEventBase & { type: 'browser-execution-failed' })
+  | (UnzenExecutionEventBase & { type: 'fallback-started' })
+  | (UnzenExecutionEventBase & { type: 'server-execution-started' })
+  | (UnzenExecutionEventBase & { type: 'completed' })
+  | (UnzenExecutionEventBase & { type: 'cancel-requested' })
+  | (UnzenExecutionEventBase & { type: 'cancelled' })
+  | (UnzenExecutionEventBase & { type: 'failed'; errorCode: string });
+
+// NOTE: `sandbox-initializing` was intentionally NOT included as an emitted
+// event. The sandbox initializes lazily inside the executor during the browser
+// attempt; without an executor-level init hook the client cannot report it
+// accurately, and emitting a guess would mislead the UI. The browser attempt
+// is represented by `browser-execution-started`/`browser-execution-failed`.
+
+/** Per-attempt diagnostic entry in an execution's attempt chain */
+export interface ExecutionAttemptDiagnostic {
+  kind: 'browser' | 'server';
+  startedAt: number;
+  durationMs: number;
+  outcome: 'succeeded' | 'failed' | 'cancelled';
+  errorCode?: string;
+}
+
+/** Rich diagnostics for an execution (issue #105 §3) */
+export interface ExecutionDiagnostics {
+  executionId: string;
+  /** Where the final result came from, if one was produced */
+  finalRoute?: 'browser' | 'server';
+  /** Last phase an execution attempt was started in (also on failure) */
+  lastAttemptedOn?: 'browser' | 'server';
+  /** Whether the browser attempt failed and a server fallback was used */
+  fallbackUsed: boolean;
+  /** Attempt chain: browser failure + server fallback are both recorded */
+  attempts: ExecutionAttemptDiagnostic[];
+  /** Total wall time of the execution in milliseconds */
+  totalDurationMs: number;
+  /** Manifest cache status at the start of the execution */
+  manifestCache: 'hit' | 'miss';
+}
+
+/** Result of executeWithDiagnostics() */
+export type ExecutionDiagnosticResult<T = unknown> =
+  | { success: true; result: T; diagnostics: ExecutionDiagnostics; error?: never }
+  | { success: false; result?: never; error: { code: string; message: string }; diagnostics: ExecutionDiagnostics };
+
+/**
+ * Stable error codes (issue #105 §5).
+ * Routing and UI state must be derived from these codes, never by parsing
+ * message strings.
+ */
+export type ExecutionErrorCode =
+  | 'cancelled'
+  | 'manifest_fetch_failed'
+  | 'code_fetch_failed'
+  | 'browser_runtime_failed'
+  | 'function_failed'
+  | 'server_fallback_failed'
+  | 'client_disposed';
+
+/** Execution phase used to classify errors into stable codes */
+type Phase = 'none' | 'manifest' | 'code' | 'browser' | 'server';
+
+/** Event payload without the execution envelope fields (filled in per execution) */
+type EmittableEvent =
+  | { type: 'accepted' }
+  | { type: 'manifest-fetch-started' }
+  | { type: 'manifest-fetch-completed' }
+  | { type: 'code-fetch-started' }
+  | { type: 'code-fetch-completed' }
+  | { type: 'browser-execution-started' }
+  | { type: 'browser-execution-failed' }
+  | { type: 'fallback-started' }
+  | { type: 'server-execution-started' }
+  | { type: 'completed' }
+  | { type: 'cancel-requested' }
+  | { type: 'cancelled' }
+  | { type: 'failed'; errorCode: ExecutionErrorCode };
+
+/**
+ * Classify an error into a stable code for the given phase.
+ * Cancellation and function errors win over phase-specific codes.
+ */
+function classifyError(error: Error, phase: Phase): ExecutionErrorCode {
+  if (error instanceof UnzenCancelledError) return 'cancelled';
+  if (error instanceof UnzenFunctionError) return 'function_failed';
+  switch (phase) {
+    case 'none': return 'client_disposed';
+    case 'manifest': return 'manifest_fetch_failed';
+    case 'code': return 'code_fetch_failed';
+    case 'browser': return 'browser_runtime_failed';
+    case 'server': return 'server_fallback_failed';
+  }
+}
 
 /**
  * Client configuration options
@@ -113,13 +272,19 @@ export interface UnzenClientOptions {
   sandbox?: SandboxExecutor;
 }
 
+/** Counter for generating unique execution ids */
+let executionIdCounter = 0;
+
 /**
  * UnzenClient - Main SDK class
  *
  * Usage:
  * ```typescript
- * const client = new UnzenClient({ endpoint: 'https://example.com' });
+ * const client = new UnzenClient({ endpoint: 'https://example.com', workerUrl: '/worker.js' });
  * const result = await client.call('add', 1, 2);
+ * // or with lifecycle + cancellation:
+ * const controller = new AbortController();
+ * const result = await client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
  * client.dispose();
  * ```
  */
@@ -135,6 +300,9 @@ export class UnzenClient {
 
   // Disposal tracking
   private disposed = false;
+
+  /** Internal AbortControllers of in-flight executions — dispose() aborts them all */
+  private readonly inFlightControllers = new Set<AbortController>();
 
   constructor(options: UnzenClientOptions) {
     this.endpoint = options.endpoint;
@@ -162,227 +330,472 @@ export class UnzenClient {
   }
 
   /**
-   * Call a function
+   * Call a function (compatibility wrapper, no signal/events).
    *
    * @param name - Function name
    * @param args - Function arguments
    * @returns Function result
    * @throws {UnzenFunctionError} When function execution fails
    * @throws {UnzenRuntimeError} When runtime error occurs (browser-only mode)
-   *
-   * Execution strategy by mode:
-   * - development: Always server fallback
-   * - production: Browser first, fallback on runtime error
-   * - browser-only: Browser only, throw on any error
+   * @throws {UnzenCancelledError} When the execution is cancelled
    */
   async call<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
-    // Prevent use after disposal
-    // Disposed client has released sandbox resources; execution would fail
-    if (this.disposed) {
-      throw new UnzenRuntimeError('Client has been disposed. Create a new instance.');
-    }
-
-    // Development mode: always use fallback
-    if (this.mode === 'development') {
-      return (await this.fallbackHandler.execute(name, args)) as T;
-    }
-
-    // Production/browser-only mode: try browser execution
-    try {
-      return (await this.executeBrowser(name, args)) as T;
-    } catch (error) {
-      // Function errors are NOT recovered by fallback
-      // Rationale: User code bugs should be fixed, not masked
-      if (error instanceof UnzenFunctionError) {
-        throw error;
-      }
-
-      // Runtime errors in browser-only mode are fatal
-      if (this.mode === 'browser-only') {
-        throw error;
-      }
-
-      // Production mode: fallback on runtime error
-      // Rationale: Environment issues (WASM failure, etc.) are recoverable
-      return (await this.fallbackHandler.execute(name, args)) as T;
-    }
+    return this.execute<T>({ name, args });
   }
 
   /**
-   * Call a function with diagnostics
-   *
-   * Returns DiagnosticResult with success flag, result, diagnostics, and error details.
-   * Never throws (errors are captured in result).
-   *
-   * Unlike call(), this method implements its own execution flow to track:
-   * - executedOn: whether the function ran in browser or on server
-   * - durationMs: total execution time including fetch and execution
-   * - cached: whether the manifest was already in cache before this call
-   *
-   * @param name - Function name
-   * @param args - Function arguments
-   * @returns DiagnosticResult with success/error info and diagnostics
+   * Call a function with legacy diagnostics (compatibility wrapper).
+   * Returns the issue-#105 richer result via executeWithDiagnostics and maps
+   * it to the old DiagnosticResult shape.
    */
   async callWithDiagnostics<T = unknown>(
     name: string,
     ...args: unknown[]
   ): Promise<DiagnosticResult<T>> {
-    // Check if manifest is already cached before this call starts.
-    // This provides insight into whether we needed a network round-trip for the manifest.
-    const wasCached = this.manifestFetcher.isCached();
-    const startTime = performance.now();
+    const result = await this.executeWithDiagnostics<T>({ name, args });
 
-    // Track where execution was attempted for error diagnostics.
-    // This is set as execution progresses so we know where the error occurred.
-    let lastAttemptedOn: 'browser' | 'server' | undefined;
+    const durationMs = result.diagnostics.totalDurationMs;
+    const cached = result.diagnostics.manifestCache === 'hit';
 
-    try {
-      // Prevent use after disposal
-      if (this.disposed) {
-        // No execution attempted — return 'client_disposed' error type
-        // with durationMs but without executedOn (no execution location applies)
-        return {
-          success: false,
-          error: {
-            type: 'client_disposed',
-            message: 'Client has been disposed. Create a new instance.',
-          },
-          diagnostics: {
-            durationMs: performance.now() - startTime,
-            cached: wasCached,
-          },
-        };
-      }
-
-      let result: T;
-      let executedOn: 'browser' | 'server';
-
-      if (this.mode === 'development') {
-        // Development mode: always use server fallback
-        lastAttemptedOn = 'server';
-        result = (await this.fallbackHandler.execute(name, args)) as T;
-        executedOn = 'server';
-      } else {
-        // Production/browser-only mode: try browser execution
-        try {
-          lastAttemptedOn = 'browser';
-          result = (await this.executeBrowser(name, args)) as T;
-          executedOn = 'browser';
-        } catch (error) {
-          // Function errors are NOT recovered by fallback
-          if (error instanceof UnzenFunctionError) {
-            throw error;
-          }
-
-          // Runtime errors in browser-only mode are fatal
-          if (this.mode === 'browser-only') {
-            throw error;
-          }
-
-          // Production mode: fallback on runtime error
-          lastAttemptedOn = 'server';
-          result = (await this.fallbackHandler.execute(name, args)) as T;
-          executedOn = 'server';
-        }
-      }
-
-      const durationMs = performance.now() - startTime;
-
+    if (result.success) {
+      // On success an attempt was necessarily made, so lastAttemptedOn is set.
       return {
         success: true,
-        result,
+        result: result.result,
         diagnostics: {
-          executedOn,
+          executedOn: result.diagnostics.lastAttemptedOn!,
           durationMs,
-          cached: wasCached,
-        },
-      };
-    } catch (error) {
-      // Determine specific error type based on error class and execution context.
-      // This provides consumers with actionable information about what went wrong
-      // and where it happened.
-      let errorType: string;
-      if (error instanceof UnzenFunctionError) {
-        errorType = 'function_error';
-      } else if (lastAttemptedOn === 'server') {
-        errorType = 'server_runtime_error';
-      } else {
-        // Browser-side runtime error (Wasm failure, timeout, etc.)
-        errorType = 'browser_runtime_error';
-      }
-
-      return {
-        success: false,
-        error: {
-          type: errorType,
-          message: error instanceof Error ? error.message : String(error),
-        },
-        diagnostics: {
-          executedOn: lastAttemptedOn,
-          durationMs: performance.now() - startTime,
-          cached: wasCached,
+          cached,
         },
       };
     }
+
+    return {
+      success: false,
+      error: { type: mapToLegacyErrorType(result.error.code), message: result.error.message },
+      diagnostics: {
+        executedOn: result.diagnostics.lastAttemptedOn,
+        durationMs,
+        cached,
+      },
+    };
   }
 
   /**
-   * Execute function in browser
+   * Execute a function with explicit request options (issue #105).
    *
-   * @param name - Function name
-   * @param args - Function arguments
+   * @param request - Function name, args, optional AbortSignal and onEvent
    * @returns Function result
-   * @throws {UnzenFunctionError} When function execution fails or function not found
-   * @throws {UnzenRuntimeError} When runtime error occurs
-   *
-   * Steps:
-   * 1. Fetch manifest to get function metadata
-   * 2. Check if function exists
-   * 3. Fetch function code
-   * 4. Execute in sandbox
+   * @throws {UnzenFunctionError} When function execution fails
+   * @throws {UnzenCancelledError} When the caller aborts via request.signal
+   * @throws {UnzenRuntimeError} When runtime error occurs (browser-only mode)
    */
-  private async executeBrowser(
-    name: string,
-    args: unknown[]
-  ): Promise<unknown> {
-    // 1. Fetch manifest
-    // This is cached after first call, so subsequent calls are fast
-    const manifest = await this.manifestFetcher.fetch();
+  async execute<T = unknown>(request: UnzenExecutionRequest): Promise<T> {
+    const outcome = await this.runExecution<T>(request);
+    if (outcome.ok) {
+      return outcome.result as T;
+    }
+    throw outcome.error;
+  }
 
-    // 2. Get function entry
-    const entry = manifest.functions[name];
-    if (!entry) {
-      // Function not in manifest is a user error (calling non-existent function)
-      // Not a runtime error, so this will NOT trigger fallback in production mode
-      throw new UnzenFunctionError(
-        `Function "${name}" not found in manifest`
-      );
+  /**
+   * Execute a function with lifecycle events and rich diagnostics (issue #105).
+   *
+   * Never throws — failures are captured in the returned result with a stable
+   * error code and the full attempt chain.
+   */
+  async executeWithDiagnostics<T = unknown>(
+    request: UnzenExecutionRequest,
+  ): Promise<ExecutionDiagnosticResult<T>> {
+    const outcome = await this.runExecution<T>(request);
+
+    if (outcome.ok) {
+      return {
+        success: true,
+        result: outcome.result as T,
+        diagnostics: {
+          executionId: outcome.executionId,
+          finalRoute: outcome.finalRoute,
+          lastAttemptedOn: outcome.lastAttemptedOn,
+          fallbackUsed: outcome.fallbackUsed,
+          attempts: outcome.attempts,
+          totalDurationMs: outcome.totalDurationMs,
+          manifestCache: outcome.manifestCache,
+        },
+      };
     }
 
-    // 3. Fetch function code
-    // This is cached by hash, so identical code is fetched only once
-    const code = await this.codeFetcher.fetch(entry);
-
-    // 4. Execute in sandbox
-    // Sandbox executor throws UnzenFunctionError on user code errors
-    return await this.sandboxExecutor.execute(code, args);
+    return {
+      success: false,
+      error: { code: outcome.errorCode, message: outcome.error!.message },
+      diagnostics: {
+        executionId: outcome.executionId,
+        finalRoute: outcome.finalRoute,
+        lastAttemptedOn: outcome.lastAttemptedOn,
+        fallbackUsed: outcome.fallbackUsed,
+        attempts: outcome.attempts,
+        totalDurationMs: outcome.totalDurationMs,
+        manifestCache: outcome.manifestCache,
+      },
+    };
   }
 
   /**
    * Clean up resources
    *
-   * Should be called when client is no longer needed.
+   * Rejects new executions, cancels all in-flight executions (settling their
+   * promises), then releases the sandbox executor.
    * Idempotent (safe to call multiple times).
    */
   dispose(): void {
     if (this.disposed) {
       return;
     }
-
-    // Clean up sandbox executor
-    // In real implementation, this would terminate Web Worker
-    this.sandboxExecutor.dispose();
-
     this.disposed = true;
+
+    // Cancel every in-flight execution so no pending promise is left unsettled.
+    // Each execution observes the abort and settles as cancelled.
+    for (const controller of this.inFlightControllers) {
+      controller.abort();
+    }
+    this.inFlightControllers.clear();
+
+    // Clean up sandbox executor (terminates Web Worker, rejects pending work)
+    this.sandboxExecutor.dispose();
+  }
+
+  /**
+   * Run an execution end-to-end and return the raw outcome.
+   *
+   * This is the single pipeline shared by execute() (throw path) and
+   * executeWithDiagnostics() (result path). It records lifecycle events and
+   * the per-attempt diagnostic chain as it goes.
+   */
+  private async runExecution<T>(
+    request: UnzenExecutionRequest,
+  ): Promise<RunExecutionOutcome<T>> {
+    const executionId = `exec-${++executionIdCounter}`;
+    const startedAt = performance.now();
+    const wasManifestCached = this.manifestFetcher.isCached();
+
+    let sequence = 0;
+    let terminalEmitted = false;
+    const attempts: ExecutionAttemptDiagnostic[] = [];
+    let finalRoute: 'browser' | 'server' | undefined;
+    // Last phase an execution attempt was started in — used by the legacy
+    // callWithDiagnostics mapping (executedOn must reflect where the error
+    // occurred, not just where a result was produced).
+    let lastAttemptedOn: 'browser' | 'server' | undefined;
+    let fallbackUsed = false;
+
+    // Emit an event, guarding against terminal-event duplicates and listener
+    // exceptions (a throwing listener must not break the execution pipeline).
+    const emit = (event: EmittableEvent) => {
+      if (
+        terminalEmitted
+        && (event.type === 'completed' || event.type === 'cancelled' || event.type === 'failed')
+      ) {
+        return;
+      }
+      const fullEvent = {
+        ...event,
+        executionId,
+        sequence: ++sequence,
+        timestamp: Date.now(),
+      } as UnzenExecutionEvent;
+      if (
+        event.type === 'completed'
+        || event.type === 'cancelled'
+        || event.type === 'failed'
+      ) {
+        terminalEmitted = true;
+      }
+      try {
+        request.onEvent?.(fullEvent);
+      } catch {
+        // Listener errors are isolated — they must not corrupt execution state.
+      }
+    };
+
+    const pushAttempt = (
+      kind: 'browser' | 'server',
+      attemptStartedAt: number,
+      outcome: ExecutionAttemptDiagnostic['outcome'],
+      errorCode?: string,
+    ): void => {
+      attempts.push({
+        kind,
+        startedAt: attemptStartedAt,
+        durationMs: performance.now() - attemptStartedAt,
+        outcome,
+        errorCode,
+      });
+    };
+
+    // Build the shared diagnostics snapshot at completion.
+    const buildOutcome = (
+      ok: boolean,
+      result?: T,
+      error?: Error,
+      errorCode?: ExecutionErrorCode,
+    ): RunExecutionOutcome<T> => ({
+      ok,
+      result,
+      error,
+      errorCode: errorCode ?? 'client_disposed',
+      executionId,
+      finalRoute,
+      lastAttemptedOn,
+      fallbackUsed,
+      attempts,
+      totalDurationMs: performance.now() - startedAt,
+      manifestCache: wasManifestCached ? 'hit' : 'miss',
+    });
+
+    // Emit the terminal `cancelled` event and build a cancelled outcome.
+    // Used whenever the internal signal is (or becomes) aborted so no late
+    // result can be committed as success (issue #105 AC #5).
+    const cancelledOutcome = (): RunExecutionOutcome<T> => {
+      emit({ type: 'cancelled' });
+      return buildOutcome(
+        false,
+        undefined,
+        new UnzenCancelledError('Execution cancelled by caller'),
+        'cancelled',
+      );
+    };
+
+    // Internal AbortController: dispose() aborts every in-flight controller,
+    // and the caller's signal is forwarded onto it, so one cancellation path
+    // covers both dispose and caller abort.
+    const internalController = new AbortController();
+    this.inFlightControllers.add(internalController);
+
+    const forwardAbort = () => {
+      emit({ type: 'cancel-requested' });
+      internalController.abort();
+    };
+
+    try {
+      // Caller signal forwarding (removed on completion).
+      if (request.signal) {
+        if (request.signal.aborted) {
+          return cancelledOutcome();
+        }
+        request.signal.addEventListener('abort', forwardAbort, { once: true });
+      }
+
+      // Reject new executions on a disposed client (terminal event included
+      // so an event-driven UI is always told the execution ended).
+      if (this.disposed) {
+        emit({ type: 'failed', errorCode: 'client_disposed' });
+        return buildOutcome(
+          false,
+          undefined,
+          new UnzenRuntimeError('Client has been disposed. Create a new instance.'),
+          'client_disposed',
+        );
+      }
+
+      emit({ type: 'accepted' });
+
+      // === Development mode: server only ===
+      if (this.mode === 'development') {
+        finalRoute = 'server';
+        lastAttemptedOn = 'server';
+        emit({ type: 'server-execution-started' });
+        const attemptStart = performance.now();
+        try {
+          const result = await this.fallbackHandler.execute(request.name, request.args, internalController.signal);
+          // Guard against a late result committing after cancellation.
+          if (internalController.signal.aborted) {
+            pushAttempt('server', attemptStart, 'cancelled', 'cancelled');
+            return cancelledOutcome();
+          }
+          pushAttempt('server', attemptStart, 'succeeded');
+          emit({ type: 'completed' });
+          return buildOutcome(true, result as T);
+        } catch (error) {
+          const err = toError(error);
+          pushAttempt(
+            'server',
+            attemptStart,
+            err instanceof UnzenCancelledError ? 'cancelled' : 'failed',
+            classifyError(err, 'server'),
+          );
+          if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
+            return cancelledOutcome();
+          }
+          emit({ type: 'failed', errorCode: classifyError(err, 'server') });
+          return buildOutcome(false, undefined, err, classifyError(err, 'server'));
+        }
+      }
+
+      // === Browser attempt ===
+      // 1. Manifest fetch
+      lastAttemptedOn = 'browser';
+      emit({ type: 'manifest-fetch-started' });
+      let manifest;
+      try {
+        manifest = await this.manifestFetcher.fetch(internalController.signal);
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
+        emit({ type: 'manifest-fetch-completed' });
+      } catch (error) {
+        const err = toError(error);
+        if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
+        emit({ type: 'failed', errorCode: 'manifest_fetch_failed' });
+        return buildOutcome(false, undefined, err, 'manifest_fetch_failed');
+      }
+
+      // 2. Function existence check (tolerate a malformed manifest so the
+      //    "never throws" contract of executeWithDiagnostics holds)
+      const entry = manifest?.functions?.[request.name];
+      if (!entry) {
+        // Function not in manifest is a user error (calling non-existent function)
+        const err = new UnzenFunctionError(`Function "${request.name}" not found in manifest`);
+        emit({ type: 'failed', errorCode: 'function_failed' });
+        return buildOutcome(false, undefined, err, 'function_failed');
+      }
+
+      // 3. Code fetch
+      emit({ type: 'code-fetch-started' });
+      let code: string;
+      try {
+        code = await this.codeFetcher.fetch(entry, internalController.signal);
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
+        emit({ type: 'code-fetch-completed' });
+      } catch (error) {
+        const err = toError(error);
+        if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
+        emit({ type: 'failed', errorCode: 'code_fetch_failed' });
+        return buildOutcome(false, undefined, err, 'code_fetch_failed');
+      }
+
+      // 4. Browser sandbox execution
+      emit({ type: 'browser-execution-started' });
+      const browserAttemptStart = performance.now();
+      try {
+        const result = await this.sandboxExecutor.execute(code, request.args, {
+          signal: internalController.signal,
+        });
+        // A late result after cancellation must never be committed as success.
+        if (internalController.signal.aborted) {
+          pushAttempt('browser', browserAttemptStart, 'cancelled', 'cancelled');
+          return cancelledOutcome();
+        }
+        pushAttempt('browser', browserAttemptStart, 'succeeded');
+        finalRoute = 'browser';
+        emit({ type: 'completed' });
+        return buildOutcome(true, result as T);
+      } catch (error) {
+        const err = toError(error);
+
+        // Cancellation is not a failure: emit only the `cancelled` terminal.
+        if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
+          pushAttempt('browser', browserAttemptStart, 'cancelled', 'cancelled');
+          return cancelledOutcome();
+        }
+
+        pushAttempt(
+          'browser',
+          browserAttemptStart,
+          'failed',
+          classifyError(err, 'browser'),
+        );
+        emit({ type: 'browser-execution-failed' });
+
+        // Function errors are NOT recovered by fallback
+        // Rationale: User code bugs should be fixed, not masked
+        if (err instanceof UnzenFunctionError) {
+          emit({ type: 'failed', errorCode: 'function_failed' });
+          return buildOutcome(false, undefined, err, 'function_failed');
+        }
+
+        // Runtime errors in browser-only mode are fatal
+        if (this.mode === 'browser-only') {
+          emit({ type: 'failed', errorCode: 'browser_runtime_failed' });
+          return buildOutcome(false, undefined, err, 'browser_runtime_failed');
+        }
+
+        // === Production mode: fallback on runtime error ===
+        // Rationale: Environment issues (WASM failure, etc.) are recoverable
+        fallbackUsed = true;
+        finalRoute = 'server';
+        lastAttemptedOn = 'server';
+        emit({ type: 'fallback-started' });
+        emit({ type: 'server-execution-started' });
+        const serverAttemptStart = performance.now();
+        try {
+          const result = await this.fallbackHandler.execute(request.name, request.args, internalController.signal);
+          // A late fallback result after cancellation must not commit either.
+          if (internalController.signal.aborted) {
+            pushAttempt('server', serverAttemptStart, 'cancelled', 'cancelled');
+            return cancelledOutcome();
+          }
+          pushAttempt('server', serverAttemptStart, 'succeeded');
+          emit({ type: 'completed' });
+          return buildOutcome(true, result as T);
+        } catch (serverError) {
+          const serverErr = toError(serverError);
+          pushAttempt(
+            'server',
+            serverAttemptStart,
+            serverErr instanceof UnzenCancelledError ? 'cancelled' : 'failed',
+            classifyError(serverErr, 'server'),
+          );
+          if (serverErr instanceof UnzenCancelledError || internalController.signal.aborted) {
+            return cancelledOutcome();
+          }
+          emit({ type: 'failed', errorCode: classifyError(serverErr, 'server') });
+          return buildOutcome(false, undefined, serverErr, classifyError(serverErr, 'server'));
+        }
+      }
+    } finally {
+      // Always deregister: no listener, no in-flight controller survives.
+      if (request.signal) {
+        request.signal.removeEventListener('abort', forwardAbort);
+      }
+      this.inFlightControllers.delete(internalController);
+    }
+  }
+}
+
+/** Outcome of runExecution shared by execute() and executeWithDiagnostics() */
+interface RunExecutionOutcome<T> {
+  ok: boolean;
+  result?: T;
+  error?: Error;
+  errorCode: ExecutionErrorCode;
+  executionId: string;
+  finalRoute?: 'browser' | 'server';
+  /** Last phase an attempt was started in (used by legacy diagnostics mapping) */
+  lastAttemptedOn?: 'browser' | 'server';
+  fallbackUsed: boolean;
+  attempts: ExecutionAttemptDiagnostic[];
+  totalDurationMs: number;
+  manifestCache: 'hit' | 'miss';
+}
+
+/** Normalize an unknown thrown value into an Error */
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** Map a new stable error code to the legacy callWithDiagnostics error type */
+function mapToLegacyErrorType(code: string): string {
+  switch (code) {
+    case 'function_failed': return 'function_error';
+    case 'server_fallback_failed': return 'server_runtime_error';
+    case 'client_disposed': return 'client_disposed';
+    case 'cancelled': return 'cancelled';
+    default: return 'browser_runtime_error';
   }
 }

@@ -5,16 +5,28 @@
  * (WebWorkerSandboxExecutor) and the Web Worker (quickjs-worker.ts).
  *
  * Message flow:
- *   Main Thread → Worker:  InitMessage | ExecuteMessage
- *   Worker → Main Thread:  InitResultMessage | ExecuteResultMessage
+ *   Main Thread → Worker:  InitMessage | ExecuteMessage | CancelMessage
+ *   Worker → Main Thread:  InitResultMessage | ExecuteResultMessage | CancelResultMessage
  *
  * Design rationale:
  * - Discriminated union via `type` field for safe message routing
- * - requestId on execute messages enables concurrent execution tracking
+ * - requestId on execute/cancel messages enables per-request tracking
+ * - generationId ties every message to a specific Worker generation. The
+ *   executor increments it each time it (re)creates a Worker, so stale
+ *   responses from an old generation are rejected instead of being applied
+ *   to a fresh Worker's requests.
+ * - protocolVersion (WORKER_PROTOCOL_VERSION) enables versioned schema
+ *   validation: a response from an incompatible worker is treated as
+ *   malformed rather than trusted.
  * - errorType distinguishes function errors (no fallback) from runtime errors (fallback)
  * - Factory functions ensure consistent message creation
  * - Type guards enable safe narrowing in message handlers
  */
+
+// Version of the worker wire protocol. Bump on incompatible shape changes.
+// The executor validates every response against this; mismatches are
+// classified as malformed/protocol-violation instead of being trusted.
+export const WORKER_PROTOCOL_VERSION = 1;
 
 // ============================================================
 // Main Thread → Worker Messages
@@ -23,19 +35,32 @@
 /** Initialize QuickJS Wasm module in the worker */
 export interface InitMessage {
   readonly type: 'init';
+  readonly protocolVersion?: number;
+  /** Worker generation this init belongs to (echoed in init-result) */
+  readonly generationId?: number;
 }
 
 /** Execute code in the QuickJS sandbox */
 export interface ExecuteMessage {
   readonly type: 'execute';
   readonly requestId: string;
+  readonly protocolVersion?: number;
+  readonly generationId?: number;
   readonly code: string;
   readonly args: unknown[];
   readonly timeout?: number;
 }
 
+/** Cooperatively cancel a running execution */
+export interface CancelMessage {
+  readonly type: 'cancel';
+  readonly requestId: string;
+  readonly protocolVersion?: number;
+  readonly generationId?: number;
+}
+
 /** Union of all messages sent from main thread to worker */
-export type WorkerMessage = InitMessage | ExecuteMessage;
+export type WorkerMessage = InitMessage | ExecuteMessage | CancelMessage;
 
 // ============================================================
 // Worker → Main Thread Messages
@@ -46,6 +71,8 @@ export interface InitResultMessage {
   readonly type: 'init-result';
   readonly success: boolean;
   readonly error?: string;
+  readonly protocolVersion?: number;
+  readonly generationId?: number;
 }
 
 /** Result of code execution (success or error) */
@@ -55,21 +82,33 @@ export interface ExecuteResultMessage {
   readonly success: boolean;
   readonly value?: unknown;
   readonly error?: string;
+  readonly protocolVersion?: number;
+  readonly generationId?: number;
   /** Distinguishes user code errors from runtime/environment errors.
    * 'function_error' → UnzenFunctionError (no server fallback)
    * 'runtime_error' → UnzenRuntimeError (triggers server fallback) */
   readonly errorType?: 'function_error' | 'runtime_error';
 }
 
+/** Acknowledgement of a cooperative cancel request */
+export interface CancelResultMessage {
+  readonly type: 'cancel-result';
+  readonly requestId: string;
+  readonly success: boolean;
+  readonly error?: string;
+  readonly protocolVersion?: number;
+  readonly generationId?: number;
+}
+
 /** Union of all messages sent from worker to main thread */
-export type WorkerResponse = InitResultMessage | ExecuteResultMessage;
+export type WorkerResponse = InitResultMessage | ExecuteResultMessage | CancelResultMessage;
 
 // ============================================================
 // Factory Functions
 // ============================================================
 
-export function createInitMessage(): InitMessage {
-  return { type: 'init' };
+export function createInitMessage(generationId?: number): InitMessage {
+  return { type: 'init', protocolVersion: WORKER_PROTOCOL_VERSION, generationId };
 }
 
 export function createExecuteMessage(
@@ -77,30 +116,155 @@ export function createExecuteMessage(
   code: string,
   args: unknown[],
   timeout?: number,
+  generationId?: number,
 ): ExecuteMessage {
-  return { type: 'execute', requestId, code, args, timeout };
+  return {
+    type: 'execute',
+    requestId,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
+    code,
+    args,
+    timeout,
+  };
+}
+
+export function createCancelMessage(
+  requestId: string,
+  generationId?: number,
+): CancelMessage {
+  return {
+    type: 'cancel',
+    requestId,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
+  };
 }
 
 export function createInitResultMessage(
   success: boolean,
   error?: string,
+  generationId?: number,
 ): InitResultMessage {
-  return { type: 'init-result', success, error };
+  return {
+    type: 'init-result',
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
+    success,
+    error,
+  };
 }
 
 export function createExecuteResultMessage(
   requestId: string,
   value: unknown,
+  generationId?: number,
 ): ExecuteResultMessage {
-  return { type: 'execute-result', requestId, success: true, value };
+  return {
+    type: 'execute-result',
+    requestId,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
+    success: true,
+    value,
+  };
 }
 
 export function createExecuteErrorMessage(
   requestId: string,
   errorType: 'function_error' | 'runtime_error',
   error: string,
+  generationId?: number,
 ): ExecuteResultMessage {
-  return { type: 'execute-result', requestId, success: false, error, errorType };
+  return {
+    type: 'execute-result',
+    requestId,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
+    success: false,
+    error,
+    errorType,
+  };
+}
+
+export function createCancelResultMessage(
+  requestId: string,
+  success: boolean,
+  error?: string,
+  generationId?: number,
+): CancelResultMessage {
+  return {
+    type: 'cancel-result',
+    requestId,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
+    success,
+    error,
+  };
+}
+
+// ============================================================
+// Runtime Validation
+// ============================================================
+
+/**
+ * Validate an unknown value as a WorkerResponse.
+ *
+ * Returns `{ ok: true, msg }` on success or `{ ok: false, reason }` on
+ * failure. The executor uses this instead of trusting `event.data` blindly:
+ * a response that is not an object, declares a mismatched protocolVersion,
+ * or is missing required fields is classified as malformed rather than
+ * applied to request bookkeeping.
+ */
+export function validateWorkerResponse(
+  data: unknown,
+): { ok: true; msg: WorkerResponse } | { ok: false; reason: string } {
+  if (typeof data !== 'object' || data === null) {
+    return { ok: false, reason: 'response is not an object' };
+  }
+  const m = data as Record<string, unknown>;
+  if (
+    m.protocolVersion !== undefined
+    && m.protocolVersion !== WORKER_PROTOCOL_VERSION
+  ) {
+    return {
+      ok: false,
+      reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`,
+    };
+  }
+  // generationId, when present, must be a number (a malformed generation id
+  // could otherwise bypass the executor's stale-generation filtering).
+  if (m.generationId !== undefined && typeof m.generationId !== 'number') {
+    return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
+  }
+  if (m.type === 'init-result') {
+    if (typeof m.success !== 'boolean') {
+      return { ok: false, reason: 'init-result missing boolean success' };
+    }
+    return { ok: true, msg: m as unknown as InitResultMessage };
+  }
+  if (m.type === 'execute-result') {
+    if (typeof m.requestId !== 'string' || typeof m.success !== 'boolean') {
+      return { ok: false, reason: 'execute-result missing requestId/success' };
+    }
+    // errorType, when present, must be one of the known values. An arbitrary
+    // value would otherwise be mapped to function_error in the executor.
+    if (
+      m.errorType !== undefined
+      && m.errorType !== 'function_error'
+      && m.errorType !== 'runtime_error'
+    ) {
+      return { ok: false, reason: `unknown errorType: ${String(m.errorType)}` };
+    }
+    return { ok: true, msg: m as unknown as ExecuteResultMessage };
+  }
+  if (m.type === 'cancel-result') {
+    if (typeof m.requestId !== 'string' || typeof m.success !== 'boolean') {
+      return { ok: false, reason: 'cancel-result missing requestId/success' };
+    }
+    return { ok: true, msg: m as unknown as CancelResultMessage };
+  }
+  return { ok: false, reason: `unknown message type: ${String(m.type)}` };
 }
 
 // ============================================================
@@ -113,4 +277,8 @@ export function isInitResultMessage(msg: WorkerResponse): msg is InitResultMessa
 
 export function isExecuteResultMessage(msg: WorkerResponse): msg is ExecuteResultMessage {
   return msg.type === 'execute-result';
+}
+
+export function isCancelResultMessage(msg: WorkerResponse): msg is CancelResultMessage {
+  return msg.type === 'cancel-result';
 }

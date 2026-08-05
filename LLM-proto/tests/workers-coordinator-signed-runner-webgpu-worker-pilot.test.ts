@@ -1,14 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import {
+  runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot,
+  type WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload,
+  type WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport,
+} from '../src/workers-coordinator-signed-runner-webgpu-worker-pilot.js';
 import type {
   WorkersCoordinatorSignedRunnerBrowserPreviewReport,
 } from '../src/workers-coordinator-signed-runner-browser-preview.js';
 import {
-  runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot,
-  type WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence,
-} from '../src/workers-coordinator-signed-runner-webgpu-worker-pilot.js';
+  createCapturedAndVerifiedEnvelope,
+  createProductionClaimingSyntheticEnvelope,
+  createSyntheticEnvelope,
+  createVerifiedValidationOptions,
+  type WorkersCoordinatorSignedRunnerEvidenceProvenance,
+} from './evidence-envelope-helpers.js';
 
 function createPreviewReport(
   overrides: Partial<WorkersCoordinatorSignedRunnerBrowserPreviewReport> = {},
+  evidence: Partial<WorkersCoordinatorSignedRunnerEvidenceProvenance> = {},
 ): WorkersCoordinatorSignedRunnerBrowserPreviewReport {
   const base: WorkersCoordinatorSignedRunnerBrowserPreviewReport = {
     runtime: 'signed-runner-browser-preview-verification',
@@ -21,13 +30,23 @@ function createPreviewReport(
       authHeaderPresent: true,
     },
     browserHarness: {
-      source: 'real-browser-harness',
-      capturedAtMs: 1_779_667_200_000,
       runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
       cspConnectSrc: ['https://coordinator.unzen.dev', 'wss://coordinator.unzen.dev', 'https://cdn.unzen.dev'],
       sandboxFlags: ['allow-scripts'],
       coop: 'same-origin',
       coep: 'require-corp',
+    },
+    evidence: {
+      validationStatus: 'valid',
+      evidenceKind: 'signed-runner-contract',
+      evidenceLevel: 'synthetic-fixture',
+      readinessStatus: 'contract-tested',
+      producerName: 'vitest',
+      producerVersion: '4.1.7',
+      runId: 'synthetic-run-1',
+      capturedAt: '2026-07-10T13:00:00.000Z',
+      issueCodes: [],
+      ...evidence,
     },
     releaseGateReport: {
       runtime: 'signed-runner-csp-coop-coep-release-gate',
@@ -85,13 +104,11 @@ function createPreviewReport(
   };
 }
 
-function createPilotEvidence(
-  overrides: Partial<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence> = {},
-): WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidence {
+function createPilotEvidencePayload(
+  overrides: Partial<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload> = {},
+): WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload {
   return {
-    source: 'real-browser-webgpu-worker-pilot',
     runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
-    capturedAtMs: 1_779_667_260_000,
     segmentExecution: {
       modelId: 'unzen-30b-q4-8seg-feasibility',
       segmentId: 'segment-03',
@@ -146,16 +163,32 @@ function createPilotEvidence(
   };
 }
 
-describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
-  it('passes completed model segment execution while signed runner isolation remains active', () => {
-    const report = runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot({
-      previewReport: createPreviewReport(),
-      pilotEvidence: createPilotEvidence(),
-    });
+async function runPilot(options: {
+  previewReport?: WorkersCoordinatorSignedRunnerBrowserPreviewReport;
+  pilotEvidenceEnvelope?: Parameters<typeof runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot>[0]['pilotEvidenceEnvelope'];
+  evidenceValidation?: Parameters<typeof runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot>[0]['evidenceValidation'];
+} = {}): Promise<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport> {
+  return runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot({
+    previewReport: options.previewReport ?? createPreviewReport(),
+    pilotEvidenceEnvelope: options.pilotEvidenceEnvelope
+      ?? createSyntheticEnvelope(createPilotEvidencePayload()),
+    evidenceValidation: options.evidenceValidation ?? { now: '2026-07-10T14:00:00.000Z' },
+  });
+}
 
-    expect(report.runtime).toBe('signed-runner-real-webgpu-worker-pilot');
+describe('Workers Coordinator signed runner WebGPU worker pilot contract', () => {
+  it('passes completed segment execution at contract-tested without claiming production readiness', async () => {
+    const report = await runPilot();
+
+    expect(report.runtime).toBe('signed-runner-webgpu-worker-pilot');
     expect(report.status).toBe('pass');
     expect(report.previewRunnerUrl).toBe('https://preview.unzen-workers.example/runners/signed/runner.html');
+    expect(report.evidence).toMatchObject({
+      validationStatus: 'valid',
+      evidenceLevel: 'synthetic-fixture',
+      readinessStatus: 'contract-tested',
+      issueCodes: [],
+    });
     expect(report.segmentExecution).toMatchObject({
       runtime: 'webgpu-dedicated-worker',
       state: 'completed',
@@ -180,7 +213,7 @@ describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
       coep: 'require-corp',
       allowedOrigins: ['https://coordinator.unzen.dev', 'wss://coordinator.unzen.dev', 'https://cdn.unzen.dev'],
     });
-    expect(report.securityBoundaryDuringExecution.blockedNonCoordinatorCdnNetworkAttempt).toMatchObject({
+    expect(report.securityBoundaryDuringExecution?.blockedNonCoordinatorCdnNetworkAttempt).toMatchObject({
       url: 'https://collector.example.test/segment-metrics',
       blocked: true,
     });
@@ -188,20 +221,21 @@ describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
     expect(report.bottlenecksToIssue).toEqual(['webgpu-worker-performance-and-fallback-telemetry']);
   });
 
-  it('fails when model segment execution starts but does not complete', () => {
-    const report = runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot({
-      previewReport: createPreviewReport(),
-      pilotEvidence: createPilotEvidence({
-        segmentExecution: {
-          modelId: 'unzen-30b-q4-8seg-feasibility',
-          segmentId: 'segment-03',
-          runtime: 'webgpu-dedicated-worker',
-          state: 'started',
-          layerStart: 24,
-          layerEnd: 31,
-          startedAtMs: 1_779_667_250_000,
-        },
-      }),
+  it('fails when model segment execution starts but does not complete', async () => {
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createSyntheticEnvelope(
+        createPilotEvidencePayload({
+          segmentExecution: {
+            modelId: 'unzen-30b-q4-8seg-feasibility',
+            segmentId: 'segment-03',
+            runtime: 'webgpu-dedicated-worker',
+            state: 'started',
+            layerStart: 24,
+            layerEnd: 31,
+            startedAtMs: 1_779_667_250_000,
+          },
+        }),
+      ),
     });
 
     expect(report.status).toBe('fail');
@@ -209,18 +243,19 @@ describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
     expect(report.bottlenecksToIssue).toEqual(['signed-runner-webgpu-segment-execution-hardening']);
   });
 
-  it('fails when IndexedDB cache evidence depends on top-level page storage', () => {
-    const report = runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot({
-      previewReport: createPreviewReport(),
-      pilotEvidence: createPilotEvidence({
-        indexedDbCache: {
-          backend: 'indexeddb',
-          databaseName: 'unzen-model-cache',
-          segmentWeightKey: 'models/unzen-30b-q4/segment-03.bin',
-          cacheHit: true,
-          topLevelStorageAccessed: true,
-        },
-      }),
+  it('fails when IndexedDB cache evidence depends on top-level page storage', async () => {
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createSyntheticEnvelope(
+        createPilotEvidencePayload({
+          indexedDbCache: {
+            backend: 'indexeddb',
+            databaseName: 'unzen-model-cache',
+            segmentWeightKey: 'models/unzen-30b-q4/segment-03.bin',
+            cacheHit: true,
+            topLevelStorageAccessed: true,
+          },
+        }),
+      ),
     });
 
     expect(report.status).toBe('fail');
@@ -228,20 +263,21 @@ describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
     expect(report.bottlenecksToIssue).toEqual(['signed-runner-indexeddb-cache-isolation-hardening']);
   });
 
-  it('fails when checkpoint relay uses direct worker networking', () => {
-    const report = runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot({
-      previewReport: createPreviewReport(),
-      pilotEvidence: createPilotEvidence({
-        checkpointRelay: {
-          owner: 'coordinator-storage',
-          checkpointKey: 'checkpoint:signed-runner-webgpu-pilot:segment-03',
-          relayUrl: 'https://coordinator.unzen.dev/checkpoints/signed-runner-webgpu-pilot/segment-03',
-          directWorkerNetworking: true,
-          topLevelDomAccessed: false,
-          topLevelCookieAccessed: false,
-          topLevelStorageAccessed: false,
-        },
-      }),
+  it('fails when checkpoint relay uses direct worker networking', async () => {
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createSyntheticEnvelope(
+        createPilotEvidencePayload({
+          checkpointRelay: {
+            owner: 'coordinator-storage',
+            checkpointKey: 'checkpoint:signed-runner-webgpu-pilot:segment-03',
+            relayUrl: 'https://coordinator.unzen.dev/checkpoints/signed-runner-webgpu-pilot/segment-03',
+            directWorkerNetworking: true,
+            topLevelDomAccessed: false,
+            topLevelCookieAccessed: false,
+            topLevelStorageAccessed: false,
+          },
+        }),
+      ),
     });
 
     expect(report.status).toBe('fail');
@@ -249,23 +285,24 @@ describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
     expect(report.bottlenecksToIssue).toEqual(['signed-runner-checkpoint-relay-isolation-hardening']);
   });
 
-  it('fails when WebGPU execution leaks a non-Coordinator/CDN network attempt', () => {
-    const report = runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot({
-      previewReport: createPreviewReport(),
-      pilotEvidence: createPilotEvidence({
-        networkAttempts: [
-          {
-            url: 'https://coordinator.unzen.dev/checkpoints',
-            initiator: 'dedicated-worker',
-            blocked: false,
-          },
-          {
-            url: 'https://collector.example.test/segment-metrics',
-            initiator: 'dedicated-worker',
-            blocked: false,
-          },
-        ],
-      }),
+  it('fails when WebGPU execution leaks a non-Coordinator/CDN network attempt', async () => {
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createSyntheticEnvelope(
+        createPilotEvidencePayload({
+          networkAttempts: [
+            {
+              url: 'https://coordinator.unzen.dev/checkpoints',
+              initiator: 'dedicated-worker',
+              blocked: false,
+            },
+            {
+              url: 'https://collector.example.test/segment-metrics',
+              initiator: 'dedicated-worker',
+              blocked: false,
+            },
+          ],
+        }),
+      ),
     });
 
     expect(report.status).toBe('fail');
@@ -273,5 +310,78 @@ describe('Workers Coordinator signed runner real WebGPU worker pilot', () => {
       'webgpu-pilot-non-coordinator-cdn-network-attempt-not-blocked: https://collector.example.test',
     );
     expect(report.bottlenecksToIssue).toEqual(['signed-runner-webgpu-network-policy-hardening']);
+  });
+});
+
+describe('Workers Coordinator signed runner WebGPU worker pilot integration gate', () => {
+  it('rejects a hand-written captured-and-verified envelope without artifact loader and verifier callbacks', async () => {
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createPilotEvidencePayload(),
+      ),
+      evidenceValidation: {
+        now: '2026-07-10T14:00:00.000Z',
+        trustedVerifiers: [{ name: 'unzen-ci-evidence-verifier', version: '1.0.0' }],
+      },
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe(
+      'webgpu-pilot-evidence-not-validated: artifact-unavailable',
+    );
+    expect(report.evidence.validationStatus).toBe('not-evaluated');
+    expect(report.evidence.issueCodes).toContain('artifact-unavailable');
+    expect(report.segmentExecution).toBeUndefined();
+  });
+
+  it('rejects a synthetic-fixture envelope that claims production readiness', async () => {
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createProductionClaimingSyntheticEnvelope(
+        createPilotEvidencePayload(),
+      ),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe(
+      'webgpu-pilot-evidence-not-validated: readiness-exceeds-evidence-level',
+    );
+    expect(report.evidence.issueCodes).toContain('readiness-exceeds-evidence-level');
+  });
+
+  it('accepts captured-and-verified evidence only with trusted loader, verifier, and attestation', async () => {
+    const report = await runPilot({
+      previewReport: createPreviewReport({}, {
+        evidenceLevel: 'captured-and-verified',
+        readinessStatus: 'production-candidate',
+        validationStatus: 'valid',
+      }),
+      pilotEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createPilotEvidencePayload(),
+      ),
+      evidenceValidation: createVerifiedValidationOptions(),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.evidence).toMatchObject({
+      validationStatus: 'valid',
+      evidenceLevel: 'captured-and-verified',
+      readinessStatus: 'production-candidate',
+    });
+    expect(report.failureReason).toBeUndefined();
+  });
+
+  it('caps the reported readiness when the browser-preview upstream is only contract-tested', async () => {
+    // Even captured-and-verified pilot evidence cannot be reported as
+    // production-ready while the upstream preview report is synthetic.
+    const report = await runPilot({
+      pilotEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createPilotEvidencePayload(),
+      ),
+      evidenceValidation: createVerifiedValidationOptions(),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.evidence.evidenceLevel).toBe('captured-and-verified');
+    expect(report.evidence.readinessStatus).toBe('contract-tested');
   });
 });

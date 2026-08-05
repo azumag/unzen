@@ -1,0 +1,649 @@
+/**
+ * demo.css — styles for the unzen core E2E Demo page.
+ *
+ * Design approach (issue #104):
+ * - All visual constants are CSS custom properties (design tokens).
+ * - UI state is expressed with `[data-state]` attributes on each demo section
+ *   and `[data-state]` on result panels; CSS never has to know JS internals.
+ * - Accessibility: visible focus styles, reduced-motion support, no horizontal
+ *   overflow on small screens, errors styled with the aria-invalid field.
+ */
+
+:root {
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-border: #d7dbe0;
+  --color-text: #1f2430;
+  --color-text-muted: #5c6470;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-on-accent: #ffffff;
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-warning: #b45309;
+  --color-warning-bg: #fffbeb;
+  --color-neutral: #4b5563;
+  --color-neutral-bg: #f3f4f6;
+  --color-info: #1d4ed8;
+  --color-info-bg: #eff6ff;
+  --color-focus-ring: #93c5fd;
+  --radius: 8px;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --shadow-card: 0 1px 3px rgba(16, 24, 40, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-bg);
+  padding: var(--space-4);
+}
+
+/* Keyboard and programmatic focus must always be visible. */
+:focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+
+/* ============================================================
+   Page header
+   ============================================================ */
+
+.page-header {
+  max-width: 1000px;
+  margin: 0 auto var(--space-6);
+}
+
+.page-header h1 {
+  font-size: 1.6rem;
+  margin: 0 0 var(--space-1);
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-4);
+}
+
+.lang-switch {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.lang-btn {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.lang-btn.is-active {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border-color: var(--color-accent);
+}
+
+.notice {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-warning-bg);
+  border-left: 4px solid var(--color-warning);
+  border-radius: var(--radius);
+  color: var(--color-warning);
+  font-size: 0.95rem;
+}
+
+/* ============================================================
+   Info box (how it works / security boundary)
+   ============================================================ */
+
+.info-box {
+  max-width: 1000px;
+  margin: 0 auto var(--space-6);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.info-box h2 {
+  font-size: 1.1rem;
+  margin: 0 0 var(--space-3);
+}
+
+.info-box ul {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-5);
+}
+
+.info-box li {
+  margin-bottom: var(--space-2);
+}
+
+.security-note {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-info-bg);
+  border-left: 4px solid var(--color-info);
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+}
+
+/* ============================================================
+   Demo sections
+   ============================================================ */
+
+main#demos {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.demo {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+  box-shadow: var(--shadow-card);
+}
+
+/* Terminal states colour the left border so the outcome is visible at a glance. */
+.demo[data-state='succeeded'] {
+  border-left-color: var(--color-success);
+}
+
+.demo[data-state='failed'] {
+  border-left-color: var(--color-danger);
+}
+
+.demo[data-state='cancelled'] {
+  border-left-color: var(--color-neutral);
+}
+
+.demo h2 {
+  font-size: 1.15rem;
+  margin: 0 0 var(--space-1);
+}
+
+.demo-desc {
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-4);
+  font-size: 0.95rem;
+}
+
+.sample-note {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-warning-bg);
+  border: 1px solid #fde68a;
+  border-radius: var(--radius);
+  color: var(--color-warning);
+  font-size: 0.9rem;
+}
+
+.field {
+  margin-bottom: var(--space-4);
+}
+
+.field label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.field input[type='text'],
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.field textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+/* Per-field error state, tied to the aria-invalid attribute the demo sets. */
+.field input[aria-invalid='true'],
+.field textarea[aria-invalid='true'] {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.field-error {
+  margin: var(--space-1) 0 0;
+  color: var(--color-danger);
+  font-size: 0.9rem;
+}
+
+/* ============================================================
+   Controls
+   ============================================================ */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+button {
+  font: inherit;
+  border-radius: 4px;
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.run-btn {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border-color: var(--color-accent);
+}
+
+.run-btn:hover {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+}
+
+.sample-btn {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-color: var(--color-border);
+}
+
+.cancel-btn {
+  background: var(--color-surface);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.retry-btn {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Status region (aria-live)
+   ============================================================ */
+
+.status {
+  margin: var(--space-2) 0;
+  font-weight: 600;
+  min-height: 1.6em;
+}
+
+.demo[data-state='running-in-browser'] .status-text {
+  color: var(--color-info);
+}
+
+.demo[data-state='falling-back-to-server'] .status-text,
+.demo[data-state='running-on-server'] .status-text {
+  color: var(--color-warning);
+}
+
+.demo[data-state='succeeded'] .status-text {
+  color: var(--color-success);
+}
+
+.demo[data-state='failed'] .status-text {
+  color: var(--color-danger);
+}
+
+.demo[data-state='cancelled'] .status-text {
+  color: var(--color-neutral);
+}
+
+.live-chain {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.live-chain li::marker {
+  color: var(--color-text-muted);
+}
+
+/* ============================================================
+   Result panels
+   ============================================================ */
+
+.result {
+  margin-top: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.result[data-state='succeeded'] {
+  border-left: 4px solid var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.result[data-state='failed'] {
+  border-left: 4px solid var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.result[data-state='cancelled'] {
+  border-left: 4px solid var(--color-neutral);
+  background: var(--color-neutral-bg);
+}
+
+.result h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 1rem;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.badge.route-browser {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+}
+
+.badge.route-server {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.badge.cache-hit {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.badge.cache-miss {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral);
+}
+
+.badge.code {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Error categories are visually distinct — driven by error codes, never by
+   parsing message strings. */
+.badge.error-category.input {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.badge.error-category.function {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.badge.error-category.runtime {
+  background: #fecaca;
+  color: #7f1d1d;
+}
+
+.badge.error-category.server {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.badge.error-category.network {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+}
+
+.badge.error-category.cancelled,
+.badge.error-category.unknown {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral);
+}
+
+.error-hint {
+  margin: var(--space-2) 0;
+  font-size: 0.95rem;
+}
+
+.diagnostics-note {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.result pre {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  /* Wrap instead of horizontal scroll so mobile never overflows. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.attempt-chain {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
+}
+
+.attempt-chain li {
+  margin-bottom: var(--space-1);
+  font-size: 0.9rem;
+}
+
+.markdown-preview {
+  margin-top: var(--space-3);
+}
+
+.markdown-preview iframe {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+}
+
+/* ============================================================
+   Statistics
+   ============================================================ */
+
+.stats-section {
+  max-width: 1000px;
+  margin: 0 auto var(--space-8);
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.stats-section h2 {
+  font-size: 1.15rem;
+  margin: 0 0 var(--space-1);
+}
+
+.stats-note {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 var(--space-4);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.stat-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.stat-value.is-null {
+  color: var(--color-text-muted);
+}
+
+.stat-label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.stat-count {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.stats-controls {
+  margin-bottom: var(--space-3);
+}
+
+.reset-btn {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral);
+  border-color: var(--color-border);
+}
+
+.stats-definitions {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.stats-definitions summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.stats-definitions dl {
+  margin: var(--space-3) 0 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  font-size: 0.9rem;
+}
+
+.stats-definitions dt {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.stats-definitions dd {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+/* ============================================================
+   Reduced motion
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ============================================================
+   Mobile
+   ============================================================ */
+
+@media (max-width: 640px) {
+  body {
+    padding: var(--space-2);
+  }
+
+  .demo,
+  .info-box,
+  .stats-section {
+    padding: var(--space-4);
+  }
+
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .controls button {
+    width: 100%;
+  }
+
+  .stats-definitions dl {
+    grid-template-columns: 1fr;
+  }
+}

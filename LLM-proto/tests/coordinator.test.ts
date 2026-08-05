@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Coordinator } from '../src/coordinator.js';
+import { createFixtureModelManifest } from '../src/model-manifest-fixtures.js';
 import { workerId, WorkerTier } from '../src/types.js';
 import type { SegmentExecutor } from '../src/pipeline.js';
 import type { WorkerId, Checkpoint } from '../src/types.js';
@@ -43,12 +44,17 @@ describe('Coordinator', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    coordinator = new Coordinator(createMockExecutor(totalSegments), {
-      totalSegments,
-      heartbeatTimeoutMs: 10_000,
-      heartbeatIntervalMs: 5_000,
-      retryDelayMs: 0,
-    });
+    coordinator = new Coordinator(
+      createMockExecutor(totalSegments),
+      createFixtureModelManifest({ totalSegments }),
+      {
+        totalSegments,
+        heartbeatTimeoutMs: 10_000,
+        heartbeatIntervalMs: 5_000,
+        retryDelayMs: 0,
+        allowFixtureManifest: true,
+      },
+    );
   });
 
   afterEach(() => {
@@ -169,6 +175,65 @@ describe('Coordinator', () => {
     it('should throw when no workers are available', async () => {
       await expect(coordinator.submitRequest('test'))
         .rejects.toThrow();
+    });
+  });
+
+  describe('model manifest injection', () => {
+    it('derives segment geometry from the validated manifest', () => {
+      const manifest = createFixtureModelManifest({ totalSegments: 4 });
+      const derived = new Coordinator(createMockExecutor(4), manifest, {
+        heartbeatTimeoutMs: 10_000,
+        heartbeatIntervalMs: 5_000,
+        retryDelayMs: 0,
+        allowFixtureManifest: true,
+      });
+
+      expect(derived.segmentCount).toBe(4);
+      expect(derived.modelRevision).toBe(manifest.modelRevision);
+      expect(derived.manifestDigest).toBe(manifest.manifestDigest);
+    });
+
+    it('rejects a fixture manifest by default (production code path)', () => {
+      expect(() => new Coordinator(
+        createMockExecutor(4),
+        createFixtureModelManifest({ totalSegments: 4 }),
+        {
+          heartbeatTimeoutMs: 10_000,
+          heartbeatIntervalMs: 5_000,
+          retryDelayMs: 0,
+        },
+      )).toThrow(/fixture/);
+    });
+
+    it('rejects an invalid manifest even when fixtures are allowed', () => {
+      const manifest = createFixtureModelManifest({ totalSegments: 4 });
+      const broken = {
+        ...manifest,
+        segments: manifest.segments.map((segment, index) =>
+          index === 1 ? { ...segment, sha256: 'sha256:segment-1' } : segment,
+        ),
+      };
+
+      expect(() => new Coordinator(createMockExecutor(4), broken, {
+        heartbeatTimeoutMs: 10_000,
+        heartbeatIntervalMs: 5_000,
+        retryDelayMs: 0,
+        allowFixtureManifest: true,
+      })).toThrow(/placeholder/);
+    });
+
+    it('rejects a segment count that disagrees with Coordinator options', () => {
+      expect(() => new Coordinator(
+        createMockExecutor(4),
+        createFixtureModelManifest({ totalSegments: 4 }),
+        {
+          totalSegments: 8,
+          heartbeatTimeoutMs: 10_000,
+          heartbeatIntervalMs: 5_000,
+          retryDelayMs: 0,
+          allowFixtureManifest: true,
+        },
+      )).toThrow(/segments/);
     });
   });
 

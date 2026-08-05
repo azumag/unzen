@@ -8,6 +8,7 @@
 4. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
 5. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
 6. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
+7. [`chrome-prompt-api-harness.md`](./chrome-prompt-api-harness.md) — Chrome Prompt API feasibility harness（#93）とmanual計測手順
 
 ## 読み方
 

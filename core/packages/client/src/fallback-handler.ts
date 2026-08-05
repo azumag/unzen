@@ -16,7 +16,12 @@
  * - Response: { result?: unknown, error?: { type: string, message: string } }
  */
 
-import { UnzenFunctionError, UnzenNetworkError } from '@unzen/shared';
+import {
+  UnzenCancelledError,
+  UnzenFunctionError,
+  UnzenNetworkError,
+} from '@unzen/shared';
+import { isAbortError, throwIfAborted } from './abort';
 
 export class FallbackHandler {
   /**
@@ -34,20 +39,28 @@ export class FallbackHandler {
    *
    * @param name - Function name to execute
    * @param args - Function arguments
+   * @param signal - Optional AbortSignal that cancels the server request.
+   *   When the signal aborts, the promise rejects with UnzenCancelledError.
    * @returns Function result
+   * @throws {UnzenCancelledError} When the caller aborts via signal
    * @throws {UnzenFunctionError} When function execution fails (user code error)
    * @throws {UnzenNetworkError} When network or server error occurs
    */
-  async execute(name: string, args: unknown[]): Promise<unknown> {
+  async execute(name: string, args: unknown[], signal?: AbortSignal): Promise<unknown> {
+    // Reject immediately if the caller already aborted before calling —
+    // a cancelled request must never start (or continue on) the server.
+    throwIfAborted(signal);
+
     const url = `${this.endpoint}/exec/${name}`;
     const body = JSON.stringify({ args });
 
     try {
-      // Make HTTP request to server
+      // Make HTTP request to server (signal cancels the request on abort)
       const response = await globalThis.fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
+        signal,
       });
 
       // Parse response JSON regardless of status code
@@ -99,6 +112,12 @@ export class FallbackHandler {
         error instanceof UnzenNetworkError
       ) {
         throw error;
+      }
+
+      // Cancellation must surface as UnzenCancelledError, never as a network
+      // error (which would look recoverable and mask a user cancellation).
+      if (isAbortError(error) || signal?.aborted) {
+        throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
       // Wrap other errors (fetch failure, JSON parse error, etc.) as network error

@@ -82,7 +82,13 @@ describe('quickjs-worker handleWorkerMessage', () => {
       );
 
       expect(responses).toHaveLength(1);
-      expect(responses[0]).toEqual({ type: 'init-result', success: true, error: undefined });
+      expect(responses[0]).toEqual({
+        type: 'init-result',
+        protocolVersion: 1,
+        generationId: undefined,
+        success: true,
+        error: undefined,
+      });
       expect(state.quickJS).not.toBeNull();
     });
 

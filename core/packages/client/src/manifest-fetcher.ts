@@ -33,6 +33,7 @@ import {
   type ManifestResponse,
   type FunctionManifestEntry,
 } from '@unzen/shared';
+import { raceWithAbort, throwIfAborted } from './abort';
 
 export class ManifestFetcher {
   /**
@@ -76,33 +77,43 @@ export class ManifestFetcher {
   /**
    * Fetch manifest from server (or return cached value)
    *
+   * @param signal - Optional AbortSignal that cancels the network fetch.
+   *   When the signal aborts, the promise rejects with UnzenCancelledError.
    * @returns Manifest response
+   * @throws {UnzenCancelledError} When the caller aborts via signal
    * @throws {UnzenNetworkError} When network or server error occurs
    */
-  async fetch(): Promise<ManifestResponse> {
+  async fetch(signal?: AbortSignal): Promise<ManifestResponse> {
+    // Reject immediately if the caller already aborted before calling — even
+    // a cached manifest must not be handed out after cancellation. Cancellation
+    // must never be wrapped into a network error.
+    throwIfAborted(signal);
+
     // Return cached manifest if available
     // Rationale: Manifest changes are rare, so aggressive caching is acceptable
     if (this.cache !== null) {
       return this.cache;
     }
 
-    // Deduplicate concurrent fetch() calls
-    // If a fetch is already in progress, return the same promise
-    // This prevents N concurrent callers from making N HTTP requests
-    if (this.inflight !== null) {
-      return this.inflight;
+    // Deduplicate concurrent fetch() calls: subsequent callers share the
+    // in-flight request. The shared request is NOT bound to any caller's
+    // signal; each caller races it against their own abort so cancelling one
+    // execution settles only that caller (issue #105 AC #1 under concurrency).
+    if (this.inflight === null) {
+      this.inflight = this.fetchFromServer();
     }
-
-    // Create and store the fetch promise before awaiting
-    this.inflight = this.fetchFromServer();
+    const inflight = this.inflight;
 
     try {
-      const manifest = await this.inflight;
-      return manifest;
+      if (signal) {
+        return await raceWithAbort(inflight, signal);
+      }
+      return await inflight;
     } finally {
-      // Clear inflight regardless of success/failure
-      // On failure, next call will retry
-      this.inflight = null;
+      // Clear inflight only if it is still the promise this caller waited on.
+      if (this.inflight === inflight) {
+        this.inflight = null;
+      }
     }
   }
 

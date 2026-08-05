@@ -113,6 +113,23 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('./docs/coordinator-prototype.md');
   });
 
+  it('surfaces the model manifest specification from the LLM-proto entry points', () => {
+    const manifestSpec = readProjectFile('docs/model-manifest.md');
+    const readme = readProjectFile('README.md');
+    const plan = readProjectFile('PLAN.md');
+
+    expect(manifestSpec).toContain('SegmentedModelManifest');
+    expect(manifestSpec).toContain('src/model-manifest.ts');
+    expect(manifestSpec).toContain('src/model-manifest-validator.ts');
+    expect(manifestSpec).toContain('src/browser-built-in-model.ts');
+    expect(manifestSpec).toContain('placeholder');
+    expect(manifestSpec).toContain('fixture');
+    expect(manifestSpec).toContain('Coordinator');
+    expect(readme).toContain('docs/model-manifest.md');
+    expect(readme).toContain('src/model-manifest.ts');
+    expect(plan).toContain('./docs/model-manifest.md');
+  });
+
   it('surfaces the Workers Coordinator prototype gate from the LLM-proto entry points', () => {
     const workersSpec = readProjectFile('docs/workers-coordinator-prototype.md');
     const readme = readProjectFile('README.md');
@@ -314,7 +331,7 @@ describe('LLM prototype documentation links', () => {
     expect(plan).toContain('rollback checkpoint boundary');
     expect(plan).toContain('signed runner release gate');
     expect(plan).toContain('signed runner browser preview gate');
-    expect(plan).toContain('signed runner real WebGPU worker pilot gate');
+    expect(plan).toContain('signed runner WebGPU worker pilot gate');
     expect(plan).toContain('WebGPU worker performance / fallback telemetry gate');
     expect(plan).toContain('Production worker fleet SLO / cost gate');
     expect(plan).toContain('Publisher reward and abuse-resistant settlement gate');

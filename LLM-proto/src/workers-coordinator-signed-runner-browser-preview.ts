@@ -7,6 +7,16 @@ import {
   type WorkersCoordinatorSignedRunnerContract,
   type WorkersCoordinatorSignedRunnerReleaseGateReport,
 } from './workers-coordinator-signed-runner-release-gate.js';
+import {
+  deriveSignedRunnerEvidenceProvenance,
+  evidenceValidationFailureReason,
+  type WorkersCoordinatorSignedRunnerEvidenceProvenance,
+} from './workers-coordinator-signed-runner-evidence.js';
+import {
+  validateEvidenceEnvelope,
+  type EvidenceEnvelope,
+  type EvidenceValidationOptions,
+} from './evidence.js';
 
 export interface WorkersCoordinatorSignedRunnerBrowserPreviewTarget {
   readonly baseUrl: string;
@@ -16,8 +26,10 @@ export interface WorkersCoordinatorSignedRunnerBrowserPreviewTarget {
   readonly authHeaderPresent: boolean;
 }
 
-export interface WorkersCoordinatorSignedRunnerBrowserEvidence {
-  readonly source: 'real-browser-harness';
+// Contract fields captured by the browser harness. They are carried inside an
+// EvidenceEnvelope payload so that provenance (evidenceLevel/readiness) is
+// decided by validateEvidenceEnvelope(), never by a hand-written `source`.
+export interface WorkersCoordinatorSignedRunnerBrowserEvidencePayload {
   readonly runnerUrl: string;
   readonly responseHeaders: {
     readonly 'content-security-policy': string;
@@ -40,44 +52,74 @@ export interface WorkersCoordinatorSignedRunnerBrowserEvidence {
     readonly verified: boolean;
   };
   readonly networkAttempts: readonly WorkersCoordinatorRunnerNetworkAttempt[];
-  readonly capturedAtMs: number;
 }
 
 export interface WorkersCoordinatorSignedRunnerBrowserPreviewOptions {
   readonly target: WorkersCoordinatorSignedRunnerBrowserPreviewTarget;
   readonly productionGateReport: WorkersCoordinatorProductionObservabilityCanaryReport;
-  readonly browserEvidence: WorkersCoordinatorSignedRunnerBrowserEvidence;
+  readonly browserEvidenceEnvelope: EvidenceEnvelope<WorkersCoordinatorSignedRunnerBrowserEvidencePayload>;
+  // Trust boundary for captured-and-verified evidence: trustedVerifiers,
+  // loadArtifact, verifyArtifact, and now must come from outside the envelope.
+  readonly evidenceValidation: EvidenceValidationOptions;
 }
 
 export interface WorkersCoordinatorSignedRunnerBrowserPreviewReport {
   readonly runtime: 'signed-runner-browser-preview-verification';
   readonly status: 'pass' | 'fail';
   readonly target: WorkersCoordinatorSignedRunnerBrowserPreviewTarget;
-  readonly browserHarness: {
-    readonly source: 'real-browser-harness';
-    readonly capturedAtMs: number;
+  // Present only when the envelope validated, because the fields are extracted
+  // from the validated payload rather than trusted by inspection.
+  readonly browserHarness?: {
     readonly runnerUrl: string;
     readonly cspConnectSrc: readonly string[];
     readonly sandboxFlags: readonly string[];
     readonly coop: string | null;
     readonly coep: string | null;
   };
-  readonly releaseGateReport: WorkersCoordinatorSignedRunnerReleaseGateReport;
-  readonly allowedOrigins: readonly string[];
-  readonly blockedNonCoordinatorCdnNetworkAttempt: WorkersCoordinatorRunnerNetworkAttempt | null;
+  readonly evidence: WorkersCoordinatorSignedRunnerEvidenceProvenance;
+  readonly releaseGateReport?: WorkersCoordinatorSignedRunnerReleaseGateReport;
+  readonly allowedOrigins?: readonly string[];
+  readonly blockedNonCoordinatorCdnNetworkAttempt?: WorkersCoordinatorRunnerNetworkAttempt | null;
   readonly failureReason?: string;
   readonly bottlenecksToIssue: readonly string[];
 }
 
-export function runWorkersCoordinatorSignedRunnerBrowserPreviewVerification(
+export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerification(
   options: WorkersCoordinatorSignedRunnerBrowserPreviewOptions,
-): WorkersCoordinatorSignedRunnerBrowserPreviewReport {
-  const contract = browserEvidenceToRunnerContract(options.browserEvidence);
+): Promise<WorkersCoordinatorSignedRunnerBrowserPreviewReport> {
+  // The gate only trusts contract fields once the envelope has been validated.
+  // A hand-written fixture cannot reach captured-and-verified readiness, so the
+  // payload-dependent parts of the report stay absent on rejection.
+  const validation = await validateEvidenceEnvelope<WorkersCoordinatorSignedRunnerBrowserEvidencePayload>(
+    options.browserEvidenceEnvelope,
+    options.evidenceValidation,
+  );
+  const evidence = deriveSignedRunnerEvidenceProvenance(validation);
+  const evidenceFailure = evidenceValidationFailureReason(
+    'signed-runner-preview-evidence-not-validated',
+    validation,
+  );
+
+  if (evidenceFailure) {
+    return {
+      runtime: 'signed-runner-browser-preview-verification',
+      status: 'fail',
+      target: options.target,
+      evidence,
+      failureReason: evidenceFailure,
+      bottlenecksToIssue: selectBottlenecksToIssue(evidenceFailure),
+    };
+  }
+
+  // validation.status === 'valid' guarantees the envelope was returned, so the
+  // non-null assertion is safe here.
+  const payload = validation.envelope!.payload;
+  const contract = browserEvidenceToRunnerContract(payload);
   const releaseGateReport = runWorkersCoordinatorSignedRunnerReleaseGate({
     productionGateReport: options.productionGateReport,
     runner: contract,
   });
-  const targetFailureReason = selectTargetFailureReason(options.target, options.browserEvidence);
+  const targetFailureReason = selectTargetFailureReason(options.target, payload);
   const failureReason = targetFailureReason ?? releaseGateReport.failureReason;
 
   return {
@@ -85,14 +127,13 @@ export function runWorkersCoordinatorSignedRunnerBrowserPreviewVerification(
     status: failureReason ? 'fail' : 'pass',
     target: options.target,
     browserHarness: {
-      source: options.browserEvidence.source,
-      capturedAtMs: options.browserEvidence.capturedAtMs,
-      runnerUrl: options.browserEvidence.runnerUrl,
+      runnerUrl: payload.runnerUrl,
       cspConnectSrc: releaseGateReport.csp.connectSrc,
-      sandboxFlags: options.browserEvidence.sandboxIframe.flags,
+      sandboxFlags: payload.sandboxIframe.flags,
       coop: releaseGateReport.coopCoepHeaders.coop,
       coep: releaseGateReport.coopCoepHeaders.coep,
     },
+    evidence,
     releaseGateReport,
     allowedOrigins: releaseGateReport.networkBoundary.allowedOrigins,
     blockedNonCoordinatorCdnNetworkAttempt:
@@ -103,7 +144,7 @@ export function runWorkersCoordinatorSignedRunnerBrowserPreviewVerification(
 }
 
 function browserEvidenceToRunnerContract(
-  evidence: WorkersCoordinatorSignedRunnerBrowserEvidence,
+  evidence: WorkersCoordinatorSignedRunnerBrowserEvidencePayload,
 ): WorkersCoordinatorSignedRunnerContract {
   return {
     runnerUrl: evidence.runnerUrl,
@@ -136,13 +177,10 @@ function parseCspDirective(cspHeader: string, directiveName: string): readonly s
 
 function selectTargetFailureReason(
   target: WorkersCoordinatorSignedRunnerBrowserPreviewTarget,
-  evidence: WorkersCoordinatorSignedRunnerBrowserEvidence,
+  evidence: WorkersCoordinatorSignedRunnerBrowserEvidencePayload,
 ): string | undefined {
   if (!target.authHeaderPresent) {
     return `authenticated-preview-header-missing: ${target.authHeaderName}`;
-  }
-  if (evidence.source !== 'real-browser-harness') {
-    return 'signed-runner-preview-must-use-real-browser-harness';
   }
   if (!evidence.runnerUrl.startsWith(target.baseUrl.replace(/\/$/, ''))) {
     return 'runner-url-outside-preview-target';

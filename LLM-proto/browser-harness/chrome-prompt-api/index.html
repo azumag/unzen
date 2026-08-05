@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chrome Prompt API feasibility harness</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* Dependency-free diagnostic page: no frameworks, no external assets, so it
+       runs from any static server and cannot be blocked by a third-party CSP. */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 1.5rem auto;
+      max-width: 60rem;
+      padding: 0 1rem;
+      color: #1f2328;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.4rem; }
+    h2 { font-size: 1.05rem; margin-top: 1.5rem; }
+    .banner {
+      border: 1px solid #d0d7de;
+      border-left: 4px solid #d29922;
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      background: #fff8c5;
+      margin: 1rem 0;
+    }
+    .banner.error { border-left-color: #cf222e; background: #ffebe9; }
+    .banner.ok { border-left-color: #1a7f37; background: #dafbe1; }
+    button {
+      font: inherit;
+      padding: 0.5rem 1rem;
+      border: 1px solid #1f2328;
+      border-radius: 6px;
+      background: #1f2328;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #log {
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      background: #f6f8fa;
+      max-height: 16rem;
+      overflow: auto;
+    }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 16rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.75rem;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      background: #f6f8fa;
+    }
+    .actions { display: flex; gap: 0.5rem; margin: 0.75rem 0; flex-wrap: wrap; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Chrome Prompt API feasibility harness</h1>
+
+  <div id="banner" class="banner">
+    Feature-detect in progress…
+  </div>
+
+  <h2>What this page measures</h2>
+  <p>
+    This harness exercises the <code>LanguageModel</code> Prompt API inside the
+    <strong>top-level document</strong> execution context (Chrome Built-in AI).
+    Model preparation has its own lifecycle — availability, user activation,
+    first download, language — which the scenarios below record. The report is
+    <strong>self-reported</strong>: it is NOT "real-browser verified" evidence
+    until an operator wraps it in a <code>captured-and-verified</code> envelope
+    with an artifact loader and an independent verifier
+    (<code>src/evidence.ts</code> / <code>src/chrome-prompt-api-report.ts</code>).
+  </p>
+  <p>
+    Serve this folder over <code>http://localhost</code> (the Prompt API requires
+    a secure-ish origin) and click <strong>Run scenarios</strong>. The model
+    download may take a minute on the first run; a user activation from the Run
+    click is required for the first download.
+  </p>
+
+  <div class="actions">
+    <button id="run" type="button">Run scenarios</button>
+    <button id="copy" type="button" disabled>Copy report JSON</button>
+    <button id="download" type="button" disabled>Download report JSON</button>
+  </div>
+
+  <h2>Log</h2>
+  <div id="log">Waiting for the first scenario run…</div>
+
+  <h2>Report JSON</h2>
+  <div id="report-holder" class="hidden">
+    <textarea id="report-output" readonly aria-label="Feasibility report JSON"></textarea>
+  </div>
+
+  <script src="harness.js"></script>
+</body>
+</html>

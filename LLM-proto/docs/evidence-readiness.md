@@ -118,8 +118,8 @@ Evidence levelとは別に、機能の成熟度を以下で表す。
 | browser retention | session duration sample入力による集計 | `contract-tested` |
 | Coordinator prototype | simulated worker / checkpoint / heartbeat | `contract-tested` |
 | Miniflare smoke | workerd/Miniflare runtime | `runtime-observed`。対象範囲を明記する |
-| deployed smoke / browser preview | 外部report入力とvalidatorを含む | artifact provenanceがない場合は`contract-tested`または`runtime-observed` |
-| signed runner WebGPU pilot | caller supplied evidence objectを検証 | 現状は`contract-tested`。名称だけで実WebGPU実行済みとしない |
+| deployed smoke / browser preview | browser evidence envelopeをvalidatorで検証 | artifact provenanceがない場合は`contract-tested`。loader・verifier・trust listが揃ったLevel 3のみ`verified-pilot`以上 |
+| signed runner WebGPU pilot / telemetry | caller supplied evidence envelopeをvalidatorで検証し、upstream readinessでcap | 現状は`contract-tested`。名称だけで実WebGPU実行済みとしない |
 | fleet SLO / reward / payout / tax gates | upstream reportを入力するdecision gate | 主に`contract-tested`。実fleet・資金移動・申告を証明しない |
 | Chrome Built-in AI | Issue #92配下で設計中 | `design-only` |
 

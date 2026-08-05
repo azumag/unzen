@@ -6,10 +6,13 @@ import {
 } from '../src/webgpu-30b-feasibility.js';
 
 describe('WebGPU 30B partial inference feasibility gate', () => {
-  it('passes the default 30B-class q4 metadata gate and reports scale-up measurements', () => {
+  it('passes the default 30B-class q4 example metadata gate and reports scale-up measurements', () => {
     const report = evaluateWebGpu30BFeasibility(createDefault30BFeasibilityManifest());
 
     expect(report.status).toBe('pass');
+    expect(report.modelId).toBe('unzen-30b-q4-8seg-example');
+    expect(report.modelRevision).toBe('rev-2026-08-01');
+    expect(report.manifestDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(report.segmentCount).toBe(8);
     expect(report.quantizationBits).toBe(4);
     expect(report.checkpointTensorShape).toEqual([1, 512, 6656]);
@@ -32,11 +35,14 @@ describe('WebGPU 30B partial inference feasibility gate', () => {
     const base = createDefault30BFeasibilityManifest();
     const manifest: WebGpu30BFeasibilityManifest = {
       ...base,
-      quantizationBits: 8,
-      segments: base.segments.map((segment, index) => ({
-        ...segment,
-        estimatedVramMB: index === 3 ? 5200 : segment.estimatedVramMB,
-      })),
+      model: {
+        ...base.model,
+        quantization: 'q8',
+        segments: base.model.segments.map((segment, index) => ({
+          ...segment,
+          estimatedMemoryMB: index === 3 ? 5200 : segment.estimatedMemoryMB,
+        })),
+      },
       dispatcherAssumptions: {
         ...base.dispatcherAssumptions,
         workerVramFreeMB: 4096,
@@ -72,14 +78,17 @@ describe('WebGPU 30B partial inference feasibility gate', () => {
     const base = createDefault30BFeasibilityManifest();
     const report = evaluateWebGpu30BFeasibility({
       ...base,
-      segments: base.segments.map((segment, index) => index === 4
-        ? { ...segment, layerStart: segment.layerStart + 1 }
-        : segment),
+      model: {
+        ...base.model,
+        segments: base.model.segments.map((segment, index) => index === 4
+          ? { ...segment, layerStart: segment.layerStart + 1 }
+          : segment),
+      },
     });
 
     expect(report.status).toBe('fail');
     expect(report.failureReasons).toContain(
-      'segment-layer-boundaries: segments must be 8 contiguous layer ranges with stable indexes',
+      'segment-layer-boundaries: segments must be contiguous layer ranges with stable indexes',
     );
   });
 });

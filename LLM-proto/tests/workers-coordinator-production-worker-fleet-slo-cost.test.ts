@@ -4,20 +4,38 @@ import type {
 } from '../src/workers-coordinator-signed-runner-webgpu-worker-pilot.js';
 import {
   runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry,
-  type WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence,
+  type WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload,
+  type WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport,
 } from '../src/workers-coordinator-webgpu-worker-performance-telemetry.js';
 import {
   runWorkersCoordinatorProductionWorkerFleetSloCostGate,
   type WorkersCoordinatorProductionWorkerFleetEvidence,
 } from '../src/workers-coordinator-production-worker-fleet-slo-cost.js';
+import {
+  createSyntheticEnvelope,
+  type WorkersCoordinatorSignedRunnerEvidenceProvenance,
+} from './evidence-envelope-helpers.js';
 
 function createPilotReport(
   overrides: Partial<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport> = {},
+  evidence: Partial<WorkersCoordinatorSignedRunnerEvidenceProvenance> = {},
 ): WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport {
   const base: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport = {
-    runtime: 'signed-runner-real-webgpu-worker-pilot',
+    runtime: 'signed-runner-webgpu-worker-pilot',
     status: 'pass',
     previewRunnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
+    evidence: {
+      validationStatus: 'valid',
+      evidenceKind: 'signed-runner-contract',
+      evidenceLevel: 'synthetic-fixture',
+      readinessStatus: 'contract-tested',
+      producerName: 'vitest',
+      producerVersion: '4.1.7',
+      runId: 'synthetic-run-1',
+      capturedAt: '2026-07-10T13:00:00.000Z',
+      issueCodes: [],
+      ...evidence,
+    },
     segmentExecution: {
       modelId: 'unzen-30b-q4-8seg-feasibility',
       segmentId: 'segment-03',
@@ -67,13 +85,11 @@ function createPilotReport(
   };
 }
 
-function createTelemetryEvidence(
-  overrides: Partial<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence> = {},
-): WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidence {
+function createTelemetryEvidencePayload(
+  overrides: Partial<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload> = {},
+): WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload {
   return {
-    source: 'real-browser-webgpu-worker-performance-telemetry',
     runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
-    capturedAtMs: 1_779_667_320_000,
     segmentLatencySamplesMs: [8_900, 8_720, 9_040, 8_830, 9_180],
     indexedDbCacheTiming: {
       backend: 'indexeddb',
@@ -214,17 +230,18 @@ function createFleetEvidence(
   };
 }
 
-function createPassingTelemetryReport() {
+async function createPassingTelemetryReport(): Promise<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport> {
   return runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry({
     pilotReport: createPilotReport(),
-    telemetryEvidence: createTelemetryEvidence(),
+    telemetryEvidenceEnvelope: createSyntheticEnvelope(createTelemetryEvidencePayload()),
+    evidenceValidation: { now: '2026-07-10T14:00:00.000Z' },
   });
 }
 
 describe('Workers Coordinator production worker fleet SLO and cost gate', () => {
-  it('promotes when fleet p95 latency, fallback, cost, opt-in, and signed runner boundary are within threshold', () => {
+  it('promotes when fleet p95 latency, fallback, cost, opt-in, and signed runner boundary are within threshold', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence(),
     });
 
@@ -287,9 +304,9 @@ describe('Workers Coordinator production worker fleet SLO and cost gate', () => 
     expect(report.bottlenecksToIssue).toEqual(['publisher-reward-and-abuse-resistant-settlement-gate']);
   });
 
-  it('holds when a device tier p95 latency misses the fleet SLO', () => {
+  it('holds when a device tier p95 latency misses the fleet SLO', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence({
         deviceTierSlo: [
           {
@@ -308,9 +325,9 @@ describe('Workers Coordinator production worker fleet SLO and cost gate', () => 
     expect(report.bottlenecksToIssue).toEqual(['production-fleet-device-tier-slo-hardening']);
   });
 
-  it('holds when WebGPU device loss or CPU fallback rate exceeds budget', () => {
+  it('holds when WebGPU device loss or CPU fallback rate exceeds budget', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence({
         fallbackBudget: {
           webGpuDeviceLossRate: 0.006,
@@ -326,9 +343,9 @@ describe('Workers Coordinator production worker fleet SLO and cost gate', () => 
     expect(report.bottlenecksToIssue).toEqual(['production-fleet-fallback-budget-hardening']);
   });
 
-  it('holds when IndexedDB warmup cost or miss penalty exceeds budget', () => {
+  it('holds when IndexedDB warmup cost or miss penalty exceeds budget', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence({
         cacheCost: {
           currency: 'USD',
@@ -346,9 +363,9 @@ describe('Workers Coordinator production worker fleet SLO and cost gate', () => 
     expect(report.bottlenecksToIssue).toEqual(['production-fleet-cache-cost-hardening']);
   });
 
-  it('holds when checkpoint relay spend or retry/failure rate exceeds budget', () => {
+  it('holds when checkpoint relay spend or retry/failure rate exceeds budget', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence({
         checkpointRelaySpend: {
           currency: 'USD',
@@ -367,9 +384,9 @@ describe('Workers Coordinator production worker fleet SLO and cost gate', () => 
     expect(report.bottlenecksToIssue).toEqual(['production-fleet-checkpoint-relay-cost-hardening']);
   });
 
-  it('holds when user opt-in impact is below production threshold', () => {
+  it('holds when user opt-in impact is below production threshold', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence({
         optInImpact: {
           optedInWorkerCount: 12_000,
@@ -387,9 +404,9 @@ describe('Workers Coordinator production worker fleet SLO and cost gate', () => 
     expect(report.bottlenecksToIssue).toEqual(['production-fleet-opt-in-threshold-hardening']);
   });
 
-  it('holds when fleet aggregation leaks a non-Coordinator/CDN network attempt', () => {
+  it('holds when fleet aggregation leaks a non-Coordinator/CDN network attempt', async () => {
     const report = runWorkersCoordinatorProductionWorkerFleetSloCostGate({
-      telemetryReport: createPassingTelemetryReport(),
+      telemetryReport: await createPassingTelemetryReport(),
       fleetEvidence: createFleetEvidence({
         networkAttempts: [
           {
