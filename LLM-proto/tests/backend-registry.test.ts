@@ -92,6 +92,24 @@ describe('BackendRegistry (capability-based candidate selection)', () => {
     expect(registry.size).toBe(0);
   });
 
+  it('rejects duplicate backend ids instead of silently overwriting', async () => {
+    const registry = new BackendRegistry();
+    const first = new MockInferenceBackend(capabilityFor('server-fallback'));
+    await registry.register('dup-1', first);
+
+    await expect(
+      registry.register('dup-1', new MockInferenceBackend(capabilityFor('segmented-webgpu'))),
+    ).rejects.toThrow(/already registered/i);
+    expect(registry.size).toBe(1);
+    // The original entry is preserved; the failed re-registration never lands.
+    expect(registry.get('dup-1')).toBe(first);
+
+    expect(() =>
+      registry.registerCapability('dup-1', capabilityFor('segmented-webgpu')),
+    ).toThrow(/already registered/i);
+    expect(registry.size).toBe(1);
+  });
+
   it('selects candidates by capability predicate, not by backend-specific types', async () => {
     const registry = new BackendRegistry();
     await registry.register('seg-1', new MockInferenceBackend(capabilityFor('segmented-webgpu')));

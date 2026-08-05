@@ -130,6 +130,11 @@ worker speaks `InferenceBackend`, this module should be deleted.
    routable; execution still flows through the old SegmentExecutor pipeline.
 ```
 
+> Note: the legacy adapter is currently a tested conversion utility only — the
+> wiring that feeds adapted capabilities into the `BackendRegistry` is not yet
+> implemented. It is deferred until a segmented worker migrates to
+> `InferenceBackend` or the Coordinator integrates capability routing.
+
 The boundary rule: the Coordinator understands ONLY capabilities and events;
 each backend owns its execution mechanics. A segmented backend owns segment
 geometry (which itself comes from the validated `SegmentedModelManifest`, see

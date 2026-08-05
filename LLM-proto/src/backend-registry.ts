@@ -65,6 +65,9 @@ export class BackendRegistry {
    * registration so the routing table never contains an untrusted entry.
    */
   async register(backendId: string, backend: InferenceBackend): Promise<void> {
+    if (this.entries.has(backendId)) {
+      throw new Error(`backend already registered: ${backendId}`);
+    }
     const capability = await backend.describeCapabilities();
     assertValidWorkerCapability(capability);
     this.entries.set(backendId, { backendId, capability, backend });
@@ -76,6 +79,9 @@ export class BackendRegistry {
    * but is still driven through the old `SegmentExecutor` path.
    */
   registerCapability(backendId: string, capability: WorkerCapability): void {
+    if (this.entries.has(backendId)) {
+      throw new Error(`backend already registered: ${backendId}`);
+    }
     assertValidWorkerCapability(capability);
     this.entries.set(backendId, { backendId, capability });
   }
