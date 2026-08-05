@@ -96,7 +96,11 @@ the Chrome Prompt API full-model backend
 (`backend: 'browser-built-in-full-model'`, `provider: 'chrome'`,
 `api: 'prompt-api'`). It carries no segment geometry, no artifact hashes, and
 no VRAM partitioning; `validateBrowserBuiltInModelDescriptor()` rejects any
-descriptor that fabricates them.
+descriptor that fabricates them. Since #94 the descriptor embeds a typed,
+runtime-validated `WorkerCapability` (see
+[`docs/inference-backend-abstraction.md`](./inference-backend-abstraction.md))
+instead of a loose string-tag array, and rejects any capability that declares
+segment execution.
 
 ## Focused Test Command
 

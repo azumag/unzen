@@ -1,11 +1,23 @@
 /**
- * Chrome Built-in AI full-model backend descriptor (issue #92, #102).
+ * Chrome Built-in AI full-model backend descriptor (issue #92, #94).
  *
  * The Chrome backend runs one full model inside the document's Prompt API
  * session. It has NO segment geometry, NO artifact hashes, and NO VRAM
  * partitioning: every segmented-model field is absent by construction, and the
  * validator rejects any descriptor that fabricates them.
+ *
+ * Since issue #94 the descriptor carries a real, typed `WorkerCapability`
+ * instead of the old `capabilities: readonly string[]` bag of string tags.
+ * The capability is runtime-validated (`validateWorkerCapability`) at
+ * validation time, so the full-model capability can never smuggle in segment
+ * geometry through the typed field either.
  */
+
+import {
+  CAPABILITY_SCHEMA_VERSION,
+  type WorkerCapability,
+} from './inference-backend.js';
+import { validateWorkerCapability } from './inference-capability.js';
 
 export const BROWSER_BUILT_IN_MODEL_SCHEMA_VERSION = '1.0.0' as const;
 
@@ -15,7 +27,8 @@ export interface BrowserBuiltInModelDescriptor {
   readonly provider: 'chrome';
   readonly api: 'prompt-api';
   readonly runtimeVersion: string;
-  readonly capabilities: readonly string[];
+  /** Typed, runtime-validated capability of the Chrome full-model backend. */
+  readonly capability: WorkerCapability;
 }
 
 export interface BrowserBuiltInModelValidationIssue {
@@ -39,8 +52,45 @@ const FORBIDDEN_SEGMENT_GEOMETRY_FIELDS = [
   'source',
 ] as const;
 
+/**
+ * Default Chrome full-model capability.
+ *
+ * `contextWindowTokens` (4096) and `expectedLatencyMs` are EXAMPLE placeholders
+ * pending the real-browser measurement tracked by issue #93; they are not
+ * measured facts. Overrides let the caller supply measured values once the
+ * harness evidence exists.
+ */
+export function buildChromePromptApiCapability(
+  runtimeVersion: string,
+  overrides: Partial<WorkerCapability> = {},
+): WorkerCapability {
+  return {
+    schemaVersion: CAPABILITY_SCHEMA_VERSION,
+    backend: 'browser-built-in-full-model',
+    runtimeName: 'chrome-prompt-api',
+    runtimeVersion,
+    executionMode: 'full-model',
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+    supportedLanguages: ['ja', 'en'],
+    streaming: true,
+    // EXAMPLE placeholder pending real-browser measurement (#93).
+    contextWindowTokens: 4096,
+    requiresUserActivation: true,
+    executionSurfaces: ['document'],
+    supportsCancellation: true,
+    maxConcurrency: 1,
+    // EXAMPLE placeholder pending real-browser measurement (#93).
+    expectedLatencyMs: 1_000,
+    privacyBoundary: 'in-browser',
+    allowedNetworkDestinations: ['none'],
+    ...overrides,
+  };
+}
+
 export function createBrowserBuiltInModelDescriptor(
   runtimeVersion = 'unknown',
+  overrides: Partial<WorkerCapability> = {},
 ): BrowserBuiltInModelDescriptor {
   return {
     schemaVersion: BROWSER_BUILT_IN_MODEL_SCHEMA_VERSION,
@@ -48,14 +98,17 @@ export function createBrowserBuiltInModelDescriptor(
     provider: 'chrome',
     api: 'prompt-api',
     runtimeVersion,
-    capabilities: ['full-model-in-document', 'streaming', 'abort', 'context-window'],
+    capability: buildChromePromptApiCapability(runtimeVersion, overrides),
   };
 }
 
 /**
- * Validate a browser built-in model descriptor. Beyond shape checks, this
- * rejects any descriptor that tries to attach fabricated segment geometry to a
- * backend that needs none.
+ * Validate a browser built-in model descriptor. Beyond shape checks, this:
+ *   - runtime-validates the embedded typed `WorkerCapability`;
+ *   - rejects any descriptor that tries to attach fabricated segment geometry
+ *     to a backend that needs none (issue #102, preserved by #94);
+ *   - rejects a capability that declares segment execution, which would
+ *     contradict the full-model backend kind.
  */
 export function validateBrowserBuiltInModelDescriptor(
   input: unknown,
@@ -95,15 +148,29 @@ export function validateBrowserBuiltInModelDescriptor(
       message: 'runtimeVersion must be a non-empty string',
     });
   }
-  if (
-    !Array.isArray(input.capabilities) ||
-    input.capabilities.length === 0 ||
-    !input.capabilities.every((value) => typeof value === 'string' && value.trim().length > 0)
-  ) {
+
+  const capabilityValidation = validateWorkerCapability(input.capability);
+  if (capabilityValidation.status !== 'valid') {
     issues.push({
-      code: 'invalid-capabilities',
-      path: '$.capabilities',
-      message: 'capabilities must be a non-empty array of strings',
+      code: 'invalid-capability',
+      path: '$.capability',
+      message: `capability is not a valid WorkerCapability: ${capabilityValidation.issues
+        .map((item) => `${item.path} ${item.code}`)
+        .join('; ')}`,
+    });
+  } else if (
+    isRecord(input.capability) &&
+    (input.capability.backend !== 'browser-built-in-full-model' ||
+      input.capability.executionMode === 'segment')
+  ) {
+    // A full-model descriptor whose embedded capability claims a different
+    // backend kind or segment execution contradicts itself.
+    issues.push({
+      code: 'segment-execution-forbidden',
+      path: '$.capability',
+      message:
+        'a browser-built-in full-model descriptor must carry a full-model capability ' +
+        "(backend 'browser-built-in-full-model', executionMode 'full-model')",
     });
   }
 

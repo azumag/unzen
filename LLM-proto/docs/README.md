@@ -9,6 +9,7 @@
 5. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
 6. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
 7. [`chrome-prompt-api-harness.md`](./chrome-prompt-api-harness.md) — Chrome Prompt API feasibility harness（#93）とmanual計測手順
+8. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
 
 ## 読み方
 

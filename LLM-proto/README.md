@@ -163,6 +163,10 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | State machine | `src/request-state-machine.ts` | accepted→queued→leased→running→completed等の遷移を検証するreducer (#103) |
 | Worker Registry | `src/worker-registry.ts` | connection世代ごとのworker登録・revoke・heartbeat policy (#103) |
 | Lease Manager | `src/lease-manager.ts` | assignment identityとactive leaseの一致検証 (#103) |
+| Inference Backend | `src/inference-backend.ts` | `WorkerCapability` / `InferenceEvent` / `InferenceBackend`契約。segmented・full-model・server-fallbackを同一のcapability routing inputにする抽象化 (#94) |
+| Capability Validator | `src/inference-capability.ts` | `WorkerCapability`のruntime validation。schema version・unknown field policy・enum/range整合を検証 (#94) |
+| Backend Registry | `src/backend-registry.ts` | capability predicateによるcandidate selection。backend固有型ではなくcapabilityでrouting (#94) |
+| Legacy Worker Adapter | `src/legacy-worker-adapter.ts` | 旧Worker登録protocolをsegmented capabilityへ変換する一時adapter (#94) |
 
 ### Feasibility / measurement contracts
 
@@ -254,6 +258,10 @@ npm run test:workers-publisher-tax-provider-sandbox
 npm run test:workers-publisher-tax-production-cutover
 npm run test:workers-publisher-tax-production-callbacks
 npm run test:workers-publisher-tax-production-monitoring
+npx vitest run tests/inference-backend.test.ts
+npx vitest run tests/backend-registry.test.ts
+npx vitest run tests/legacy-worker-adapter.test.ts
+npx vitest run tests/browser-built-in-model.test.ts
 ```
 
 ### Runtime smoke
@@ -272,6 +280,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 - [#101](https://github.com/azumag/unzen/issues/101): simulated evidenceと実測evidenceの分離 — evidence envelope基盤(#108)とbrowser preview・WebGPU pilot・telemetry gateのenvelope検証移行で対応済み。残りは各gateの実証拠artifactの取得
 - [#102](https://github.com/azumag/unzen/issues/102): hard-coded model geometryとplaceholder hashのmanifest化 — `SegmentedModelManifest` + 起動時fail-fast validatorで対応済み。30B/8segment/~2.1GBはEXAMPLE fixtureであり実測値ではない
 - [#103](https://github.com/azumag/unzen/issues/103): durable request state、idempotency、retry、cancellation — `DurableCoordinator` + in-memory repositoryで対応（詳細は[`docs/coordinator-durability.md`](./docs/coordinator-durability.md)）
+- [#94](https://github.com/azumag/unzen/issues/94): InferenceBackend / `WorkerCapability`抽象化 — segmented・full-model・server-fallbackを同一capabilityでrouting（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
 - [#92](https://github.com/azumag/unzen/issues/92): Chrome Built-in AI backend（descriptorは`src/browser-built-in-model.ts`で定義済み）
 
 これらが完了するまで、現在のgate chainをproduction-ready systemとは表現しません。
@@ -300,6 +309,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 | [`docs/browser-worker-retention-measurement.md`](./docs/browser-worker-retention-measurement.md) | retention measurement | sample aggregation harnessあり |
 | [`docs/coordinator-prototype.md`](./docs/coordinator-prototype.md) | Coordinator prototype | simulated harnessあり |
 | [`docs/coordinator-durability.md`](./docs/coordinator-durability.md) | Durable Coordinator (#103): durable state・idempotency・identity・retry/cancellation・checkpoint envelope | in-memory repository + durable Coordinator testでcontract検証 |
+| [`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md) | InferenceBackend / `WorkerCapability`抽象化 (#94): backend kind、capability validation、event union、capability routing、per-backend責任境界 | mock backend + routing unit testでcontract検証 |
 | [`docs/workers-coordinator-prototype.md`](./docs/workers-coordinator-prototype.md) | Workers/operations gate chain | contractとruntime evidenceを区別して読む |
 | [`docs/chrome-prompt-api-harness.md`](./docs/chrome-prompt-api-harness.md) | Chrome Prompt API feasibility harnessとmanual計測手順 | #93で導入。実測結果は未取得（未解決条件） |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |

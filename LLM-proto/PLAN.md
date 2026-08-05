@@ -733,6 +733,7 @@ All-or-Nothing パイプライン:
 25. [Publisher tax filing production callbacks readiness gate](./docs/workers-coordinator-prototype.md) で、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production monitoring reconciliation へ進む promote/hold thresholds を検証する
 26. [Publisher tax filing production monitoring reconciliation gate](./docs/workers-coordinator-prototype.md) で、accepted / rejected / corrected / duplicate-suppressed callback streams、operator monitoring records、publisher monitoring exports、alert traceability、duplicate-filing suppression replay、rollback / emergency hold replay controls、exception operations runbook へ進む promote/hold thresholds を検証する
 27. [Chrome Prompt API feasibility harness (#93)](./docs/chrome-prompt-api-harness.md) で、`browser-harness/chrome-prompt-api/` の実ブラウザ計測（availability・user activation・初回download・日本語入出力・abort・context・session lifecycle・concurrent・surface matrix）を `captured-and-verified` envelope で検証し、Go / Conditional Go / No-Go / 未解決条件 を記録する。実ブラウザ計測が完了するまで判定は `not-evaluated`（未解決条件）に留まり、手書きfixtureは昇格できない（7.5項）
+28. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・Chrome full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、Chrome backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない
 
 ### 7.2 経済性の精緻化
 
@@ -788,10 +789,11 @@ pending real-browser measurement（未解決条件）です。実測結果は主
 
 ---
 
-**ドキュメントバージョン**: 2.6
+**ドキュメントバージョン**: 2.7
 **作成日**: 2026年2月
 **ステータス**: レビュー済み方針確定版
 **変更履歴**:
+- v2.7: InferenceBackend / `WorkerCapability`抽象化（#94）を7.1項に追加。segmented・full-model・server-fallbackを同一capabilityでroutingする方針と、Chrome backendが`SegmentExecutor`を装わないことを明記（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
 - v2.0: 初版(旧文書の矛盾解消、方針確定)
 - v2.1: 通信ポリシー明確化、RPMポジション修正、信頼性3シナリオ化、公平性配慮追加
 - v2.2: 目的定義の表現統一、安全境界の多層防御設計追加、経済性の仮定明示強化、置換条件の時期断定削除、公平性の具体策追加、検証項目の分離
