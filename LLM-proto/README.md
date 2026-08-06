@@ -25,8 +25,8 @@ LLM-protoでは次を検証します。
 > 特別な設定（フラグ・エンタープライズポリシー）なしには API が露出しない
 > ことが確認されたため破棄しました。関連コード（`ChromeLanguageModelBackend`、
 > `chrome-prompt-api-report.ts`、`browser-built-in-model.ts`、
-> `browser-harness/` 等）は削除済みです。#94 の `browser-built-in-full-model`
-> kind は抽象化としてのみ残ります。
+> `browser-harness/chrome-prompt-api/` 等）は削除済みです。#94 の
+> `browser-built-in-full-model` kind は抽象化としてのみ残ります。
 
 ## 2. 実装トラック
 
@@ -61,7 +61,7 @@ Chrome 150 stable / 153 Canary のいずれもフラグやエンタープライ�
   #95（ChromeLanguageModelBackend 実装）、#100（E2E / 互換性matrix）
 - 削除済み: `src/chrome-language-model-backend.ts`、`src/chrome-prompt-api-adapter.ts`、
   `src/chrome-prompt-api-report.ts`、`src/browser-built-in-model.ts`、
-  `browser-harness/`、関連テスト・docs（`docs/chrome-prompt-api-harness.md` 等）
+  `browser-harness/chrome-prompt-api/`、関連テスト・docs（`docs/chrome-prompt-api-harness.md` 等）
 - 残存: #94 の `InferenceBackend` 抽象化と `browser-built-in-full-model` kind
   （将来のfull-model backend用の予約枠。実装なし）
 
@@ -77,9 +77,9 @@ Chrome 150 stable / 153 Canary のいずれもフラグやエンタープライ�
 | 領域 | 実装されているもの | 現在の基本status |
 |---|---|---|
 | 基本Pipeline / SpanPipeline | Worker選択、segment実行、checkpoint、retryのTypeScript prototype | `contract-tested` |
-| 2B / 2-worker milestone | mock segment artifactを使う比較・resume harness | `contract-tested` |
+| 2B / 2-worker milestone | mock segment artifactを使う比較・resume harness。**実ブラウザWebGPU単一ワーカー実行（Llama-3.2-1B q4）は実測済み（2026-08-06）** | `contract-tested` + 単一ワーカー実測（self-reported） |
 | AdaptiveChunkDispatcher | telemetry fixtureからchunk length・score・assignmentを計算 | `contract-tested` |
-| 30B WebGPU feasibility | model/runtime/checkpoint metadataの判定 | `contract-tested` |
+| 30B WebGPU feasibility | model/runtime/checkpoint metadataの判定 + WebGPUデバイス前提の実測（Chrome 150 / Metal 3） | `contract-tested` + デバイス前提実測（self-reported） |
 | checkpoint transfer | deterministic payloadのserializationとtransfer estimate | `contract-tested` |
 | browser retention | session sampleからretention/retry影響を集計 | `contract-tested` |
 | Coordinator prototype | API lifecycle、heartbeat、assignment、relayのsimulated report | `contract-tested` |
@@ -273,7 +273,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 | [`PLAN.md`](./PLAN.md) | 確定方針とpipeline計画 | 設計基準。仮定値は実測値と区別する |
 | [`docs/evidence-readiness.md`](./docs/evidence-readiness.md) | evidence levelとreadiness規約 | #108で導入、gate移行#101で適用 |
 | [`docs/model-manifest.md`](./docs/model-manifest.md) | `SegmentedModelManifest` / validator | #102で導入 |
-| [`docs/2b-two-worker-prototype.md`](./docs/2b-two-worker-prototype.md) | 2B / 2-worker milestone | contract harnessあり |
+| [`docs/2b-two-worker-prototype.md`](./docs/2b-two-worker-prototype.md) | 2B / 2-worker milestone | contract harnessあり + 単一ワーカーWebGPU実測記録（2026-08-06） |
 | [`docs/adaptive-chunk-dispatcher.md`](./docs/adaptive-chunk-dispatcher.md) | adaptive dispatcher | simulated logicあり |
 | [`docs/webgpu-30b-partial-inference-feasibility.md`](./docs/webgpu-30b-partial-inference-feasibility.md) | 30B partial inferenceの判定項目 | metadata gateあり、実browser検証は別 |
 | [`docs/checkpoint-transfer-measurement.md`](./docs/checkpoint-transfer-measurement.md) | checkpoint measurement | deterministic harnessあり |

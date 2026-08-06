@@ -160,6 +160,40 @@ Do not move from this prototype to 30B-class work until the run report answers:
 If any gate fails, the next issue should target that bottleneck directly instead
 of increasing model size or worker count.
 
+## Single-worker reference measurement (2026-08-06)
+
+The first real-browser measurement milestone: a 1B-class model run through the
+WebGPU backend as the single-worker reference path (the split path is the next
+milestone). Self-reported, not yet captured-and-verified.
+
+| Item | Cold (first load) | Warm (cached) |
+|---|---|---|
+| Model | onnx-community/Llama-3.2-1B-Instruct (q4, ~1.7 GB ONNX data) | same |
+| Browser / adapter | Chrome 150.0.7871.188, macOS 26.5.2 arm64, Apple GPU (metal-3) | same |
+| Load time | 2,562,494 ms (~43 min: 1.7 GB download at a variable ~0.5-0.7 MB/s + WebGPU compile) | 15,721 ms |
+| Generation (32 tokens, greedy) | 12,115 ms (~2.6 tok/s) | 24,394 ms (~1.3 tok/s) |
+| Output sample | "The capital of France is Paris. The capital of Germany is Berlin…" | same |
+
+Findings:
+
+- A 1B-class model produces correct continuation text on the real WebGPU path
+  in this environment (device precondition proven).
+- The browser cache (transformers.js Cache API) shortens reload from ~43 min
+  to ~16 s — the IndexedDB/cache acceptance angle is demonstrated at the
+  browser-cache level.
+- Generation throughput varies between runs (2.6 vs 1.3 tok/s on one sample
+  each); more samples are needed before treating it as a stable number.
+- This single-worker run does not yet cover: two-segment split execution,
+  checkpoint relay, worker-loss resume, or split-vs-reference quality
+  comparison (see `Executable Harness` above for the simulated control flow).
+
+Harness: `browser-harness/webgpu-2b/` (serve with `node serve.mjs`, open
+`index.html?model=<repo>` and click Run; the report is rendered on the page).
+The runner loads transformers.js from a pinned jsdelivr URL and model
+artifacts from huggingface.co — fine for a local diagnostic harness, but a
+telemetry path would need to vendor the library with SRI and serve artifacts
+from the unzen CDN.
+
 ## Relationship To Existing Designs
 
 - `PLAN.md` remains the reviewed long-term pipeline plan for 30B-class models.

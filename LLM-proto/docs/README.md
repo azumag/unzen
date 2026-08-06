@@ -9,6 +9,7 @@
 5. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
 6. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
 7. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
+8. [`../browser-harness/webgpu-2b/`](../browser-harness/webgpu-2b/) — WebGPU 実測harness（transformers.js + WebGPU でモデル実行・計測）
 
 ## 読み方
 
