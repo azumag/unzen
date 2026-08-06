@@ -15,6 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = Number(process.env.PORT ?? 8788);
+// When set, /models/<repo>/... is served from this directory so the runner
+// can load model artifacts from disk instead of downloading from
+// huggingface.co (see runner.js env.localModelPath). MODELS_DIR content is
+// TRUSTED: point it only at a model artifact tree, never at an untrusted
+// directory (symlinks inside it are followed).
+const MODELS_DIR = process.env.MODELS_DIR ? normalize(process.env.MODELS_DIR) : undefined;
 
 const MIME = {
   '.html': 'text/html',
@@ -28,8 +34,17 @@ const MIME = {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-    let path = normalize(join(ROOT, url.pathname));
-    if (!path.startsWith(ROOT)) {
+    console.log(`${new Date().toISOString()} ${req.method} ${url.pathname}`);
+    // Model artifacts are resolved under /models/ against MODELS_DIR when
+    // configured; anything else is resolved inside the harness directory.
+    let base = ROOT;
+    let pathname = url.pathname;
+    if (MODELS_DIR && pathname.startsWith('/models/')) {
+      base = MODELS_DIR.endsWith('/') ? MODELS_DIR : MODELS_DIR + '/';
+      pathname = pathname.slice('/models/'.length);
+    }
+    let path = normalize(join(base, pathname));
+    if (!path.startsWith(base)) {
       res.writeHead(403).end('forbidden');
       return;
     }

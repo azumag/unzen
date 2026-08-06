@@ -79,7 +79,12 @@ async function run() {
   let generator;
   try {
     env.backends.onnx.wasm.proxy = false;
-    env.allowLocalModels = false;
+    // Local-first artifact loading: when the server exposes /models/ (see
+    // serve.mjs MODELS_DIR) the model is read from disk. allowLocalModels is
+    // REQUIRED here: in browsers it defaults to false (transformers.js v4
+    // env.js), so without it every file would be fetched from huggingface.co.
+    env.localModelPath = '/models/';
+    env.allowLocalModels = true;
     log('model: ' + MODEL);
     log('device: webgpu');
     generator = await pipeline('text-generation', MODEL, {

@@ -61,11 +61,15 @@ Each artifact must include a manifest entry:
   "segmentIndex": 0,
   "totalSegments": 2,
   "layerStart": 0,
-  "layerEnd": 11,
+  "layerEnd": 7,
   "quantization": "q4",
   "sha256": "..."
 }
 ```
+
+(The example matches the 16-layer Llama-3.2-1B split at the layer-7/8
+boundary used in the split-path design notes below. The exact layer count
+depends on the selected model.)
 
 The exact layer count depends on the selected model. Segment boundaries should
 be contiguous and deterministic; uneven splits are allowed only when required by
@@ -166,7 +170,9 @@ The first real-browser measurement milestone: a 1B-class model run through the
 WebGPU backend as the single-worker reference path (the split path is the next
 milestone). Self-reported, not yet captured-and-verified.
 
-| Item | Cold (first load) | Warm (cached) |
+### Remote-artifact run (first measurement)
+
+| Item | Cold (first load) | Warm (browser Cache API) |
 |---|---|---|
 | Model | onnx-community/Llama-3.2-1B-Instruct (q4, ~1.7 GB ONNX data) | same |
 | Browser / adapter | Chrome 150.0.7871.188, macOS 26.5.2 arm64, Apple GPU (metal-3) | same |
@@ -174,25 +180,133 @@ milestone). Self-reported, not yet captured-and-verified.
 | Generation (32 tokens, greedy) | 12,115 ms (~2.6 tok/s) | 24,394 ms (~1.3 tok/s) |
 | Output sample | "The capital of France is Paris. The capital of Germany is Berlin…" | same |
 
+These two generation readings were taken as single samples while the browser
+was also handling the 1.7 GB artifact stream; they are diagnostic only and not
+used for the throughput estimate.
+
+### Local-artifact runs (model served from disk, verified)
+
+The 1.7 GB q4 artifacts are served by the harness itself
+(`MODELS_DIR=... node serve.mjs`, `env.localModelPath='/models/'` +
+`env.allowLocalModels=true`). The server access log recorded the
+`/models/.../model_q4.onnx_data` requests, so the local path was actually
+used. Five runs on a fresh browser profile:
+
+| Run | Load (local cache hit + compile) | Generation (32 tokens) | tok/s |
+|---|---|---|---|
+| 1 | 6,610 ms | 3,026 ms | 10.6 |
+| 2 | 5,478 ms | 2,034 ms | 15.7 |
+| 3 | 4,688 ms | 1,608 ms | 19.9 |
+| 4 | (from the same session) | 4,713 ms | 6.8 |
+| 5 | (from the same session) | 2,304 ms | 13.9 |
+
+Same output text in every run. Generation throughput: **6.8-19.9 tok/s**
+(32 tokens, greedy), mean ~13 tok/s across these five samples.
+
 Findings:
 
 - A 1B-class model produces correct continuation text on the real WebGPU path
   in this environment (device precondition proven).
-- The browser cache (transformers.js Cache API) shortens reload from ~43 min
-  to ~16 s — the IndexedDB/cache acceptance angle is demonstrated at the
-  browser-cache level.
-- Generation throughput varies between runs (2.6 vs 1.3 tok/s on one sample
-  each); more samples are needed before treating it as a stable number.
+- **Generation throughput is 6.8-19.9 tok/s (32 tokens, greedy) when the model
+  is served locally.** The remote-artifact readings (1.3-2.6 tok/s) are not
+  used for the estimate (see above).
+- Load from local artifacts + WebGPU compile is ~5-7 s per run; the first
+  remote load was 43 min, dominated by the download. The browser Cache API
+  shortens a remote reload to ~16 s.
 - This single-worker run does not yet cover: two-segment split execution,
   checkpoint relay, worker-loss resume, or split-vs-reference quality
   comparison (see `Executable Harness` above for the simulated control flow).
 
-Harness: `browser-harness/webgpu-2b/` (serve with `node serve.mjs`, open
+Harness: `browser-harness/webgpu-2b/` (serve with
+`MODELS_DIR=<dir> node serve.mjs` to serve local model artifacts, open
 `index.html?model=<repo>` and click Run; the report is rendered on the page).
 The runner loads transformers.js from a pinned jsdelivr URL and model
-artifacts from huggingface.co — fine for a local diagnostic harness, but a
-telemetry path would need to vendor the library with SRI and serve artifacts
+artifacts from the local `/models/` path or huggingface.co — fine for a local
+diagnostic harness, but a telemetry path would need to vendor the library with
+SRI and serve artifacts
 from the unzen CDN.
+
+## Split-path design notes (2026-08-06)
+
+ONNX graph analysis of `onnx-community/Llama-3.2-1B-Instruct`
+(`onnx/model_q4.onnx`, opset 21 + com.microsoft) to prepare the two-segment
+split implementation. The graph was NOT split yet; these notes fix the
+boundary contract the split must honor.
+
+### Graph structure (measured)
+
+| Item | Value |
+|---|---|
+| Decoder layers | 16 (`/model/layers.0` .. `/model/layers.15`) |
+| Hidden size | 2048 (float32) |
+| KV cache | 16 layers x 8 heads x 64 dims (`past_key_values.N.key/value`) |
+| Attention mask | computed by a shared subgraph (`/model/attn_mask_reformat/...`) from `attention_mask` + sequence length |
+| RoPE | `cos_cache` / `sin_cache` are graph INITIALIZERS in the external data file (`model_q4.onnx_data`), shape `[131072, 32]` float32 (~16 MB each), consumed by every `GroupQueryAttention` node |
+| LM head | `final_norm_layernorm` (inside `/model/layers.16/`) + `lm_head` MatMul → `logits [batch, seq, 128256]` |
+
+### Layer boundary
+
+Each layer N starts with `SkipSimplifiedLayerNormalization`
+(`/model/layers.N/input_layernorm/SkipLayerNorm`), which fuses the residual
+add. The `GroupQueryAttention` node takes NO residual input: the residual
+chain is carried by the SkipLayerNorm outputs (`output_3` = residual path,
+`output_0` = normalized path). Verified wiring into layer 8's input norm:
+
+- `output_3` of layer 7's `post_attention_layernorm` (the layer-7 residual
+  chain state), and
+- `output_0` of layer 7's `mlp/down_proj` (the MLP result),
+
+both `[batch_size, sequence_length, 2048]` float32, are added + normalized by
+layer 8's `input_layernorm`. A clean layer-7/8 boundary therefore relays
+**2 tensors per token (residual + MLP output, 16 KiB/token)**; there is no
+single-tensor boundary because of the fused residual chain. (An alternative —
+slicing after layer 8's `input_layernorm` — still needs the normalized output
+AND the residual output, so it stays 2 tensors.)
+
+### Checkpoint (relayed hidden state) size estimate
+
+The boundary relays two `[batch_size, sequence_length, 2048]` float32 tensors
+(residual + MLP output) per layer boundary. At batch 1: **16 KiB per token**
+(2 x 2048 x 4 B), so a 32-token prefix relay costs **512 KiB** and each
+decoded token relays 16 KiB. This is the size the Coordinator must relay per
+step in the split path — to be confirmed by the split run.
+
+### Split approach (recommended)
+
+Two onnxruntime-web sessions over the SAME q4 artifact file, produced by
+slicing the ONNX graph (e.g. python `onnx.utils.extract_model` on the
+`model_q4.onnx` + external data):
+
+- **Segment 0**: inputs `input_ids` + `attention_mask` + `past_key_values.0..7` +
+  `cos_cache` / `sin_cache`; embedding + attention-mask subgraph +
+  `/model/layers.0` .. `/model/layers.7`; outputs the layer-7 residual
+  (`post_attention_layernorm` `output_3`) + layer-7 MLP result
+  (`mlp/down_proj` `output_0`) + `present.0..7`.
+- **Segment 1**: `/model/layers.8` (input_layernorm onward) ..
+  `/model/layers.16` (incl. final norm) + `lm_head`; inputs the two boundary
+  tensors + `past_key_values.8..15` + `attention_mask` + `cos_cache` /
+  `sin_cache`; outputs `logits` + `present.8..15`.
+
+Generation loop (self-implemented, transformers.js not used for execution):
+prefill segment 0 then 1 once, then per-token segment 0 -> relay hidden state
+-> segment 1 -> sample.
+
+### Open questions before implementing
+
+- Weight tensors live in the shared external data file (`model_q4.onnx_data`);
+  both sliced models must reference it (no re-export needed if the initializer
+  names are preserved).
+- `cos_cache` / `sin_cache` are large initializers (each ~16 MB); both sliced
+  models reference them from the shared external data file, so the file must
+  stay co-located with both sliced `.onnx` files.
+- The attention-mask subgraph must be duplicated into segment 1 or the mask
+  tensor must be precomputed by the caller and passed in as a graph input.
+- KV-cache ownership: segment 0 owns layers 0-7 cache, segment 1 owns 8-15;
+  the Coordinator relays only the two boundary tensors (16 KiB/token), not the
+  caches.
+- Quality gate: split-path logits must match the single-worker reference
+  within tolerance (the reference path is measured above).
+
 
 ## Relationship To Existing Designs
 
