@@ -78,35 +78,6 @@ during execution (deliverable 4):
 | `prepare` | Model preparation state change + download progress |
 | `error` | Failure carrying the structured `ErrorCode` taxonomy (context overflow is an `error` event with `code: 'context-overflow'`) |
 
-> `prepare` events flow through `prepare()`'s contract-level `onProgress`
-> callback (`PrepareOptions.onProgress`), NOT through the `execute()` event
-> stream: `prepare()` is not async-iterable, so the callback is the only
-> contract-level path that reaches the Coordinator without a backend-specific
-> downcast. The Chrome backend additionally exposes a concrete-class
-> `onPrepare()` subscription; both channels deliver the same events.
-
-## Chrome backend implementation (issue #95)
-
-`src/chrome-language-model-backend.ts` implements the contract for the
-`browser-built-in-full-model` kind:
-
-- state machine as a validated discriminated union (`unsupported` /
-  `unavailable` / `preparing` / `ready` / `busy` / `failed` / `destroyed`);
-  illegal transitions throw `StateTransitionError` instead of corrupting state
-  (`transitionBackendState()`);
-- session policy: `per-request` (fresh session per request, released on
-  completion) vs `per-conversation` (reuse with soft/hard usage thresholds;
-  hard threshold is an explicit `context-overflow` error or a fresh-session
-  rotation — input is never silently dropped);
-- abort / cancel via `AbortSignal` with no events flowing after abort;
-- Chrome exceptions mapped to the common `ErrorCode` taxonomy
-  (`classifyChromeError`, context-sensitive for preparation failures);
-- capability + health telemetry (`describeCapabilities()` / `telemetry()`)
-  that never carries prompt text or download content;
-- `src/chrome-prompt-api-adapter.ts` is the duck-typed seam to the real
-  `window.ai.languageModel`, and `tests/chrome-prompt-api-fake.ts` is the
-  scriptable fake used by the unit tests.
-
 ## Routing
 
 `src/backend-registry.ts` selects candidates by capability predicate — never
@@ -181,12 +152,10 @@ is ever exposed to the other.
 ## Evidence note
 
 The Chrome capability defaults (`contextWindowTokens: 4096`,
-`expectedLatencyMs: 1000` in `createBrowserBuiltInModelDescriptor()` and the
-mirrored fallbacks in `ChromeLanguageModelBackend`) are EXAMPLE placeholders
-pending the real-browser measurement tracked by issue #93. They are not
-measured facts and must be replaced by captured-and-verified evidence before
-production use. The backend reports a session-measured context window whenever
-one has been observed.
+`expectedLatencyMs: 1000` in `createBrowserBuiltInModelDescriptor()`) are
+EXAMPLE placeholders pending the real-browser measurement tracked by issue
+#93. They are not measured facts and must be replaced by captured-and-verified
+evidence before production use.
 
 ## Focused tests
 
@@ -196,5 +165,4 @@ npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
 npx vitest run tests/browser-built-in-model.test.ts
-npx vitest run tests/chrome-language-model-backend.test.ts
 ```

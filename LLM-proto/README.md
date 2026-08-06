@@ -167,8 +167,6 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Capability Validator | `src/inference-capability.ts` | `WorkerCapability`のruntime validation。schema version・unknown field policy・enum/range整合を検証 (#94) |
 | Backend Registry | `src/backend-registry.ts` | capability predicateによるcandidate selection。backend固有型ではなくcapabilityでrouting (#94) |
 | Legacy Worker Adapter | `src/legacy-worker-adapter.ts` | 旧Worker登録protocolをsegmented capabilityへ変換する一時adapter (#94) |
-| Chrome Language Model Backend | `src/chrome-language-model-backend.ts` | Chrome Prompt APIをラップするfull-model `InferenceBackend`実装。状態機械・session policy・abort/context監視・error taxonomy変換 (#95) |
-| Chrome Prompt API Adapter | `src/chrome-prompt-api-adapter.ts` | browser global（`window.ai.languageModel`）とbackendの間のduck-typingシーム。test可能なfake注入を可能にする (#95) |
 
 ### Feasibility / measurement contracts
 
@@ -283,7 +281,6 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 - [#102](https://github.com/azumag/unzen/issues/102): hard-coded model geometryとplaceholder hashのmanifest化 — `SegmentedModelManifest` + 起動時fail-fast validatorで対応済み。30B/8segment/~2.1GBはEXAMPLE fixtureであり実測値ではない
 - [#103](https://github.com/azumag/unzen/issues/103): durable request state、idempotency、retry、cancellation — `DurableCoordinator` + in-memory repositoryで対応（詳細は[`docs/coordinator-durability.md`](./docs/coordinator-durability.md)）
 - [#94](https://github.com/azumag/unzen/issues/94): InferenceBackend / `WorkerCapability`抽象化 — segmented・full-model・server-fallbackを同一capabilityでrouting（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
-- [#95](https://github.com/azumag/unzen/issues/95): ChromeLanguageModelBackend — Chrome Prompt APIのfull-model backend実装（状態機械・session policy・error taxonomy・fake APIによるunit test）。capability default値は#93実測完了までEXAMPLE placeholder
 - [#92](https://github.com/azumag/unzen/issues/92): Chrome Built-in AI backend（descriptorは`src/browser-built-in-model.ts`で定義済み）
 
 これらが完了するまで、現在のgate chainをproduction-ready systemとは表現しません。

@@ -149,14 +149,6 @@ export interface PrepareOptions {
   readonly modelId?: string;
   readonly priority?: 'low' | 'normal' | 'high';
   readonly signal?: AbortSignal;
-  /**
-   * Contract-level model-preparation progress channel. Preparation events flow
-   * through this callback (and possibly a backend-specific subscription), NOT
-   * through the execute() event stream: prepare() is not async-iterable, so
-   * this callback is the only path that reaches the Coordinator without a
-   * backend-specific downcast.
-   */
-  readonly onProgress?: (event: InferencePrepareEvent) => void;
 }
 
 /** Outcome of a `prepare()` call. `state: 'available'` means ready to run. */
