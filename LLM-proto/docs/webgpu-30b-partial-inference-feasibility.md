@@ -103,6 +103,23 @@ Run this only after the metadata gate passes:
 8. Record adapter name, browser version, runtime version, peak memory, shader
    compile time, first-token time, and failure mode.
 
+## WebGPU availability measurement (2026-08-06)
+
+Device precondition probe (self-reported, not yet captured-and-verified):
+
+| Item | Measured |
+|---|---|
+| Browser | Chrome 150.0.7871.188 (macOS 26.5.2, arm64) |
+| Adapter | vendor `apple`, architecture `metal-3` (Apple GPU, Metal 3) |
+| `navigator.gpu` | present |
+| `requestAdapter()` / `requestDevice()` | both succeed |
+| Compute execution | minimal parallel-add compute shader ran and read back `[1,2,3,4]` (correct) |
+
+This confirms the device precondition (a real GPU-backed WebGPU path works in
+this environment) for the manual checklist above. It does NOT measure model
+loading, shader compile time, memory budget, or checkpoint transfer, and it is
+not wrapped in a captured-and-verified envelope yet.
+
 ## Advance / Stop Conditions
 
 Advance to real 30B partial inference only when:
