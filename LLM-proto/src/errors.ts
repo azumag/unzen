@@ -57,6 +57,18 @@ export const ErrorCode = {
   DuplicateCompletion: 'duplicate-completion',
   /** An illegal state transition was attempted. */
   StateTransitionViolation: 'state-transition-violation',
+  /** The browser/API surface is not supported by this environment (issue #95). */
+  UnsupportedApi: 'unsupported-api',
+  /** The model is unavailable or the hardware requirements are not met (issue #95). */
+  ModelUnavailable: 'model-unavailable',
+  /** The operation was rejected because a user activation is required (issue #95). */
+  UserActivationRequired: 'user-activation-required',
+  /** The request uses a language/modality the backend does not support (issue #95). */
+  UnsupportedModality: 'unsupported-modality',
+  /** The session was destroyed and cannot be reused (issue #95). */
+  SessionDestroyed: 'session-destroyed',
+  /** A browser policy / permission denied the operation (issue #95). */
+  PermissionDenied: 'permission-denied',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -164,7 +176,9 @@ export function isCancellation(code: ErrorCode): boolean {
  * True when the failure is attributed to the worker and the worker (or its
  * generation) should be isolated from future assignments. Task-level failures
  * (invalid input, unsupported language, context overflow) never harm a healthy
- * worker.
+ * worker. Issue #95 additions (Chrome Prompt API backend) are also task- or
+ * capability-level: they describe the environment/request, not a fault of a
+ * healthy segmented worker.
  */
 export function isIsolatable(code: ErrorCode): boolean {
   switch (code) {
@@ -177,6 +191,12 @@ export function isIsolatable(code: ErrorCode): boolean {
     case ErrorCode.DuplicateCompletion:
     case ErrorCode.StateTransitionViolation:
     case ErrorCode.UnknownWorker:
+    case ErrorCode.UnsupportedApi:
+    case ErrorCode.ModelUnavailable:
+    case ErrorCode.UserActivationRequired:
+    case ErrorCode.UnsupportedModality:
+    case ErrorCode.SessionDestroyed:
+    case ErrorCode.PermissionDenied:
       return false;
     default:
       return true;

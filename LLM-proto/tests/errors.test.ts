@@ -81,6 +81,15 @@ describe('errors', () => {
       expect(isIsolatable(ErrorCode.ContextOverflow)).toBe(false);
     });
 
+    it('issue #95 backend errors describe the environment/request, not a worker fault', () => {
+      expect(isIsolatable(ErrorCode.UnsupportedApi)).toBe(false);
+      expect(isIsolatable(ErrorCode.ModelUnavailable)).toBe(false);
+      expect(isIsolatable(ErrorCode.UserActivationRequired)).toBe(false);
+      expect(isIsolatable(ErrorCode.UnsupportedModality)).toBe(false);
+      expect(isIsolatable(ErrorCode.SessionDestroyed)).toBe(false);
+      expect(isIsolatable(ErrorCode.PermissionDenied)).toBe(false);
+    });
+
     it('worker/transport/protocol failures ARE isolatable', () => {
       expect(isIsolatable(ErrorCode.WorkerDisconnected)).toBe(true);
       expect(isIsolatable(ErrorCode.HeartbeatTimeout)).toBe(true);
