@@ -19,7 +19,14 @@ LLM-protoでは次を検証します。
 - Coordinatorを通信・状態管理・securityの境界にできるか
 - ユーザーの明示的オプトインと停止可能性を維持できるか
 - サイト運営者への報酬を不正耐性のある形で計算できるか
-- Chrome Built-in AI等、ブラウザ管理モデルを別backendとして利用できるか
+
+> 破棄済み（2026-08-06）: Chrome Built-in AI / Prompt API を別backendとして
+> 利用する方針（トラックB、issues #92/#93/#95/#100）は、実ブラウザ計測で
+> 特別な設定（フラグ・エンタープライズポリシー）なしには API が露出しない
+> ことが確認されたため破棄しました。関連コード（`ChromeLanguageModelBackend`、
+> `chrome-prompt-api-report.ts`、`browser-built-in-model.ts`、
+> `browser-harness/` 等）は削除済みです。#94 の `browser-built-in-full-model`
+> kind は抽象化としてのみ残ります。
 
 ## 2. 実装トラック
 
@@ -42,55 +49,21 @@ API request
 - Worker離脱時は直前checkpointから別Workerへ再割り当てする
 - model geometry、segment size、latency、checkpoint sizeは仮定値と実測値を区別する
 
-### B. Chrome Built-in AI full-model backend
+### B. Chrome Built-in AI full-model backend — **破棄**
 
-Chromeが管理する端末内モデルを、一つのrequestを完結するfull-model Workerとして扱う計画です。
+Chromeが管理する端末内モデルを、一つのrequestを完結するfull-model Workerとして
+扱う計画でしたが、**2026-08-06 に破棄**しました。実ブラウザ計測（#93）で、
+Chrome 150 stable / 153 Canary のいずれもフラグやエンタープライズポリシーの
+特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、
+「設定不要で動くWeb収益化インフラ」の要件を満たせないと判断しました。
 
-```text
-user consent / user activation
-  → Prompt API document runner
-  → ChromeLanguageModelBackend
-  → authenticated Coordinator bridge
-  → whole-model routing
-```
-
-この経路はsegmented pipelineとは別backendです。
-
-- layer range、model shard、checkpoint relayを要求しない
-- Prompt API sessionはdocument contextが所有する
-- availability、model preparation、streaming、abort、context、session lifecycleを扱う
-- browser version、OS、hardware、execution surfaceごとの実ブラウザ検証が必要
-
-実装計画は [Issue #92](https://github.com/azumag/unzen/issues/92) を参照してください。
-
-#### 2.B.1 Chrome Prompt API feasibility のGo/No-Go記録（#93）
-
-standalone browser harness（`browser-harness/chrome-prompt-api/`）が実ブラウザで
-計測し、report schema + validator（`src/chrome-prompt-api-report.ts`）が証明力を
-判定します。**現時点では全項目 pending real-browser measurement（未解決条件）です。**
-実測結果は主張しません。実測した場合は、captured-and-verified envelopeで検証された
-結果のみ、この表の「現在の記録」を更新します。
-
-| 条件 | 現在の記録 | `met`になる条件 |
-|---|---|---|
-| real-browser-evidence | **pending real-browser measurement** | artifact loader + independent verifierで検証された`captured-and-verified` envelope |
-| prompt-api-availability | **pending real-browser measurement** | top-levelでavailabilityが`available` |
-| create-after-user-activation | **pending real-browser measurement** | user activation内で`create()`成功 |
-| first-download-preparation | **pending real-browser measurement** | 初回download完了と`downloadprogress`観測 |
-| prompt-non-streaming | **pending real-browser measurement** | `prompt()`が計測付きで成功 |
-| prompt-streaming | **pending real-browser measurement** | `promptStreaming()`がchunk計測付きで成功 |
-| japanese-input-output | **pending real-browser measurement** | 日本語入力受付と日本語出力 |
-| abort-interruption | **pending real-browser measurement** | `AbortSignal`で生成中断 |
-| context-usage-and-overflow | **pending real-browser measurement** | context window取得とoverflow/quota処理 |
-| session-lifecycle | **pending real-browser measurement** | destroy + re-create成功 |
-| concurrent-sessions | **pending real-browser measurement** | 同時session実行エラーなし |
-| surface-matrix | **pending real-browser measurement** | top-level / same-origin / sandbox iframeの記録 |
-
-判定: `not-evaluated`（未解決条件）＝実ブラウザ検証済みevidenceなし（現状）。
-`go`＝全条件met（captured-and-verified必須）。`conditional-go`＝一部pending/not-applicable。
-`no-go`＝シナリオ失敗。手書きfixtureは`not-evaluated`から昇格できません。
-
-- 詳細: [`docs/chrome-prompt-api-harness.md`](./docs/chrome-prompt-api-harness.md)
+- 破棄対象: issues #92（Chrome Built-in AI backend）、#93（feasibility harness）、
+  #95（ChromeLanguageModelBackend 実装）、#100（E2E / 互換性matrix）
+- 削除済み: `src/chrome-language-model-backend.ts`、`src/chrome-prompt-api-adapter.ts`、
+  `src/chrome-prompt-api-report.ts`、`src/browser-built-in-model.ts`、
+  `browser-harness/`、関連テスト・docs（`docs/chrome-prompt-api-harness.md` 等）
+- 残存: #94 の `InferenceBackend` 抽象化と `browser-built-in-full-model` kind
+  （将来のfull-model backend用の予約枠。実装なし）
 
 ### C. Swarm / ensemble experiments
 
@@ -113,7 +86,10 @@ standalone browser harness（`browser-harness/chrome-prompt-api/`）が実ブラ
 | Miniflare smoke | Miniflare/workerd上のfetch・storage・WebSocket境界 | `runtime-observed`（対象範囲限定） |
 | deployed/browser/WebGPU系gate | evidence envelopeとdecision logicのvalidator | provenanceがなければ`contract-tested`。browser preview・pilot・telemetry gateはenvelope検証済みのみ受け付け |
 | fleet SLO、reward、payout、tax | upstream reportからの判定・reconciliation logic | 主に`contract-tested` |
-| Chrome Built-in AI | feasibility harness・report schema・Go/No-Go gate（#93） | `contract-tested`。実ブラウザ計測は未実施（未解決条件） |
+
+> 破棄済み: Chrome Built-in AI（#92/#93/#95/#100）は、特別な設定なしにはAPIが
+> 露出しないことを実ブラウザ計測で確認したため採用を破棄（2026-08-06）。
+> 関連コード削除済み。
 
 最新状態はartifactとevidence envelopeに基づいて更新します。
 
@@ -151,7 +127,6 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Protocol | `src/protocol.ts` | Coordinator-Worker message contract |
 | Model Manifest | `src/model-manifest.ts` | versioned `SegmentedModelManifest` + manifest digest (#102)。segment geometryの唯一のsource of truth |
 | Model Manifest Validator | `src/model-manifest-validator.ts` | 起動時fail-fast検証。placeholder hash・fixture manifestをreject (#102) |
-| Browser Built-in Model | `src/browser-built-in-model.ts` | Chrome full-model backend descriptor。segment geometryを持たない (#92, #102) |
 | WorkerPool | `src/worker-pool.ts` | Worker登録・heartbeat・選択・状態管理 |
 | CheckpointStore | `src/checkpoint.ts` | checkpointの保存・取得 |
 | Pipeline | `src/pipeline.ts` | 1 segment / 1 Workerのpipeline |
@@ -175,7 +150,6 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | TwoWorkerPrototype | `src/two-worker-prototype.ts` | simulated fixture |
 | AdaptiveChunkDispatcher | `src/adaptive-chunk-dispatcher.ts` | simulated telemetry |
 | WebGPU30BFeasibility | `src/webgpu-30b-feasibility.ts` | metadata evaluation（`SegmentedModelManifest`を入力とする、#102） |
-| ChromePromptApiFeasibility | `src/chrome-prompt-api-report.ts` | Chrome Prompt API harness report schema + validator + Go/No-Go gate（#93、実ブラウザ計測は別） |
 | CheckpointTransferMeasurement | `src/checkpoint-transfer-measurement.ts` | deterministic payload / estimate |
 | BrowserWorkerRetention | `src/browser-worker-retention.ts` | supplied session sample aggregation |
 | CoordinatorPrototype | `src/coordinator-prototype.ts` | simulated Coordinator report |
@@ -235,7 +209,6 @@ npm test -- --run tests/two-worker-prototype.test.ts
 npm test -- --run tests/adaptive-chunk-dispatcher.test.ts
 npm test -- --run tests/webgpu-30b-feasibility.test.ts
 npm test -- --run tests/model-manifest-validator.test.ts
-npm test -- --run tests/browser-built-in-model.test.ts
 npm test -- --run tests/checkpoint-transfer-measurement.test.ts
 npm test -- --run tests/browser-worker-retention.test.ts
 npm test -- --run tests/coordinator-prototype.test.ts
@@ -244,7 +217,6 @@ npm run test:workers-signed-runner-gate
 npm run test:workers-signed-runner-browser-preview
 npm run test:workers-signed-runner-webgpu-worker-pilot
 npm run test:workers-webgpu-telemetry
-npm run test:chrome-prompt-api
 npm run test:workers-fleet-slo-cost
 npm run test:workers-publisher-settlement
 npm run test:workers-publisher-ledger
@@ -261,7 +233,6 @@ npm run test:workers-publisher-tax-production-monitoring
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
-npx vitest run tests/browser-built-in-model.test.ts
 ```
 
 ### Runtime smoke
@@ -281,7 +252,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 - [#102](https://github.com/azumag/unzen/issues/102): hard-coded model geometryとplaceholder hashのmanifest化 — `SegmentedModelManifest` + 起動時fail-fast validatorで対応済み。30B/8segment/~2.1GBはEXAMPLE fixtureであり実測値ではない
 - [#103](https://github.com/azumag/unzen/issues/103): durable request state、idempotency、retry、cancellation — `DurableCoordinator` + in-memory repositoryで対応（詳細は[`docs/coordinator-durability.md`](./docs/coordinator-durability.md)）
 - [#94](https://github.com/azumag/unzen/issues/94): InferenceBackend / `WorkerCapability`抽象化 — segmented・full-model・server-fallbackを同一capabilityでrouting（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
-- [#92](https://github.com/azumag/unzen/issues/92): Chrome Built-in AI backend（descriptorは`src/browser-built-in-model.ts`で定義済み）
+- [#92](https://github.com/azumag/unzen/issues/92) / [#93](https://github.com/azumag/unzen/issues/93) / [#95](https://github.com/azumag/unzen/issues/95) / [#100](https://github.com/azumag/unzen/issues/100): Chrome Built-in AI / Prompt API — **破棄**（特別な設定なしにはAPIが露出しないことを実ブラウザ計測で確認。関連コード削除済み）
 
 これらが完了するまで、現在のgate chainをproduction-ready systemとは表現しません。
 
@@ -292,7 +263,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 - 基本Coordinator/Pipelineはprocess-local stateを含み、production durabilityが未完成（`DurableCoordinator`は#103でdurable repository上に構築済み。production storage adapterは未実装）
 - 基本Pipelineのtimeoutは`withAbortableTimeout`（`src/pipeline-utils.ts`）でunderlying executionをabortする設計に移行済み（#103）
 - 手書きfixture fieldだけでは実行証拠にならない。browser preview・WebGPU pilot・telemetry gateはevidence envelopeの検証を必須とし、`contract-tested`以上へは昇格しない
-- Prompt APIはdocument runner、Permission Policy、user activation等の実ブラウザ検証が未完了（feasibility harnessは#93で導入済み。計測・captured-and-verified evidenceは未取得）
+- Chrome Prompt API / Built-in AI は採用を破棄（#92/#93/#95/#100）。実ブラウザ計測で特別な設定なしにはAPIが露出しないことを確認（2026-08-06）。`browser-built-in-full-model` kindは#94抽象化としてのみ残存
 - payout・tax gateは実providerの資金移動・申告完了を意味しない
 
 ## 9. 関連ドキュメント
@@ -301,7 +272,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 |---|---|---|
 | [`PLAN.md`](./PLAN.md) | 確定方針とpipeline計画 | 設計基準。仮定値は実測値と区別する |
 | [`docs/evidence-readiness.md`](./docs/evidence-readiness.md) | evidence levelとreadiness規約 | #108で導入、gate移行#101で適用 |
-| [`docs/model-manifest.md`](./docs/model-manifest.md) | `SegmentedModelManifest` / validator / Chrome descriptor規約 | #102で導入 |
+| [`docs/model-manifest.md`](./docs/model-manifest.md) | `SegmentedModelManifest` / validator | #102で導入 |
 | [`docs/2b-two-worker-prototype.md`](./docs/2b-two-worker-prototype.md) | 2B / 2-worker milestone | contract harnessあり |
 | [`docs/adaptive-chunk-dispatcher.md`](./docs/adaptive-chunk-dispatcher.md) | adaptive dispatcher | simulated logicあり |
 | [`docs/webgpu-30b-partial-inference-feasibility.md`](./docs/webgpu-30b-partial-inference-feasibility.md) | 30B partial inferenceの判定項目 | metadata gateあり、実browser検証は別 |
@@ -311,7 +282,6 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 | [`docs/coordinator-durability.md`](./docs/coordinator-durability.md) | Durable Coordinator (#103): durable state・idempotency・identity・retry/cancellation・checkpoint envelope | in-memory repository + durable Coordinator testでcontract検証 |
 | [`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md) | InferenceBackend / `WorkerCapability`抽象化 (#94): backend kind、capability validation、event union、capability routing、per-backend責任境界 | mock backend + routing unit testでcontract検証 |
 | [`docs/workers-coordinator-prototype.md`](./docs/workers-coordinator-prototype.md) | Workers/operations gate chain | contractとruntime evidenceを区別して読む |
-| [`docs/chrome-prompt-api-harness.md`](./docs/chrome-prompt-api-harness.md) | Chrome Prompt API feasibility harnessとmanual計測手順 | #93で導入。実測結果は未取得（未解決条件） |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 

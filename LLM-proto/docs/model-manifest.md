@@ -10,8 +10,8 @@ validated manifest so that:
   accident;
 - a config whose real artifact hashes do not match cannot generate an
   execution plan;
-- the Chrome built-in backend (which needs no segment geometry at all) is a
-  separate, geometry-free descriptor.
+- a geometry-free backend (if one is ever introduced through the #94
+  abstraction) is kept separate from segment geometry.
 
 ## Manifest Shape
 
@@ -89,18 +89,9 @@ feasibility planning, not measured fact** - the fixture's `memoryBasis` is
 `budgeted` and its `measurementConditions` state that the numbers are
 synthetic.
 
-## Chrome Built-in Backend
+## Browser-managed full-model backend
 
-`src/browser-built-in-model.ts` defines `BrowserBuiltInModelDescriptor` for
-the Chrome Prompt API full-model backend
-(`backend: 'browser-built-in-full-model'`, `provider: 'chrome'`,
-`api: 'prompt-api'`). It carries no segment geometry, no artifact hashes, and
-no VRAM partitioning; `validateBrowserBuiltInModelDescriptor()` rejects any
-descriptor that fabricates them. Since #94 the descriptor embeds a typed,
-runtime-validated `WorkerCapability` (see
-[`docs/inference-backend-abstraction.md`](./inference-backend-abstraction.md))
-instead of a loose string-tag array, and rejects any capability that declares
-segment execution.
+> 破棄済み: Chrome Prompt API / Built-in AI 採用方針（#92/#93/#95/#100）は、実ブラウザ計測で特別な設定なしには API が露出しないことが確認されたため破棄しました。`src/browser-built-in-model.ts` は削除済みです。`browser-built-in-full-model` kind は #94 の抽象化としてのみ残り、具体的な実装はありません。
 
 ## Focused Test Command
 

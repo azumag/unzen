@@ -121,7 +121,11 @@ Evidence levelとは別に、機能の成熟度を以下で表す。
 | deployed smoke / browser preview | browser evidence envelopeをvalidatorで検証 | artifact provenanceがない場合は`contract-tested`。loader・verifier・trust listが揃ったLevel 3のみ`verified-pilot`以上 |
 | signed runner WebGPU pilot / telemetry | caller supplied evidence envelopeをvalidatorで検証し、upstream readinessでcap | 現状は`contract-tested`。名称だけで実WebGPU実行済みとしない |
 | fleet SLO / reward / payout / tax gates | upstream reportを入力するdecision gate | 主に`contract-tested`。実fleet・資金移動・申告を証明しない |
-| Chrome Built-in AI | Issue #92配下で設計中 | `design-only` |
+
+> 破棄済み: Chrome Built-in AI (issues #92/#93/#95/#100) は、特別な設定なしには
+> API が露出しないことが実ブラウザ計測で確認されたため採用を破棄しました。
+> 関連コードは削除済みで、`browser-built-in-full-model` kind は #94 の
+> 抽象化としてのみ残ります。
 
 ## 文書で使う表現
 
@@ -213,9 +217,10 @@ interface EvidenceEnvelope<T> {
 
 ## 関連Issue
 
-- [#92 Chrome Built-in AIをUnzen Workerとして利用する](https://github.com/azumag/unzen/issues/92)
-- [#93 Chrome Prompt APIの実ブラウザfeasibility harness](https://github.com/azumag/unzen/issues/93)
-- [#100 Chrome backend E2E・互換性matrix・段階的rollout](https://github.com/azumag/unzen/issues/100)
+- [#92 Chrome Built-in AIをUnzen Workerとして利用する](https://github.com/azumag/unzen/issues/92) — **破棄**（特別な設定なしにはAPIが露出しないため）
+- [#93 Chrome Prompt APIの実ブラウザfeasibility harness](https://github.com/azumag/unzen/issues/93) — **破棄**（#92と同理由。関連コード削除済み）
+- [#95 ChromeLanguageModelBackend 実装](https://github.com/azumag/unzen/issues/95) — **破棄**（#92と同理由。revert済み）
+- [#100 Chrome backend E2E・互換性matrix・段階的rollout](https://github.com/azumag/unzen/issues/100) — **破棄**（#92/#93に依存）
 - [#101 simulated evidenceと実測evidenceを分離](https://github.com/azumag/unzen/issues/101)
 - [#102 model geometry・placeholder hashをmanifestへ移行](https://github.com/azumag/unzen/issues/102)
 - [#103 Coordinatorの永続性・retry/cancellation semantics](https://github.com/azumag/unzen/issues/103)

@@ -8,8 +8,7 @@
 4. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
 5. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
 6. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
-7. [`chrome-prompt-api-harness.md`](./chrome-prompt-api-harness.md) — Chrome Prompt API feasibility harness（#93）とmanual計測手順
-8. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
+7. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
 
 ## 読み方
 
@@ -19,4 +18,6 @@
 - runtime自身のreport: runtime observation
 - digestとverifierを持つartifact: verified evidence
 
-最新の実装計画はGitHub Issue #92、証拠モデルの是正はIssue #101を参照してください。
+最新の実装計画は[`../PLAN.md`](../PLAN.md)、証拠モデルの是正はIssue #101を参照してください。
+
+> 注: Chrome Prompt API / Built-in AI 採用方針（#92/#93/#95/#100）は、実ブラウザ計測で特別な設定なしには API が露出しないことが確認されたため破棄しました（#95 revert・関連ファイル削除済み）。`browser-built-in-full-model` kind は抽象化としてのみ残ります。

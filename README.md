@@ -11,7 +11,7 @@ Webブラウザやクライアント端末の余剰計算資源を活用し、�
 |---|---|---|
 | [`core`](./core/) | QuickJS/Wasmを利用したブラウザ委譲型の汎用コード実行 | ブラウザ実行・サーバーフォールバックのプロトタイプとE2Eデモあり |
 | [`LLM-proto`](./LLM-proto/) — segmented WebGPU | モデルをセグメント分割し、Coordinator経由のcheckpoint relayで推論する方式 | TypeScriptの制御フロー、metadata、Miniflare smoke、各種gateを実装中。実モデル・実ブラウザ証拠は別途検証が必要 |
-| [`LLM-proto`](./LLM-proto/) — Chrome Built-in AI | Chromeが管理する端末内モデルをfull-model Workerとして利用する方式 | Issue #92配下でfeasibility・Backend抽象化・UI/UX・E2Eを設計中 |
+| ~~Chrome Built-in AI backend~~ | ~~Chromeが管理する端末内モデルをfull-model Workerとして利用する方式~~ | **破棄（2026-08-06）**: 特別な設定なしにはAPIが露出しないことを実ブラウザ計測で確認。詳細は[`LLM-proto/README.md`](./LLM-proto/README.md) |
 | [`LLM-proto/SWARM.md`](./LLM-proto/SWARM.md) | 軽量モデルを複数ノードで実行し、分散合意する実験方式 | 探索的・実験的 |
 
 ## Evidenceとreadiness
@@ -62,7 +62,7 @@ LLMトラックではWorker・サイト運営者への報酬が必要という�
 
 ## 主要Issue
 
-- [#92 Chrome Built-in AI（Prompt API / Gemini Nano）をUnzen Workerとして利用する](https://github.com/azumag/unzen/issues/92)
+- ~~[#92 Chrome Built-in AI（Prompt API / Gemini Nano）をUnzen Workerとして利用する](https://github.com/azumag/unzen/issues/92)~~ — **破棄（2026-08-06）**: 特別な設定なしにはAPIが露出しないため。関連Issue #93/#95/#100も破棄、コード削除済み
 - [#101 simulated evidenceと実測evidenceを分離しreadiness表現を是正](https://github.com/azumag/unzen/issues/101)
 - [#102 hard-coded model geometry・placeholder hashをmodel manifestに置換](https://github.com/azumag/unzen/issues/102)
 - [#103 Coordinatorの永続性・request identity・retry/cancellation semanticsを修正](https://github.com/azumag/unzen/issues/103)
@@ -73,7 +73,6 @@ LLMトラックではWorker・サイト運営者への報酬が必要という�
 - 商用SLA、可用性、性能、費用優位性
 - 30Bモデルの実ブラウザ分割推論が成立すること
 - READMEに記載された仮定値が実測値であること
-- Chrome Built-in AIが全Chrome環境で利用できること
 - payout・税務gateが実際の資金移動や申告完了を証明すること
 
 各トラックは、実測artifactと再現可能な手順が揃った段階で成熟度表示を更新します。

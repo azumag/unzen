@@ -732,8 +732,8 @@ All-or-Nothing パイプライン:
 24. [Publisher tax filing production cutover readiness gate](./docs/workers-coordinator-prototype.md) で、sandbox provider filing IDs、operator approval evidence、production filing window、live-provider preflight evidence、duplicate-filing suppression、rollback / emergency hold controls、production callbacks readiness へ進む promote/hold thresholds を検証する
 25. [Publisher tax filing production callbacks readiness gate](./docs/workers-coordinator-prototype.md) で、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production monitoring reconciliation へ進む promote/hold thresholds を検証する
 26. [Publisher tax filing production monitoring reconciliation gate](./docs/workers-coordinator-prototype.md) で、accepted / rejected / corrected / duplicate-suppressed callback streams、operator monitoring records、publisher monitoring exports、alert traceability、duplicate-filing suppression replay、rollback / emergency hold replay controls、exception operations runbook へ進む promote/hold thresholds を検証する
-27. [Chrome Prompt API feasibility harness (#93)](./docs/chrome-prompt-api-harness.md) で、`browser-harness/chrome-prompt-api/` の実ブラウザ計測（availability・user activation・初回download・日本語入出力・abort・context・session lifecycle・concurrent・surface matrix）を `captured-and-verified` envelope で検証し、Go / Conditional Go / No-Go / 未解決条件 を記録する。実ブラウザ計測が完了するまで判定は `not-evaluated`（未解決条件）に留まり、手書きfixtureは昇格できない（7.5項）
-28. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・Chrome full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、Chrome backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない
+27. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
+28. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
 
 ### 7.2 経済性の精緻化
 
@@ -760,40 +760,36 @@ All-or-Nothing パイプライン:
 - ユーザー体験: バックグラウンド推論は実際に「影響最小」か?
 - 低スペック端末: CPU推論・軽量タスクで実用的な参加が可能か?
 
-### 7.5 Chrome Prompt API feasibility のGo/No-Go記録（#93）
+### 7.5 ~~Chrome Prompt API feasibility のGo/No-Go記録（#93）~~ — 破棄
 
-standalone browser harness（`browser-harness/chrome-prompt-api/`）が実ブラウザで計測し、
-`src/chrome-prompt-api-report.ts` のvalidatorが証明力を判定します。判定は
-`evaluateChromePromptApiFeasibilityDecision()` が導出し、**現時点では全項目
-pending real-browser measurement（未解決条件）です。実測結果は主張しません。**
+**2026-08-06 破棄。** Chrome Built-in AI / Prompt API は、実ブラウザ計測で
+フラグ・エンタープライズポリシー等の特別な設定なしには `window.ai` が露出
+しないことを確認したため、採用方針ごと破棄しました。
 
-| 条件 | 現在の記録 | `met`になる条件 |
-|---|---|---|
-| real-browser-evidence | **pending real-browser measurement** | artifact loader + independent verifierで検証された`captured-and-verified` envelope |
-| prompt-api-availability | **pending real-browser measurement** | top-levelでavailabilityが`available` |
-| create-after-user-activation | **pending real-browser measurement** | user activation内で`create()`成功 |
-| first-download-preparation | **pending real-browser measurement** | 初回download完了と`downloadprogress`観測 |
-| prompt-non-streaming | **pending real-browser measurement** | `prompt()`が計測付きで成功 |
-| prompt-streaming | **pending real-browser measurement** | `promptStreaming()`がchunk計測付きで成功 |
-| japanese-input-output | **pending real-browser measurement** | 日本語入力受付と日本語出力 |
-| abort-interruption | **pending real-browser measurement** | `AbortSignal`で生成中断 |
-| context-usage-and-overflow | **pending real-browser measurement** | context window取得とoverflow/quota処理 |
-| session-lifecycle | **pending real-browser measurement** | destroy + re-create成功 |
-| concurrent-sessions | **pending real-browser measurement** | 同時session実行エラーなし |
-| surface-matrix | **pending real-browser measurement** | top-level / same-origin / sandbox iframeの記録 |
+計測の記録（実測、2026-08-06）:
 
-判定: `not-evaluated`（未解決条件）＝実ブラウザ検証済みevidenceなし（現状）。
-`go`＝全条件met（captured-and-verified必須）。`conditional-go`＝一部pending/not-applicable。
-`no-go`＝シナリオ失敗。手書きfixtureは`not-evaluated`から昇格できません
-（`validateEvidenceEnvelope()` はtrusted loader・verifierなしではcaptured-and-verifiedを受理しない）。
+- Chrome 150.0.7871.188 stable / 153.0.7992.0 canary で検証
+- `chrome://flags` で `prompt-api`（= Enabled Multilingual）と
+  `optimization-guide-on-device-model`（= Enabled BypassPerfRequirement）を
+  有効化しても `window.ai` は非露出
+- サインイン済み・モデルダウンロード済み（4GB）の実プロファイルでも非露出
+- エンタープライズポリシー `BuiltInAIAPIsEnabled=true` でも非露出
+- いずれの環境でも API が無いため、ハーネスのシナリオ実行は不能
+  （`not-applicable` なレポートのみ生成可能）
+
+この結果は「設定不要で動くWeb収益化インフラ」の前提を満たさないため、
+#92/#93/#95/#100 を破棄し、関連コード（harness・report schema・
+ChromeLanguageModelBackend・descriptor）を削除しました。
+`browser-built-in-full-model` kind は #94 の抽象化としてのみ残ります。
 
 ---
 
-**ドキュメントバージョン**: 2.7
+**ドキュメントバージョン**: 2.8
 **作成日**: 2026年2月
 **ステータス**: レビュー済み方針確定版
 **変更履歴**:
-- v2.7: InferenceBackend / `WorkerCapability`抽象化（#94）を7.1項に追加。segmented・full-model・server-fallbackを同一capabilityでroutingする方針と、Chrome backendが`SegmentExecutor`を装わないことを明記（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
+- v2.8: Chrome Built-in AI / Prompt API 採用方針（#92/#93/#95/#100）を破棄。実ブラウザ計測で特別な設定なしにはAPIが露出しないことを確認（7.5項に記録）。関連コード削除済み
+- v2.7: InferenceBackend / `WorkerCapability`抽象化（#94）を7.1項に追加。segmented・full-model・server-fallbackを同一capabilityでroutingする方針と、full-model backendが`SegmentExecutor`を装わないことを明記（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
 - v2.0: 初版(旧文書の矛盾解消、方針確定)
 - v2.1: 通信ポリシー明確化、RPMポジション修正、信頼性3シナリオ化、公平性配慮追加
 - v2.2: 目的定義の表現統一、安全境界の多層防御設計追加、経済性の仮定明示強化、置換条件の時期断定削除、公平性の具体策追加、検証項目の分離

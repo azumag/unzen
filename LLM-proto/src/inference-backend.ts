@@ -2,10 +2,17 @@
  * Inference backend abstraction (issue #94).
  *
  * The legacy architecture centers on `SegmentExecutor` / `SegmentConfig` /
- * checkpoint relay: every worker is a segmented WebGPU executor. The Chrome
- * Prompt API, by contrast, is a FULL-MODEL backend with no layer ranges, no
- * VRAM shards, no checkpoints, browser-managed model download, document
- * context, and user activation as its defining characteristics.
+ * checkpoint relay: every worker is a segmented WebGPU executor. A
+ * full-model backend (browser-managed model download, document context,
+ * user activation) is a fundamentally different resource with no layer
+ * ranges, no VRAM shards, and no checkpoints of its own.
+ *
+ * NOTE: the browser-built-in full-model route was originally targeted at the
+ * Chrome Prompt API (issues #92/#93/#95/#100). That route was abandoned after
+ * real-browser probing showed the API is not exposed without special flags /
+ * enterprise policy, which does not meet the product's no-configuration
+ * requirement. The abstract kind remains for a future full-model backend;
+ * the Chrome-specific implementation was removed.
  *
  * This module defines the backend contract that both kinds (and a future
  * server-fallback kind) implement:
@@ -45,9 +52,11 @@ export const CAPABILITY_SCHEMA_VERSION = '1.0.0' as const;
 
 /**
  * The three backend kinds. `segmented-webgpu` is the legacy 30B segmented
- * route; `browser-built-in-full-model` is the Chrome Prompt API route; and
- * `server-fallback` is the reserved kind for a coordinated server-side
- * fallback that the Coordinator can treat as another routable candidate.
+ * route; `browser-built-in-full-model` is the reserved kind for a
+ * browser-managed full-model backend (no concrete implementation exists
+ * after the Chrome Prompt API route was abandoned); and `server-fallback` is
+ * the reserved kind for a coordinated server-side fallback that the
+ * Coordinator can treat as another routable candidate.
  */
 export const INFERENCE_BACKEND_KINDS = [
   'segmented-webgpu',
@@ -80,9 +89,9 @@ export type InputModality = 'text' | 'image' | 'audio';
 export type OutputModality = 'text' | 'token-stream' | 'image' | 'audio';
 
 /**
- * Browser-managed model download state. The values mirror Chrome's
- * `LanguageModelAvailability` / `downloadprogress` surface, so the
- * browser-built-in backend maps its native states directly.
+ * Browser-managed model download state. The values mirror the browser
+ * built-in AI availability surface so a browser-managed backend can map its
+ * native states directly.
  */
 export type ModelDownloadState = 'unavailable' | 'downloadable' | 'downloading' | 'available';
 
@@ -118,10 +127,10 @@ export interface WorkerCapability {
   /** Capability schema version; validated at registration time. */
   readonly schemaVersion: string;
   readonly backend: InferenceBackendKind;
-  /** Runtime implementation name, e.g. 'chrome-prompt-api' or 'webllm'. */
+  /** Runtime implementation name, e.g. 'webllm' or a future browser AI name. */
   readonly runtimeName: string;
   readonly runtimeVersion: string;
-  /** Full-model (Chrome) or segment execution (legacy WebGPU route). */
+  /** Full-model or segment execution (legacy WebGPU route). */
   readonly executionMode: ExecutionMode;
   readonly inputModalities: readonly InputModality[];
   readonly outputModalities: readonly OutputModality[];

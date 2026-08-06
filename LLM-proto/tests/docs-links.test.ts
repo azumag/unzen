@@ -121,7 +121,6 @@ describe('LLM prototype documentation links', () => {
     expect(manifestSpec).toContain('SegmentedModelManifest');
     expect(manifestSpec).toContain('src/model-manifest.ts');
     expect(manifestSpec).toContain('src/model-manifest-validator.ts');
-    expect(manifestSpec).toContain('src/browser-built-in-model.ts');
     expect(manifestSpec).toContain('placeholder');
     expect(manifestSpec).toContain('fixture');
     expect(manifestSpec).toContain('Coordinator');

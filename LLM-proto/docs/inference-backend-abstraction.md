@@ -1,23 +1,29 @@
 # Inference Backend Abstraction (WorkerCapability)
 
 Issue [#94](https://github.com/azumag/unzen/issues/94) introduced a backend
-abstraction so the Chrome Prompt API can register as a first-class inference
+abstraction so a full-model backend can register as a first-class inference
 resource WITHOUT pretending to be a `SegmentExecutor`.
 
 The legacy architecture centers on `SegmentExecutor` / `SegmentConfig` /
-checkpoint relay: every worker is a segmented WebGPU executor. The Chrome
-Prompt API is a FULL-MODEL backend with no layer ranges, no VRAM shards, no
-checkpoints, browser-managed model download, document context, and user
-activation as its defining characteristics. These two kinds (plus a reserved
-`server-fallback` kind) are now described, validated, and routed through one
+checkpoint relay: every worker is a segmented WebGPU executor. A full-model
+backend (browser-managed model download, document context, user activation)
+is a fundamentally different resource with no layer ranges, no VRAM shards,
+and no checkpoints of its own. These two kinds (plus a reserved
+`server-fallback` kind) are described, validated, and routed through one
 common contract.
+
+> 破棄済み (2026-08-06): `browser-built-in-full-model` の具体的な実装
+> (Chrome Prompt API backend, issues #92/#93/#95/#100) は、実ブラウザ計測で
+> 特別な設定 (フラグ / エンタープライズポリシー) なしには API が露出しない
+> ことが確認されたため破棄しました。#95 の実装は revert、#92/#93 の
+> harness・descriptor は削除済みです。kind は抽象化としてのみ残ります。
 
 ## Backend kinds
 
 | Kind | Meaning |
 |---|---|
 | `segmented-webgpu` | The legacy 30B segmented route. `SegmentExecutor` remains an INTERNAL implementation detail of this backend; the new contract never exposes segment/checkpoint APIs. |
-| `browser-built-in-full-model` | Chrome Prompt API. One full model per document session. No layer range / VRAM shard / checkpoint. |
+| `browser-built-in-full-model` | Reserved for a browser-managed full-model backend. No concrete implementation exists (the Chrome Prompt API route was abandoned; see above). |
 | `server-fallback` | Reserved for a coordinated server-side fallback, comparable as the same routing input. |
 
 ## Contract
@@ -35,7 +41,7 @@ interface InferenceBackend {
 
 The contract deliberately contains no segment or checkpoint types
 (`SegmentConfig` / `Checkpoint` do not appear at the type level, deliverable
-7). The Chrome backend registers with a full-model `WorkerCapability` and is
+7). A full-model backend registers with a full-model `WorkerCapability` and is
 never forced to expose segmented APIs.
 
 ## WorkerCapability
@@ -114,15 +120,15 @@ worker speaks `InferenceBackend`, this module should be deleted.
         ┌───────────▼──────────┐  ┌───────▼──────────────────┐  ┌────▼─────────────┐
         │ segmented-webgpu     │  │ browser-built-in-full-  │  │ server-fallback  │
         │   backend            │  │   model backend         │  │   (reserved)     │
-        │                      │  │                         │  │                  │
-        │ - segment geometry   │  │ - full-model execution  │  │ - full-model on  │
-        │ - segment execution  │  │ - browser-managed model │  │   unzen-managed  │
-        │ - checkpoint         │  │   download              │  │   servers        │
-        │   production         │  │ - document session      │  │ - privacy        │
-        │ - VRAM shards        │  │ - user activation       │  │   boundary:      │
-        │ - worker surface     │  │ - session lifetime      │  │   'server'       │
-        │ - SegmentExecutor is │  │ - streaming/abort/      │  │                  │
-        │   internal here      │  │   context               │  │                  │
+        │                      │  │   (no implementation;   │  │                  │
+        │ - segment geometry   │  │    Chrome route was     │  │ - full-model on  │
+        │ - segment execution  │  │    abandoned)           │  │   unzen-managed  │
+        │ - checkpoint         │  │ - full-model execution  │  │   servers        │
+        │   production         │  │ - browser-managed model │  │ - privacy        │
+        │ - VRAM shards        │  │   download              │  │   boundary:      │
+        │ - worker surface     │  │ - document session      │  │   'server'       │
+        │ - SegmentExecutor is │  │ - user activation       │  │                  │
+        │   internal here      │  │ - session lifetime      │  │                  │
         └──────────────────────┘  └─────────────────────────┘  └──────────────────┘
 
    Legacy route (temporary): workers register via the old protocol and are
@@ -149,14 +155,6 @@ is ever exposed to the other.
   workers through `WorkerPool` / `SegmentExecutor`. The capability-based
   registry is the path for backends that are not segmented.
 
-## Evidence note
-
-The Chrome capability defaults (`contextWindowTokens: 4096`,
-`expectedLatencyMs: 1000` in `createBrowserBuiltInModelDescriptor()`) are
-EXAMPLE placeholders pending the real-browser measurement tracked by issue
-#93. They are not measured facts and must be replaced by captured-and-verified
-evidence before production use.
-
 ## Focused tests
 
 ```bash
@@ -164,5 +162,4 @@ cd LLM-proto
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
-npx vitest run tests/browser-built-in-model.test.ts
 ```

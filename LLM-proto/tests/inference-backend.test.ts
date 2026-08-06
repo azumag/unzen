@@ -21,8 +21,8 @@ function createFullModelCapability(overrides: Partial<WorkerCapability> = {}): W
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
     backend: 'browser-built-in-full-model',
-    runtimeName: 'chrome-prompt-api',
-    runtimeVersion: '150.0.0.0',
+    runtimeName: 'browser-full-model',
+    runtimeVersion: '1.0.0',
     executionMode: 'full-model',
     inputModalities: ['text'],
     outputModalities: ['text'],
@@ -129,7 +129,7 @@ describe('WorkerCapability runtime validation', () => {
     expect(result.issues.map((issue) => issue.code)).toContain('invalid-download-state');
   });
 
-  it('accepts the four Chrome availability states', () => {
+  it('accepts the four model download states', () => {
     for (const state of ['unavailable', 'downloadable', 'downloading', 'available'] as const) {
       const result = validateWorkerCapability(
         createFullModelCapability({ modelDownloadState: state }),

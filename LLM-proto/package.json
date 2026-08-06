@@ -7,7 +7,6 @@
   "scripts": {
     "test": "vitest run",
     "test:evidence": "vitest run tests/evidence.test.ts",
-    "test:chrome-prompt-api": "vitest run tests/chrome-prompt-api-report.test.ts",
     "test:workers-smoke": "vitest run tests/workers-coordinator-miniflare-smoke.test.ts",
     "test:workers-load-smoke": "vitest run tests/workers-coordinator-load-shaped-smoke.test.ts",
     "test:workers-deployed-smoke": "vitest run tests/workers-coordinator-deployed-smoke.test.ts",

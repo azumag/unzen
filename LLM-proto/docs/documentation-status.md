@@ -10,7 +10,7 @@
 - browser、OS、runtime、execution surfaceを限定している
 - security claimは対象境界とnegative testを示している
 - payout・tax・provider関連は、decision contractと実処理を区別している
-- Chrome Built-in AIはsegmented WebGPU backendと混同していない
+- browser-managed full-model backendはsegmented WebGPU backendと混同していない
 - 未確認、非対応、条件付き対応を区別している
 - 関連Issueと次の検証手順へ辿れる
 
