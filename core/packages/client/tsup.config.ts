@@ -54,4 +54,15 @@ export default defineConfig([
     // Bundle everything — worker script must be self-contained
     noExternal: [/.*/],
   },
+  // MoonBit worker script entry — self-contained bundle for the dedicated
+  // wasm-gc worker. No host module resolution is available inside a Worker.
+  {
+    entry: { 'moonbit-worker': 'src/worker/moonbit-worker.ts' },
+    format: ['esm'],
+    dts: false,
+    clean: false,
+    sourcemap: true,
+    splitting: false,
+    noExternal: [/.*/],
+  },
 ]);

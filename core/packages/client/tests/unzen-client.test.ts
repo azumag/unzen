@@ -13,6 +13,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   UnzenCancelledError,
   UnzenDeadlineExceededError,
@@ -23,6 +26,10 @@ import {
 } from '@unzen/shared';
 import { UnzenClient, type UnzenExecutionEvent } from '../src/unzen-client';
 import { MockSandboxExecutor } from '../src/quickjs-sandbox';
+
+const fibonacciWasmBytes = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fibonacci.wasm'),
+);
 
 /** Create an AbortError-compatible rejection for mocked fetch/sandbox */
 function abortError(): Error {
@@ -1293,6 +1300,138 @@ describe('UnzenClient', () => {
       }
       expect(execCalls).toHaveLength(0);
       client.dispose();
+    });
+
+    it('routes moonbit entries to the worker executor when moonbitWorkerUrl is set', async () => {
+      const events: string[] = [];
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          fibonacci: {
+            runtime: 'moonbit',
+            hash: 'mb-hash',
+            version: 1,
+            codeUrl: 'https://example.com/code/fibonacci.wasm',
+            exportName: 'fibonacci',
+          },
+        },
+      };
+      let executed = false;
+      const fakeWorkerExecutor = {
+        prepare: async () => new ArrayBuffer(8),
+        execute: async (_url: string, _args: unknown[], opts?: { exportName?: string }) => {
+          executed = true;
+          expect(opts?.exportName).toBe('fibonacci');
+          return 55;
+        },
+        dispose: () => {},
+        isReady: () => true,
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        throw new Error('unexpected URL: ' + url);
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({
+        endpoint,
+        sandbox: new MockSandboxExecutor(),
+        // moonbitWorkerUrl is set, but an explicit moonbitSandbox override
+        // wins — this test verifies the option surface accepts either and the
+        // moonbit path routes to the moonbit executor.
+        moonbitSandbox: fakeWorkerExecutor,
+        moonbitWorkerUrl: '/moonbit-worker.js',
+      });
+      const result = await client.executeWithDiagnostics<number>({
+        name: 'fibonacci',
+        args: [10],
+        onEvent: (e) => events.push(e.type),
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.result).toBe(55);
+        expect(result.diagnostics.finalRoute).toBe('browser');
+      }
+      expect(executed).toBe(true);
+      client.dispose();
+    });
+
+    it('routes moonbit entries through the real worker executor when moonbitWorkerUrl is set', async () => {
+      // Global Worker is replaced with a mock that runs the REAL MoonBit
+      // worker message handler against the fibonacci fixture, so this proves
+      // UnzenClient → MoonBitWorkerSandboxExecutor → worker script path end
+      // to end (including the wasm fetch on the main thread).
+      const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+      const workerState = { compiledModules: new Map<string, WebAssembly.Module>() };
+
+      class FakeWorker {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: ((event: ErrorEvent) => void) | null = null;
+        terminate() {}
+        postMessage(msg: unknown) {
+          queueMicrotask(() => {
+            void handleMoonbitWorkerMessage(
+              { data: msg as never },
+              workerState,
+              (resp) => {
+                this.onmessage?.(new MessageEvent('message', { data: resp }));
+              },
+            );
+          });
+        }
+      }
+      const originalWorker = globalThis.Worker;
+      (globalThis as unknown as { Worker: unknown }).Worker = FakeWorker;
+
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          fibonacci: {
+            runtime: 'moonbit',
+            hash: 'mb-hash',
+            version: 1,
+            codeUrl: 'https://example.com/code/fibonacci.wasm',
+            exportName: 'fibonacci',
+          },
+        },
+      };
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        if (url.includes('/code/fibonacci.wasm')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            arrayBuffer: async () =>
+              fibonacciWasmBytes.buffer.slice(
+                fibonacciWasmBytes.byteOffset,
+                fibonacciWasmBytes.byteOffset + fibonacciWasmBytes.byteLength,
+              ) as ArrayBuffer,
+          });
+        }
+        throw new Error('unexpected URL: ' + url);
+      });
+      globalThis.fetch = fetchMock;
+
+      try {
+        const client = new UnzenClient({
+          endpoint,
+          sandbox: new MockSandboxExecutor(),
+          moonbitWorkerUrl: '/moonbit-worker.js',
+        });
+        const result = await client.executeWithDiagnostics<number>({
+          name: 'fibonacci',
+          args: [10],
+        });
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.result).toBe(55);
+          expect(result.diagnostics.finalRoute).toBe('browser');
+        }
+        client.dispose();
+      } finally {
+        (globalThis as unknown as { Worker: unknown }).Worker = originalWorker;
+      }
     });
 
     it('should not send noFallback inputs in development mode', async () => {

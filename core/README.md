@@ -211,19 +211,23 @@ Browser Main Thread                  Web Worker Thread
 | Layer 3: QuickJS | 独立JSエンジン（V8とは別） |
 | Layer 4: API制限 | eval/Function/Proxy削除、プロトタイプ凍結 |
 
-> **MoonBit の隔離について**: 現 Phase の `MoonBitSandboxExecutor` は
-> Web Worker 化されておらず、wasm を呼び出し元スレッドで直接インスタンス化・
-> 実行する。Wasm のメモリ分離・import 制限（MoonBit runtime import のみ）・
-> ネットワーク/DOM 非アクセスは保たれるが、実行開始後は中断できず、
-> 長時間/無限ループの export はそのスレッドをブロックする。専用 Worker 化は
-> 今後の課題である（QuickJS パスは既存の 4層隔離）。
+> **MoonBit の隔離について**: `moonbitWorkerUrl` を指定すると MoonBit 関数は
+> 専用 Web Worker（`MoonBitWorkerSandboxExecutor`）で実行され、CPU 負荷の高い
+> export でもページのメインスレッドをブロックしない。wasm のメモリ分離・
+> import 制限（MoonBit runtime import のみ）・ネットワーク/DOM 非アクセスに
+> 加えて、タイムアウト/キャンセルは Worker 終了で強制できる。Worker 内の
+> export 自体は同期・中断不可（終了は Worker の terminate のみ）。指定しない
+> 場合はメインスレッド実行の `MoonBitSandboxExecutor` が使われる（デモ用途）。
 
 ## セキュリティ
 
 関数はサンドボックス内で実行される:
 - **外部接続禁止**: fetch, WebSocket, XHR 等は一切使えない
-- **DOM アクセス不可**: Web Worker 内で隔離して実行する
-- **リソース制限**: メモリは16MB、実行時間はタイムアウト（協調 + 強制停止）が適用される
+- **DOM アクセス不可**: QuickJS は Web Worker 内、MoonBit は `moonbitWorkerUrl`
+  指定時に専用 Web Worker 内で実行する（未指定の MoonBit はメインスレッド実行）
+- **リソース制限**: QuickJS はメモリ16MB、実行時間はタイムアウト（協調 + 強制停止）。
+  MoonBit (Worker) はタイムアウト/キャンセルを `Worker.terminate()` で強制。
+  MoonBit に明示的な16MB制限はない（wasm-gc のメモリはブラウザが管理）
 - **純粋計算のみ**: 入力→計算→出力のみで、副作用はない
 - **プロトタイプ汚染防止**: Object/Array/String等の全ビルトインプロトタイプを凍結する
 - **コンストラクタチェーン切断**: Function/AsyncFunction/GeneratorFunction/AsyncGeneratorFunction全4種を切断する
@@ -238,14 +242,30 @@ Browser Main Thread                  Web Worker Thread
 | 性能 | 短時間関数に十分 (50ms以内) | Rustに近い高速実行 |
 | ブラウザ | ほぼ全ブラウザ | wasm-gc対応 (Chrome 119+, Firefox 120+, Safari 18+) |
 | 用途 | 手軽にJS関数を委任 | 性能が重要な計算処理 |
-| 実装状況 | **Phase 2 完了** | **Phase 3 クライアント統合済み** (`MoonBitSandboxExecutor`) |
+| 実装状況 | **Phase 2 完了** | **Phase 3 クライアント統合済み** (`MoonBitSandboxExecutor` / `MoonBitWorkerSandboxExecutor`) |
 
 MoonBit 関数は `UnzenServer.defineMoonbit(name, wasmPath, { exportName })` で
 登録し、マニフェストは `runtime: 'moonbit'` と wasm の配信 URL を公開する。
-クライアントは `MoonBitSandboxExecutor` が wasm をフェッチ・インスタンス化し、
-指定の export（既定 `run`）をスカラー引数で呼び出す。実行はブラウザ限定で、
-サーバーフォールバックは行わない（QuickJS ランタイムでは wasm を実行できない）。
-スカラー入出力のみ対応（文字列・配列・オブジェクトは JS-GC interop が未対応）。
+クライアントは `moonbitWorkerUrl` 指定時に `MoonBitWorkerSandboxExecutor`（専用
+Web Worker、メインスレッド非ブロック・terminate で強制停止）、未指定時は
+`MoonBitSandboxExecutor`（メインスレッド、デモ用途）が wasm をフェッチ・
+インスタンス化し、指定の export（既定 `run`）をスカラー引数で呼び出す。
+実行はブラウザ限定で、サーバーフォールバックは行わない（QuickJS ランタイムでは
+wasm を実行できない）。スカラー入出力のみ対応（文字列・配列・オブジェクトは
+JS-GC interop が未対応）。
+
+```typescript
+const client = new UnzenClient({
+  endpoint: 'https://example.com/unzen',
+  mode: 'production',
+  workerUrl: '/worker.js',               // QuickJS worker
+  moonbitWorkerUrl: '/moonbit-worker.js', // MoonBit worker (推奨)
+});
+```
+
+`/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
+配信する（`npm run build -w @unzen/client` で生成。demo サーバーは
+`/moonbit-worker.js` で配信済み）。
 
 ## プロジェクト構成
 

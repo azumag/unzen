@@ -195,3 +195,13 @@ test.describe('narrow viewport', () => {
     await expect(page.locator('#demo-multiply')).toHaveAttribute('data-state', 'succeeded');
   });
 });
+
+test.describe('MoonBit worker (real wasm-gc in the browser)', () => {
+  test('executes a fibonacci module in the dedicated worker', async ({ page }) => {
+    await page.goto('/moonbit-test.html');
+
+    await expect(page.locator('#result')).toHaveText('fib10=55 fib15=610', {
+      timeout: 30_000,
+    });
+  });
+});

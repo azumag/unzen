@@ -54,6 +54,7 @@ import { CodeFetcher } from './code-fetcher';
 import type { SandboxExecutor } from './sandbox-executor';
 import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 import { MoonBitSandboxExecutor } from './moonbit-sandbox';
+import { MoonBitWorkerSandboxExecutor } from './moonbit-worker-sandbox';
 
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
@@ -283,6 +284,15 @@ export interface UnzenClientOptions {
    * testing or alternative wasm runtimes.
    */
   moonbitSandbox?: SandboxExecutor;
+
+  /**
+   * URL of the MoonBit worker script (e.g. '/moonbit-worker.js'). When set,
+   * MoonBit functions execute in a dedicated Web Worker via
+   * MoonBitWorkerSandboxExecutor instead of on the main thread. Takes
+   * precedence over the main-thread MoonBitSandboxExecutor default; an
+   * explicit `moonbitSandbox` override wins over both.
+   */
+  moonbitWorkerUrl?: string;
 }
 
 /** Counter for generating unique execution ids */
@@ -327,7 +337,17 @@ export class UnzenClient {
     this.fallbackHandler = new FallbackHandler(this.endpoint);
     this.manifestFetcher = new ManifestFetcher(this.endpoint);
     this.codeFetcher = new CodeFetcher(this.endpoint);
-    this.moonbitSandbox = options.moonbitSandbox ?? new MoonBitSandboxExecutor();
+    if (options.moonbitSandbox) {
+      this.moonbitSandbox = options.moonbitSandbox;
+    } else if (options.moonbitWorkerUrl) {
+      // Dedicated worker execution: MoonBit exports never block the main
+      // thread, and timeouts/cancellation terminate the worker.
+      this.moonbitSandbox = new MoonBitWorkerSandboxExecutor({
+        workerUrl: options.moonbitWorkerUrl,
+      });
+    } else {
+      this.moonbitSandbox = new MoonBitSandboxExecutor();
+    }
 
     // Select sandbox executor: explicit sandbox > workerUrl > error
     // - options.sandbox: Custom executor (advanced usage / testing)

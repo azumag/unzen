@@ -254,10 +254,10 @@ MoonBit wasm-gc modules run inside the same Wasm sandbox as QuickJS:
 - **No external access**: Wasm cannot make network requests or access DOM
 - **Import restriction**: Only explicitly provided imports are available
 
-> **注 (2026-08-11)**: 現 Phase の `MoonBitSandboxExecutor` は Web Worker で
-> はなく、wasm を呼び出し元スレッドで直接実行する。Wasm のメモリ分離と
-> import 制限は成立するが、実行開始後は中断不能で、無限ループはメインスレッドを
-> ブロックする。専用 Worker 化（QuickJS と同じ 4層隔離）は今後の課題。
+> **注 (2026-08-11)**: `MoonBitWorkerSandboxExecutor`（`moonbitWorkerUrl` 指定時）
+> は専用 Web Worker で wasm を実行し、メインスレッドをブロックしない。
+> タイムアウト/キャンセルは `Worker.terminate()` で強制する。Worker 内の export
+> 自体は同期・中断不可。`MoonBitSandboxExecutor`（Worker なし）はデモ用途。
 
 ## Go/No-Go Criteria
 

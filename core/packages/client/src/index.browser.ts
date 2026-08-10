@@ -40,6 +40,11 @@ export {
   type MoonBitSandboxOptions,
   type PreparedMoonBitModule,
 } from './moonbit-sandbox';
+export {
+  MoonBitWorkerSandboxExecutor,
+  type MoonBitWorkerSandboxOptions,
+  type MoonBitExecutorDiagnostics,
+} from './moonbit-worker-sandbox';
 
 // Re-export commonly used types from @unzen/shared for convenience
 export type {

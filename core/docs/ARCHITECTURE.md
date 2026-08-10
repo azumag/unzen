@@ -638,8 +638,14 @@ defineRaw('add', '(a, b) => a + b')
   キャッシュし、`spectest` 等の MoonBit ランタイム import のみでインスタンス化して
   指定 export を呼ぶ。`UnzenClient` はマニフェストの `runtime` で
   QuickJS パスと MoonBit パスを振り分ける。
-- MoonBit 実行は同期・中断不可のため、キャンセルは呼び出し開始前のみ有効。
-  スカラー入出力のみ対応（配列・オブジェクトは JS-GC interop が未対応）。
+- `MoonBitWorkerSandboxExecutor` (client) は `moonbitWorkerUrl` 指定時に使われ、
+  専用 Web Worker で wasm を実行する（QuickJS パスと同じ Layer 1 の分離）。
+  単一実行のみ・有界キュー・init timeout・hard-kill timeout（Worker terminate）・
+  generation 管理・キャンセル（終了）を備える。worker バンドルは
+  `moonbit-worker.js`（tsup エントリ）として配信する。
+- Worker 内の MoonBit export は同期・中断不可のため、タイムアウト/キャンセルは
+  `Worker.terminate()` で強制する。スカラー入出力のみ対応（配列・オブジェクトは
+  JS-GC interop が未対応）。
 - サーバーフォールバックは非対応 (`/exec/:name` は 501)。ブラウザ実行のみ。
 
 ---

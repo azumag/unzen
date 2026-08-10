@@ -111,6 +111,10 @@ const clientCode = readFileSync(
 const workerCode = readFileSync(
   join(__dirname, '../packages/client/dist/quickjs-worker.js'), 'utf-8'
 );
+// MoonBit worker: self-contained bundle for the dedicated wasm-gc worker.
+const moonbitWorkerCode = readFileSync(
+  join(__dirname, '../packages/client/dist/moonbit-worker.js'), 'utf-8'
+);
 
 app.get('/client.js', (c) => {
   return c.text(clientCode, 200, {
@@ -121,6 +125,13 @@ app.get('/client.js', (c) => {
 
 app.get('/worker.js', (c) => {
   return c.text(workerCode, 200, {
+    'Content-Type': 'application/javascript',
+    'Cache-Control': 'public, max-age=3600',
+  });
+});
+
+app.get('/moonbit-worker.js', (c) => {
+  return c.text(moonbitWorkerCode, 200, {
     'Content-Type': 'application/javascript',
     'Cache-Control': 'public, max-age=3600',
   });

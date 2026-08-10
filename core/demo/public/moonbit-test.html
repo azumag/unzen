@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MoonBit worker test</title>
+</head>
+<body>
+  <h1>MoonBit worker E2E test</h1>
+  <pre id="result">running…</pre>
+  <script type="module">
+    import { MoonBitWorkerSandboxExecutor } from '/client.js';
+
+    const resultEl = document.getElementById('result');
+    try {
+      const executor = new MoonBitWorkerSandboxExecutor({
+        workerUrl: '/moonbit-worker.js',
+        timeout: 5000,
+      });
+      const fib10 = await executor.execute('/moonbit/fibonacci.wasm', [10], {
+        exportName: 'fibonacci',
+      });
+      const fib15 = await executor.execute('/moonbit/fibonacci.wasm', [15], {
+        exportName: 'fibonacci',
+      });
+      resultEl.textContent = `fib10=${fib10} fib15=${fib15}`;
+      executor.dispose();
+    } catch (error) {
+      resultEl.textContent = `ERROR: ${error && error.message ? error.message : error}`;
+    }
+  </script>
+</body>
+</html>
