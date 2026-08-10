@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { UnzenNetworkError, type ManifestResponse } from '@unzen/shared';
+import { UnzenCancelledError, UnzenNetworkError, type ManifestResponse } from '@unzen/shared';
 import { ManifestFetcher } from '../src/manifest-fetcher';
 
 describe('ManifestFetcher', () => {
@@ -23,14 +23,14 @@ describe('ManifestFetcher', () => {
   const mockManifest: ManifestResponse = {
     functions: {
       add: {
-        name: 'add',
-        runtime: 'quickjs',
+        version: 1,
+runtime: 'quickjs',
         codeUrl: 'https://example.com/code/add.js',
         hash: 'abc123',
       },
       multiply: {
-        name: 'multiply',
-        runtime: 'quickjs',
+        version: 1,
+runtime: 'quickjs',
         codeUrl: 'https://example.com/code/multiply.js',
         hash: 'def456',
       },
@@ -71,7 +71,7 @@ describe('ManifestFetcher', () => {
       ok: true,
       json: async () => mockManifest,
     });
-    globalThis.fetch = fetchMock;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const fetcher = new ManifestFetcher('https://example.com');
 
@@ -95,8 +95,8 @@ describe('ManifestFetcher', () => {
 
     const entry = fetcher.getEntry('add');
     expect(entry).toEqual({
-      name: 'add',
-      runtime: 'quickjs',
+      version: 1,
+runtime: 'quickjs',
       codeUrl: 'https://example.com/code/add.js',
       hash: 'abc123',
     });
@@ -126,7 +126,7 @@ describe('ManifestFetcher', () => {
       ok: true,
       json: async () => mockManifest,
     });
-    globalThis.fetch = fetchMock;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const fetcher = new ManifestFetcher('https://example.com');
 
@@ -169,7 +169,7 @@ describe('ManifestFetcher', () => {
       ok: true,
       json: async () => mockManifest,
     });
-    globalThis.fetch = fetchMock;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const fetcher = new ManifestFetcher('https://example.com');
 
@@ -186,6 +186,117 @@ describe('ManifestFetcher', () => {
     expect(result1).toEqual(mockManifest);
     expect(result2).toEqual(mockManifest);
     expect(result3).toEqual(mockManifest);
+  });
+
+  describe('cancellation (issue #105 signal propagation)', () => {
+    /**
+     * Mock fetch that honors the AbortSignal in RequestInit: rejects with an
+     * AbortError-style rejection when aborted, resolves with the manifest
+     * otherwise. Returns the signal so tests can assert propagation.
+     */
+    function createAbortableFetchMock() {
+      const signals: (AbortSignal | undefined)[] = [];
+      const fetchMock = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+        signals.push(init?.signal);
+        const signal = init?.signal;
+        return new Promise((resolve, reject) => {
+          const fail = () => {
+            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+          };
+          if (signal?.aborted) {
+            fail();
+            return;
+          }
+          signal?.addEventListener('abort', fail, { once: true });
+          setTimeout(() => {
+            if (!signal?.aborted) {
+              resolve({ ok: true, json: async () => mockManifest });
+            }
+          }, 50);
+        });
+      });
+      return { fetchMock, signals };
+    }
+
+    it('should pass an AbortSignal to the underlying fetch request', async () => {
+      const { fetchMock, signals } = createAbortableFetchMock();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+
+      expect(signals).toHaveLength(1);
+      expect(signals[0]).toBeInstanceOf(AbortSignal);
+    });
+
+    it('should reject a single cancelled caller with UnzenCancelledError and abort the request', async () => {
+      const { fetchMock, signals } = createAbortableFetchMock();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      const controller = new AbortController();
+      const p = fetcher.fetch(controller.signal);
+
+      // Give the request a chance to start, then cancel it.
+      await new Promise((r) => setTimeout(r, 5));
+      controller.abort();
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      expect(signals[0]?.aborted).toBe(true);
+
+      // A later caller must start a fresh request (new signal, not pre-aborted).
+      const freshP = fetcher.fetch();
+      expect(signals[1]).not.toBe(signals[0]);
+      expect(signals[1]?.aborted).toBe(false);
+      const fresh = await freshP;
+      expect(fresh).toEqual(mockManifest);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should keep the shared request alive when one of two callers cancels', async () => {
+      const { fetchMock } = createAbortableFetchMock();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      const cancelledController = new AbortController();
+      const cancelled = fetcher.fetch(cancelledController.signal);
+      const survivor = fetcher.fetch();
+
+      await new Promise((r) => setTimeout(r, 5));
+      cancelledController.abort();
+
+      await expect(cancelled).rejects.toThrow(UnzenCancelledError);
+      // The other waiter must still receive the shared result — no second
+      // HTTP request was started for it.
+      await expect(survivor).resolves.toEqual(mockManifest);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should abort the shared request when all callers cancel, then allow a fresh start', async () => {
+      const { fetchMock, signals } = createAbortableFetchMock();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      const c1 = new AbortController();
+      const c2 = new AbortController();
+      const p1 = fetcher.fetch(c1.signal);
+      const p2 = fetcher.fetch(c2.signal);
+
+      await new Promise((r) => setTimeout(r, 5));
+      c1.abort();
+      c2.abort();
+
+      await expect(p1).rejects.toThrow(UnzenCancelledError);
+      await expect(p2).rejects.toThrow(UnzenCancelledError);
+      expect(signals[0]?.aborted).toBe(true);
+
+      const freshP = fetcher.fetch();
+      expect(signals[1]).not.toBe(signals[0]);
+      expect(signals[1]?.aborted).toBe(false);
+      const fresh = await freshP;
+      expect(fresh).toEqual(mockManifest);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('should handle empty manifest', async () => {
@@ -309,6 +420,157 @@ describe('ManifestFetcher', () => {
 
       const manifest = await fetcher.fetch();
       expect(manifest).toEqual(updatedManifest);
+    });
+
+    it('must not pair a new ETag with a stale manifest when the body parse is aborted', async () => {
+      // First response establishes E1 + M1 (old version).
+      const oldManifest: ManifestResponse = {
+        functions: {
+          add: {
+            version: 1,
+runtime: 'quickjs',
+            codeUrl: 'u1',
+            hash: 'h1',
+          },
+        },
+      };
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"e1"' }),
+        json: async () => oldManifest,
+      });
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+      fetcher.invalidate();
+
+      // Second response returns E2 but its body parse is aborted by the caller.
+      const newManifest: ManifestResponse = {
+        functions: {
+          add: {
+            version: 1,
+runtime: 'quickjs',
+            codeUrl: 'u2',
+            hash: 'h2',
+          },
+        },
+      };
+      globalThis.fetch = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+        const signal = init?.signal;
+        return new Promise((resolve, reject) => {
+          const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          signal?.addEventListener('abort', fail, { once: true });
+          setTimeout(() => {
+            if (!signal?.aborted) {
+              resolve({
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'ETag': 'W/"e2"' }),
+                json: async () => newManifest,
+              });
+            }
+          }, 60);
+        });
+      }) as unknown as typeof fetch;
+
+      const controller = new AbortController();
+      const p = fetcher.fetch(controller.signal);
+      await new Promise((r) => setTimeout(r, 5));
+      controller.abort();
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+
+      // The ETag must still be E1 (the last successfully committed body), so a
+      // later 304 never serves the old M1 manifest against E2.
+      expect((fetcher as unknown as { etag: string | null }).etag).toBe('W/"e1"');
+
+      // Third request sends If-None-Match: W/"e1" and a 304 must reuse M1.
+      let ifNoneMatch: string | null = null;
+      globalThis.fetch = vi.fn((_url: string, init?: { headers?: Record<string, string> }) => {
+        ifNoneMatch = init?.headers?.['If-None-Match'] ?? null;
+        return Promise.resolve({ ok: true, status: 304 });
+      }) as unknown as typeof fetch;
+      const result = await fetcher.fetch();
+      expect(ifNoneMatch).toBe('W/"e1"');
+      expect(result.functions.add.hash).toBe('h1');
+    });
+
+    it('must discard the old ETag when a 200 arrives without an ETag header', async () => {
+      const oldManifest: ManifestResponse = {
+        functions: {
+          add: { version: 1, runtime: 'quickjs', codeUrl: 'u1', hash: 'h1' },
+        },
+      };
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"e1"' }),
+        json: async () => oldManifest,
+      });
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+      fetcher.invalidate();
+
+      // Second 200 has a new body but NO ETag header.
+      const newManifest: ManifestResponse = {
+        functions: {
+          add: { version: 1, runtime: 'quickjs', codeUrl: 'u2', hash: 'h2' },
+        },
+      };
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({}),
+        json: async () => newManifest,
+      });
+      const manifest = await fetcher.fetch();
+      expect(manifest.functions.add.hash).toBe('h2');
+      expect((fetcher as unknown as { etag: string | null }).etag).toBeNull();
+
+      // After invalidation, the next request must NOT send the stale E1.
+      fetcher.invalidate();
+      let ifNoneMatch: string | null = 'unset';
+      globalThis.fetch = vi.fn((_url: string, init?: { headers?: Record<string, string> }) => {
+        ifNoneMatch = init?.headers?.['If-None-Match'] ?? null;
+        return Promise.resolve({ ok: true, status: 200, headers: new Headers({}), json: async () => newManifest });
+      }) as unknown as typeof fetch;
+      await fetcher.fetch();
+      expect(ifNoneMatch).toBeNull();
+    });
+
+    it('must not commit an ETag when the json() parse is interrupted by abort', async () => {
+      // First response establishes E1 + M1.
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"e1"' }),
+        json: async () => mockManifest,
+      });
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+      fetcher.invalidate();
+
+      // Second response: headers arrive (200 + E2) but json() hangs and is
+      // interrupted by the caller's abort.
+      globalThis.fetch = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+        const signal = init?.signal;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'ETag': 'W/"e2"' }),
+          json: () => new Promise((_resolve, reject) => {
+            const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+            signal?.addEventListener('abort', fail, { once: true });
+          }),
+        });
+      }) as unknown as typeof fetch;
+
+      const controller = new AbortController();
+      const p = fetcher.fetch(controller.signal);
+      controller.abort();
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+
+      // E1 stays committed; E2 must not have been stored.
+      expect((fetcher as unknown as { etag: string | null }).etag).toBe('W/"e1"');
     });
   });
 });

@@ -14,6 +14,7 @@ import {
   UnzenRuntimeError,
   UnzenFunctionError,
   UnzenNetworkError,
+  UnzenDeadlineExceededError,
 } from '../src/errors';
 
 describe('UnzenError (base class)', () => {
@@ -111,6 +112,13 @@ describe('UnzenNetworkError', () => {
 });
 
 describe('Error handling patterns', () => {
+  it('should expose DEADLINE_EXCEEDED while remaining an UnzenRuntimeError', () => {
+    const error = new UnzenDeadlineExceededError('Execution timeout exceeded');
+    expect(error).toBeInstanceOf(UnzenRuntimeError);
+    expect(error.code).toBe('DEADLINE_EXCEEDED');
+    expect(error.name).toBe('UnzenDeadlineExceededError');
+  });
+
   it('should allow discriminated union via code property', () => {
     const errors: UnzenError[] = [
       new UnzenRuntimeError('timeout'),

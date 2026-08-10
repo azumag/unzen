@@ -196,3 +196,30 @@ export class UnzenCancelledError extends UnzenError {
     this.name = 'UnzenCancelledError';
   }
 }
+
+/**
+ * Deadline-exceeded errors raised when a sandbox execution exceeds its time
+ * budget (cooperative timeout or hard kill).
+ *
+ * A distinct code ('DEADLINE_EXCEEDED') lets the client report the failure
+ * precisely instead of folding it into a generic runtime error: the user-visible
+ * error code becomes `deadline_exceeded` rather than `browser_runtime_failed`.
+ * Like all runtime errors it may trigger server fallback in production mode.
+ */
+export class UnzenDeadlineExceededError extends UnzenRuntimeError {
+  /**
+   * Create a new deadline-exceeded error
+   *
+   * @param message - Human-readable error message
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnzenDeadlineExceededError';
+    // Distinct stable code while remaining an UnzenRuntimeError so callers can
+    // (a) instanceof-check it as a runtime failure (fallback-eligible) and
+    // (b) route on the exact `DEADLINE_EXCEEDED` code (not a generic runtime).
+    // The base `code` is declared readonly for the generic error classes; the
+    // subclass narrows it in its own constructor.
+    (this as { code: string }).code = 'DEADLINE_EXCEEDED';
+  }
+}

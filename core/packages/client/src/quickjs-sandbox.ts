@@ -51,6 +51,13 @@ export type { SandboxExecutor } from './sandbox-executor';
 export class MockSandboxExecutor implements SandboxExecutor {
 
   /**
+   * The mock is synchronously ready — no lazy Wasm/worker initialization.
+   */
+  isReady(): boolean {
+    return true;
+  }
+
+  /**
    * Execute code in Node.js vm context
    *
    * Process:

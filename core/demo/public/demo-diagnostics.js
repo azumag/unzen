@@ -40,11 +40,14 @@ export function classifyError(code) {
     case 'code_fetch_failed':
       return ErrorCategory.NETWORK;
     case 'browser_runtime_failed':
+    case 'deadline_exceeded':
       return ErrorCategory.RUNTIME;
     case 'function_failed':
       return ErrorCategory.FUNCTION;
     case 'server_fallback_failed':
       return ErrorCategory.SERVER;
+    case 'server_network_failed':
+      return ErrorCategory.NETWORK;
     default:
       return ErrorCategory.UNKNOWN;
   }
@@ -65,7 +68,9 @@ export function isExecutionDiagnostics(value) {
   if (typeof d.fallbackUsed !== 'boolean') return false;
   if (!Array.isArray(d.attempts)) return false;
   if (typeof d.totalDurationMs !== 'number' || !Number.isFinite(d.totalDurationMs)) return false;
-  if (d.manifestCache !== 'hit' && d.manifestCache !== 'miss') return false;
+  if (d.manifestCache !== 'hit' && d.manifestCache !== 'miss' && d.manifestCache !== 'unknown') {
+    return false;
+  }
   return true;
 }
 

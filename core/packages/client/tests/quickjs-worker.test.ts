@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   createInitMessage,
   createExecuteMessage,
+  createCancelMessage,
   type WorkerResponse,
 } from '../src/worker/worker-protocol';
 import { handleWorkerMessage, type WorkerState } from '../src/worker/quickjs-worker';
@@ -27,7 +28,7 @@ import { handleWorkerMessage, type WorkerState } from '../src/worker/quickjs-wor
 function createMockContext(evalResults: Array<{ error?: unknown; value?: unknown }>) {
   let callIndex = 0;
   return {
-    evalCode: vi.fn(() => {
+    evalCode: vi.fn((_code: string) => {
       const result = evalResults[callIndex++];
       if (result?.error !== undefined) {
         return {
@@ -75,7 +76,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const mockLoader = vi.fn().mockResolvedValue(createMockQuickJS());
 
       await handleWorkerMessage(
-        { data: createInitMessage() },
+        { data: createInitMessage(1) },
         state,
         postMessage,
         mockLoader,
@@ -85,7 +86,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       expect(responses[0]).toEqual({
         type: 'init-result',
         protocolVersion: 1,
-        generationId: undefined,
+        generationId: 1,
         success: true,
         error: undefined,
       });
@@ -97,7 +98,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const mockLoader = vi.fn().mockRejectedValue(new Error('Wasm init failed'));
 
       await handleWorkerMessage(
-        { data: createInitMessage() },
+        { data: createInitMessage(1) },
         state,
         postMessage,
         mockLoader,
@@ -123,7 +124,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-1', 'function run(){return 42;}', []) },
+        { data: createExecuteMessage('req-1', 'function run(){return 42;}', [], 1) },
         state,
         postMessage,
       );
@@ -151,7 +152,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-2', 'function run(){return x;}', []) },
+        { data: createExecuteMessage('req-2', 'function run(){return x;}', [], 1) },
         state,
         postMessage,
       );
@@ -175,7 +176,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-3', 'function run({{', []) },
+        { data: createExecuteMessage('req-3', 'function run({{', [], 1) },
         state,
         postMessage,
       );
@@ -193,7 +194,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: null };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-4', 'function run(){return 1;}', []) },
+        { data: createExecuteMessage('req-4', 'function run(){return 1;}', [], 1) },
         state,
         postMessage,
       );
@@ -215,7 +216,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-5', 'function run(){return 1;}', []) },
+        { data: createExecuteMessage('req-5', 'function run(){return 1;}', [], 1) },
         state,
         postMessage,
       );
@@ -243,7 +244,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-sec', 'function run(){return "ok";}', []) },
+        { data: createExecuteMessage('req-sec', 'function run(){return "ok";}', [], 1) },
         state,
         postMessage,
       );
@@ -266,7 +267,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-6', 'function run(a,b){return a+b;}', [1, 2]) },
+        { data: createExecuteMessage('req-6', 'function run(a,b){return a+b;}', [1, 2], 1) },
         state,
         postMessage,
       );
@@ -287,7 +288,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-7', 'function run(){return "ok";}', []) },
+        { data: createExecuteMessage('req-7', 'function run(){return "ok";}', [], 1) },
         state,
         postMessage,
       );
@@ -307,7 +308,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-8', 'function run(){return "ok";}', [], 100) },
+        { data: createExecuteMessage('req-8', 'function run(){return "ok";}', [], 1, 100) },
         state,
         postMessage,
       );
@@ -324,13 +325,50 @@ describe('quickjs-worker handleWorkerMessage', () => {
       const state: WorkerState = { quickJS: mockQJS as any };
 
       await handleWorkerMessage(
-        { data: createExecuteMessage('req-9', 'bad code', []) },
+        { data: createExecuteMessage('req-9', 'bad code', [], 1) },
         state,
         postMessage,
       );
 
       // Context must always be disposed (QuickJS manual memory management)
       expect(context.dispose).toHaveBeenCalled();
+    });
+  });
+
+  describe('cancel message', () => {
+    it('should record and ack a cancel only for the actively running request', async () => {
+      const state: WorkerState = { quickJS: null, activeRequestId: 'req-live' };
+
+      await handleWorkerMessage(
+        { data: createCancelMessage('req-live', 1) },
+        state,
+        postMessage,
+      );
+
+      expect(state.cancelled?.has('req-live')).toBe(true);
+      expect(responses).toHaveLength(1);
+      expect(responses[0]).toMatchObject({
+        type: 'cancel-result',
+        requestId: 'req-live',
+        success: true,
+        generationId: 1,
+      });
+    });
+
+    it('should ignore a cancel for a request that already finished (no stale set entry)', async () => {
+      // The event loop was blocked during the synchronous run; the execute
+      // result was posted and the execution's finally cleared activeRequestId
+      // BEFORE the cancel message was processed.
+      const state: WorkerState = { quickJS: null, activeRequestId: null, cancelled: new Set() };
+
+      await handleWorkerMessage(
+        { data: createCancelMessage('req-done', 1) },
+        state,
+        postMessage,
+      );
+
+      expect(state.cancelled?.has('req-done')).toBe(false);
+      expect(responses).toHaveLength(0);
     });
   });
 });

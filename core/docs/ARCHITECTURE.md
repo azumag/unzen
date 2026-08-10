@@ -2,7 +2,8 @@
 
 **バージョン**: 1.1
 **作成日**: 2026-02-07
-**テスト**: 239 tests passing (shared:37 + server:61 + client:55 + demo:21 + samples:65)
+**テスト**: ユニット・統合は `npm test`、ブラウザE2Eは `npm run e2e -w @unzen/demo`
+で通過状態を確認できる（件数はコードベースの進捗に合わせて変化するため固定記載しない）
 
 ---
 
@@ -463,10 +464,10 @@ interface UnzenExecutionRequest {
 }
 ```
 
-- **イベント**: `accepted` / `manifest-fetch-started|completed` / `code-fetch-started|completed` / `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、`completed` / `cancelled` / `failed` の terminal event は1実行につき正確に1回。
+- **イベント**: `accepted` / `manifest-fetch-started|completed` / `code-fetch-started|completed` / `sandbox-initializing`（サンドボックスの遅延初期化時のみ）/ `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、terminal event は1実行につき正確に1回。`cancel-requested` 以降は新しい phase event を emit しない。
 - **キャンセル**: 1つの AbortSignal が manifest/code fetch・sandbox・fallback へ一貫して伝播する。`UnzenCancelledError` (code `CANCELLED`) は **server fallback を開始しない**。dispose() は進行中 execution を cancel して settle させる。
 - **診断**: `ExecutionDiagnostics` は browser/server の attempt chain (`attempts`)、`fallbackUsed`、`finalRoute`、`totalDurationMs`、`manifestCache` を保持。browser 失敗→server 成功の経緯を確認できる。
-- **エラーコード**: `cancelled` / `manifest_fetch_failed` / `code_fetch_failed` / `browser_runtime_failed` / `function_failed` / `server_fallback_failed` / `client_disposed`。UI 状態は message 解析ではなく code で判定する。
+- **エラーコード**: `cancelled` / `manifest_fetch_failed` / `code_fetch_failed` / `browser_runtime_failed` / `deadline_exceeded`（タイムアウト）/ `function_failed` / `server_fallback_failed` / `server_network_failed`（fallback のネットワーク失敗）/ `client_disposed`。UI 状態は message 解析ではなく code で判定する。
 - **互換**: 既存 `call(name, ...args)` / `callWithDiagnostics(name, ...args)` は signal なしの compatibility wrapper として維持。`execution` 本文・args・raw stack は event / diagnostics に含めない。
 
 ---
@@ -482,7 +483,7 @@ demo/
 │   ├── index.html      インタラクティブデモページ
 │   └── demo.js         クライアントサイドスクリプト
 └── tests/
-    └── integration.test.ts   21件の統合テスト
+    └── integration.test.ts   統合テスト
 ```
 
 ### 7.2 登録されている関数
@@ -511,15 +512,15 @@ npm run start    # → http://localhost:3000
 
 Hono の `app.request()` を使用したHTTPレベルテスト:
 
-| テストスイート | テスト数 | 検証内容 |
-|--------------|---------|----------|
-| Manifest Endpoint | 3 | 関数リスト、メタデータ |
-| Code Endpoint | 4 | コード取得、404、キャッシュヘッダー |
-| Fallback (spamCheck) | 5 | スパム検出 正/負ケース |
-| Fallback (add) | 4 | 正数/負数/ゼロ/小数 |
-| Error Handling | 2 | 404, 400 |
-| Full Flow | 1 | manifest → code → execute |
-| Static Files | 2 | HTML, JS配信 |
+| テストスイート | 検証内容 |
+|--------------|----------|
+| Manifest Endpoint | 関数リスト、メタデータ |
+| Code Endpoint | コード取得、404、キャッシュヘッダー |
+| Fallback (spamCheck) | スパム検出 正/負ケース |
+| Fallback (add) | 正数/負数/ゼロ/小数 |
+| Error Handling | 404, 400 |
+| Full Flow | manifest → code → execute |
+| Static Files | HTML, JS配信 |
 
 ---
 
@@ -628,24 +629,11 @@ defineRaw('add', '(a, b) => a + b')
 
 ## 11. テスト一覧
 
-```
-Test Files  15 passed (15)
-Tests       239 passed (239)
-Duration    ~1.3s
+現在のテスト件数はコードベースの進捗に合わせて常に変化するため、固定値では
+記載しない。確認方法:
 
-packages/shared/tests/types.test.ts            (15 tests)
-packages/shared/tests/errors.test.ts           (10 tests)
-packages/shared/tests/protocol.test.ts         (13 tests)
-packages/server/tests/function-registry.test.ts (10 tests)
-packages/server/tests/manifest-builder.test.ts  (6 tests)
-packages/server/tests/quickjs-runtime.test.ts   (19 tests)
-packages/server/tests/unzen-server.test.ts      (13 tests)
-packages/server/tests/http-routes.test.ts       (13 tests)
-packages/client/tests/fallback-handler.test.ts   (8 tests)
-packages/client/tests/manifest-fetcher.test.ts  (10 tests)
-packages/client/tests/code-fetcher.test.ts       (8 tests)
-packages/client/tests/quickjs-sandbox.test.ts   (11 tests)
-packages/client/tests/unzen-client.test.ts      (15 tests)
-demo/tests/integration.test.ts                  (21 tests)
-demo/tests/sample-functions.test.ts             (66 tests)
+```bash
+cd core
+npm test                        # ユニット・統合 (vitest)
+npm run e2e -w @unzen/demo      # ブラウザE2E (Playwright, desktop + mobile)
 ```

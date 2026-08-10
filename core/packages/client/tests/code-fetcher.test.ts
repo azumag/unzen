@@ -23,7 +23,7 @@ describe('CodeFetcher', () => {
   let originalFetch: typeof globalThis.fetch;
 
   const mockEntry: FunctionManifestEntry = {
-    name: 'add',
+    version: 1,
     runtime: 'quickjs',
     codeUrl: 'https://example.com/code/add.js',
     hash: 'abc123',
@@ -116,14 +116,14 @@ describe('CodeFetcher', () => {
     const fetcher = new CodeFetcher('https://example.com');
 
     const addEntry: FunctionManifestEntry = {
-      name: 'add',
+      version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/add.js',
       hash: 'hash1',
     };
 
     const multiplyEntry: FunctionManifestEntry = {
-      name: 'multiply',
+      version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/multiply.js',
       hash: 'hash2',
@@ -168,14 +168,14 @@ describe('CodeFetcher', () => {
     const fetcher = new CodeFetcher('https://example.com');
 
     const entry1: FunctionManifestEntry = {
-      name: 'func1',
+      version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/func1.js',
       hash: 'same-hash',
     };
 
     const entry2: FunctionManifestEntry = {
-      name: 'func2',
+      version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/func2.js',
       hash: 'same-hash', // Same hash as func1

@@ -42,7 +42,9 @@
 
 import {
   UnzenCancelledError,
+  UnzenDeadlineExceededError,
   UnzenFunctionError,
+  UnzenNetworkError,
   UnzenRuntimeError,
 } from '@unzen/shared';
 import { FallbackHandler } from './fallback-handler';
@@ -143,6 +145,7 @@ export type UnzenExecutionEvent =
   | (UnzenExecutionEventBase & { type: 'manifest-fetch-completed' })
   | (UnzenExecutionEventBase & { type: 'code-fetch-started' })
   | (UnzenExecutionEventBase & { type: 'code-fetch-completed' })
+  | (UnzenExecutionEventBase & { type: 'sandbox-initializing' })
   | (UnzenExecutionEventBase & { type: 'browser-execution-started' })
   | (UnzenExecutionEventBase & { type: 'browser-execution-failed' })
   | (UnzenExecutionEventBase & { type: 'fallback-started' })
@@ -152,19 +155,13 @@ export type UnzenExecutionEvent =
   | (UnzenExecutionEventBase & { type: 'cancelled' })
   | (UnzenExecutionEventBase & { type: 'failed'; errorCode: string });
 
-// NOTE: `sandbox-initializing` was intentionally NOT included as an emitted
-// event. The sandbox initializes lazily inside the executor during the browser
-// attempt; without an executor-level init hook the client cannot report it
-// accurately, and emitting a guess would mislead the UI. The browser attempt
-// is represented by `browser-execution-started`/`browser-execution-failed`.
-
 /** Per-attempt diagnostic entry in an execution's attempt chain */
 export interface ExecutionAttemptDiagnostic {
   kind: 'browser' | 'server';
   startedAt: number;
   durationMs: number;
   outcome: 'succeeded' | 'failed' | 'cancelled';
-  errorCode?: string;
+  errorCode?: ExecutionErrorCode;
 }
 
 /** Rich diagnostics for an execution (issue #105 §3) */
@@ -180,14 +177,15 @@ export interface ExecutionDiagnostics {
   attempts: ExecutionAttemptDiagnostic[];
   /** Total wall time of the execution in milliseconds */
   totalDurationMs: number;
-  /** Manifest cache status at the start of the execution */
-  manifestCache: 'hit' | 'miss';
+  /** Manifest cache status at the start of the execution ('unknown' when the
+   * runtime did not report it, e.g. a legacy/malformed diagnostics object) */
+  manifestCache: 'hit' | 'miss' | 'unknown';
 }
 
 /** Result of executeWithDiagnostics() */
 export type ExecutionDiagnosticResult<T = unknown> =
   | { success: true; result: T; diagnostics: ExecutionDiagnostics; error?: never }
-  | { success: false; result?: never; error: { code: string; message: string }; diagnostics: ExecutionDiagnostics };
+  | { success: false; result?: never; error: { code: ExecutionErrorCode; message: string }; diagnostics: ExecutionDiagnostics };
 
 /**
  * Stable error codes (issue #105 §5).
@@ -199,8 +197,10 @@ export type ExecutionErrorCode =
   | 'manifest_fetch_failed'
   | 'code_fetch_failed'
   | 'browser_runtime_failed'
+  | 'deadline_exceeded'
   | 'function_failed'
   | 'server_fallback_failed'
+  | 'server_network_failed'
   | 'client_disposed';
 
 /** Execution phase used to classify errors into stable codes */
@@ -213,6 +213,7 @@ type EmittableEvent =
   | { type: 'manifest-fetch-completed' }
   | { type: 'code-fetch-started' }
   | { type: 'code-fetch-completed' }
+  | { type: 'sandbox-initializing' }
   | { type: 'browser-execution-started' }
   | { type: 'browser-execution-failed' }
   | { type: 'fallback-started' }
@@ -229,12 +230,15 @@ type EmittableEvent =
 function classifyError(error: Error, phase: Phase): ExecutionErrorCode {
   if (error instanceof UnzenCancelledError) return 'cancelled';
   if (error instanceof UnzenFunctionError) return 'function_failed';
+  if (error instanceof UnzenDeadlineExceededError) return 'deadline_exceeded';
   switch (phase) {
     case 'none': return 'client_disposed';
     case 'manifest': return 'manifest_fetch_failed';
     case 'code': return 'code_fetch_failed';
     case 'browser': return 'browser_runtime_failed';
-    case 'server': return 'server_fallback_failed';
+    case 'server': return error instanceof UnzenNetworkError
+      ? 'server_network_failed'
+      : 'server_fallback_failed';
   }
 }
 
@@ -487,14 +491,19 @@ export class UnzenClient {
     // occurred, not just where a result was produced).
     let lastAttemptedOn: 'browser' | 'server' | undefined;
     let fallbackUsed = false;
+    // Set when `cancel-requested` is emitted (or the internal signal aborts).
+    // Once set, no new phase event may be emitted — only the terminal
+    // `cancelled` may follow (issue #105 AC: cancel is final).
+    let cancellationRequested = false;
 
     // Emit an event, guarding against terminal-event duplicates and listener
     // exceptions (a throwing listener must not break the execution pipeline).
     const emit = (event: EmittableEvent) => {
-      if (
-        terminalEmitted
-        && (event.type === 'completed' || event.type === 'cancelled' || event.type === 'failed')
-      ) {
+      // Nothing may be emitted after a terminal event, and after a cancellation
+      // request only the terminal `cancelled` may be emitted. A listener can
+      // abort the run synchronously inside an emit() call, so the flag is set
+      // before the listener runs to keep re-entrant emits suppressed.
+      if (terminalEmitted || (cancellationRequested && event.type !== 'cancelled')) {
         return;
       }
       const fullEvent = {
@@ -503,12 +512,16 @@ export class UnzenClient {
         sequence: ++sequence,
         timestamp: Date.now(),
       } as UnzenExecutionEvent;
+      if (event.type === 'cancel-requested') {
+        cancellationRequested = true;
+      }
       if (
         event.type === 'completed'
         || event.type === 'cancelled'
         || event.type === 'failed'
       ) {
         terminalEmitted = true;
+        cancellationRequested = true;
       }
       try {
         request.onEvent?.(fullEvent);
@@ -521,7 +534,7 @@ export class UnzenClient {
       kind: 'browser' | 'server',
       attemptStartedAt: number,
       outcome: ExecutionAttemptDiagnostic['outcome'],
-      errorCode?: string,
+      errorCode?: ExecutionErrorCode,
     ): void => {
       attempts.push({
         kind,
@@ -598,12 +611,18 @@ export class UnzenClient {
       }
 
       emit({ type: 'accepted' });
+      if (internalController.signal.aborted) {
+        // The caller cancelled inside the `accepted` listener — end here.
+        return cancelledOutcome();
+      }
 
       // === Development mode: server only ===
       if (this.mode === 'development') {
-        finalRoute = 'server';
         lastAttemptedOn = 'server';
         emit({ type: 'server-execution-started' });
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
         const attemptStart = performance.now();
         try {
           const result = await this.fallbackHandler.execute(request.name, request.args, internalController.signal);
@@ -613,6 +632,7 @@ export class UnzenClient {
             return cancelledOutcome();
           }
           pushAttempt('server', attemptStart, 'succeeded');
+          finalRoute = 'server';
           emit({ type: 'completed' });
           return buildOutcome(true, result as T);
         } catch (error) {
@@ -642,6 +662,9 @@ export class UnzenClient {
           return cancelledOutcome();
         }
         emit({ type: 'manifest-fetch-completed' });
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
       } catch (error) {
         const err = toError(error);
         if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
@@ -670,6 +693,9 @@ export class UnzenClient {
           return cancelledOutcome();
         }
         emit({ type: 'code-fetch-completed' });
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
       } catch (error) {
         const err = toError(error);
         if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
@@ -680,6 +706,12 @@ export class UnzenClient {
       }
 
       // 4. Browser sandbox execution
+      // The sandbox may lazily initialize (WebWorkerSandboxExecutor). Surface
+      // that state so the UI can show "sandbox initializing" without parsing
+      // messages; warm sandboxes (already ready) emit nothing.
+      if (!(this.sandboxExecutor.isReady?.() ?? true)) {
+        emit({ type: 'sandbox-initializing' });
+      }
       emit({ type: 'browser-execution-started' });
       const browserAttemptStart = performance.now();
       try {
@@ -712,6 +744,14 @@ export class UnzenClient {
         );
         emit({ type: 'browser-execution-failed' });
 
+        // The listener may have cancelled the run while the failure was being
+        // reported. Cancellation is final: do not start fallback, and do not
+        // mark fallbackUsed / finalRoute for a run that never reached the
+        // server attempt.
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
+
         // Function errors are NOT recovered by fallback
         // Rationale: User code bugs should be fixed, not masked
         if (err instanceof UnzenFunctionError) {
@@ -721,17 +761,23 @@ export class UnzenClient {
 
         // Runtime errors in browser-only mode are fatal
         if (this.mode === 'browser-only') {
-          emit({ type: 'failed', errorCode: 'browser_runtime_failed' });
-          return buildOutcome(false, undefined, err, 'browser_runtime_failed');
+          const code = classifyError(err, 'browser');
+          emit({ type: 'failed', errorCode: code });
+          return buildOutcome(false, undefined, err, code);
         }
 
         // === Production mode: fallback on runtime error ===
         // Rationale: Environment issues (WASM failure, etc.) are recoverable
         fallbackUsed = true;
-        finalRoute = 'server';
         lastAttemptedOn = 'server';
         emit({ type: 'fallback-started' });
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
         emit({ type: 'server-execution-started' });
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
         const serverAttemptStart = performance.now();
         try {
           const result = await this.fallbackHandler.execute(request.name, request.args, internalController.signal);
@@ -741,6 +787,7 @@ export class UnzenClient {
             return cancelledOutcome();
           }
           pushAttempt('server', serverAttemptStart, 'succeeded');
+          finalRoute = 'server';
           emit({ type: 'completed' });
           return buildOutcome(true, result as T);
         } catch (serverError) {

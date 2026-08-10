@@ -33,6 +33,7 @@ describe('eventToState — SDK events map to UI states (no message parsing)', ()
     ['manifest-fetch-completed', DemoState.PREPARING],
     ['code-fetch-started', DemoState.PREPARING],
     ['code-fetch-completed', DemoState.PREPARING],
+    ['sandbox-initializing', DemoState.INITIALIZING_SANDBOX],
     ['browser-execution-started', DemoState.RUNNING_IN_BROWSER],
     ['browser-execution-failed', DemoState.FALLING_BACK_TO_SERVER],
     ['fallback-started', DemoState.FALLING_BACK_TO_SERVER],
@@ -65,6 +66,7 @@ describe('canSubmit — double-submit guard', () => {
     for (const state of [
       DemoState.VALIDATING,
       DemoState.PREPARING,
+      DemoState.INITIALIZING_SANDBOX,
       DemoState.RUNNING_IN_BROWSER,
       DemoState.FALLING_BACK_TO_SERVER,
       DemoState.RUNNING_ON_SERVER,

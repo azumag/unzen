@@ -15,7 +15,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   UnzenCancelledError,
+  UnzenDeadlineExceededError,
   UnzenFunctionError,
+  UnzenNetworkError,
   UnzenRuntimeError,
   type ManifestResponse,
 } from '@unzen/shared';
@@ -43,7 +45,7 @@ describe('UnzenClient', () => {
   const mockManifest: ManifestResponse = {
     functions: {
       add: {
-        name: 'add',
+        version: 1,
         runtime: 'quickjs',
         codeUrl: 'https://example.com/code/add.js',
         hash: 'abc123',
@@ -107,7 +109,7 @@ describe('UnzenClient', () => {
         ok: true,
         json: async () => ({ result: 3 }),
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -167,7 +169,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -211,7 +213,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Should not reach here');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -252,7 +254,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Should not call other endpoints');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -284,7 +286,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -327,7 +329,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -360,7 +362,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Should not call other endpoints');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -428,7 +430,7 @@ describe('UnzenClient', () => {
         ok: true,
         json: async () => ({ result: 3 }),
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -599,7 +601,6 @@ describe('UnzenClient', () => {
       // and falls back to server
       const { MockSandboxExecutor } = await import('../src/quickjs-sandbox');
       const failingSandbox = new MockSandboxExecutor();
-      const origExecute = failingSandbox.execute.bind(failingSandbox);
       failingSandbox.execute = async () => {
         throw new UnzenRuntimeError('Wasm unavailable');
       };
@@ -625,7 +626,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('Unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({
         endpoint: 'https://example.com',
@@ -683,7 +684,7 @@ describe('UnzenClient', () => {
 
     it('should reject immediately when signal is already aborted (no fetch, no fallback)', async () => {
       const fetchMock = vi.fn();
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
       const controller = new AbortController();
@@ -698,14 +699,14 @@ describe('UnzenClient', () => {
 
     it('should cancel during manifest fetch and never fall back', async () => {
       // Manifest fetch hangs until the signal aborts (then rejects as AbortError)
-      const fetchMock = vi.fn((url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
         if (init?.signal?.aborted) {
           reject(abortError());
           return;
         }
         init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
       }));
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
       const controller = new AbortController();
@@ -721,7 +722,7 @@ describe('UnzenClient', () => {
     it('should cancel during browser execution without fallback', async () => {
       // Sandbox that only settles when its signal aborts → cancelled
       const hangingSandbox = new MockSandboxExecutor();
-      hangingSandbox.execute = (_code, _args, options) => new Promise((resolve, reject) => {
+      hangingSandbox.execute = (_code, _args, options) => new Promise((_resolve, reject) => {
         if (options?.signal?.aborted) {
           reject(new UnzenCancelledError('cancelled'));
           return;
@@ -734,7 +735,7 @@ describe('UnzenClient', () => {
         if (url.includes('/code/add.js')) return textResponse(mockAddCode);
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: hangingSandbox });
       const controller = new AbortController();
@@ -764,7 +765,7 @@ describe('UnzenClient', () => {
         if (url.includes('/exec/add')) return jsonResponse({ result: 3 });
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
       const p = client.execute({ name: 'add', args: [1, 2], signal: controller.signal });
@@ -777,7 +778,7 @@ describe('UnzenClient', () => {
 
     it('should cancel in-flight executions on dispose (no unsettled promises)', async () => {
       const hangingSandbox = new MockSandboxExecutor();
-      hangingSandbox.execute = (_code, _args, options) => new Promise((resolve, reject) => {
+      hangingSandbox.execute = (_code, _args, options) => new Promise((_resolve, reject) => {
         if (options?.signal?.aborted) {
           reject(new UnzenCancelledError('cancelled'));
           return;
@@ -790,7 +791,7 @@ describe('UnzenClient', () => {
         if (url.includes('/code/add.js')) return textResponse(mockAddCode);
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: hangingSandbox });
       const p = client.execute({ name: 'add', args: [1, 2] });
@@ -814,7 +815,7 @@ describe('UnzenClient', () => {
         if (url.includes('/exec/add')) return jsonResponse({ result: 3 });
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
       const result = await client.executeWithDiagnostics<number>({ name: 'add', args: [1, 2] });
@@ -842,7 +843,7 @@ describe('UnzenClient', () => {
         if (url.includes('/code/add.js')) return textResponse(mockAddCode);
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
       const result = await client.executeWithDiagnostics<number>({
@@ -865,6 +866,68 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('should emit sandbox-initializing before browser-execution-started on a cold sandbox', async () => {
+      const events: string[] = [];
+      let sandboxReady = false;
+      const coldSandbox = new MockSandboxExecutor();
+      coldSandbox.isReady = () => sandboxReady;
+      coldSandbox.execute = async (_code, args) => {
+        sandboxReady = true;
+        return (args as number[]).reduce((a, b) => a + b, 0);
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({ endpoint, sandbox: coldSandbox });
+      const result = await client.executeWithDiagnostics<number>({
+        name: 'add',
+        args: [1, 2],
+        onEvent: (e) => events.push(e.type),
+      });
+
+      expect(result.success).toBe(true);
+      expect(events).toEqual([
+        'accepted',
+        'manifest-fetch-started',
+        'manifest-fetch-completed',
+        'code-fetch-started',
+        'code-fetch-completed',
+        'sandbox-initializing',
+        'browser-execution-started',
+        'completed',
+      ]);
+      client.dispose();
+    });
+
+    it('should not emit sandbox-initializing for a warm sandbox', async () => {
+      const events: string[] = [];
+      const warmSandbox = new MockSandboxExecutor();
+      warmSandbox.isReady = () => true;
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({ endpoint, sandbox: warmSandbox });
+      await client.executeWithDiagnostics<number>({
+        name: 'add',
+        args: [1, 2],
+        onEvent: (e) => events.push(e.type),
+      });
+
+      expect(events).not.toContain('sandbox-initializing');
+      expect(events).toContain('browser-execution-started');
+      client.dispose();
+    });
+
     it('should return stable error codes from executeWithDiagnostics', async () => {
       // function error → 'function_failed'
       const errorCode = 'function run() { throw new Error("User error"); }';
@@ -873,7 +936,7 @@ describe('UnzenClient', () => {
         if (url.includes('/code/add.js')) return textResponse(errorCode);
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
       const result = await client.executeWithDiagnostics({ name: 'add', args: [1, 2] });
@@ -917,7 +980,7 @@ describe('UnzenClient', () => {
         if (url.includes('/code/add.js')) return textResponse(mockAddCode);
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: lateSandbox });
       const controller = new AbortController();
@@ -942,7 +1005,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
       const controller = new AbortController();
@@ -975,7 +1038,7 @@ describe('UnzenClient', () => {
         }
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
       const controller = new AbortController();
@@ -1001,6 +1064,118 @@ describe('UnzenClient', () => {
 
       expect(result.success).toBe(false);
       expect(events).toEqual(['cancelled']);
+      client.dispose();
+    });
+
+    it('should report a sandbox deadline as deadline_exceeded (browser-only mode)', async () => {
+      const timeoutSandbox = new MockSandboxExecutor();
+      timeoutSandbox.execute = async () => {
+        throw new UnzenDeadlineExceededError('Execution timeout exceeded');
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({
+        endpoint,
+        mode: 'browser-only',
+        sandbox: timeoutSandbox,
+      });
+      const result = await client.executeWithDiagnostics({ name: 'add', args: [1, 2] });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('deadline_exceeded');
+      }
+      client.dispose();
+    });
+
+    it('should classify a fallback network failure as server_network_failed', async () => {
+      const failingSandbox = new MockSandboxExecutor();
+      failingSandbox.execute = async () => {
+        throw new UnzenRuntimeError('browser down');
+      };
+
+      // Manifest/code succeed; the fallback /exec call fails with a network error.
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        if (url.includes('/exec/add')) {
+          return Promise.reject(new UnzenNetworkError('connect ECONNREFUSED'));
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
+      const result = await client.executeWithDiagnostics({ name: 'add', args: [1, 2] });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('server_network_failed');
+        expect(result.diagnostics.fallbackUsed).toBe(true);
+        expect(result.diagnostics.attempts[1]).toMatchObject({
+          kind: 'server',
+          outcome: 'failed',
+        });
+      }
+      client.dispose();
+    });
+
+    it('must not start fallback events when the caller cancels inside browser-execution-failed', async () => {
+      // The onEvent listener aborts the run while the browser failure is being
+      // reported. After cancel-requested, no new phase (fallback / server)
+      // event may be emitted and no server fallback may start.
+      const events: string[] = [];
+      const failingSandbox = new MockSandboxExecutor();
+      const controller = new AbortController();
+      failingSandbox.execute = async (_code, _args, _options) => {
+        throw new UnzenRuntimeError('browser down');
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        if (url.includes('/exec/add')) return jsonResponse({ result: 3 });
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
+      const result = await client.executeWithDiagnostics({
+        name: 'add',
+        args: [1, 2],
+        signal: controller.signal,
+        onEvent: (e) => {
+          events.push(e.type);
+          if (e.type === 'browser-execution-failed') {
+            controller.abort();
+          }
+        },
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('cancelled');
+        expect(result.diagnostics.fallbackUsed).toBe(false);
+        expect(result.diagnostics.finalRoute).toBeUndefined();
+        expect(result.diagnostics.attempts.some((a) => a.kind === 'server')).toBe(false);
+      }
+
+      // No phase event may follow cancel-requested; the terminal cancelled is last.
+      const cancelIdx = events.indexOf('cancel-requested');
+      expect(cancelIdx).toBeGreaterThanOrEqual(0);
+      const afterCancel = events.slice(cancelIdx);
+      expect(afterCancel).toEqual(['cancel-requested', 'cancelled']);
+      expect(events[events.length - 1]).toBe('cancelled');
+
+      // No server /exec request may have been made.
+      const execCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes('/exec/'));
+      expect(execCalls).toHaveLength(0);
       client.dispose();
     });
 
@@ -1043,7 +1218,7 @@ describe('UnzenClient', () => {
         if (url.includes('/code/add.js')) return textResponse(mockAddCode);
         throw new Error('unexpected URL');
       });
-      globalThis.fetch = fetchMock;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
 

@@ -162,6 +162,9 @@ npm test
 
 # サーバー起動後の E2E スクリプト
 bash test-e2e.sh
+
+# ブラウザ E2E (Playwright; サーバー自動起動、desktop + mobile)
+npm run e2e
 ```
 
 - `tests/demo-state.test.ts` — 状態機械（二重送信ガード、イベント→状態、キャンセル遷移）
@@ -171,3 +174,6 @@ bash test-e2e.sh
 - `tests/demo-i18n.test.ts` — en/ja 辞書のキー完全一致
 - `tests/server-fallback.test.ts` — フォールバック HTTP プロトコル契約
 - `tests/integration.test.ts` — サーバー統合スモークテスト
+- `e2e/demo.spec.ts` — ブラウザE2E（happy path / fallback / cancel / 二重送信 /
+  input error+retry / keyboard-only / narrow viewport。Worker の故障は
+  `page.route()` による /worker.js 差し替えで決定論的に注入）

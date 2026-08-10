@@ -12,19 +12,46 @@
  * - Error classification (function_error vs runtime_error)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { UnzenCancelledError, UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  UnzenCancelledError,
+  UnzenDeadlineExceededError,
+  UnzenFunctionError,
+  UnzenRuntimeError,
+} from '@unzen/shared';
 import { WebWorkerSandboxExecutor } from '../src/web-worker-sandbox';
-import type { WorkerMessage, WorkerResponse } from '../src/worker/worker-protocol';
+import {
+  WORKER_PROTOCOL_VERSION,
+  type WorkerMessage,
+  type WorkerResponse,
+} from '../src/worker/worker-protocol';
 
 /**
  * Mock Worker class that simulates the Web Worker postMessage API.
  * Allows tests to control worker responses without real Wasm.
  */
+
+/** A response fixture without the envelope — the mock adds version/generation. */
+type RespondFixture =
+  | { type: 'init-result'; success: boolean; error?: string }
+  | {
+      type: 'execute-result';
+      requestId: string;
+      success: boolean;
+      value?: unknown;
+      error?: string;
+      errorType?: 'function_error' | 'runtime_error' | 'deadline_exceeded';
+    }
+  | { type: 'cancel-result'; requestId: string; success: boolean; error?: string };
+
 class MockWorker {
   onmessage: ((event: MessageEvent<WorkerResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   private messageHandler: ((msg: WorkerMessage) => void) | null = null;
+  /** When set, postMessage throws synchronously for matching messages. */
+  throwOnPostMessage: ((msg: WorkerMessage) => boolean) | null = null;
+  /** Generation echoed in responses — recorded from the last incoming message */
+  lastGenerationId = 1;
 
   /** Register a handler that will respond to postMessage calls */
   onPostMessage(handler: (msg: WorkerMessage) => void) {
@@ -32,6 +59,12 @@ class MockWorker {
   }
 
   postMessage(msg: WorkerMessage) {
+    if (this.throwOnPostMessage?.(msg)) {
+      throw new Error('DataCloneError: value could not be cloned');
+    }
+    if (typeof msg.generationId === 'number') {
+      this.lastGenerationId = msg.generationId;
+    }
     // Simulate async message passing (like real Worker)
     if (this.messageHandler) {
       // Use queueMicrotask for async simulation
@@ -44,9 +77,16 @@ class MockWorker {
   }
 
   /** Simulate a response from the worker */
-  respond(data: WorkerResponse) {
+  respond(data: RespondFixture) {
     if (this.onmessage) {
-      this.onmessage(new MessageEvent('message', { data }));
+      // Echo the protocol version/generation so responses are valid per the
+      // wire contract. A stale-generation test overrides it after the fact.
+      const full: WorkerResponse = {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: this.lastGenerationId,
+        ...data,
+      } as WorkerResponse;
+      this.onmessage(new MessageEvent('message', { data: full }));
     }
   }
 
@@ -86,7 +126,7 @@ function createAutoRespondingMockWorker() {
 
 /** Factory that returns a mock worker and tracks calls */
 function createMockWorkerFactory(worker: MockWorker) {
-  return (url: string | URL) => {
+  return (_url: string | URL) => {
     return worker as unknown as Worker;
   };
 }
@@ -251,6 +291,32 @@ describe('WebWorkerSandboxExecutor', () => {
 
       await expect(executor.execute('function run() { while(true){} }', []))
         .rejects.toThrow(UnzenRuntimeError);
+      executor.dispose();
+    });
+
+    it('should throw UnzenDeadlineExceededError for a worker-reported deadline_exceeded', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          worker.respond({
+            type: 'execute-result',
+            requestId: msg.requestId,
+            success: false,
+            errorType: 'deadline_exceeded',
+            error: 'Execution timeout exceeded (50ms)',
+          });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      await expect(executor.execute('function run() { while(true){} }', []))
+        .rejects.toThrow(UnzenDeadlineExceededError);
       executor.dispose();
     });
 
@@ -818,6 +884,43 @@ describe('WebWorkerSandboxExecutor', () => {
       executor.dispose();
     });
 
+    it('should settle once and count once when the worker returns a negative cancel ack', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'cancel') {
+          // The worker cannot cancel (e.g. unknown request) — negative ack.
+          worker.respond({
+            type: 'cancel-result',
+            requestId: msg.requestId,
+            success: false,
+            error: 'unknown request',
+          });
+        }
+        // execute messages dropped → request stays running until the cancel
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        cancelAckTimeoutMs: 30,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const p = executor.execute('hang', [], { signal: controller.signal });
+      await new Promise((r) => setTimeout(r, 10));
+      controller.abort();
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      // The negative ack settles the request immediately; the ack timer must
+      // not fire later and count the same cancel a second time.
+      expect(executor.diagnostics.cancelAckTimeoutCount).toBe(1);
+      expect(executor.diagnostics.cancelCount).toBe(1);
+      executor.dispose();
+    });
+
     it('should reject immediately when signal is already aborted', async () => {
       const executor = new WebWorkerSandboxExecutor({
         workerUrl: '/worker.js',
@@ -826,10 +929,294 @@ describe('WebWorkerSandboxExecutor', () => {
 
       const controller = new AbortController();
       controller.abort();
+      const factory = vi.fn();
+      const countingExecutor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: factory,
+      });
 
       await expect(
         executor.execute('function run() { return 1; }', [], { signal: controller.signal }),
       ).rejects.toThrow(UnzenCancelledError);
+      // A pre-aborted request counts as one cancellation and never touches the
+      // worker factory.
+      await expect(
+        countingExecutor.execute('function run() { return 1; }', [], { signal: controller.signal }),
+      ).rejects.toThrow(UnzenCancelledError);
+      expect(countingExecutor.diagnostics.cancelCount).toBe(1);
+      expect(factory).not.toHaveBeenCalled();
+      executor.dispose();
+      countingExecutor.dispose();
+    });
+
+    it('must not commit a successful execute-result that races an abort (cancel wins)', async () => {
+      // A real worker runs QuickJS synchronously, so a CancelMessage cannot be
+      // processed mid-loop: an execute-result (success) can arrive AFTER the
+      // caller aborted but BEFORE the cancel-result. The success must NOT be
+      // committed — the request settles as cancelled (never server fallback).
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          // The worker finishes the run AFTER the caller aborts and reports
+          // success without having processed the cancel message yet.
+          setTimeout(() => {
+            worker.respond({
+              type: 'execute-result',
+              requestId: msg.requestId,
+              success: true,
+              value: 42,
+            });
+          }, 30);
+        } else if (msg.type === 'cancel') {
+          // The cancel ack arrives AFTER the finished execute-result, exactly
+          // like a real worker whose event loop was blocked during the run.
+          setTimeout(() => {
+            worker.respond({ type: 'cancel-result', requestId: msg.requestId, success: true });
+          }, 60);
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        cancelAckTimeoutMs: 1000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const p = executor.execute('function run() { return 42; }', [], { signal: controller.signal });
+      await new Promise((r) => setTimeout(r, 10));
+
+      controller.abort();
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      expect(executor.diagnostics.cancelCount).toBe(1);
+      executor.dispose();
+    });
+
+    it('must not surface a racing execute-result error as a runtime failure after abort', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          setTimeout(() => {
+            worker.respond({
+              type: 'execute-result',
+              requestId: msg.requestId,
+              success: false,
+              errorType: 'runtime_error',
+              error: 'Execution timeout exceeded',
+            });
+          }, 30);
+        } else if (msg.type === 'cancel') {
+          setTimeout(() => {
+            worker.respond({ type: 'cancel-result', requestId: msg.requestId, success: true });
+          }, 60);
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        cancelAckTimeoutMs: 1000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const p = executor.execute('hang', [], { signal: controller.signal });
+      await new Promise((r) => setTimeout(r, 10));
+
+      controller.abort();
+
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      executor.dispose();
+    });
+  });
+
+  describe('init-waiting requests (bounded backpressure + prompt cancel)', () => {
+    it('should apply the queue bound to requests that arrive while init is in progress', async () => {
+      const worker = new MockWorker();
+      // Init never resolves — simulates a hung Wasm load. All requests wait.
+      worker.onPostMessage(() => {
+        // Intentionally drop everything.
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 5000,
+        maxQueueSize: 2,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const owner = executor.execute('owner', []);
+      // The owner occupies the single-flight slot; two more fit in the queue.
+      const q1 = executor.execute('q1', []);
+      const q2 = executor.execute('q2', []);
+      const overflow = executor.execute('q3', []);
+
+      await expect(overflow).rejects.toThrow('queue is full');
+      expect(executor.diagnostics.queueOverflowCount).toBe(1);
+
+      executor.dispose();
+      await expect(owner).rejects.toThrow(UnzenRuntimeError);
+      await expect(q1).rejects.toThrow(UnzenRuntimeError);
+      await expect(q2).rejects.toThrow(UnzenRuntimeError);
+    });
+
+    it('should settle promptly when a request is aborted during init (no init-timeout wait)', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage(() => {
+        // Intentionally drop everything — init hangs.
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const p = executor.execute('function run() { return 1; }', [], { signal: controller.signal });
+
+      controller.abort();
+
+      // Must reject immediately — NOT after initTimeoutMs (5000ms).
+      const started = Date.now();
+      await expect(p).rejects.toThrow(UnzenCancelledError);
+      expect(Date.now() - started).toBeLessThan(500);
+      expect(executor.diagnostics.cancelCount).toBe(1);
+
+      executor.dispose();
+    });
+
+    it('should start queued requests on the same init once the init-owner aborts during init', async () => {
+      let initResponded = false;
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init' && !initResponded) {
+          initResponded = true;
+          // Delay init so the owner can abort before it completes.
+          setTimeout(() => worker.respond({ type: 'init-result', success: true }), 20);
+        } else if (msg.type === 'execute') {
+          worker.respond({
+            type: 'execute-result',
+            requestId: msg.requestId,
+            success: true,
+            value: 'ran-' + msg.requestId,
+          });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const controller = new AbortController();
+      const owner = executor.execute('owner', [], { signal: controller.signal });
+      const queued = executor.execute('queued', []);
+
+      controller.abort();
+      await expect(owner).rejects.toThrow(UnzenCancelledError);
+
+      // The queued request must still run on the completed init.
+      await expect(queued).resolves.toMatch(/^ran-req-\d+$/);
+      executor.dispose();
+    });
+  });
+
+  describe('synchronous postMessage failures (DataCloneError etc.)', () => {
+    it('should settle an execute immediately when postMessage throws, then continue the queue', async () => {
+      const worker = new MockWorker();
+      worker.throwOnPostMessage = (msg) => msg.type === 'execute';
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') worker.respond({ type: 'init-result', success: true });
+        else if (msg.type === 'execute') {
+          worker.respond({
+            type: 'execute-result',
+            requestId: msg.requestId,
+            success: true,
+            value: 7,
+          });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      // The clone failure must not leave the request waiting on its hard-kill
+      // timer; it settles as a runtime error (fallback-eligible).
+      await expect(
+        executor.execute('function run() {}', [() => 1]),
+      ).rejects.toThrow('Failed to send execute message');
+
+      // The executor is still usable (the failure was not generation-fatal).
+      worker.throwOnPostMessage = null;
+      const result = await executor.execute('function run() { return 7; }', []);
+      expect(result).toBe(7);
+      executor.dispose();
+    });
+
+    it('should fail init immediately when the init postMessage throws', async () => {
+      const worker = new MockWorker();
+      worker.throwOnPostMessage = (msg) => msg.type === 'init';
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      const started = Date.now();
+      await expect(executor.execute('function run() { return 1; }', []))
+        .rejects.toThrow('Failed to send init message');
+      // Settled immediately — not after the 5s init timeout.
+      expect(Date.now() - started).toBeLessThan(500);
+      executor.dispose();
+    });
+  });
+
+  describe('synchronous Worker creation failures', () => {
+    it('should settle the init owner and queued requests, then recover on a later attempt', async () => {
+      let factoryCalls = 0;
+      let healthyWorker: MockWorker | null = null;
+      const createWorker = () => {
+        factoryCalls++;
+        if (factoryCalls === 1) {
+          // First attempt: the Worker constructor itself throws (SecurityError
+          // / invalid URL / injected test factory).
+          throw new Error('SecurityError: Failed to construct Worker');
+        }
+        healthyWorker = createAutoRespondingMockWorker();
+        return healthyWorker as unknown as Worker;
+      };
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 5000,
+        createWorker,
+      });
+
+      const started = Date.now();
+      const owner = executor.execute('function run() { return 1; }', []);
+      const queued = executor.execute('function run() { return 2; }', []);
+
+      // Both settle immediately (NOT after the 5s init timeout) with a runtime
+      // error that is fallback-eligible.
+      await expect(owner).rejects.toThrow('Failed to create Worker');
+      await expect(queued).rejects.toThrow('Failed to create Worker');
+      expect(Date.now() - started).toBeLessThan(500);
+
+      // The factory recovers: a fresh execution re-initializes and succeeds.
+      const result = await executor.execute('function run() { return 3; }', []);
+      expect(result).toBe('__mock_result__');
+      expect(factoryCalls).toBe(2);
       executor.dispose();
     });
   });
@@ -878,17 +1265,21 @@ describe('WebWorkerSandboxExecutor', () => {
       const result = await executor.execute('ok', []);
       expect(result).toBe('new-gen');
       expect(workerCount).toBe(2);
+      // The generation restart is counted even though nothing was queued when
+      // generation 1 failed (issue #106 regression: restart counter).
+      expect(executor.diagnostics.generationRestartCount).toBe(1);
 
       // Feed a stale response tagged with the OLD generation through the live
       // worker's handler — it must be rejected and counted, not acted upon.
       const before = executor.diagnostics.lateResponseCount;
-      workers[1].respond({
+      const stale = {
         type: 'execute-result',
         requestId: 'stale-req',
-        generationId: 1,
         success: true,
         value: 'stale',
-      });
+      } as const;
+      workers[1].lastGenerationId = 1;
+      workers[1].respond(stale);
       expect(executor.diagnostics.lateResponseCount).toBe(before + 1);
 
       // Executor must remain functional.

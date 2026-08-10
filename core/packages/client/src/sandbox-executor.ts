@@ -44,6 +44,16 @@ export interface SandboxExecutor {
   execute(code: string, args: unknown[], options?: ExecuteOptions): Promise<unknown>;
 
   /**
+   * Whether the sandbox runtime is ready to execute without (re)initialization.
+   *
+   * Implementations that lazily initialize (e.g. WebWorkerSandboxExecutor)
+   * return false until their runtime is ready; the client uses this to surface
+   * a `sandbox-initializing` lifecycle event. Optional: a sandbox without lazy
+   * initialization can omit it and is treated as always ready.
+   */
+  isReady?(): boolean;
+
+  /**
    * Clean up resources
    *
    * Should be called when executor is no longer needed.

@@ -53,6 +53,13 @@ export interface WorkerState {
    * Created lazily on the first cancel message.
    */
   cancelled?: Set<string>;
+  /**
+   * Request id of the execution currently running in QuickJS, or null.
+   * A CancelMessage that arrives after the execution finished (the event loop
+   * was blocked during the synchronous run) is ignored instead of re-adding a
+   * completed request id to the cancelled set.
+   */
+  activeRequestId?: string | null;
 }
 
 /**
@@ -97,7 +104,7 @@ export async function handleWorkerMessage(
   const msg = event.data;
 
   if (msg.type === 'init') {
-    await handleInit(state, postMessage, loader, msg.generationId);
+    await handleInit(state, postMessage, msg.generationId, loader);
   } else if (msg.type === 'execute') {
     await handleExecute(
       msg.requestId,
@@ -122,8 +129,8 @@ export async function handleWorkerMessage(
 async function handleInit(
   state: WorkerState,
   postMessage: (msg: WorkerResponse) => void,
+  generationId: number,
   loader?: () => Promise<QuickJSModule>,
-  generationId?: number,
 ): Promise<void> {
   try {
     if (!state.quickJS) {
@@ -131,10 +138,10 @@ async function handleInit(
       const load = loader ?? loadQuickJS;
       state.quickJS = await load();
     }
-    postMessage(createInitResultMessage(true, undefined, generationId));
+    postMessage(createInitResultMessage(true, generationId));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    postMessage(createInitResultMessage(false, message, generationId));
+    postMessage(createInitResultMessage(false, generationId, message));
   }
 }
 
@@ -145,13 +152,17 @@ async function handleInit(
  * the worker received the cancel without needing to force-terminate.
  */
 function handleCancel(
-  msg: { requestId: string; generationId?: number },
+  msg: { requestId: string; generationId: number },
   state: WorkerState,
   postMessage: (msg: WorkerResponse) => void,
 ): void {
+  // Only an actively-running request can be cancelled. A cancel for a request
+  // that already finished (or has not started) must not be recorded: the main
+  // thread already settled it, and a stale id would linger forever.
+  if (state.activeRequestId !== msg.requestId) return;
   if (!state.cancelled) state.cancelled = new Set();
   state.cancelled.add(msg.requestId);
-  postMessage(createCancelResultMessage(msg.requestId, true, undefined, msg.generationId));
+  postMessage(createCancelResultMessage(msg.requestId, true, msg.generationId));
 }
 
 /**
@@ -165,7 +176,7 @@ async function handleExecute(
   code: string,
   args: unknown[],
   timeout: number | undefined,
-  generationId: number | undefined,
+  generationId: number,
   state: WorkerState,
   postMessage: (msg: WorkerResponse) => void,
 ): Promise<void> {
@@ -246,6 +257,7 @@ async function handleExecute(
     const startTime = Date.now();
     let timeoutTriggered = false;
     let cancelledTriggered = false;
+    state.activeRequestId = requestId;
     context.runtime.setInterruptHandler(() => {
       const isCancelled = state.cancelled?.has(requestId) ?? false;
       const exceeded = Date.now() - startTime > effectiveTimeout;
@@ -275,7 +287,7 @@ async function handleExecute(
       if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
         postMessage(createExecuteErrorMessage(
           requestId,
-          'runtime_error',
+          'deadline_exceeded',
           `Execution timeout exceeded (${effectiveTimeout}ms)`,
           generationId,
         ));
@@ -301,6 +313,11 @@ async function handleExecute(
     // Prune the cancelled-set entry for this request so a long-lived worker
     // does not accumulate stale request ids.
     state.cancelled?.delete(requestId);
+    // No request is executing anymore; a later CancelMessage for this id is
+    // stale and must be ignored (see handleCancel).
+    if (state.activeRequestId === requestId) {
+      state.activeRequestId = null;
+    }
   }
 }
 
@@ -339,9 +356,14 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
           const msg = event.data;
           const requestId = msg.type === 'execute' ? msg.requestId : undefined;
           if (requestId) {
-            self.postMessage(createExecuteErrorMessage(requestId, 'runtime_error', message));
+            self.postMessage(createExecuteErrorMessage(
+              requestId,
+              'runtime_error',
+              message,
+              msg.generationId,
+            ));
           } else {
-            self.postMessage(createInitResultMessage(false, message));
+            self.postMessage(createInitResultMessage(false, msg.generationId, message));
           }
         } catch {
           // Last resort: log to console (worker console is visible in DevTools)

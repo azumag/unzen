@@ -13,6 +13,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "build": "npm run build -w @unzen/shared && npm run build --workspaces --if-present",
+    "typecheck": "npm run build -w @unzen/shared && tsc -p packages/client/tsconfig.test.json --noEmit",
     "clean": "rm -rf packages/*/dist demo/dist"
   },
   "devDependencies": {

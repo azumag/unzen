@@ -3,7 +3,8 @@
 サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
 QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行する。
 
-> **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。489テスト通過。
+> **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。
+> ユニット・統合テストは `npm test`、ブラウザE2Eは `npm run e2e -w @unzen/demo` で通過状態を確認できる。
 
 ## コンセプト
 
@@ -60,6 +61,35 @@ if (!result.valid) {
 }
 ```
 
+### 実行ライフサイクル・キャンセル・診断 (issue #105)
+
+`executeWithDiagnostics()` は AbortSignal によるキャンセル、実行イベント、失敗経緯
+(attempt chain) を返す。キャンセルは常に `cancelled` で終わり、サーバーへの
+フォールバックを開始しない。
+
+```typescript
+const controller = new AbortController();
+const result = await client.executeWithDiagnostics({
+  name: 'jsonSchemaValidate',
+  args: [userSchema, requestBody],
+  signal: controller.signal,
+  onEvent: (e) => {
+    // accepted / manifest-fetch-* / code-fetch-* / sandbox-initializing /
+    // browser-execution-* / fallback-started / server-execution-started /
+    // completed / cancel-requested / cancelled / failed
+    updateUi(e.type);
+  },
+});
+
+if (!result.success && result.error.code === 'cancelled') {
+  // ユーザーがキャンセルした — フォールバックは走っていない
+}
+```
+
+エラーは安定したコード（`function_failed` / `browser_runtime_failed` /
+`deadline_exceeded` / `server_fallback_failed` / `server_network_failed` /
+`cancelled` など）で分類され、UI はメッセージ文字列ではなくコードで状態を判定する。
+
 ## サンプル関数
 
 ### `jsonSchemaValidate` — JSON Schema バリデーション
@@ -112,7 +142,7 @@ await client.call('levenshteinDistance', 'kitten', 'sitting');
 ### その他のサンプル
 
 - **`formValidate`** — メール・クレジットカード(Luhn)・電話番号・パスワードの複合検証
-- **`calculatePrice`** — 税金・割引・送料の改竄不能な価格計算
+- **`calculatePrice`** — 税金・割引・送料の計算をブラウザ内で実行
 - **`markdownToHtml`** — Markdown→HTML 変換（XSS 防止付き）
 - **`textStats`** — 単語数・可読性スコア（Flesch-Kincaid）
 
@@ -143,7 +173,7 @@ Unzen browser sandbox での計算参加を別の状態として扱う。
 - **サーバー負荷軽減**: バリデーションやデータ変換をブラウザで処理し、API呼び出しを減らす
 - **プライバシー**: ユーザーデータがサーバーに送信されずにブラウザ内で完結する
 - **自動フォールバック**: Wasm未対応ブラウザでも同じ関数がサーバーで実行される
-- **セキュリティ**: 4層隔離モデルにより、サードパーティコードの安全な実行を保証する
+- **セキュリティ**: 4層隔離モデルにより、サードパーティコードをページのメインスレッド・DOM・ネットワークから分離する。これはブラウザ内の隔離境界の保証であり、サーバー側のトラスト境界や認証の代替ではない
 
 ## タイムアウト階層
 
@@ -221,8 +251,8 @@ core/
 ## 想定ユースケース
 
 **軽量処理** (50ms):
-- **フォームバリデーション**: 複雑なスキーマ検証をブラウザで実行する（改竄防止）
-- **価格計算**: 税金・割引・送料を改竄不能な形で計算する
+- **フォームバリデーション**: 複雑なスキーマ検証をブラウザで実行する（サーバーへの往復を削減）
+- **価格計算**: 税金・割引・送料をブラウザ内で計算する（即時レスポンス）
 - **コンテンツフィルタリング**: スパム判定やNGワード検出を行う
 
 **中量処理** (500ms):

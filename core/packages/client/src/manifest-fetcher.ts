@@ -35,6 +35,16 @@ import {
 } from '@unzen/shared';
 import { raceWithAbort, throwIfAborted } from './abort';
 
+/** A shared in-flight manifest request with per-caller waiter tracking. */
+interface InflightManifestRequest {
+  /** The shared underlying fetch (deduplicated across callers) */
+  promise: Promise<ManifestResponse>;
+  /** Aborts the underlying HTTP request when the last waiter leaves */
+  controller: AbortController;
+  /** Number of callers currently waiting on this request */
+  waiters: number;
+}
+
 export class ManifestFetcher {
   /**
    * Server endpoint URL (e.g., "https://example.com")
@@ -53,7 +63,7 @@ export class ManifestFetcher {
    * Prevents multiple concurrent fetch() calls from hitting the server
    * (race condition fix: second caller awaits the same promise)
    */
-  private inflight: Promise<ManifestResponse> | null = null;
+  private inflight: InflightManifestRequest | null = null;
 
   /**
    * Stored ETag from last server response for conditional requests (Phase 3)
@@ -96,23 +106,47 @@ export class ManifestFetcher {
     }
 
     // Deduplicate concurrent fetch() calls: subsequent callers share the
-    // in-flight request. The shared request is NOT bound to any caller's
-    // signal; each caller races it against their own abort so cancelling one
-    // execution settles only that caller (issue #105 AC #1 under concurrency).
+    // in-flight request. Each caller races it against their own signal, so
+    // cancelling one execution settles only that caller. The underlying HTTP
+    // request is aborted only when the LAST waiter leaves, so a shared request
+    // is not torn down for the callers that still need it.
     if (this.inflight === null) {
-      this.inflight = this.fetchFromServer();
+      const controller = new AbortController();
+      const entry: InflightManifestRequest = {
+        promise: this.fetchFromServer(controller.signal),
+        controller,
+        waiters: 0,
+      };
+      // Clear the shared slot only when the underlying request itself settles
+      // (or when the last waiter leaves) — never when an individual caller's
+      // raceWithAbort rejects. The trailing catch marks the chain handled so
+      // an aborted request with zero remaining waiters is not an unhandled
+      // rejection.
+      entry.promise.finally(() => {
+        if (this.inflight === entry) {
+          this.inflight = null;
+        }
+      }).catch(() => {});
+      this.inflight = entry;
     }
-    const inflight = this.inflight;
+    const entry = this.inflight;
+    entry.waiters++;
 
     try {
       if (signal) {
-        return await raceWithAbort(inflight, signal);
+        return await raceWithAbort(entry.promise, signal);
       }
-      return await inflight;
+      return await entry.promise;
     } finally {
-      // Clear inflight only if it is still the promise this caller waited on.
-      if (this.inflight === inflight) {
-        this.inflight = null;
+      entry.waiters--;
+      if (entry.waiters === 0) {
+        // No caller needs the result anymore: stop the shared HTTP request so
+        // a cancelled caller does not leave network traffic and cache mutation
+        // running in the background, and let a later caller start fresh.
+        if (this.inflight === entry) {
+          this.inflight = null;
+        }
+        entry.controller.abort();
       }
     }
   }
@@ -125,7 +159,7 @@ export class ManifestFetcher {
    * - Handles 304 Not Modified by returning the last known manifest
    * - Stores new ETag and manifest on 200 OK responses
    */
-  private async fetchFromServer(): Promise<ManifestResponse> {
+  private async fetchFromServer(signal: AbortSignal): Promise<ManifestResponse> {
     const url = `${this.endpoint}/manifest`;
 
     // Build request headers
@@ -148,6 +182,7 @@ export class ManifestFetcher {
       const response = await globalThis.fetch(url, {
         method: 'GET',
         headers,
+        signal,
       });
 
       // 304 Not Modified: server confirms our cached version is still current
@@ -165,19 +200,18 @@ export class ManifestFetcher {
         );
       }
 
-      // Extract ETag from response for future conditional requests
-      // Store it regardless of whether we had one before (may be a new value)
-      // Use optional chaining for resilience: some environments or mocks
-      // may not provide a headers object on the Response
-      const etag = response.headers?.get('ETag');
-      if (etag) {
-        this.etag = etag;
-      }
-
-      // Parse and cache response
+      // Parse the body FIRST. The ETag identifies this exact body, so both
+      // must be committed atomically: if the body parse is aborted mid-flight
+      // (the last waiter cancelled, aborting the underlying request), the ETag
+      // must not be stored for a manifest we never committed — otherwise a
+      // later 304 would pair the new ETag with the old manifest.
+      const etag = response.headers?.get('ETag') ?? null;
       const manifest: ManifestResponse = await response.json();
+      // Commit both together. A 200 without an ETag header invalidates the old
+      // ETag: pairing a stale ETag with the new manifest would make the next
+      // 304 serve the wrong body.
+      this.etag = etag;
       this.cache = manifest;
-      // Store in lastManifest for 304 revalidation after future invalidate() calls
       this.lastManifest = manifest;
 
       return manifest;

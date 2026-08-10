@@ -10,6 +10,7 @@
  * module maps event types to the demo's UI states:
  *
  *   accepted / manifest-fetch-* / code-fetch-*  → preparing
+ *   sandbox-initializing                       → initializing-sandbox
  *   browser-execution-started                   → running-in-browser
  *   browser-execution-failed / fallback-started → falling-back-to-server
  *   server-execution-started                    → running-on-server
@@ -19,14 +20,15 @@
  *   failed                                      → failed
  *
  * The state list itself (idle / validating / preparing / running-in-browser /
- * falling-back-to-server / running-on-server / succeeded / failed / cancelling
- * / cancelled) is mandated by issue #104.
+ * initializing-sandbox / falling-back-to-server / running-on-server /
+ * succeeded / failed / cancelling / cancelled) is mandated by issue #104.
  */
 
 export const DemoState = Object.freeze({
   IDLE: 'idle',
   VALIDATING: 'validating',
   PREPARING: 'preparing',
+  INITIALIZING_SANDBOX: 'initializing-sandbox',
   RUNNING_IN_BROWSER: 'running-in-browser',
   FALLING_BACK_TO_SERVER: 'falling-back-to-server',
   RUNNING_ON_SERVER: 'running-on-server',
@@ -49,6 +51,8 @@ export function eventToState(eventType) {
     case 'code-fetch-started':
     case 'code-fetch-completed':
       return DemoState.PREPARING;
+    case 'sandbox-initializing':
+      return DemoState.INITIALIZING_SANDBOX;
     case 'browser-execution-started':
       return DemoState.RUNNING_IN_BROWSER;
     // browser-execution-failed arrives just before fallback-started: showing
@@ -150,6 +154,7 @@ export function isRunning(state) {
   switch (state) {
     case DemoState.VALIDATING:
     case DemoState.PREPARING:
+    case DemoState.INITIALIZING_SANDBOX:
     case DemoState.RUNNING_IN_BROWSER:
     case DemoState.FALLING_BACK_TO_SERVER:
     case DemoState.RUNNING_ON_SERVER:

@@ -47,7 +47,12 @@
  *   - Hard timeout → UnzenRuntimeError (triggers server fallback)
  */
 
-import { UnzenCancelledError, UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
+import {
+  UnzenCancelledError,
+  UnzenDeadlineExceededError,
+  UnzenFunctionError,
+  UnzenRuntimeError,
+} from '@unzen/shared';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import {
   createCancelMessage,
@@ -167,10 +172,16 @@ interface BaseRequest {
 interface RunningRequest extends BaseRequest {
   generationId: number;
   startedAt: number;
-  /** Hard-kill timer, started when execution begins (not when enqueued) */
-  hardKillTimer: ReturnType<typeof setTimeout>;
+  /** Hard-kill timer, started when execution begins (not when enqueued).
+   * Null while the request owns initialization and has not started running. */
+  hardKillTimer: ReturnType<typeof setTimeout> | null;
   /** Timer waiting for a cooperative cancel acknowledgement (null when idle) */
   cancelAckTimer: ReturnType<typeof setTimeout> | null;
+  /** Set once the caller's signal aborts; a racing execute-result must then be
+   * settled as cancellation instead of committing its value. */
+  cancelRequested: boolean;
+  /** Monotonic timestamp of the cancel request (for cancel-latency metrics) */
+  cancelRequestedAt: number | null;
 }
 
 /** A request waiting in the bounded FIFO queue */
@@ -196,6 +207,9 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
   private generationId = 0;
   /** Currently executing request, or null when idle */
   private runningRequest: RunningRequest | null = null;
+  /** True when a generation failure left queued work to restart on a fresh
+   * generation; cleared once that restart actually starts. */
+  private pendingRestart = false;
   /** Bounded FIFO queue of requests waiting to execute */
   private readonly queue: QueuedRequest[] = [];
   /** Deduplicates concurrent ensureInitialized() calls */
@@ -238,6 +252,17 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
    */
   get diagnostics(): ExecutorDiagnostics {
     return { ...this.diagnosticsState };
+  }
+
+  /**
+   * Whether the QuickJS Wasm runtime is ready to execute.
+   *
+   * False while the worker is empty/initializing (e.g. on first use or after a
+   * generation failure); the client surfaces a `sandbox-initializing` event
+   * based on this so a UI can show the init state instead of guessing.
+   */
+  isReady(): boolean {
+    return this.state.status === 'ready';
   }
 
   /**
@@ -288,16 +313,8 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     // Reject immediately if the caller already aborted before calling.
     // Cancellation is a deliberate caller decision, never a runtime error.
     if (options?.signal?.aborted) {
+      this.diagnosticsState.cancelCount++;
       throw new UnzenCancelledError('Execution cancelled by caller');
-    }
-
-    // Lazy init: create Worker and load QuickJS Wasm on first call.
-    // Concurrent callers share the same init promise.
-    await this.ensureInitialized();
-
-    // dispose() may have run while we waited for init.
-    if (this.isDisposed()) {
-      throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
 
     // Generate unique request ID for tracking concurrent executions
@@ -313,33 +330,43 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
         signal: options?.signal,
       };
 
-      // Single-flight: if a request is already running, enqueue this one.
-      // The queue is bounded; overflow is rejected with a stable error instead
-      // of growing memory without limit.
-      if (this.runningRequest) {
-        // The caller may have aborted across the `await ensureInitialized()`
-        // boundary; an already-aborted signal never fires its abort listener,
-        // so re-check here to avoid a stale queue occupant.
-        if (base.signal?.aborted) {
-          this.diagnosticsState.cancelCount++;
-          reject(new UnzenCancelledError('Execution cancelled by caller'));
-          return;
-        }
-        if (this.queue.length >= this.maxQueueSize) {
-          this.diagnosticsState.queueOverflowCount++;
-          reject(new UnzenRuntimeError(
-            `Executor queue is full (max ${this.maxQueueSize} queued requests)`,
-          ));
-          return;
-        }
-        const queued: QueuedRequest = { ...base, enqueuedAt: Date.now() };
-        this.queue.push(queued);
-        this.diagnosticsState.queueWaitCount++;
-        this.attachAbortListener(queued, requestId);
-      } else {
-        this.startRequest(base, requestId);
+      // Single-flight: while a request is running OR the worker is still
+      // initializing, new requests wait in the bounded FIFO queue. Applying
+      // the bound during init keeps memory bounded even when Wasm load is slow
+      // and lets callers cancel promptly instead of hanging on the init await.
+      if (this.state.status === 'initializing' || this.runningRequest) {
+        this.enqueueOrReject(base);
+        return;
       }
+
+      this.startRequest(base, requestId);
     });
+  }
+
+  /**
+   * Enqueue a request, or reject it when the queue is full / already aborted.
+   *
+   * The caller may have aborted before calling; an already-aborted signal
+   * never fires its abort listener, so re-check here to avoid a stale queue
+   * occupant.
+   */
+  private enqueueOrReject(base: BaseRequest): void {
+    if (base.signal?.aborted) {
+      this.diagnosticsState.cancelCount++;
+      base.reject(new UnzenCancelledError('Execution cancelled by caller'));
+      return;
+    }
+    if (this.queue.length >= this.maxQueueSize) {
+      this.diagnosticsState.queueOverflowCount++;
+      base.reject(new UnzenRuntimeError(
+        `Executor queue is full (max ${this.maxQueueSize} queued requests)`,
+      ));
+      return;
+    }
+    const queued: QueuedRequest = { ...base, enqueuedAt: Date.now() };
+    this.queue.push(queued);
+    this.diagnosticsState.queueWaitCount++;
+    this.attachAbortListener(queued, base.requestId);
   }
 
   /**
@@ -405,6 +432,12 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
         // dispose()/teardown may have moved us to disposed/empty meanwhile.
         if (this.state.status === 'initializing' && this.state.generationId === generationId) {
           this.state = { status: 'ready', generationId };
+          // A generation failure left work to restart; count each successful
+          // restart regardless of whether anything was queued at the time.
+          if (this.pendingRestart) {
+            this.diagnosticsState.generationRestartCount++;
+            this.pendingRestart = false;
+          }
         }
       },
       (error: Error) => {
@@ -422,12 +455,26 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
 
   /** Actual init logic — creates Worker and waits for QuickJS Wasm to load */
   private doInit(generationId: number): Promise<void> {
-    const worker = this.createWorkerFn(this.workerUrl);
-    this.worker = worker;
-
     return new Promise<void>((resolve, reject) => {
       // `settled` guards against double-settle from timer + message + error.
       let settled = false;
+
+      // The Worker constructor itself can throw synchronously (SecurityError,
+      // invalid URL, a test-injected factory). That is an init failure, not a
+      // hang: settle immediately so the init-owner and queued requests are
+      // rejected and the executor can retry on a fresh generation later.
+      let worker: Worker;
+      try {
+        worker = this.createWorkerFn(this.workerUrl);
+      } catch (error) {
+        this.diagnosticsState.initFailureCount++;
+        this.resetToEmptyIfNotDisposed();
+        reject(new UnzenRuntimeError(
+          `Failed to create Worker: ${error instanceof Error ? error.message : String(error)}`,
+        ));
+        return;
+      }
+      this.worker = worker;
 
       // Init timeout: if `init-result` never arrives, settle init waiters
       // instead of leaving them pending forever (issue #106 §3).
@@ -490,7 +537,7 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
         if (msg.type !== 'init-result') return;
 
         // Reject a stale init-result from an old generation.
-        if (msg.generationId !== undefined && msg.generationId !== generationId) {
+        if (msg.generationId !== generationId) {
           this.diagnosticsState.lateResponseCount++;
           return;
         }
@@ -513,13 +560,34 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
         }
       };
 
-      worker.postMessage(createInitMessage(generationId));
+      try {
+        worker.postMessage(createInitMessage(generationId));
+      } catch (error) {
+        // Synchronous send failure (e.g. DataCloneError / dead worker): settle
+        // the init immediately instead of leaving the init timer running.
+        if (settled) return;
+        settled = true;
+        clearTimeout(initTimer);
+        this.diagnosticsState.initFailureCount++;
+        this.initReject = null;
+        this.teardownWorker();
+        this.resetToEmptyIfNotDisposed();
+        reject(new UnzenRuntimeError(
+          `Failed to send init message: ${error instanceof Error ? error.message : String(error)}`,
+        ));
+      }
     });
   }
 
   /**
    * Start executing a request on the current Worker generation.
-   * Called when the executor is idle (state ready) and no request is running.
+   * Called when the executor is idle and no request is running.
+   *
+   * When the worker is already ready this posts the execute message
+   * immediately. When the worker is empty/initializing the request becomes the
+   * single-flight slot that OWNS initialization: it reserves the running slot
+   * (so concurrent callers queue against it) and only arms its execution
+   * timeout once the worker is actually ready — init has its own timeout.
    */
   private startRequest(req: BaseRequest, requestId: string): void {
     if (this.state.status === 'disposed') {
@@ -533,38 +601,96 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       return;
     }
 
-    const generationId = this.generationId;
-    const startedAt = Date.now();
+    // Reserve the single-flight slot now. `hardKillTimer` stays null until
+    // execution actually begins (beginExecution), so an abort during init can
+    // settle the request without waiting for init to finish.
+    const running: RunningRequest = {
+      ...req,
+      generationId: this.generationId,
+      startedAt: Date.now(),
+      hardKillTimer: null,
+      cancelAckTimer: null,
+      cancelRequested: false,
+      cancelRequestedAt: null,
+    };
+    this.runningRequest = running;
 
     // A queued request already carries an abort listener from enqueue time.
     // Detach it before attaching the running-request handler below — otherwise
     // the signal accumulates two listeners and cancelling fires twice.
-    this.removeAbortListener(req);
-
-    // Hard-kill timer starts at EXECUTION START, not enqueue time, so queue
-    // wait time is never counted against the execution timeout.
-    const hardKillTimer = setTimeout(() => {
-      this.handleHardTimeout(requestId);
-    }, this.timeout * this.hardKillMultiplier);
-
-    const running: RunningRequest = {
-      ...req,
-      generationId,
-      startedAt,
-      hardKillTimer,
-      cancelAckTimer: null,
-    };
-    this.runningRequest = running;
-
+    this.removeAbortListener(running);
     this.attachAbortListener(running, requestId);
 
-    this.worker!.postMessage(createExecuteMessage(
-      requestId,
-      req.code,
-      req.args,
-      this.timeout,
-      generationId,
-    ));
+    if (this.state.status === 'ready') {
+      this.postExecuteMessage(running, this.generationId);
+      return;
+    }
+
+    // Init owner: (re)initialize, then hand the request to the ready worker.
+    // The rejection handler is required even when the request already settled
+    // (e.g. aborted during init) so a later init failure is not an unhandled
+    // rejection.
+    this.ensureInitialized().then(
+      () => {
+        // The request may have settled (abort/dispose) or the slot may have
+        // been claimed by drainQueue while we initialized — never restart it.
+        if (this.runningRequest?.requestId !== requestId) return;
+        if (this.state.status !== 'ready') {
+          const current = this.runningRequest;
+          this.runningRequest = null;
+          this.removeAbortListener(current!);
+          current!.reject(new UnzenRuntimeError('Executor not ready after initialization'));
+          return;
+        }
+        this.postExecuteMessage(this.runningRequest, this.generationId);
+      },
+      (error: Error) => {
+        if (this.runningRequest?.requestId !== requestId) return;
+        const err = error instanceof Error ? error : new UnzenRuntimeError(String(error));
+        this.runningRequest = null;
+        this.clearRunningTimers(running);
+        this.removeAbortListener(running);
+        running.reject(err);
+        this.rejectAllQueued(err);
+      },
+    );
+  }
+
+  /**
+   * Post the execute message for a request on a ready worker generation.
+   *
+   * Arms the hard-kill timer at EXECUTION START (not enqueue time), so queue
+   * wait time and init time are never counted against the execution timeout.
+   */
+  private postExecuteMessage(running: RunningRequest, generationId: number): void {
+    running.generationId = generationId;
+    running.startedAt = Date.now();
+    running.hardKillTimer = setTimeout(() => {
+      this.handleHardTimeout(running.requestId);
+    }, this.timeout * this.hardKillMultiplier);
+
+    try {
+      this.worker!.postMessage(createExecuteMessage(
+        running.requestId,
+        running.code,
+        running.args,
+        generationId,
+        this.timeout,
+      ));
+    } catch (error) {
+      // Synchronous send failure (e.g. DataCloneError from an unserializable
+      // argument, or the worker died between init and now): settle this
+      // request and continue the queue instead of leaving it on its hard-kill
+      // timer with a busy executor. The worker itself is still healthy for
+      // clone failures, so this is not generation-fatal.
+      this.runningRequest = null;
+      this.clearRunningTimers(running);
+      this.removeAbortListener(running);
+      running.reject(new UnzenRuntimeError(
+        `Failed to send execute message: ${error instanceof Error ? error.message : String(error)}`,
+      ));
+      void this.drainQueue();
+    }
   }
 
   /**
@@ -579,7 +705,14 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       this.diagnosticsState.lateResponseCount++;
       return;
     }
-    this.failGeneration(new UnzenRuntimeError(
+    if (this.runningRequest.cancelRequested) {
+      // The caller aborted but the worker neither finished nor acknowledged
+      // the cancel in time — surface the caller's intent, not a runtime
+      // failure that would wrongly trigger server fallback.
+      this.failGeneration(new UnzenCancelledError('Execution cancelled by caller'));
+      return;
+    }
+    this.failGeneration(new UnzenDeadlineExceededError(
       `Execution hard timeout (worker terminated after ${Math.round(this.timeout * this.hardKillMultiplier)}ms)`,
     ));
   }
@@ -593,6 +726,9 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
    */
   private failGeneration(error: Error): void {
     this.diagnosticsState.forcedTerminationCount++;
+    // The next successful initialization starts a fresh generation. Count it
+    // as a restart whether or not queued work existed at failure time.
+    this.pendingRestart = true;
 
     // Settle the running request immediately with the failure.
     const running = this.runningRequest;
@@ -622,6 +758,25 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
   private async drainQueue(): Promise<void> {
     while (!this.isDisposed()) {
       if (this.runningRequest) return;
+      if (this.queue.length === 0) return;
+
+      // Wait for (re)initialization while the queue still owns the abort
+      // listeners, so an abort during init settles the queued request
+      // promptly instead of only at init completion.
+      if (this.state.status !== 'ready') {
+        try {
+          await this.ensureInitialized();
+        } catch (error) {
+          // Init failed — nothing in the queue can run. Fail them all with the
+          // same error rather than retrying in a hot loop.
+          const err = error instanceof Error ? error : new UnzenRuntimeError(String(error));
+          this.rejectAllQueued(err);
+          return;
+        }
+        if (this.isDisposed()) return;
+        if (this.runningRequest) return;
+        continue;
+      }
 
       const next = this.queue.shift();
       if (!next) return;
@@ -632,33 +787,6 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
         this.removeAbortListener(next);
         next.reject(new UnzenCancelledError('Execution cancelled by caller'));
         continue;
-      }
-
-      // Ensure the worker is initialized for the new generation.
-      try {
-        await this.ensureInitialized();
-      } catch (error) {
-        // Init failed — the shifted `next` plus the remaining queue cannot
-        // run; fail them all with the same error rather than retrying in a
-        // hot loop. `next` was already removed from the queue, so reject it
-        // explicitly (its abort listener must be detached too).
-        const err = error instanceof Error ? error : new UnzenRuntimeError(String(error));
-        this.removeAbortListener(next);
-        next.reject(err);
-        this.rejectAllQueued(err);
-        return;
-      }
-
-      if (this.isDisposed()) {
-        this.removeAbortListener(next);
-        next.reject(new UnzenRuntimeError('Executor has been disposed.'));
-        return;
-      }
-
-      // Another path may have started a request while we awaited init.
-      if (this.runningRequest) {
-        this.queue.unshift(next);
-        return;
       }
 
       this.startRequest(next, next.requestId);
@@ -707,8 +835,15 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     this.clearRunningTimers(running);
     this.removeAbortListener(running);
 
-    if (msg.success) {
+    // A result that raced the caller's abort must never be committed: even a
+    // successful completion after abort settles as cancellation (the worker
+    // could not observe the cancel mid-run and reported the finished value).
+    if (running.cancelRequested) {
+      running.reject(new UnzenCancelledError('Execution cancelled by caller'));
+    } else if (msg.success) {
       running.resolve(msg.value);
+    } else if (msg.errorType === 'deadline_exceeded') {
+      running.reject(new UnzenDeadlineExceededError(msg.error ?? 'Execution timeout exceeded'));
     } else if (msg.errorType === 'runtime_error') {
       running.reject(new UnzenRuntimeError(msg.error ?? 'Runtime error'));
     } else {
@@ -734,14 +869,18 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       return;
     }
     if (!msg.success) {
-      // Worker reports it could not cancel — keep waiting on the running
-      // request; its own timeout/cancel-ack-timer will settle it.
+      // Worker reports it could not cancel (e.g. unknown request). The cancel
+      // ack timer would otherwise fire later and count the same cancel twice.
+      // Settle via the generation-fatal path now: the caller's intent is
+      // final, the counter is counted exactly once here.
       this.diagnosticsState.cancelAckTimeoutCount++;
+      this.failGeneration(new UnzenCancelledError('Execution cancelled by caller'));
       return;
     }
 
-    this.diagnosticsState.cancelCount++;
-    this.diagnosticsState.cancelLatencyMs = Date.now() - running.startedAt;
+    this.diagnosticsState.cancelLatencyMs = running.cancelRequestedAt
+      ? Date.now() - running.cancelRequestedAt
+      : null;
     this.runningRequest = null;
     this.clearRunningTimers(running);
     this.removeAbortListener(running);
@@ -766,7 +905,25 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     const running = this.runningRequest;
     if (!running || running.requestId !== requestId) return;
 
-    this.worker?.postMessage(createCancelMessage(requestId, running.generationId));
+    // Record the caller's intent so a racing execute-result cannot commit its
+    // value after the abort (see handleExecuteResult). Count the cancellation
+    // exactly once, at the moment the abort is first accepted — a racing
+    // execute-result that arrives before the cancel-result must not double- or
+    // under-count it.
+    running.cancelRequested = true;
+    running.cancelRequestedAt = Date.now();
+    this.diagnosticsState.cancelCount++;
+
+    try {
+      this.worker?.postMessage(createCancelMessage(requestId, running.generationId));
+    } catch {
+      // The worker is gone (already terminated): the caller's cancellation is
+      // final, so settle via the generation-fatal path without waiting for a
+      // cancel ack that can never arrive.
+      this.diagnosticsState.cancelAckTimeoutCount++;
+      this.failGeneration(new UnzenCancelledError('Execution cancelled by caller'));
+      return;
+    }
 
     running.cancelAckTimer = setTimeout(() => {
       // Guard: the request may have settled while waiting for the ack.
@@ -789,15 +946,28 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     if (!req.signal) return;
 
     const handler = () => {
-      if (this.runningRequest?.requestId === requestId) {
-        this.initiateCancel(requestId);
-      } else {
-        const idx = this.queue.findIndex((q) => q.requestId === requestId);
-        if (idx >= 0) {
-          const [queued] = this.queue.splice(idx, 1);
+      const running = this.runningRequest;
+      if (running?.requestId === requestId) {
+        if (this.state.status === 'ready') {
+          this.initiateCancel(requestId);
+        } else {
+          // The request owns initialization and has not begun executing, so a
+          // worker cancel is neither possible nor needed: settle immediately
+          // (the shared init may continue for queued requests).
           this.diagnosticsState.cancelCount++;
-          queued.reject(new UnzenCancelledError('Execution cancelled while queued'));
+          this.runningRequest = null;
+          this.clearRunningTimers(running);
+          this.removeAbortListener(running);
+          running.reject(new UnzenCancelledError('Execution cancelled by caller'));
+          void this.drainQueue();
         }
+        return;
+      }
+      const idx = this.queue.findIndex((q) => q.requestId === requestId);
+      if (idx >= 0) {
+        const [queued] = this.queue.splice(idx, 1);
+        this.diagnosticsState.cancelCount++;
+        queued.reject(new UnzenCancelledError('Execution cancelled while queued'));
       }
     };
 
@@ -815,7 +985,10 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
 
   /** Clear the hard-kill and cancel-ack timers for a settled running request */
   private clearRunningTimers(running: RunningRequest): void {
-    clearTimeout(running.hardKillTimer);
+    if (running.hardKillTimer) {
+      clearTimeout(running.hardKillTimer);
+      running.hardKillTimer = null;
+    }
     if (running.cancelAckTimer) {
       clearTimeout(running.cancelAckTimer);
       running.cancelAckTimer = null;
@@ -843,8 +1016,9 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       const msg = validated.msg;
 
       // Reject any message from a generation other than the one this handler
-      // was installed for (stale worker responses after a restart).
-      if (msg.generationId !== undefined && msg.generationId !== generationId) {
+      // was installed for (stale worker responses after a restart). Every
+      // response carries a generationId by protocol contract.
+      if (msg.generationId !== generationId) {
         this.diagnosticsState.lateResponseCount++;
         return;
       }

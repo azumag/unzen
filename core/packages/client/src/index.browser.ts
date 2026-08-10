@@ -55,4 +55,5 @@ export {
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenCancelledError,
+  UnzenDeadlineExceededError,
 } from '@unzen/shared';

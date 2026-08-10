@@ -35,17 +35,17 @@ export const WORKER_PROTOCOL_VERSION = 1;
 /** Initialize QuickJS Wasm module in the worker */
 export interface InitMessage {
   readonly type: 'init';
-  readonly protocolVersion?: number;
+  readonly protocolVersion: number;
   /** Worker generation this init belongs to (echoed in init-result) */
-  readonly generationId?: number;
+  readonly generationId: number;
 }
 
 /** Execute code in the QuickJS sandbox */
 export interface ExecuteMessage {
   readonly type: 'execute';
   readonly requestId: string;
-  readonly protocolVersion?: number;
-  readonly generationId?: number;
+  readonly protocolVersion: number;
+  readonly generationId: number;
   readonly code: string;
   readonly args: unknown[];
   readonly timeout?: number;
@@ -55,8 +55,8 @@ export interface ExecuteMessage {
 export interface CancelMessage {
   readonly type: 'cancel';
   readonly requestId: string;
-  readonly protocolVersion?: number;
-  readonly generationId?: number;
+  readonly protocolVersion: number;
+  readonly generationId: number;
 }
 
 /** Union of all messages sent from main thread to worker */
@@ -71,8 +71,8 @@ export interface InitResultMessage {
   readonly type: 'init-result';
   readonly success: boolean;
   readonly error?: string;
-  readonly protocolVersion?: number;
-  readonly generationId?: number;
+  readonly protocolVersion: number;
+  readonly generationId: number;
 }
 
 /** Result of code execution (success or error) */
@@ -82,12 +82,14 @@ export interface ExecuteResultMessage {
   readonly success: boolean;
   readonly value?: unknown;
   readonly error?: string;
-  readonly protocolVersion?: number;
-  readonly generationId?: number;
+  readonly protocolVersion: number;
+  readonly generationId: number;
   /** Distinguishes user code errors from runtime/environment errors.
    * 'function_error' → UnzenFunctionError (no server fallback)
-   * 'runtime_error' → UnzenRuntimeError (triggers server fallback) */
-  readonly errorType?: 'function_error' | 'runtime_error';
+   * 'runtime_error' → UnzenRuntimeError (triggers server fallback)
+   * 'deadline_exceeded' → UnzenDeadlineExceededError (triggers server fallback,
+   *   reported as `deadline_exceeded` instead of a generic runtime failure) */
+  readonly errorType?: 'function_error' | 'runtime_error' | 'deadline_exceeded';
 }
 
 /** Acknowledgement of a cooperative cancel request */
@@ -96,8 +98,8 @@ export interface CancelResultMessage {
   readonly requestId: string;
   readonly success: boolean;
   readonly error?: string;
-  readonly protocolVersion?: number;
-  readonly generationId?: number;
+  readonly protocolVersion: number;
+  readonly generationId: number;
 }
 
 /** Union of all messages sent from worker to main thread */
@@ -107,7 +109,7 @@ export type WorkerResponse = InitResultMessage | ExecuteResultMessage | CancelRe
 // Factory Functions
 // ============================================================
 
-export function createInitMessage(generationId?: number): InitMessage {
+export function createInitMessage(generationId: number): InitMessage {
   return { type: 'init', protocolVersion: WORKER_PROTOCOL_VERSION, generationId };
 }
 
@@ -115,8 +117,8 @@ export function createExecuteMessage(
   requestId: string,
   code: string,
   args: unknown[],
+  generationId: number,
   timeout?: number,
-  generationId?: number,
 ): ExecuteMessage {
   return {
     type: 'execute',
@@ -131,7 +133,7 @@ export function createExecuteMessage(
 
 export function createCancelMessage(
   requestId: string,
-  generationId?: number,
+  generationId: number,
 ): CancelMessage {
   return {
     type: 'cancel',
@@ -143,8 +145,8 @@ export function createCancelMessage(
 
 export function createInitResultMessage(
   success: boolean,
+  generationId: number,
   error?: string,
-  generationId?: number,
 ): InitResultMessage {
   return {
     type: 'init-result',
@@ -158,7 +160,7 @@ export function createInitResultMessage(
 export function createExecuteResultMessage(
   requestId: string,
   value: unknown,
-  generationId?: number,
+  generationId: number,
 ): ExecuteResultMessage {
   return {
     type: 'execute-result',
@@ -172,9 +174,9 @@ export function createExecuteResultMessage(
 
 export function createExecuteErrorMessage(
   requestId: string,
-  errorType: 'function_error' | 'runtime_error',
+  errorType: 'function_error' | 'runtime_error' | 'deadline_exceeded',
   error: string,
-  generationId?: number,
+  generationId: number,
 ): ExecuteResultMessage {
   return {
     type: 'execute-result',
@@ -190,8 +192,8 @@ export function createExecuteErrorMessage(
 export function createCancelResultMessage(
   requestId: string,
   success: boolean,
+  generationId: number,
   error?: string,
-  generationId?: number,
 ): CancelResultMessage {
   return {
     type: 'cancel-result',
@@ -223,18 +225,16 @@ export function validateWorkerResponse(
     return { ok: false, reason: 'response is not an object' };
   }
   const m = data as Record<string, unknown>;
-  if (
-    m.protocolVersion !== undefined
-    && m.protocolVersion !== WORKER_PROTOCOL_VERSION
-  ) {
+  if (m.protocolVersion !== WORKER_PROTOCOL_VERSION) {
     return {
       ok: false,
       reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`,
     };
   }
-  // generationId, when present, must be a number (a malformed generation id
-  // could otherwise bypass the executor's stale-generation filtering).
-  if (m.generationId !== undefined && typeof m.generationId !== 'number') {
+  // generationId is REQUIRED: every response must echo its generation so the
+  // executor can reject stale-worker responses (a missing or non-number value
+  // is a protocol violation, not a trusted response).
+  if (typeof m.generationId !== 'number' || !Number.isInteger(m.generationId)) {
     return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
   }
   if (m.type === 'init-result') {
@@ -253,6 +253,7 @@ export function validateWorkerResponse(
       m.errorType !== undefined
       && m.errorType !== 'function_error'
       && m.errorType !== 'runtime_error'
+      && m.errorType !== 'deadline_exceeded'
     ) {
       return { ok: false, reason: `unknown errorType: ${String(m.errorType)}` };
     }

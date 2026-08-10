@@ -34,6 +34,7 @@ export {
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenCancelledError,
+  UnzenDeadlineExceededError,
 } from './errors';
 
 // Sandbox security hardening (shared between server and client QuickJS runtimes)
