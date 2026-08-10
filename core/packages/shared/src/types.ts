@@ -39,6 +39,8 @@ export interface FunctionDefinition {
   version: number;
   /** SHA-256 hash of function code for integrity verification */
   hash: string;
+  /** Name of the export to call on a MoonBit wasm-gc module (defaults to 'run') */
+  exportName?: string;
   /**
    * Per-function execution timeout in milliseconds (1-2000).
    * Controls server-side fallback execution timeout only.
@@ -46,6 +48,10 @@ export interface FunctionDefinition {
    * Timeout tiers: 50ms (default), 500ms (medium), 2000ms (heavy).
    */
   timeout?: number;
+  /** When true, a browser failure never falls back to the server.
+   * Used for functions whose inputs must not leave the client (e.g. password
+   * hashing) and for runtimes the server cannot execute (MoonBit wasm-gc). */
+  noFallback?: boolean;
 }
 
 /**

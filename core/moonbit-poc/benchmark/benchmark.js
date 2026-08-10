@@ -100,13 +100,18 @@ function nativeFibonacci(n) {
  *   increment:  12345
  *   modulus:    2^31 (via bitwise AND)
  *   seed:      42
+ *
+ * NOTE: the multiplication MUST use Math.imul so intermediate values wrap at
+ * 32 bits exactly like the MoonBit Int (i32) implementation. Plain JS
+ * multiplication exceeds the safe-integer range and produces a different
+ * sequence, which would make the two runtimes sort different arrays.
  */
 function nativeSort(size) {
   // Generate deterministic pseudo-random array (same LCG as MoonBit)
   const arr = new Array(size);
   let seed = 42;
   for (let i = 0; i < size; i++) {
-    seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7FFFFFFF;
     arr[i] = seed % 100000;
   }
 

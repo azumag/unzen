@@ -22,6 +22,9 @@
 export interface ExecuteOptions {
   /** AbortSignal that cancels this request (queued or running) */
   signal?: AbortSignal;
+  /** Export to call on a module-based runtime (e.g. MoonBit wasm-gc); ignored
+   * by source-based runtimes (QuickJS). */
+  exportName?: string;
 }
 
 export interface SandboxExecutor {
@@ -42,6 +45,16 @@ export interface SandboxExecutor {
    * - Aborting options.signal rejects with UnzenCancelledError
    */
   execute(code: string, args: unknown[], options?: ExecuteOptions): Promise<unknown>;
+
+  /**
+   * Optional: fetch and prepare a module ahead of execution.
+   *
+   * Used by runtimes whose `code` is a module URL rather than source text
+   * (e.g. MoonBit wasm-gc). The client calls this during the code-fetch phase
+   * so the module is ready before browser-execution-started. Implementations
+   * without a separate preparation step can omit it.
+   */
+  prepare?(code: string, signal?: AbortSignal): Promise<unknown>;
 
   /**
    * Whether the sandbox runtime is ready to execute without (re)initialization.

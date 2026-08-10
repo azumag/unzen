@@ -104,10 +104,14 @@ describe('UnzenClient', () => {
 
   describe('development mode', () => {
     it('should always use fallback in development mode', async () => {
-      // Mock fallback endpoint
-      const fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ result: 3 }),
+      // Mock manifest (proves `add` is an ordinary server-executable
+      // function) and fallback endpoint.
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ result: 3 }),
+        });
       });
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -130,11 +134,14 @@ describe('UnzenClient', () => {
     });
 
     it('should propagate function errors in development mode', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          error: { type: 'function_error', message: 'Test error' },
-        }),
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            error: { type: 'function_error', message: 'Test error' },
+          }),
+        });
       });
 
       const client = new UnzenClient({
@@ -426,9 +433,12 @@ describe('UnzenClient', () => {
 
     it('should report executedOn as server when fallback is used', async () => {
       // Development mode always uses server fallback
-      const fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ result: 3 }),
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ result: 3 }),
+        });
       });
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -1123,6 +1133,373 @@ describe('UnzenClient', () => {
           outcome: 'failed',
         });
       }
+      client.dispose();
+    });
+
+    it('should route moonbit manifest entries to the moonbit sandbox', async () => {
+      const events: string[] = [];
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          fibonacci: {
+            runtime: 'moonbit',
+            hash: 'mb-hash',
+            version: 1,
+            codeUrl: 'https://example.com/code/fibonacci.wasm',
+            exportName: 'fibonacci',
+          },
+        },
+      };
+      const prepared: string[] = [];
+      const executed: Array<{ url: string; args: unknown[] }> = [];
+      const fakeMoonbit = {
+        prepare: async (url: string) => {
+          prepared.push(url);
+        },
+        execute: async (url: string, args: unknown[]) => {
+          executed.push({ url, args });
+          return 55;
+        },
+        dispose: () => {},
+      };
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        throw new Error('unexpected URL: ' + url);
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({
+        endpoint,
+        sandbox: new MockSandboxExecutor(),
+        moonbitSandbox: fakeMoonbit,
+      });
+      const result = await client.executeWithDiagnostics<number>({
+        name: 'fibonacci',
+        args: [10],
+        onEvent: (e) => events.push(e.type),
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.result).toBe(55);
+        expect(result.diagnostics.finalRoute).toBe('browser');
+        expect(result.diagnostics.attempts[0]).toMatchObject({
+          kind: 'browser',
+          outcome: 'succeeded',
+        });
+      }
+      // The wasm module was prepared and executed via the moonbit executor,
+      // not the QuickJS code fetcher (which would corrupt wasm bytes as text).
+      expect(prepared).toEqual(['https://example.com/code/fibonacci.wasm']);
+      expect(executed).toEqual([
+        { url: 'https://example.com/code/fibonacci.wasm', args: [10] },
+      ]);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // manifest only
+      client.dispose();
+    });
+
+    it('should NOT fall back to the server when a moonbit runtime error occurs', async () => {
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          boom: {
+            runtime: 'moonbit',
+            hash: 'mb-hash',
+            version: 1,
+            codeUrl: 'https://example.com/code/boom.wasm',
+            noFallback: true,
+          },
+        },
+      };
+      const failingMoonbit = {
+        prepare: async () => {},
+        execute: async () => {
+          throw new UnzenRuntimeError('wasm crashed');
+        },
+        dispose: () => {},
+      };
+
+      const execRequests: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        if (url.includes('/exec/')) execRequests.push(url);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({
+        endpoint,
+        sandbox: new MockSandboxExecutor(),
+        moonbitSandbox: failingMoonbit,
+      });
+      const result = await client.executeWithDiagnostics({ name: 'boom', args: [] });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        // The original browser error is the final result — not a replaced
+        // server_fallback_failed.
+        expect(result.error.code).toBe('browser_runtime_failed');
+        expect(result.diagnostics.fallbackUsed).toBe(false);
+        expect(result.diagnostics.finalRoute).toBeUndefined();
+        expect(result.diagnostics.attempts[0]).toMatchObject({
+          kind: 'browser',
+          outcome: 'failed',
+        });
+      }
+      // No server /exec request may have been made for a noFallback function.
+      expect(execRequests).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should suppress fallback for moonbit even when noFallback is omitted from the manifest', async () => {
+      // A hand-written manifest may omit the optional noFallback flag; the
+      // runtime alone must still prevent server fallback.
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          fib: {
+            runtime: 'moonbit',
+            hash: 'h',
+            version: 1,
+            codeUrl: 'https://example.com/code/fib.wasm',
+            // noFallback intentionally omitted
+          },
+        },
+      };
+      const failingMoonbit = {
+        prepare: async () => {},
+        execute: async () => {
+          throw new UnzenRuntimeError('wasm crashed');
+        },
+        dispose: () => {},
+      };
+      const execCalls: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        if (url.includes('/exec/')) execCalls.push(url);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock;
+
+      const client = new UnzenClient({
+        endpoint,
+        sandbox: new MockSandboxExecutor(),
+        moonbitSandbox: failingMoonbit,
+      });
+      const result = await client.executeWithDiagnostics({ name: 'fib', args: [10] });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('browser_runtime_failed');
+        expect(result.diagnostics.fallbackUsed).toBe(false);
+      }
+      expect(execCalls).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should not send noFallback inputs in development mode', async () => {
+      const noFallbackManifest: ManifestResponse = {
+        functions: {
+          hashPassword: {
+            runtime: 'quickjs',
+            hash: 'h',
+            version: 1,
+            codeUrl: 'https://example.com/code/hashPassword.js',
+            noFallback: true,
+          },
+        },
+      };
+      const execBodies: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse(noFallbackManifest);
+        if (url.includes('/exec/')) {
+          execBodies.push(String(init?.body ?? ''));
+          return jsonResponse({ result: 'server-hash' });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({
+        endpoint,
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+      const result = await client.executeWithDiagnostics({
+        name: 'hashPassword',
+        args: ['supersecret', 'salt', 100, 32],
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('browser_runtime_failed');
+      }
+      // The password must never be POSTed, even in development mode.
+      expect(execBodies).toHaveLength(0);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/exec/'))).toBe(false);
+      client.dispose();
+    });
+
+    it('should not send moonbit inputs in development mode (noFallback omitted)', async () => {
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          fib: {
+            runtime: 'moonbit',
+            hash: 'h',
+            version: 1,
+            codeUrl: 'https://example.com/code/fib.wasm',
+          },
+        },
+      };
+      const execBodies: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        if (url.includes('/exec/')) {
+          execBodies.push(String(init?.body ?? ''));
+          return jsonResponse({ result: 55 });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({
+        endpoint,
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+      const result = await client.executeWithDiagnostics({ name: 'fib', args: [10] });
+
+      expect(result.success).toBe(false);
+      expect(execBodies).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('still runs ordinary functions on the server in development mode', async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string, _init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/exec/add')) {
+          return jsonResponse({ result: 3 });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({
+        endpoint,
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+      const result = await client.executeWithDiagnostics<number>({ name: 'add', args: [1, 2] });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.result).toBe(3);
+        expect(result.diagnostics.finalRoute).toBe('server');
+      }
+      client.dispose();
+    });
+
+    it('does not send inputs to /exec when the development manifest fetch fails', async () => {
+      const execBodies: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return Promise.reject(new Error('network down'));
+        if (url.includes('/exec/')) {
+          execBodies.push(String(init?.body ?? ''));
+          return jsonResponse({ result: 'server-hash' });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({
+        endpoint,
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+      const result = await client.executeWithDiagnostics({
+        name: 'hashPassword',
+        args: ['secret-marker', 'salt', 100, 32],
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('manifest_fetch_failed');
+      }
+      expect(execBodies).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('does not send inputs to /exec when the manifest lacks the entry in development mode', async () => {
+      const execBodies: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse({ functions: {} });
+        if (url.includes('/exec/')) {
+          execBodies.push(String(init?.body ?? ''));
+          return jsonResponse({ result: 'server-hash' });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({
+        endpoint,
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+      const result = await client.executeWithDiagnostics({
+        name: 'hashPassword',
+        args: ['secret-marker', 'salt', 100, 32],
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('function_failed');
+      }
+      expect(execBodies).toHaveLength(0);
+      client.dispose();
+    });
+
+    it('should not send noFallback inputs (password) to the server on browser failure', async () => {
+      const noFallbackManifest: ManifestResponse = {
+        functions: {
+          hashPassword: {
+            runtime: 'quickjs',
+            hash: 'h',
+            version: 1,
+            codeUrl: 'https://example.com/code/hashPassword.js',
+            noFallback: true,
+          },
+        },
+      };
+      const failingSandbox = new MockSandboxExecutor();
+      failingSandbox.execute = async () => {
+        throw new UnzenRuntimeError('browser sandbox crashed');
+      };
+
+      const bodyStrings: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes('/manifest')) return jsonResponse(noFallbackManifest);
+        if (url.includes('/code/hashPassword')) return textResponse('function run() {}');
+        if (url.includes('/exec/')) {
+          bodyStrings.push(String(init?.body ?? ''));
+          return jsonResponse({ result: 'server-hash' });
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const client = new UnzenClient({ endpoint, sandbox: failingSandbox });
+      const result = await client.executeWithDiagnostics({
+        name: 'hashPassword',
+        args: ['supersecret', 'salt', 100, 32],
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('browser_runtime_failed');
+        expect(result.diagnostics.fallbackUsed).toBe(false);
+      }
+      // The password must never reach the server via a fallback POST.
+      expect(bodyStrings).toHaveLength(0);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/exec/'))).toBe(false);
       client.dispose();
     });
 

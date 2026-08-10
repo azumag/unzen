@@ -46,12 +46,14 @@ import {
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenRuntimeError,
+  type FunctionManifestEntry,
 } from '@unzen/shared';
 import { FallbackHandler } from './fallback-handler';
 import { ManifestFetcher } from './manifest-fetcher';
 import { CodeFetcher } from './code-fetcher';
 import type { SandboxExecutor } from './sandbox-executor';
 import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
+import { MoonBitSandboxExecutor } from './moonbit-sandbox';
 
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
@@ -274,6 +276,13 @@ export interface UnzenClientOptions {
    * alternative isolation strategies.
    */
   sandbox?: SandboxExecutor;
+
+  /**
+   * MoonBit wasm-gc SandboxExecutor (defaults to MoonBitSandboxExecutor).
+   * Used when the manifest entry declares runtime 'moonbit'. Override for
+   * testing or alternative wasm runtimes.
+   */
+  moonbitSandbox?: SandboxExecutor;
 }
 
 /** Counter for generating unique execution ids */
@@ -301,6 +310,8 @@ export class UnzenClient {
   private readonly manifestFetcher: ManifestFetcher;
   private readonly codeFetcher: CodeFetcher;
   private readonly sandboxExecutor: SandboxExecutor;
+  /** MoonBit wasm-gc executor — used for functions with runtime 'moonbit' */
+  private readonly moonbitSandbox: SandboxExecutor;
 
   // Disposal tracking
   private disposed = false;
@@ -316,6 +327,7 @@ export class UnzenClient {
     this.fallbackHandler = new FallbackHandler(this.endpoint);
     this.manifestFetcher = new ManifestFetcher(this.endpoint);
     this.codeFetcher = new CodeFetcher(this.endpoint);
+    this.moonbitSandbox = options.moonbitSandbox ?? new MoonBitSandboxExecutor();
 
     // Select sandbox executor: explicit sandbox > workerUrl > error
     // - options.sandbox: Custom executor (advanced usage / testing)
@@ -466,6 +478,7 @@ export class UnzenClient {
 
     // Clean up sandbox executor (terminates Web Worker, rejects pending work)
     this.sandboxExecutor.dispose();
+    this.moonbitSandbox.dispose();
   }
 
   /**
@@ -618,6 +631,43 @@ export class UnzenClient {
 
       // === Development mode: server only ===
       if (this.mode === 'development') {
+        // The noFallback contract ("inputs never leave the client") applies in
+        // EVERY mode: development mode must not send password/MoonBit inputs
+        // to /exec just because it skips the browser. Resolve the manifest
+        // metadata first and refuse server execution for noFallback/MoonBit.
+        let devEntry: FunctionManifestEntry | undefined;
+        try {
+          devEntry = (await this.manifestFetcher.fetch(internalController.signal))
+            ?.functions?.[request.name];
+        } catch (error) {
+          // Fail CLOSED: unless the manifest proves this is an ordinary
+          // server-executable function, inputs must not leave the client. A
+          // manifest fetch failure never proceeds to /exec.
+          const err = toError(error);
+          if (err instanceof UnzenCancelledError || internalController.signal.aborted) {
+            return cancelledOutcome();
+          }
+          emit({ type: 'failed', errorCode: 'manifest_fetch_failed' });
+          return buildOutcome(false, undefined, err, 'manifest_fetch_failed');
+        }
+        if (internalController.signal.aborted) {
+          return cancelledOutcome();
+        }
+        if (!devEntry) {
+          const err = new UnzenFunctionError(
+            `Function "${request.name}" not found in manifest`,
+          );
+          emit({ type: 'failed', errorCode: 'function_failed' });
+          return buildOutcome(false, undefined, err, 'function_failed');
+        }
+        if (devEntry.noFallback || devEntry.runtime === 'moonbit') {
+          const err = new UnzenRuntimeError(
+            `Function "${request.name}" requires browser execution (server fallback disabled)`,
+          );
+          emit({ type: 'failed', errorCode: 'browser_runtime_failed' });
+          return buildOutcome(false, undefined, err, 'browser_runtime_failed');
+        }
+
         lastAttemptedOn = 'server';
         emit({ type: 'server-execution-started' });
         if (internalController.signal.aborted) {
@@ -684,11 +734,19 @@ export class UnzenClient {
         return buildOutcome(false, undefined, err, 'function_failed');
       }
 
-      // 3. Code fetch
+      // 3. Code/module fetch
       emit({ type: 'code-fetch-started' });
-      let code: string;
+      let code: string | undefined;
       try {
-        code = await this.codeFetcher.fetch(entry, internalController.signal);
+        if (entry.runtime === 'moonbit') {
+          // MoonBit functions are compiled wasm, not JS source: prepare the
+          // module (fetch + compile the .wasm from the manifest codeUrl). The
+          // executor instance is ready after preparation; the execution itself
+          // happens in step 4.
+          await this.moonbitSandbox.prepare?.(entry.codeUrl, internalController.signal);
+        } else {
+          code = await this.codeFetcher.fetch(entry, internalController.signal);
+        }
         if (internalController.signal.aborted) {
           return cancelledOutcome();
         }
@@ -709,15 +767,21 @@ export class UnzenClient {
       // The sandbox may lazily initialize (WebWorkerSandboxExecutor). Surface
       // that state so the UI can show "sandbox initializing" without parsing
       // messages; warm sandboxes (already ready) emit nothing.
-      if (!(this.sandboxExecutor.isReady?.() ?? true)) {
+      const executor = entry.runtime === 'moonbit' ? this.moonbitSandbox : this.sandboxExecutor;
+      if (!(executor.isReady?.() ?? true)) {
         emit({ type: 'sandbox-initializing' });
       }
       emit({ type: 'browser-execution-started' });
       const browserAttemptStart = performance.now();
       try {
-        const result = await this.sandboxExecutor.execute(code, request.args, {
-          signal: internalController.signal,
-        });
+        const result = entry.runtime === 'moonbit'
+          ? await executor.execute(entry.codeUrl, request.args, {
+              signal: internalController.signal,
+              exportName: entry.exportName,
+            })
+          : await executor.execute(code!, request.args, {
+              signal: internalController.signal,
+            });
         // A late result after cancellation must never be committed as success.
         if (internalController.signal.aborted) {
           pushAttempt('browser', browserAttemptStart, 'cancelled', 'cancelled');
@@ -759,8 +823,14 @@ export class UnzenClient {
           return buildOutcome(false, undefined, err, 'function_failed');
         }
 
-        // Runtime errors in browser-only mode are fatal
-        if (this.mode === 'browser-only') {
+        // Runtime errors in browser-only mode are fatal, and functions marked
+        // noFallback (MoonBit wasm-gc, privacy-sensitive inputs) never fall
+        // back: the browser error is the final result, and the server never
+        // receives the inputs.
+        // MoonBit cannot execute on the server at all (QuickJS runtime), so
+        // the runtime alone suppresses fallback even when the manifest omits
+        // the (optional) noFallback flag.
+        if (this.mode === 'browser-only' || entry.noFallback || entry.runtime === 'moonbit') {
           const code = classifyError(err, 'browser');
           emit({ type: 'failed', errorCode: code });
           return buildOutcome(false, undefined, err, code);

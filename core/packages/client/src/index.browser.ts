@@ -35,6 +35,11 @@ export {
   type WebWorkerSandboxOptions,
   type ExecutorDiagnostics,
 } from './web-worker-sandbox';
+export {
+  MoonBitSandboxExecutor,
+  type MoonBitSandboxOptions,
+  type PreparedMoonBitModule,
+} from './moonbit-sandbox';
 
 // Re-export commonly used types from @unzen/shared for convenience
 export type {

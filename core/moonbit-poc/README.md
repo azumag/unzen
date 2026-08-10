@@ -1,6 +1,41 @@
 # MoonBit wasm-gc Proof of Concept
 
-> **Status**: PoC complete. Build verified with MoonBit CLI v0.1.20260126. fibonacci.wasm: 8.2KB, sort.wasm: 9.0KB. Browser benchmark pending.
+> **Status**: PoC complete. Build verified with MoonBit CLI v0.1.20260126. fibonacci.wasm: 8.2KB, sort.wasm: 9.0KB. Browser benchmark verified (2026-08-11).
+
+## Browser benchmark results (2026-08-11)
+
+実ブラウザ (Chrome) で Native JS と MoonBit wasm-gc の比較を実行した。
+
+**環境**: Chrome 151.0.7922.76 / macOS 26.6.1 / Mac mini (Apple M4, 16GB) /
+MoonBit CLI v0.1.20260126 / 10 iterations + 1 warm-up、P50 (中央値) を採用。
+
+| Benchmark | Native JS | MoonBit wasm-gc | Speedup |
+|---|---|---|---|
+| fibonacci(40) | 595.00 ms | 187.60 ms | **3.17x** |
+| sort(10,000) | 0.60 ms | 0.50 ms | 1.20x |
+
+### 所見
+
+- 再帰・純粋計算主体の fibonacci では wasm-gc が Native JS を約 3.2 倍上回る。
+  QuickJS Wasm インタプリタの想定遅延 (~35-55x vs V8) と比較すると、
+  計算密集型ワークロードでは wasm-gc が明確に有利。
+- 配列操作主体の sort ではほぼ同等 (1.20x)。wasm-gc の配列アクセスは
+  JS に対して大きな劣位がなく、QuickJS で 0.5-1.4s かかる想定の
+  10K 要素ソートが実質数 ms で完了する。
+- ブラウザは wasm-gc 対応 (Chrome 119+/Firefox 120+/Safari 18+) が必要。
+  `benchmark/index.html` は非対応ブラウザでも Native JS のみ実行する。
+- sort の LCG は JS 側で `Math.imul` を使用し、MoonBit の i32 wrapping と
+  同一系列になるようにしている (固定系列の先頭要素は両 runtime とも 9 で一致)。
+  plain JS 乗算は safe-integer を超え、系列がずれて比較が無効になる。
+
+### 再現手順
+
+```bash
+cd moonbit-poc
+moon build --target wasm-gc   # fibonacci.wasm / sort.wasm を生成
+python3 -m http.server 8080 --bind 127.0.0.1
+# http://localhost:8080/benchmark/ を Chrome で開き "Run All" をクリック
+```
 
 ## Purpose
 
@@ -218,7 +253,11 @@ MoonBit wasm-gc modules run inside the same Wasm sandbox as QuickJS:
 - **Memory isolation**: wasm-gc modules have their own managed memory
 - **No external access**: Wasm cannot make network requests or access DOM
 - **Import restriction**: Only explicitly provided imports are available
-- **Web Worker**: Same 4-layer isolation model applies
+
+> **注 (2026-08-11)**: 現 Phase の `MoonBitSandboxExecutor` は Web Worker で
+> はなく、wasm を呼び出し元スレッドで直接実行する。Wasm のメモリ分離と
+> import 制限は成立するが、実行開始後は中断不能で、無限ループはメインスレッドを
+> ブロックする。専用 Worker 化（QuickJS と同じ 4層隔離）は今後の課題。
 
 ## Go/No-Go Criteria
 
@@ -316,13 +355,14 @@ Exports match `moon.pkg.json` configuration:
 | Binary size < 50KB | PASS | 8.2 KB and 9.0 KB |
 | Build succeeds | PASS | Clean build, 4 tasks |
 | Correctness | PASS | Deterministic results verified |
-| Performance vs V8 | PENDING | Requires browser benchmark |
-| Browser loading | PENDING | Requires browser test |
+| Performance vs V8 | PASS (Chrome) | fib 3.17x / sort 1.20x (2026-08-11 実測) |
+| Browser loading | PASS (Chrome) | wasm-gc fetch + instantiate 成功 (2026-08-11 実測) |
 | Data marshaling | PARTIAL | Int works (direct i32); Array/String TBD |
 
 ### Next Steps
 
-1. Open `benchmark/index.html` in Chrome/Firefox/Safari and run comparisons
-2. Record actual MoonBit vs Native JS performance numbers
-3. Test data marshaling for Array and String types
-4. Make final Go/No-Go decision based on browser benchmark results
+1. ~~Open benchmark in Chrome and record numbers~~ (完了: 2026-08-11, fib 3.17x / sort 1.20x)
+2. Firefox / Safari での計測（cross-browser 未確認）
+3. Data marshaling (Array / String) の検証 — JS-GC interop が必要
+4. sort は Go/No-Go 基準 1.5x に未達 (1.20x) のため、配列中心ワークロードでは
+   QuickJS との比較を含めた再評価が必要

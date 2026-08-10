@@ -14,6 +14,7 @@
  */
 
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
 import { Hono } from 'hono';
 import type { FunctionDefinition, ExecutionRequest, ManifestResponse } from '@unzen/shared';
 import { createExecutionResponse, UnzenFunctionError, UnzenRuntimeError, MAX_FUNCTION_TIMEOUT } from '@unzen/shared';
@@ -34,6 +35,16 @@ export class UnzenServer {
   private manifestBuilder: ManifestBuilder;
   private baseUrl: string;
   private runtime: QuickJSRuntime;
+  /** Versioned immutable payloads per {name, version}, captured at
+   * registration time. `code` is served verbatim for whatever runtime that
+   * version was registered with (wasm bytes for moonbit, JS source for
+   * quickjs), so a re-registration can never change what an already-published
+   * ?v=N URL delivers. */
+  private readonly versionedCode = new Map<string, Map<number, {
+    runtime: 'quickjs' | 'moonbit';
+    /** JS source for quickjs, validated wasm bytes for moonbit */
+    payload: Buffer;
+  }>>();
 
   /**
    * Version counter that increments for each function registration
@@ -103,7 +114,11 @@ export class UnzenServer {
    * @param code - JavaScript code as string (function expression or arrow function)
    * @param options - Optional settings (timeout: 1-2000ms for heavy computations)
    */
-  defineRaw(name: string, code: string, options?: { timeout?: number }): void {
+  defineRaw(
+    name: string,
+    code: string,
+    options?: { timeout?: number; noFallback?: boolean },
+  ): void {
     // Validate per-function timeout if provided
     // Must be an integer in [1, 2000] to prevent abuse and match timeout tiers:
     // 50ms (default), 500ms (medium), 2000ms (heavy)
@@ -149,10 +164,91 @@ export class UnzenServer {
       version: this.versionCounter,
       hash,
       ...(options?.timeout !== undefined && { timeout: options.timeout }),
+      ...(options?.noFallback !== undefined && { noFallback: options.noFallback }),
     };
 
     // Register the function definition
+    this.captureVersionedCode(name, this.versionCounter, 'quickjs', Buffer.from(wrappedCode, 'utf-8'));
     this.registry.register(definition);
+  }
+
+  /**
+   * Register a MoonBit wasm-gc function from a compiled .wasm file.
+   *
+   * MoonBit functions are compiled to wasm-gc modules rather than JS source.
+   * The manifest advertises them with runtime 'moonbit' and the code endpoint
+   * serves the raw .wasm bytes; the browser executes the module's export.
+   * Server-side fallback is NOT supported for MoonBit (the QuickJS runtime
+   * cannot run wasm), so a failed browser attempt cannot fall back.
+   *
+   * @param name - Function name (used as identifier)
+   * @param wasmPath - Filesystem path to the compiled .wasm module
+   * @param options - Optional settings (exportName defaults to 'run', timeout)
+   */
+  defineMoonbit(
+    name: string,
+    wasmPath: string,
+    options?: { exportName?: string; timeout?: number },
+  ): void {
+    // Fail fast: the .wasm must exist and be a valid module at registration.
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(wasmPath);
+    } catch (error) {
+      throw new Error(
+        `Cannot read MoonBit module for "${name}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    // Node's @types/node does not declare the WebAssembly global on the
+    // server tsconfig (no DOM lib), so access it through the global object.
+    const wasm = (globalThis as unknown as { WebAssembly?: { validate(b: Uint8Array): boolean } }).WebAssembly;
+    if (!wasm || !wasm.validate(bytes)) {
+      throw new Error(`MoonBit module for "${name}" failed WebAssembly validation`);
+    }
+
+    if (options?.timeout !== undefined) {
+      const t = options.timeout;
+      if (!Number.isInteger(t) || t < 1 || t > MAX_FUNCTION_TIMEOUT) {
+        throw new Error(
+          `Invalid timeout ${t}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`
+        );
+      }
+    }
+
+    this.versionCounter++;
+
+    const definition: FunctionDefinition = {
+      name,
+      runtime: 'moonbit',
+      // Server-side this holds the module path (the code endpoint reads the
+      // bytes captured at registration); the manifest advertises the codeUrl
+      // for browser fetches.
+      code: wasmPath,
+      version: this.versionCounter,
+      hash: this.generateBytesHash(bytes),
+      exportName: options?.exportName ?? 'run',
+      // The QuickJS server runtime cannot execute wasm-gc: browser-only.
+      noFallback: true,
+      ...(options?.timeout !== undefined && { timeout: options.timeout }),
+    };
+
+    // Capture the exact validated bytes for immutable delivery, keyed by
+    // version so a re-registration with different bytes cannot change what an
+    // already-published ?v=N URL delivers.
+    this.captureVersionedCode(name, this.versionCounter, 'moonbit', bytes);
+    this.registry.register(definition);
+  }
+
+  /** Record the exact payload served by a published ?v=N URL. */
+  private captureVersionedCode(
+    name: string,
+    version: number,
+    runtime: 'quickjs' | 'moonbit',
+    payload: Buffer,
+  ): void {
+    const byVersion = this.versionedCode.get(name) ?? new Map();
+    byVersion.set(version, { runtime, payload });
+    this.versionedCode.set(name, byVersion);
   }
 
   /**
@@ -221,9 +317,50 @@ export class UnzenServer {
 
       // Set cache headers for immutable content
       // Version query parameter (?v=N) ensures cache invalidation on updates
+      // Resolve the versioned immutable payload FIRST, independent of the
+      // current registry runtime: a same-name re-registration (moonbit→quickjs
+      // or quickjs→moonbit) must not change what an already-published ?v=N URL
+      // delivers. An EXPLICIT version must exist in the versioned store — an
+      // unknown version is a 404 (never serve the current code under a stale
+      // immutable URL, which would poison CDN caches). Only a MISSING ?v=
+      // resolves to the current registry version.
+      const rawVersion = c.req.query('v');
+      let version = fn.version;
+      if (rawVersion !== undefined) {
+        if (!/^[1-9][0-9]*$/.test(rawVersion)) {
+          return c.json({ error: 'Invalid version' }, 400);
+        }
+        version = Number(rawVersion);
+      }
+      const byVersion = this.versionedCode.get(name);
+      const entry = byVersion?.get(version);
+      if (entry) {
+        const isWasm = entry.runtime === 'moonbit';
+        return c.body(Uint8Array.from(entry.payload), 200, {
+          'Content-Type': isWasm ? 'application/wasm' : 'text/javascript; charset=utf-8',
+          // Only an EXPLICIT ?v= URL is immutable. Without ?v= the same URL
+          // can resolve to a newer version after a re-registration, so it must
+          // be revalidated.
+          'Cache-Control': rawVersion !== undefined
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache',
+        });
+      }
+      if (rawVersion !== undefined) {
+        // Explicit version that was never published (or lost on restart):
+        // never fall back to current code under an immutable URL.
+        return c.body(null, 404, { 'Cache-Control': 'no-store' });
+      }
+      // No ?v= and no captured versioned payload (e.g. server restarted):
+      // serve the current registry code.
+      if (fn.runtime === 'moonbit') {
+        return c.json({ error: 'MoonBit module not found' }, 500);
+      }
       return c.text(fn.code, 200, {
         'Content-Type': 'text/javascript; charset=utf-8',
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        // No explicit ?v=: the URL can resolve to a NEWER version after a
+        // re-registration, so it must not be cached as immutable.
+        'Cache-Control': 'no-cache',
       });
     });
 
@@ -240,6 +377,19 @@ export class UnzenServer {
             error: 'Function not found',
           }),
           404
+        );
+      }
+
+      // Functions marked noFallback (MoonBit wasm-gc, or privacy-sensitive
+      // functions like password hashing) execute in the browser only — the
+      // server never receives their inputs or provides fallback execution.
+      if (fn.noFallback || fn.runtime === 'moonbit') {
+        return c.json(
+          createExecutionResponse({
+            success: false,
+            error: 'This function requires browser execution (server fallback is disabled)',
+          }),
+          501
         );
       }
 
@@ -415,6 +565,16 @@ export class UnzenServer {
    */
   private generateHash(code: string): string {
     const hash = createHash('sha256').update(code).digest('hex');
+    return `sha256:${hash}`;
+  }
+
+  /**
+   * Generate SHA-256 hash of raw module bytes (MoonBit wasm).
+   * Hashes the exact bytes that will be served, so a client can verify the
+   * delivered module against the manifest hash.
+   */
+  private generateBytesHash(bytes: Buffer): string {
+    const hash = createHash('sha256').update(bytes).digest('hex');
     return `sha256:${hash}`;
   }
 

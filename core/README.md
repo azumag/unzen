@@ -145,6 +145,7 @@ await client.call('levenshteinDistance', 'kitten', 'sitting');
 - **`calculatePrice`** — 税金・割引・送料の計算をブラウザ内で実行
 - **`markdownToHtml`** — Markdown→HTML 変換（XSS 防止付き）
 - **`textStats`** — 単語数・可読性スコア（Flesch-Kincaid）
+- **`hashPassword`** — PBKDF2-HMAC-SHA256 パスワードハッシュ（平文をサーバーへ送らない）
 
 詳細は [サンプル関数リファレンス](docs/sample-functions.md) を参照。
 
@@ -210,6 +211,13 @@ Browser Main Thread                  Web Worker Thread
 | Layer 3: QuickJS | 独立JSエンジン（V8とは別） |
 | Layer 4: API制限 | eval/Function/Proxy削除、プロトタイプ凍結 |
 
+> **MoonBit の隔離について**: 現 Phase の `MoonBitSandboxExecutor` は
+> Web Worker 化されておらず、wasm を呼び出し元スレッドで直接インスタンス化・
+> 実行する。Wasm のメモリ分離・import 制限（MoonBit runtime import のみ）・
+> ネットワーク/DOM 非アクセスは保たれるが、実行開始後は中断できず、
+> 長時間/無限ループの export はそのスレッドをブロックする。専用 Worker 化は
+> 今後の課題である（QuickJS パスは既存の 4層隔離）。
+
 ## セキュリティ
 
 関数はサンドボックス内で実行される:
@@ -230,7 +238,14 @@ Browser Main Thread                  Web Worker Thread
 | 性能 | 短時間関数に十分 (50ms以内) | Rustに近い高速実行 |
 | ブラウザ | ほぼ全ブラウザ | wasm-gc対応 (Chrome 119+, Firefox 120+, Safari 18+) |
 | 用途 | 手軽にJS関数を委任 | 性能が重要な計算処理 |
-| 実装状況 | **Phase 2 完了** | **Phase 3 PoC** (ビルド検証済) |
+| 実装状況 | **Phase 2 完了** | **Phase 3 クライアント統合済み** (`MoonBitSandboxExecutor`) |
+
+MoonBit 関数は `UnzenServer.defineMoonbit(name, wasmPath, { exportName })` で
+登録し、マニフェストは `runtime: 'moonbit'` と wasm の配信 URL を公開する。
+クライアントは `MoonBitSandboxExecutor` が wasm をフェッチ・インスタンス化し、
+指定の export（既定 `run`）をスカラー引数で呼び出す。実行はブラウザ限定で、
+サーバーフォールバックは行わない（QuickJS ランタイムでは wasm を実行できない）。
+スカラー入出力のみ対応（文字列・配列・オブジェクトは JS-GC interop が未対応）。
 
 ## プロジェクト構成
 

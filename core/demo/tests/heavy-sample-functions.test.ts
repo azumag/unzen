@@ -10,8 +10,11 @@
  * TDD approach: Tests written BEFORE implementation (Red phase).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { pbkdf2Sync, createHash } from 'crypto';
+import { QuickJSRuntime } from '@unzen/server';
 import { app } from '../server';
+import { hashPasswordCode } from '../sample-functions';
 
 /**
  * Helper: Execute a registered function via the server's exec endpoint.
@@ -25,6 +28,109 @@ async function execFunction(name: string, ...args: unknown[]) {
   });
   return { status: res.status, body: await res.json() as Record<string, unknown> };
 }
+
+/** UTF-8 bytes of a string (matches the sandbox's encoder behavior). */
+function utf8Bytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+// ============================================================
+// hashPassword: PBKDF2-HMAC-SHA256 password hashing
+//
+// Why heavy: PBKDF2 runs thousands of HMAC rounds by design (CPU-bound).
+// Sandbox timeout: 2000ms (heavy tier)
+// ============================================================
+describe('hashPassword', () => {
+  // hashPassword is registered with noFallback: true, so /unzen/exec rejects
+  // it with 501 (the password must never reach the server). The function body
+  // is therefore verified through the same QuickJS engine the browser uses,
+  // executed directly via QuickJSRuntime.
+  let runtime: QuickJSRuntime;
+  beforeAll(async () => {
+    runtime = new QuickJSRuntime();
+    await runtime.initialize();
+  });
+
+  async function runHash(
+    password: string,
+    salt: string,
+    iterations: number,
+    dkLen: number,
+  ): Promise<string> {
+    return await runtime.execute(hashPasswordCode, [password, salt, iterations, dkLen], {
+      timeout: 2000,
+    }) as string;
+  }
+
+  it('matches Node crypto PBKDF2-HMAC-SHA256 for a known vector', async () => {
+    const password = 'correct horse battery staple';
+    const salt = 'sodium-chloride';
+    const iterations = 100;
+    const dkLen = 32;
+
+    const expected = pbkdf2Sync(
+      utf8Bytes(password),
+      utf8Bytes(salt),
+      iterations,
+      dkLen,
+      'sha256',
+    ).toString('hex');
+
+    expect(await runHash(password, salt, iterations, dkLen)).toBe(expected);
+  });
+
+  it('is deterministic for the same inputs', async () => {
+    const first = await runHash('p@ss', 's1', 50, 16);
+    const second = await runHash('p@ss', 's1', 50, 16);
+    expect(first).toBe(second);
+  });
+
+  it('changes when the salt changes', async () => {
+    const a = await runHash('p@ss', 's1', 50, 16);
+    const b = await runHash('p@ss', 's2', 50, 16);
+    expect(a).not.toBe(b);
+  });
+
+  it('supports non-ASCII (UTF-8) passwords', async () => {
+    const password = 'パスワード🔐';
+    const salt = 'salt';
+    const expected = pbkdf2Sync(utf8Bytes(password), utf8Bytes(salt), 50, 16, 'sha256')
+      .toString('hex');
+    expect(await runHash(password, salt, 50, 16)).toBe(expected);
+  });
+
+  it('replaces lone surrogates with U+FFFD like the standard UTF-8 encoder', async () => {
+    // Lone high and low surrogates must hash identically to Node's
+    // TextEncoder-based PBKDF2 (which replaces them with U+FFFD).
+    for (const password of ['\uD800', '\uDC00', 'a\uD800b', 'a\uDC00b']) {
+      const expected = pbkdf2Sync(utf8Bytes(password), utf8Bytes('salt'), 50, 16, 'sha256')
+        .toString('hex');
+      expect(await runHash(password, 'salt', 50, 16)).toBe(expected);
+    }
+  });
+
+  it('rejects invalid parameters', async () => {
+    await expect(runtime.execute(hashPasswordCode, ['p', 's', -1, 32], { timeout: 2000 }))
+      .rejects.toThrow();
+  });
+
+  it('completes within the heavy timeout at the allowed maximum inputs', async () => {
+    // The documented input range must finish inside the 2000ms heavy tier.
+    const started = Date.now();
+    const hex = await runHash('p@ss', 'salt', 2000, 64);
+    const elapsed = Date.now() - started;
+
+    expect(typeof hex).toBe('string');
+    expect(hex.length).toBe(128); // 64 bytes as hex
+    // Leave a generous margin under the 2000ms timeout.
+    expect(elapsed).toBeLessThan(1900);
+  });
+
+  it('is served through /unzen/exec with 501 (noFallback, no server execution)', async () => {
+    const { status } = await execFunction('hashPassword', 'p', 's', 50, 16);
+    expect(status).toBe(501);
+  });
+});
 
 // ============================================================
 // jsonSchemaValidate: JSON Schema validation (Draft-07 subset)

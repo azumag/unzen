@@ -369,6 +369,40 @@ await client.call('levenshteinDistance', '', 'abc');
 
 ---
 
+## 8. `hashPassword` — PBKDF2 パスワードハッシュ（browser-only）
+
+### ユースケース
+- サインアップ・ログイン時にパスワードをブラウザ内でハッシュ化し、
+  平文をサーバーへ送信しない（`noFallback` 指定でフォールバックも無効）
+- PBKDF2 は多数の HMAC ラウンドを回す CPU 負荷の高い処理で、QuickJS では
+  許容範囲を超え得るため、heavy tier (2,000ms) を使用する
+
+### 入力
+```typescript
+type Input = [
+  password: string,  // UTF-8（lone surrogate は U+FFFD に置換）
+  salt: string,      // UTF-8
+  iterations: number, // 1..2000（上限は 2,000ms 内で完了する値に制限）
+  dkLen: number       // 1..64（派生鍵のバイト数）
+];
+```
+
+### 出力
+```typescript
+type HashResult = string; // 派生鍵の lowercase hex
+```
+
+### 実装
+- 純粋 JS: UTF-8 エンコード + SHA-256 (FIPS 180-4) + HMAC-SHA256 (RFC 2104) +
+  PBKDF2 (RFC 2898)
+- Node `crypto.pbkdf2Sync` と同一結果になることをテストで検証済み
+
+> **注意**: デモ用のサンプルである。実運用のパスワード保存には
+> サーバー側の専用 KDF（bcrypt / argon2id 等）と適切な iteration 数を使用し、
+> この関数をそのまま使わないこと。
+
+---
+
 ## sandbox 制約
 
 全関数は以下の制約の中で実行される:
@@ -381,7 +415,7 @@ await client.call('levenshteinDistance', '', 'abc');
 |------|---------|----------|
 | default | 50ms | formValidate, calculatePrice, textStats |
 | medium | 500ms | jsonSchemaValidate, sortData, levenshteinDistance, markdownToHtml |
-| heavy | 2,000ms | (将来の暗号ハッシュ、画像メタデータ抽出向け) |
+| heavy | 2,000ms | hashPassword（browser-only、フォールバックなし） |
 
 ```typescript
 // per-function timeout は defineRaw の第3引数で指定

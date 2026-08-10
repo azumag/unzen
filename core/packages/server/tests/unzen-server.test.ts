@@ -9,8 +9,15 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createHash } from 'crypto';
+import { join, dirname } from 'node:path';
+import { readFileSync, copyFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { UnzenServer } from '../src/unzen-server';
 import type { FunctionDefinition } from '@unzen/shared';
+
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 describe('UnzenServer', () => {
   let server: UnzenServer;
@@ -368,6 +375,197 @@ describe('UnzenServer', () => {
     it('should initialize QuickJS runtime', async () => {
       const newServer = new UnzenServer();
       await expect(newServer.initialize()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('defineMoonbit', () => {
+    it('should register a MoonBit wasm module with export metadata', () => {
+      server.defineMoonbit('fibonacci', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      });
+
+      const fn = server.getFunction('fibonacci');
+      expect(fn).toBeDefined();
+      expect(fn?.runtime).toBe('moonbit');
+      expect(fn?.exportName).toBe('fibonacci');
+      expect(fn?.hash).toBeTruthy();
+    });
+
+    it('should default the export name to run', () => {
+      server.defineMoonbit('defaultRun', join(fixtureDir, 'fibonacci.wasm'));
+      expect(server.getFunction('defaultRun')?.exportName).toBe('run');
+    });
+
+    it('should reject a missing module file', () => {
+      expect(() =>
+        server.defineMoonbit('missing', join(fixtureDir, 'does-not-exist.wasm')),
+      ).toThrow('Cannot read MoonBit module');
+    });
+
+    it('should reject invalid wasm bytes', () => {
+      // A valid path but not a wasm module (the repo root package.json).
+      expect(() =>
+        server.defineMoonbit('bad', join(fixtureDir, '..', '..', '..', '..', 'package.json')),
+      ).toThrow('WebAssembly validation');
+    });
+
+    it('should serve the wasm bytes from the code endpoint', async () => {
+      server.defineMoonbit('fibonacci', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      });
+      const app = server.middleware();
+
+      const res = await app.request('/code/fibonacci?v=1');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/wasm');
+      const bytes = await res.arrayBuffer();
+      expect(bytes.byteLength).toBeGreaterThan(1000);
+      expect(WebAssembly.validate(bytes)).toBe(true);
+    });
+
+    it('should advertise exportName in the manifest', async () => {
+      server.defineMoonbit('fibonacci', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      });
+      const app = server.middleware();
+
+      const res = await app.request('/manifest');
+      const manifest = await res.json();
+      expect(manifest.functions.fibonacci.runtime).toBe('moonbit');
+      expect(manifest.functions.fibonacci.exportName).toBe('fibonacci');
+      expect(manifest.functions.fibonacci.codeUrl).toContain('/code/fibonacci');
+    });
+
+    it('should reject server-side fallback execution with 501', async () => {
+      server.defineMoonbit('fibonacci', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      });
+      const app = server.middleware();
+
+      const res = await app.request('/exec/fibonacci', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args: [10] }),
+      });
+      expect(res.status).toBe(501);
+    });
+
+    it('must deliver the exact registered bytes even if the file changes afterwards', async () => {
+      // Register from a temp copy, then overwrite the file on disk: the
+      // immutable version must still serve the originally validated bytes.
+      const dir = mkdtempSync(join(tmpdir(), 'unzen-mb-'));
+      const wasmPath = join(dir, 'fib.wasm');
+      const original = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
+      writeFileSync(wasmPath, original);
+
+      server.defineMoonbit('fibImmutable', wasmPath, { exportName: 'fibonacci' });
+      const app = server.middleware();
+      const before = await (await app.request('/code/fibImmutable?v=1')).arrayBuffer();
+
+      // Overwrite with different bytes (a trivial different module header).
+      writeFileSync(wasmPath, original.subarray(0, 100));
+      const after = await (await app.request('/code/fibImmutable?v=1')).arrayBuffer();
+
+      expect(Buffer.from(after).equals(Buffer.from(before))).toBe(true);
+      expect(Buffer.from(before).equals(original)).toBe(true);
+    });
+
+    it('should hash the raw module bytes in the manifest', async () => {
+      server.defineMoonbit('fibHash', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      });
+      const app = server.middleware();
+
+      const res = await app.request('/manifest');
+      const manifest = await res.json();
+      const rawBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
+      const expected = `sha256:${createHash('sha256').update(rawBytes).digest('hex')}`;
+      expect(manifest.functions.fibHash.hash).toBe(expected);
+    });
+
+    it('serves per-version immutable bytes after a same-name re-registration', async () => {
+      const fibBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
+      const sortBytes = readFileSync(join(fixtureDir, 'sort.wasm'));
+
+      server.defineMoonbit('rebound', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      }); // version 1
+      const app = server.middleware();
+      const v1 = await (await app.request('/code/rebound?v=1')).arrayBuffer();
+
+      server.defineMoonbit('rebound', join(fixtureDir, 'sort.wasm'), {
+        exportName: 'sort_benchmark',
+      }); // version 2
+      const v2 = await (await app.request('/code/rebound?v=2')).arrayBuffer();
+      // The already-published v1 URL must keep serving the original bytes.
+      const v1After = await (await app.request('/code/rebound?v=1')).arrayBuffer();
+
+      expect(Buffer.from(v1).equals(fibBytes)).toBe(true);
+      expect(Buffer.from(v2).equals(sortBytes)).toBe(true);
+      expect(Buffer.from(v1After).equals(fibBytes)).toBe(true);
+      expect(Buffer.from(v1After).equals(sortBytes)).toBe(false);
+    });
+
+    it('keeps an old moonbit version immutable when the name is re-registered as quickjs', async () => {
+      const fibBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
+
+      server.defineMoonbit('crossRuntime', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      }); // version 1 (moonbit)
+      const app = server.middleware();
+      const v1Before = await (await app.request('/code/crossRuntime?v=1')).arrayBuffer();
+      expect((await app.request('/code/crossRuntime?v=1')).headers.get('Content-Type'))
+        .toContain('application/wasm');
+
+      server.defineRaw('crossRuntime', 'function run() { return "js"; }'); // version 2 (quickjs)
+      const v1After = await (await app.request('/code/crossRuntime?v=1')).arrayBuffer();
+      const v1AfterHeaders = (await app.request('/code/crossRuntime?v=1')).headers;
+      const v2 = await (await app.request('/code/crossRuntime?v=2')).text();
+
+      // v1 stays the original wasm bytes + content type; v2 is the JS source.
+      expect(Buffer.from(v1After).equals(fibBytes)).toBe(true);
+      expect(Buffer.from(v1Before).equals(fibBytes)).toBe(true);
+      expect(v1AfterHeaders.get('Content-Type')).toContain('application/wasm');
+      expect(v2).toContain('function run');
+    });
+
+    it('rejects unknown or malformed explicit versions without serving current code', async () => {
+      server.defineRaw('verCheck', 'function run() { return 1; }'); // version 1
+      server.defineMoonbit('mbVerCheck', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'fibonacci',
+      }); // version 1 (moonbit)
+      const app = server.middleware();
+
+      // Unknown version for a quickjs function: 404, not current code.
+      const quickjsUnknown = await app.request('/code/verCheck?v=999');
+      expect(quickjsUnknown.status).toBe(404);
+      expect(quickjsUnknown.headers.get('Cache-Control')).toContain('no-store');
+
+      // Unknown version for a moonbit function: 404, not the wasm path text.
+      const moonbitUnknown = await app.request('/code/mbVerCheck?v=999');
+      expect(moonbitUnknown.status).toBe(404);
+
+      // Malformed versions: 400.
+      expect((await app.request('/code/verCheck?v=abc')).status).toBe(400);
+      expect((await app.request('/code/verCheck?v=1.5')).status).toBe(400);
+      expect((await app.request('/code/verCheck?v=-1')).status).toBe(400);
+      expect((await app.request('/code/verCheck?v=0')).status).toBe(400);
+
+      // Missing ?v resolves to the current version with the right content type.
+      const quickjsCurrent = await app.request('/code/verCheck');
+      expect(quickjsCurrent.status).toBe(200);
+      expect(quickjsCurrent.headers.get('Content-Type')).toContain('text/javascript');
+      // Without ?v= the URL may move to a newer version later, so it must NOT
+      // be cached as immutable.
+      expect(quickjsCurrent.headers.get('Cache-Control')).not.toContain('immutable');
+      const moonbitCurrent = await app.request('/code/mbVerCheck');
+      expect(moonbitCurrent.status).toBe(200);
+      expect(moonbitCurrent.headers.get('Content-Type')).toContain('application/wasm');
+      expect(moonbitCurrent.headers.get('Cache-Control')).not.toContain('immutable');
+
+      // Explicit versions keep the immutable header.
+      const quickjsV1 = await app.request('/code/verCheck?v=1');
+      expect(quickjsV1.headers.get('Cache-Control')).toContain('immutable');
     });
   });
 });

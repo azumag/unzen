@@ -22,6 +22,7 @@ import {
   jsonSchemaValidateCode,
   sortDataCode,
   levenshteinDistanceCode,
+  hashPasswordCode,
 } from './sample-functions';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -88,6 +89,10 @@ unzenServer.defineRaw('sortData', sortDataCode, { timeout: 500 });
 
 // Function 12: Levenshtein edit distance (500ms timeout for O(n*m) computation)
 unzenServer.defineRaw('levenshteinDistance', levenshteinDistanceCode, { timeout: 500 });
+unzenServer.defineRaw('hashPassword', hashPasswordCode, {
+  timeout: 2000,
+  noFallback: true, // password must never leave the browser
+});
 
 // Initialize the server
 await unzenServer.initialize();

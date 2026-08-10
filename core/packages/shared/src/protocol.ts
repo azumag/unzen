@@ -39,6 +39,10 @@ export interface FunctionManifestEntry {
   version: number;
   /** URL to fetch the function code (immutable, cacheable) */
   codeUrl: string;
+  /** Name of the export to call on a MoonBit wasm-gc module (defaults to 'run') */
+  exportName?: string;
+  /** When true, a browser failure never falls back to the server. */
+  noFallback?: boolean;
 }
 
 /**
@@ -111,6 +115,9 @@ export function createManifestResponse(
       version: def.version,
       // Construct immutable URL with version query parameter
       codeUrl: `${baseUrl}/code/${name}?v=${def.version}`,
+      // MoonBit modules may export under their pub fn name rather than 'run'
+      exportName: def.exportName,
+      noFallback: def.noFallback,
     };
   }
 

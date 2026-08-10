@@ -20,19 +20,23 @@
 
 ```typescript
 // サーバー側で関数定義時にタイムアウトを指定
-server.defineRaw('hashPassword', code, { timeout: 500 });
+server.defineRaw('hashPassword', code, { timeout: 2000, noFallback: true });
 ```
 
 ### サンプル一覧
 
 | # | サンプル | V8推定CPU/回 | QuickJS Wasm推定 | 優先度 | 状態 |
 |---|---------|-------------|-----------------|--------|------|
-| 1 | PBKDF2パスワードハッシュ | 50-80ms | 1.75-4.4s | Phase 3 | 未実装 |
+| 1 | PBKDF2パスワードハッシュ | 50-80ms | 1.75-4.4s | Phase 3 | **実装済** (`hashPassword`) |
 | 2 | 大規模配列ソート（10K要素） | 15-25ms | 525ms-1.4s | Phase 1 | **実装済** |
-| 3 | 画像メタデータ抽出（EXIF） | 10-20ms | 350ms-1.1s | Phase 2 | 未実装 |
-| 4 | 大規模Markdown変換（10K行） | 20-35ms | 700ms-1.9s | Phase 2 | 未実装 |
+| 3 | 画像メタデータ抽出（EXIF） | 10-20ms | 350ms-1.1s | Phase 2 | 保留（バイナリ入力のため） |
+| 4 | 大規模Markdown変換（10K行） | 20-35ms | 700ms-1.9s | Phase 2 | **実装済** (`markdownToHtml`) |
 | 5 | JSONスキーマバリデーション | 15-30ms | 525ms-1.65s | Phase 1 | **実装済** |
 | 6 | テキスト類似度（Levenshtein） | 40-70ms | 1.4-3.85s | Phase 1 | **実装済** |
+
+> **保留: EXIF抽出** — 画像バイナリを QuickJS サンドボックスへ渡すには base64 入力
+> と手書きデコーダが必要で、JS-GC interop が未対応の MoonBit 同様、入力境界の
+> コストが計算コストを上回る。ブラウザ側 (main thread) で画像を扱う構成が適切。
 
 > **除外: CSVパース** — フロントエンド直接実装が適切。
 > 詳細は「[Unzenに適さないユースケース](#unzenに適さないユースケース)」を参照。
@@ -348,10 +352,10 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 
 ### Phase 3: エコシステム拡張（Phase 2の採用実績後）
 
-- [ ] PBKDF2パスワードハッシュ（~200-300行）
+- [x] PBKDF2パスワードハッシュ（~200-300行）— `hashPassword` 実装済 (browser-only)
 - [ ] フレームワーク統合プラグイン（Hono, Next.js, SvelteKit）
 - [ ] "unzen:" prefix でのnpmパッケージ指定
-- [ ] MoonBit wasm-gcランタイム統合（16MB制限緩和）
+- [x] MoonBit wasm-gcランタイム統合（16MB制限緩和）— `MoonBitSandboxExecutor` / `defineMoonbit` 実装済
 
 ---
 

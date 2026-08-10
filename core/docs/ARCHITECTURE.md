@@ -621,9 +621,26 @@ defineRaw('add', '(a, b) => a + b')
 |------|------|
 | Web Worker + QuickJS Wasm | 本物のブラウザサンドボックス (4層隔離) |
 | ETag/Conditional GET | マニフェストの効率的キャッシュ更新 |
-| MoonBit wasm-gc | 高性能計算用ランタイム統合 |
+| MoonBit wasm-gc | 高性能計算用ランタイム統合 (**実装済み**: `MoonBitSandboxExecutor` + `defineMoonbit`) |
 | Service Worker | オフラインキャッシュ対応 |
 | ビルドツール統合 | Vite/webpack プラグインでコンパイル時関数抽出 |
+
+### MoonBit wasm-gc 統合 (Phase 3)
+
+- `UnzenServer.defineMoonbit(name, wasmPath, { exportName })` は wasm モジュールを
+  登録し、`/code/:name` が `application/wasm` でバイト配信する。
+  マニフェストエントリは `runtime: 'moonbit'` と `exportName` を持つ。
+  登録時に検証した正確なバイトを `{name, version}` キーで保持し、`?v=N` の
+  immutable URL は常にその version のバイトを返す（同名再登録で旧 URL の
+  内容が変わらない）。registry 上で quickjs に上書きされても、既に公開済みの
+  versioned URL を守るため旧バイトは保持される。
+- `MoonBitSandboxExecutor` (client) は wasm をフェッチ・`WebAssembly.compile` で
+  キャッシュし、`spectest` 等の MoonBit ランタイム import のみでインスタンス化して
+  指定 export を呼ぶ。`UnzenClient` はマニフェストの `runtime` で
+  QuickJS パスと MoonBit パスを振り分ける。
+- MoonBit 実行は同期・中断不可のため、キャンセルは呼び出し開始前のみ有効。
+  スカラー入出力のみ対応（配列・オブジェクトは JS-GC interop が未対応）。
+- サーバーフォールバックは非対応 (`/exec/:name` は 501)。ブラウザ実行のみ。
 
 ---
 
