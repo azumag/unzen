@@ -153,6 +153,9 @@ export class CodeFetcher {
     if (entrySnapshot === undefined) {
       throw new UnzenNetworkError('Invalid QuickJS code manifest entry');
     }
+    // Reading a caller-owned entry can run getters. Preserve cancellation as
+    // authoritative even when the resulting hash is already cached.
+    throwIfAborted(requestSignal);
     const { codeUrl, hash } = entrySnapshot;
 
     // Check cache first

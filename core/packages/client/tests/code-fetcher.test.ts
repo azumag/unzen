@@ -164,6 +164,28 @@ describe('CodeFetcher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // Still 1, not 2
   });
 
+  it('honors cancellation triggered while snapshotting a cached entry', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(codeResponse(mockCode));
+    globalThis.fetch = fetchMock;
+    const fetcher = new CodeFetcher('https://example.com');
+    await fetcher.fetch(mockEntry);
+
+    const controller = new AbortController();
+    const abortingEntry: FunctionManifestEntry = {
+      runtime: 'quickjs',
+      version: mockEntry.version,
+      codeUrl: mockEntry.codeUrl,
+      get hash() {
+        controller.abort();
+        return mockEntry.hash;
+      },
+    };
+
+    await expect(fetcher.fetch(abortingEntry, controller.signal))
+      .rejects.toThrow(UnzenCancelledError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('evicts least-recent code by aggregate UTF-8 weight', async () => {
     const bodies = new Map([
       ['https://example.com/a.js', 'a'],
