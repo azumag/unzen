@@ -696,7 +696,7 @@ describe('ManifestFetcher', () => {
           add: {
             version: 1,
             runtime: 'quickjs',
-            codeUrl: 'u1',
+            codeUrl: '/u1',
             hash: ADD_HASH,
           },
         },
@@ -717,7 +717,7 @@ describe('ManifestFetcher', () => {
           add: {
             version: 1,
             runtime: 'quickjs',
-            codeUrl: 'u2',
+            codeUrl: '/u2',
             hash: UPDATED_HASH,
           },
         },
@@ -764,7 +764,7 @@ describe('ManifestFetcher', () => {
     it('must discard the old ETag when a 200 arrives without an ETag header', async () => {
       const oldManifest: ManifestResponse = {
         functions: {
-          add: { version: 1, runtime: 'quickjs', codeUrl: 'u1', hash: ADD_HASH },
+          add: { version: 1, runtime: 'quickjs', codeUrl: '/u1', hash: ADD_HASH },
         },
       };
       globalThis.fetch = vi.fn().mockResolvedValue({
@@ -780,7 +780,7 @@ describe('ManifestFetcher', () => {
       // Second 200 has a new body but NO ETag header.
       const newManifest: ManifestResponse = {
         functions: {
-          add: { version: 1, runtime: 'quickjs', codeUrl: 'u2', hash: UPDATED_HASH },
+          add: { version: 1, runtime: 'quickjs', codeUrl: '/u2', hash: UPDATED_HASH },
         },
       };
       globalThis.fetch = vi.fn().mockResolvedValue({

@@ -590,8 +590,11 @@ interface UnzenExecutionRequest {
   fetch より前に request field を一度だけ読む。top-level の引数 slot は iterator を
   呼ばない bounded indexed copy で浅く snapshot する。`signal` / `onEvent` も型検証して
   参照を固定し、違反は副作用前に `UnzenFunctionError` / `function_failed` として返す。
-- **server body**: fallback requestは1 MiB以内のUTF-8 JSONへbounded readし、unknown function・
+- **server body**: fallback requestは4 MiB以内のUTF-8 JSONへbounded readし、unknown function・
   `noFallback`・宣言サイズ超過で解析前に拒否する場合も受信streamをbest-effortでcancelする。
+- **manifest code URL**: untrusted manifestの`codeUrl`は単一`/`で始まるorigin-relative path、
+  またはcredential / fragmentのないHTTP(S) absolute URLだけを受理する。schemeなし相対pathと
+  protocol-relative URLはembedding page依存の解決を避けるため拒否する。
 - **イベント**: `accepted` / `manifest-fetch-started|completed`（developmentを含む全mode）/ `code-fetch-started|completed` / `sandbox-initializing`（サンドボックスの遅延初期化時のみ）/ `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、terminal event は1実行につき正確に1回。`cancel-requested` 以降は新しい phase event を emit しない。
 - **キャンセル**: 1つの AbortSignal が manifest/code fetch・sandbox・fallback へ一貫して伝播する。`UnzenCancelledError` (code `CANCELLED`) は **server fallback を開始しない**。dispose() は進行中 execution を cancel して settle させる。
 - **診断**: `ExecutionDiagnostics` は browser/server の attempt chain (`attempts`)、`fallbackUsed`、`finalRoute`、`totalDurationMs`、`manifestCache` を保持。browser 失敗→server 成功の経緯を確認できる。

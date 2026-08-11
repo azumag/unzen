@@ -129,10 +129,23 @@ function isFetchableCodeUrl(value: unknown): value is string {
     return false;
   }
   try {
-    // The server may emit either an absolute URL or an origin-relative URL.
-    // A fixed HTTPS base lets the URL parser validate both without depending
-    // on a browser location.
-    const parsed = new URL(value, 'https://unzen.invalid/');
+    // A leading slash is an origin-relative path, but `//host/path` is a
+    // protocol-relative cross-origin URL and must use an explicit scheme.
+    if (value.startsWith('/')) {
+      if (value.startsWith('//')) return false;
+      const baseOrigin = 'https://unzen.invalid';
+      const parsed = new URL(value, `${baseOrigin}/`);
+      return (
+        parsed.origin === baseOrigin
+        && parsed.username === ''
+        && parsed.password === ''
+        && parsed.hash === ''
+      );
+    }
+
+    // Scheme-less paths resolve against the embedding page rather than the
+    // manifest endpoint, so only explicit HTTP(S) absolute URLs remain.
+    const parsed = new URL(value);
     return (
       (parsed.protocol === 'http:' || parsed.protocol === 'https:')
       && parsed.username === ''

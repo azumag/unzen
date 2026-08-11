@@ -168,6 +168,25 @@ describe('ManifestResponse', () => {
     expect(isValidManifestResponse(value)).toBe(false);
   });
 
+  it.each([
+    'relative/code.js',
+    '//attacker.example/code.js',
+  ])('rejects non-origin-relative code URL %j', (codeUrl) => {
+    const value = {
+      functions: {
+        add: {
+          runtime: 'quickjs',
+          hash: VALID_HASH,
+          version: 1,
+          codeUrl,
+        },
+      },
+    };
+
+    expect(normalizeManifestResponse(value)).toBeUndefined();
+    expect(isValidManifestResponse(value)).toBe(false);
+  });
+
   it('rejects malformed MoonBit metadata', () => {
     const base = {
       runtime: 'moonbit',
