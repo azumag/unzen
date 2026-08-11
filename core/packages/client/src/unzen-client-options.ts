@@ -142,7 +142,9 @@ export function normalizeUnzenClientOptions(value: unknown): NormalizedUnzenClie
   if (customMoonBitSandbox !== undefined) {
     moonbitSandbox = {
       kind: 'custom',
-      executor: normalizeSandboxExecutor('moonbitSandbox', customMoonBitSandbox),
+      executor: customMoonBitSandbox === customSandbox && sandbox.kind === 'custom'
+        ? sandbox.executor
+        : normalizeSandboxExecutor('moonbitSandbox', customMoonBitSandbox),
     };
   } else {
     const moonbitWorkerUrl = readOption(record, 'moonbitWorkerUrl');

@@ -545,9 +545,21 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
     }
     this.inFlightControllers.clear();
 
-    // Clean up sandbox executor (terminates Web Worker, rejects pending work)
-    this.sandboxExecutor.dispose();
-    this.moonbitSandbox.dispose();
+    // Attempt every distinct executor even when caller-owned cleanup throws.
+    let disposeError: unknown;
+    try {
+      this.sandboxExecutor.dispose();
+    } catch (error) {
+      disposeError = error;
+    }
+    if (this.moonbitSandbox !== this.sandboxExecutor) {
+      try {
+        this.moonbitSandbox.dispose();
+      } catch (error) {
+        disposeError ??= error;
+      }
+    }
+    if (disposeError !== undefined) throw disposeError;
   }
 
   /**

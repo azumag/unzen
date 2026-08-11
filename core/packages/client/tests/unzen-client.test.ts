@@ -841,6 +841,44 @@ describe('UnzenClient', () => {
       expect(() => client.dispose()).not.toThrow();
     });
 
+    it('should attempt every executor cleanup when a custom dispose throws', () => {
+      const sandbox = {
+        execute: async () => undefined,
+        dispose: vi.fn(() => {
+          throw new Error('sandbox cleanup failed');
+        }),
+      };
+      const moonbitSandbox = {
+        execute: async () => undefined,
+        dispose: vi.fn(),
+      };
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox,
+        moonbitSandbox,
+      });
+
+      expect(() => client.dispose()).toThrow('sandbox cleanup failed');
+      expect(sandbox.dispose).toHaveBeenCalledTimes(1);
+      expect(moonbitSandbox.dispose).toHaveBeenCalledTimes(1);
+      expect(() => client.dispose()).not.toThrow();
+    });
+
+    it('should dispose a shared custom executor only once', () => {
+      const sharedSandbox = {
+        execute: async () => undefined,
+        dispose: vi.fn(),
+      };
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        sandbox: sharedSandbox,
+        moonbitSandbox: sharedSandbox,
+      });
+
+      client.dispose();
+      expect(sharedSandbox.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it('should throw UnzenRuntimeError when call() is invoked after dispose', async () => {
       // Disposed client has released sandbox resources
       // Subsequent call() must fail immediately with clear error
