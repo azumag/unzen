@@ -186,6 +186,33 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     globalThis.fetch = originalFetch;
   });
 
+  it.each([
+    ['empty workerUrl', { workerUrl: '' }, 'workerUrl'],
+    ['negative timeout', { workerUrl: '/moonbit-worker.js', timeout: -1 }, 'timeout'],
+    ['non-finite init timeout', { workerUrl: '/moonbit-worker.js', initTimeoutMs: NaN }, 'initTimeoutMs'],
+    ['fractional queue size', { workerUrl: '/moonbit-worker.js', maxQueueSize: 1.5 }, 'maxQueueSize'],
+    ['non-positive hard-kill multiplier', { workerUrl: '/moonbit-worker.js', hardKillMultiplier: 0 }, 'hardKillMultiplier'],
+    [
+      'overflowing hard-kill delay',
+      { workerUrl: '/moonbit-worker.js', timeout: 2_147_483_647, hardKillMultiplier: 2 },
+      'hard-kill delay',
+    ],
+    ['non-function worker factory', { workerUrl: '/moonbit-worker.js', createWorker: 'nope' }, 'createWorker'],
+  ])('rejects %s during construction', (_label, options, expected) => {
+    expect(() => new MoonBitWorkerSandboxExecutor(options as never)).toThrow(expected);
+  });
+
+  it('accepts a zero-length queue and a fractional hard-kill multiplier', () => {
+    const executor = new MoonBitWorkerSandboxExecutor({
+      workerUrl: '/moonbit-worker.js',
+      timeout: 10,
+      maxQueueSize: 0,
+      hardKillMultiplier: 0.5,
+    });
+    expect(executor).toBeDefined();
+    executor.dispose();
+  });
+
   it('executes a real wasm module through the worker lifecycle (fib(10) = 55)', async () => {
     mockFetchBytes();
     const executor = createExecutor(createRealWorker());

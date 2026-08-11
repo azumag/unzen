@@ -355,6 +355,9 @@ const client = new UnzenClient({
 `/moonbit-worker.js` で配信済み）。Worker protocol v3 は配列 ABI を含むため、
 client bundle と worker bundle は必ず同じ build/version から同時配信する。
 異なる protocol version の Worker response は fail closed で拒否される。
+advanced API から worker executor を直接構築する場合、`workerUrl`は空文字不可、
+timer値は1〜2,147,483,647msの整数、`maxQueueSize`は0以上のsafe integer、
+`hardKillMultiplier`は正の有限値で、`timeout`との積もtimer範囲内である必要がある。
 
 ## 永続 code / Wasm キャッシュ
 

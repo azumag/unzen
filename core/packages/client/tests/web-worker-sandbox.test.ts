@@ -151,6 +151,36 @@ describe('WebWorkerSandboxExecutor', () => {
       expect(executor).toBeDefined();
       executor.dispose();
     });
+
+    it.each([
+      ['empty workerUrl', { workerUrl: '   ' }, 'workerUrl'],
+      ['zero timeout', { workerUrl: '/worker.js', timeout: 0 }, 'timeout'],
+      ['non-finite timeout', { workerUrl: '/worker.js', timeout: Infinity }, 'timeout'],
+      ['fractional init timeout', { workerUrl: '/worker.js', initTimeoutMs: 1.5 }, 'initTimeoutMs'],
+      ['negative queue size', { workerUrl: '/worker.js', maxQueueSize: -1 }, 'maxQueueSize'],
+      ['fractional queue size', { workerUrl: '/worker.js', maxQueueSize: 1.5 }, 'maxQueueSize'],
+      ['zero cancel timeout', { workerUrl: '/worker.js', cancelAckTimeoutMs: 0 }, 'cancelAckTimeoutMs'],
+      ['non-positive hard-kill multiplier', { workerUrl: '/worker.js', hardKillMultiplier: 0 }, 'hardKillMultiplier'],
+      [
+        'overflowing hard-kill delay',
+        { workerUrl: '/worker.js', timeout: 2_147_483_647, hardKillMultiplier: 2 },
+        'hard-kill delay',
+      ],
+      ['non-function worker factory', { workerUrl: '/worker.js', createWorker: 42 }, 'createWorker'],
+    ])('rejects %s during construction', (_label, options, expected) => {
+      expect(() => new WebWorkerSandboxExecutor(options as never)).toThrow(expected);
+    });
+
+    it('accepts a zero-length queue and a fractional hard-kill multiplier', () => {
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 10,
+        maxQueueSize: 0,
+        hardKillMultiplier: 0.5,
+      });
+      expect(executor).toBeDefined();
+      executor.dispose();
+    });
   });
 
   describe('execute', () => {

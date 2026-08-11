@@ -503,6 +503,7 @@ interface SandboxExecutor {
 | 実行タイムアウト | 協調 timeout (QuickJS interrupt handler、`timeout`) と hard kill (`timeout × hardKillMultiplier`) の2段階。**hard-kill timer は実行開始時点から計測**するため、queue 待ち時間を実行タイムアウトと誤認しない |
 | 初期化タイムアウト | `initTimeoutMs` (既定10000) 以内に `init-result` が返らない場合、init waiter を `RUNTIME_ERROR` で settle し Worker を終了 |
 | キャンセル | `execute(code, args, { signal })` で AbortSignal を受け付ける。queued 中は queue から除去して即時 `UnzenCancelledError` (`CANCELLED`) で reject。実行中は worker protocol へ cancel を送信し、`cancelAckTimeoutMs` 内に acknowledgement がなければ generation を強制終了 |
+| Constructor境界 | QuickJS / MoonBit worker executor とも、空`workerUrl`、非関数`createWorker`、非正・非整数・2,147,483,647ms超のtimer、0未満/非整数のqueue、非有限のmultiplier、timer範囲外になるhard-kill積を同期的に拒否 |
 | Generation 管理 | Worker を (再)生成するたびに `generationId` を採番。全 response を protocol version / generation id で検証し、旧 generation の late response・duplicate completion・malformed response を拒否して diagnostics に集計 |
 | Generation-fatal 失敗 | hard timeout / worker crash / protocol violation は generation-fatal。実行中 request を即時 settle → Worker 終了 → queue の残りを新 generation で再開 (各 request の AbortSignal を再確認) |
 | エラー分類 | `function_error` → `UnzenFunctionError` (fallback なし)、`runtime_error` → `UnzenRuntimeError` (fallback あり)、キャンセル → `UnzenCancelledError` (fallback なし) |

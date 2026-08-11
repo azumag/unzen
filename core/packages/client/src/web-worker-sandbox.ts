@@ -62,6 +62,15 @@ import {
   type CancelResultMessage,
   type ExecuteResultMessage,
 } from './worker/worker-protocol';
+import {
+  assertValidHardKillDelay,
+  assertWorkerOptions,
+  normalizeHardKillMultiplier,
+  normalizeQueueSize,
+  normalizeTimerMs,
+  normalizeWorkerFactory,
+  normalizeWorkerUrl,
+} from './worker-executor-options';
 
 /**
  * Configuration options for WebWorkerSandboxExecutor
@@ -235,15 +244,40 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
   };
 
   constructor(options: WebWorkerSandboxOptions) {
-    this.workerUrl = options.workerUrl;
-    this.timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
-    this.initTimeoutMs = options.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
-    this.maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
-    this.cancelAckTimeoutMs = options.cancelAckTimeoutMs ?? DEFAULT_CANCEL_ACK_TIMEOUT_MS;
-    this.hardKillMultiplier = options.hardKillMultiplier ?? DEFAULT_HARD_KILL_MULTIPLIER;
-    // Default worker factory uses standard Web Worker constructor with ESM type.
-    // Injected in tests with mock Worker.
-    this.createWorkerFn = options.createWorker ?? ((url) => new Worker(url, { type: 'module' }));
+    assertWorkerOptions(options);
+    const workerUrl = options.workerUrl;
+    const timeout = options.timeout;
+    const initTimeoutMs = options.initTimeoutMs;
+    const maxQueueSize = options.maxQueueSize;
+    const cancelAckTimeoutMs = options.cancelAckTimeoutMs;
+    const hardKillMultiplier = options.hardKillMultiplier;
+    const createWorker = options.createWorker;
+
+    const normalizedTimeout = normalizeTimerMs('timeout', timeout, DEFAULT_TIMEOUT_MS);
+    const normalizedHardKillMultiplier = normalizeHardKillMultiplier(
+      hardKillMultiplier,
+      DEFAULT_HARD_KILL_MULTIPLIER,
+    );
+    assertValidHardKillDelay(normalizedTimeout, normalizedHardKillMultiplier);
+
+    this.workerUrl = normalizeWorkerUrl(workerUrl);
+    this.timeout = normalizedTimeout;
+    this.initTimeoutMs = normalizeTimerMs(
+      'initTimeoutMs',
+      initTimeoutMs,
+      DEFAULT_INIT_TIMEOUT_MS,
+    );
+    this.maxQueueSize = normalizeQueueSize(maxQueueSize, DEFAULT_MAX_QUEUE_SIZE);
+    this.cancelAckTimeoutMs = normalizeTimerMs(
+      'cancelAckTimeoutMs',
+      cancelAckTimeoutMs,
+      DEFAULT_CANCEL_ACK_TIMEOUT_MS,
+    );
+    this.hardKillMultiplier = normalizedHardKillMultiplier;
+    this.createWorkerFn = normalizeWorkerFactory(
+      createWorker,
+      (url) => new Worker(url, { type: 'module' }),
+    );
   }
 
   /**

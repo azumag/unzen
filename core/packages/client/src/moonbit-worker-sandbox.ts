@@ -62,6 +62,15 @@ import {
   validateMoonbitWorkerResponse,
   type MoonbitExecuteResultMessage,
 } from './worker/moonbit-worker-protocol';
+import {
+  assertValidHardKillDelay,
+  assertWorkerOptions,
+  normalizeHardKillMultiplier,
+  normalizeQueueSize,
+  normalizeTimerMs,
+  normalizeWorkerFactory,
+  normalizeWorkerUrl,
+} from './worker-executor-options';
 
 // Execution timeout for a single MoonBit export (wasm is fast; generous
 // default covers instantiate + the synchronous call).
@@ -210,15 +219,37 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   };
 
   constructor(options: MoonBitWorkerSandboxOptions) {
-    this.workerUrl = options.workerUrl;
-    this.timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
-    this.initTimeoutMs = options.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
-    this.maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
-    this.hardKillMultiplier = options.hardKillMultiplier ?? DEFAULT_HARD_KILL_MULTIPLIER;
-    this.createWorkerFn = options.createWorker
-      ?? ((url) => new Worker(url, { type: 'module' }));
+    assertWorkerOptions(options);
+    const workerUrl = options.workerUrl;
+    const timeout = options.timeout;
+    const initTimeoutMs = options.initTimeoutMs;
+    const maxQueueSize = options.maxQueueSize;
+    const hardKillMultiplier = options.hardKillMultiplier;
+    const createWorker = options.createWorker;
+    const importedStringConstants = options.importedStringConstants;
+
+    const normalizedTimeout = normalizeTimerMs('timeout', timeout, DEFAULT_TIMEOUT_MS);
+    const normalizedHardKillMultiplier = normalizeHardKillMultiplier(
+      hardKillMultiplier,
+      DEFAULT_HARD_KILL_MULTIPLIER,
+    );
+    assertValidHardKillDelay(normalizedTimeout, normalizedHardKillMultiplier);
+
+    this.workerUrl = normalizeWorkerUrl(workerUrl);
+    this.timeout = normalizedTimeout;
+    this.initTimeoutMs = normalizeTimerMs(
+      'initTimeoutMs',
+      initTimeoutMs,
+      DEFAULT_INIT_TIMEOUT_MS,
+    );
+    this.maxQueueSize = normalizeQueueSize(maxQueueSize, DEFAULT_MAX_QUEUE_SIZE);
+    this.hardKillMultiplier = normalizedHardKillMultiplier;
+    this.createWorkerFn = normalizeWorkerFactory(
+      createWorker,
+      (url) => new Worker(url, { type: 'module' }),
+    );
     this.importedStringConstants = normalizeMoonBitImportedStringConstants(
-      options.importedStringConstants,
+      importedStringConstants,
     );
   }
 
