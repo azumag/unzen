@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
+import { MAX_FUNCTION_PAYLOAD_BYTES } from '@unzen/shared';
 import {
   bundle,
   DEFAULT_MAX_BUNDLE_SIZE_BYTES,
@@ -137,6 +138,16 @@ describe('bundler', () => {
 
     expect(result.size).toBeGreaterThan(DEFAULT_MAX_BUNDLE_SIZE_BYTES);
     expect(new Function(`${result.code}\nreturn run();`)()).toBe(payload);
+  });
+
+  it('rejects a bundle limit that the server can never register', async () => {
+    await expect(bundle({
+      code: 'export function run() { return 1; }',
+      allowedModules: [],
+      maxBundleSize: MAX_FUNCTION_PAYLOAD_BYTES + 1,
+    })).rejects.toThrow(
+      `maxBundleSize must be a positive integer no greater than ${MAX_FUNCTION_PAYLOAD_BYTES}`,
+    );
   });
 
   it('should accept an exact final-payload boundary and reject one byte less', async () => {

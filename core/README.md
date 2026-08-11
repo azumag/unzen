@@ -89,6 +89,7 @@ runtime importは標準では拒否し、`dependencyBundling`を明示した場�
 allowlist検証とbundle後の禁止API検査を経て自己完結コードへ変換する。
 `allowedModules`はindexed snapshotされ、1設定あたり最大1024パターンに制限される。
 依存bundleは最終コードをUTF-8で計測し、既定100KiBを超える場合はbuild errorになる。
+`maxBundleSize` は server 登録上限と同じ16 MiB以下に制限される。
 抽出関数だけが使うruntime import bindingはhost bundleから除去し、host codeでも使う
 bindingは保持する。実際に読んだ依存fileはVite / webpackのwatch graphへ登録される。
 webpack loader設定、生成型の利用例、対象構文の制約は

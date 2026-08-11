@@ -28,6 +28,7 @@
  */
 
 import * as esbuild from 'esbuild';
+import { MAX_FUNCTION_PAYLOAD_BYTES } from '@unzen/shared';
 import { realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import ts from 'typescript';
@@ -159,10 +160,16 @@ function isWithinDirectory(filePath: string, directory: string): boolean {
 
 export function normalizeMaxBundleSize(value: unknown): number {
   if (value === undefined) return DEFAULT_MAX_BUNDLE_SIZE_BYTES;
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || value <= 0
+    || value > MAX_FUNCTION_PAYLOAD_BYTES
+  ) {
     throw new Error(
       `Invalid maxBundleSize ${String(value)}: `
-      + "maxBundleSize must be a positive integer within JavaScript's safe range",
+      + 'maxBundleSize must be a positive integer no greater than '
+      + `${MAX_FUNCTION_PAYLOAD_BYTES}`,
     );
   }
   return value;

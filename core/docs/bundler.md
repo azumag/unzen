@@ -378,7 +378,8 @@ npx vitest run
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
 - 100KiBを超える依存コードは既定で拒否する。上限を増やす場合はQuickJSの16MB memory
-  limitとparse時の追加memoryを考慮し、`maxBundleSize`を明示する
+  limitとparse時の追加memoryを考慮し、`maxBundleSize`を明示する。serverが登録できる
+  payload契約に合わせ、設定可能な絶対上限は16 MiBとする
 - compile-time抽出はクロージャ値を埋め込まない。runtime importのbundleは
   `dependencyBundling`を明示した場合だけ行う
 - 抽出関数だけが使うruntime import bindingは元moduleから除去する。同じbindingをhost codeも
