@@ -59,9 +59,9 @@ import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 /** A compiled MoonBit module ready for instantiation. */
 export interface PreparedMoonBitModule {
   /** Original module URL */
-  url: string;
+  readonly url: string;
   /** Compiled WebAssembly module */
-  module: WebAssembly.Module;
+  readonly module: WebAssembly.Module;
 }
 
 /** A shared in-flight fetch/compile with per-caller waiter tracking. */
@@ -85,6 +85,11 @@ function isSettled(
   pending: InflightModuleRequest,
 ): boolean {
   return cache.get(url) !== pending;
+}
+
+/** Keep the mutable wrapper caller-owned while sharing the immutable module. */
+function copyPreparedMoonBitModule(prepared: PreparedMoonBitModule): PreparedMoonBitModule {
+  return { url: prepared.url, module: prepared.module };
 }
 
 /** Default imports required by MoonBit wasm-gc modules (println etc.). */
@@ -158,7 +163,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     if (cached && !isInflight(cached)) {
       // Already fetched and compiled: return the settled module.
       throwIfAborted(signal);
-      return cached;
+      return copyPreparedMoonBitModule(cached);
     }
 
     let pending: InflightModuleRequest;
@@ -198,7 +203,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     pending.waiters++;
     try {
       const result = signal ? raceWithAbort(pending.promise, signal) : pending.promise;
-      return await result;
+      return copyPreparedMoonBitModule(await result);
     } finally {
       pending.waiters--;
       if (

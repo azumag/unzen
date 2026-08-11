@@ -752,7 +752,9 @@ TypeScript source
 - `MoonBitSandboxExecutor` (client) は wasm をフェッチし、生バイトを manifest hash と
   SHA-256 照合してから `WebAssembly.compile` でキャッシュする。`spectest` 等の MoonBit
   ランタイム import のみでインスタンス化して指定 export を呼ぶ。`UnzenClient` は
-  マニフェストの `runtime` で QuickJS パスと MoonBit パスを振り分ける。
+  マニフェストの `runtime` で QuickJS パスと MoonBit パスを振り分ける。compiled module
+  自体は再利用するが、`prepare()` が返す wrapper は毎回 caller-owned copy とし、
+  cache-owned `{ url, module }` を外部 mutation へ公開しない。
 - `MoonBitWorkerSandboxExecutor` (client) は `moonbitWorkerUrl` 指定時に使われ、
   main thread で同じ生バイト検証を終えてから専用 Web Worker へ渡して wasm を
   実行する（QuickJS パスと同じ Layer 1 の分離）。

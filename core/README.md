@@ -313,6 +313,8 @@ MoonBit 関数は `UnzenServer.defineMoonbit(name, wasmPath, { exportName, abi }
 Web Worker、メインスレッド非ブロック・terminate で強制停止）、未指定時は
 `MoonBitSandboxExecutor`（メインスレッド、デモ用途）が wasm をフェッチ・
 インスタンス化し、指定の export（既定 `run`）を呼び出す。
+main-thread の `prepare()` は immutable な compiled module を再利用する一方、
+呼び出し元には毎回新しい `{ url, module }` wrapper を返し、cache-owned object を公開しない。
 実行はブラウザ限定で、サーバーフォールバックは行わない（QuickJS ランタイムでは
 wasm を実行できない）。ABI 省略時は number / boolean / bigint / string の
 スカラー入出力のみ対応。String は JS String Builtins 経由

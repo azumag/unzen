@@ -143,10 +143,33 @@ describe('MoonBitSandboxExecutor', () => {
     const prepared = await executor.prepare('https://example.com/fibonacci.wasm');
     const again = await executor.prepare('https://example.com/fibonacci.wasm');
 
-    expect(prepared).toBe(again);
+    expect(prepared).not.toBe(again);
+    expect(prepared.module).toBe(again.module);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     expect(await executor.execute(prepared, [15], { exportName: 'fibonacci' })).toBe(610);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    executor.dispose();
+  });
+
+  it('does not expose the cache-owned prepared module wrapper', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor();
+    const url = 'https://example.com/fibonacci.wasm';
+
+    const prepared = await executor.prepare(url);
+    const verifiedModule = prepared.module;
+    const callerOwned = prepared as {
+      url: string;
+      module: WebAssembly.Module;
+    };
+    callerOwned.url = 'https://attacker.example/replaced.wasm';
+    callerOwned.module = {} as WebAssembly.Module;
+
+    const cached = await executor.prepare(url);
+    expect(cached).not.toBe(prepared);
+    expect(cached).toEqual({ url, module: verifiedModule });
+    await expect(executor.execute(url, [10], { exportName: 'fibonacci' })).resolves.toBe(55);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     executor.dispose();
   });
@@ -410,7 +433,9 @@ describe('MoonBitSandboxExecutor', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const again = await executor.prepare('https://example.com/first.wasm');
-    expect(again).toBe(retry);
+    expect(again).not.toBe(retry);
+    expect(again.module).toBe(retry.module);
+    expect(again.url).toBe(retry.url);
     expect(fetchCalls).toBe(2);
     executor.dispose();
   });
