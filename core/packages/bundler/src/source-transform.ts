@@ -2,6 +2,7 @@
 
 import MagicString, { type SourceMap } from 'magic-string';
 import ts from 'typescript';
+import { createUnzenPurityAnalyzer } from './pure-function-check';
 
 const UNZEN_SERVER_MODULE = '@unzen/server';
 const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
@@ -317,6 +318,7 @@ export function transformUnzenDefinitions(
 
   const output = new MagicString(source);
   const definitions: ExtractedUnzenDefinition[] = [];
+  const purityAnalyzer = createUnzenPurityAnalyzer(sourceFile);
 
   for (const statement of sourceFile.statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
@@ -343,6 +345,11 @@ export function transformUnzenDefinitions(
     }
     if (isAsyncFunction(functionNode) || functionNode.asteriskToken !== undefined) {
       fail(sourceFile, call, 'Unzen build extraction supports synchronous functions only');
+    }
+
+    const purityViolation = purityAnalyzer.check(functionNode)[0];
+    if (purityViolation) {
+      fail(sourceFile, purityViolation.node, purityViolation.message);
     }
 
     const receiver = call.expression as ts.PropertyAccessExpression;

@@ -425,6 +425,10 @@ unzen.define('check', (text: string) => {
   `defineRaw()`へコンパイル時変換する（source map付き）
 - Vite pluginの`declarationFile`を指定すると、抽出したsignatureから
   `UnzenFunctions`とtyped `UnzenClient` aliasをbuild assetとして自動生成する
+- 抽出時はTypeScriptのsymbol/scopeを使って、関数外のruntime binding、禁止global、
+  dynamic import、外部context、入力/globalへの代入、乱数・現在時刻への直接依存を
+  位置付きbuild errorにする。local working stateへの代入は許可する
+- 型annotationは実行時に消えるため、type-only importやlocal typeは純粋性検査の対象外
 - MVP段階では、関数定義を文字列リテラルとして渡す代替APIも提供する:
   ```typescript
   // 代替: 文字列リテラルで関数を定義 (トランスパイラに影響されない)
@@ -745,7 +749,7 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 - [x] ビルドツール統合 (Vite plugin / webpack loader + 共通AST変換)
 - [x] TypeScript型定義の自動生成 (Vite build asset + typed UnzenClient schema)
 - [x] 診断情報API (実行場所・時間の可視化)
-- [ ] 純粋関数チェッカー (定義時の静的解析)
+- [x] 純粋関数チェッカー (symbol/scopeベースの定義時静的解析)
 
 ---
 

@@ -65,6 +65,13 @@ build後の意味上の出力:
 server.defineRaw("sum", "(a, b) => a + b", { timeout: 500 });
 ```
 
+変換前にTypeScriptのsymbol/scope解析でinline関数の実行時参照を検査する。関数外の
+変数・runtime import、`this`/`super`、禁止global（`fetch`、`globalThis`、`eval`、
+`require`等）、dynamic import、`import.meta`、入力/globalへの代入、
+`Math.random()`、`Date.now()`、`Date()`、引数なしの`new Date()`は、参照元の
+file/line/columnを含むbuild errorになる。local binding、local shadowing、local working
+stateへの代入は許可され、型annotationとtype-only importは実行時に消えるため無視する。
+
 #### Vite
 
 Vite標準の`transform` hookを`enforce: 'pre'`で使用する。
@@ -146,7 +153,9 @@ module.exports = {
 - `name` は静的文字列、`fn` はinline arrow/function expressionかつ同期関数に限る
 - 動的な名前、外部変数に入れた関数、async/generatorは位置付きbuild errorになる
 - nestedな`.define()`と無関係なライブラリの`.define()`は誤変換を避けるため触らない
-- クロージャの外部参照は抽出文字列には含まれない。関数は引数とsandbox組み込みだけで完結させる
+- クロージャ・runtime import・入力/globalへの代入・禁止global・直接の乱数/現在時刻
+  参照はsymbol/scope検査で位置付きbuild errorになる。関数は引数、local binding、
+  許可されたsandbox組み込みで完結させる
 - npm依存を関数へ含める場合は下記`bundle()`を使い、module whitelistを適用する
 
 #### 型定義生成の契約
@@ -258,7 +267,11 @@ npx vitest run
 
 ## 制限事項
 
-- 禁止API検出は正規表現ベースのヒューリスティック。動的に構築された API 呼び出し（例: `window['fe'+'tch']`）は検出できない
+- inline `define()`の純粋性検査はASTとsymbol/scopeを使うため、コメント・文字列やlocal
+  shadowingをAPI使用とは判定しない。ただしaliasを介した呼び出しや動的に構築したpropertyを
+  データフロー追跡するものではない。alias経由の入力mutationも同じ制限を持つ
+- `bundle()`のバンドル後禁止API検出と`defineRaw()`のruntime警告は引き続き正規表現ベースの
+  defense-in-depthであり、コメント・文字列を含む可能性がある
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
 - compile-time抽出はinline関数を文字列化するが、クロージャ値やimportを自動bundleしない

@@ -70,6 +70,9 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 
 `declarationFile`はViteの`outDir`へ`UnzenFunctions`と`TypedUnzenClient`を生成する。
 生成型を使うと`client.call('sum', 1, 2)`の関数名・引数・戻り値を検査できる。
+抽出対象の関数はTypeScriptのsymbol/scope解析も通り、クロージャ・runtime import・
+禁止global・入力/globalへの代入・`Math.random()`や現在時刻への依存をsource位置付き
+build errorで拒否する。
 webpack loader設定、生成型の利用例、対象構文の制約は
 [モジュールバンドラーガイド](docs/bundler.md)を参照。
 

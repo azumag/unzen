@@ -647,6 +647,7 @@ defineRaw('add', '(a, b) => a + b')
 ```
 TypeScript source
   → TypeScript ASTで @unzen/server import / const instance / define callを照合
+  → TypeScript symbol/scopeで外部capture・入力/global代入・禁止/非決定的APIを検査
   → 型引数 / parameter / return annotationを抽出（未注釈はunknown）
   → inline関数だけをES2018 JavaScriptへtranspile
   → MagicStringで defineRaw(name, code, options) に局所置換 + source map
@@ -656,6 +657,10 @@ TypeScript source
 
 - 対象をトップレベルのinline同期関数に限定し、動的名・外部関数・async/generatorは
   build時にfile/line/column付きで拒否する
+- 関数内のlocal bindingと外部captureをsymbolで区別するため、コメント・文字列・local
+  shadowingは誤検知せず、runtime import、`this`/`super`、禁止global、dynamic import、
+  `import.meta`、入力/globalへの代入、`Math.random()`、`Date.now()`、
+  引数なし`Date`生成を位置付きerrorにする。local working stateへの代入は許可する
 - unrelated `.define()`、nested call、`node_modules`は変換しない
 - webpack loaderはESM/CJS両方で配布し、raw TypeScriptを読むためloader chainの
   最初（`use`配列の右端）に置く
