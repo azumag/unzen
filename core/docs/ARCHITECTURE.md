@@ -203,7 +203,8 @@ Error
   検証して、上限超過時は body を cancel する。server は request 超過を構造化 413 で返す
 - server 登録境界は raw source の UTF-8 byte 数と MoonBit file の stat/captured byte 数を
   16 MiB に制限し、超過時は version 採番・hash・registry 変更前に拒否する。code response は
-  captured payload と一致する `Content-Length` を返す
+  captured payload と一致する `Content-Length` を返す。shared definition validator と公開
+  `FunctionRegistry.register()` も `FunctionDefinition.code` の UTF-8 byte 数へ同じ上限を適用する
 - candidate definition を含む aggregate manifest を登録前に生成し、UTF-8 1 MiB 超なら
   version counter / registry / immutable payload store を変更せず拒否する。manifest response は
   同じ serialized body から `Content-Length` と ETag を返す

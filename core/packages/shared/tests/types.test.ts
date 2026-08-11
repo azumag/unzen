@@ -16,6 +16,7 @@ import {
   isValidContentHash,
   isValidFunctionName,
   isRuntimeType,
+  MAX_FUNCTION_PAYLOAD_BYTES,
   MAX_MOONBIT_ABI_PARAMS,
   normalizeMoonBitAbi,
   normalizeFunctionDefinition,
@@ -136,6 +137,19 @@ describe('FunctionDefinition', () => {
       expect(isValidFunctionDefinition({} as FunctionDefinition)).toBe(false);
       expect(isValidFunctionDefinition({ ...validDefinition, name: '' })).toBe(false);
       expect(isValidFunctionDefinition({ ...validDefinition, code: '' })).toBe(false);
+    });
+
+    it('enforces the function code limit by UTF-8 byte length', () => {
+      const exactLimit = '\u00e9'.repeat(MAX_FUNCTION_PAYLOAD_BYTES / 2);
+
+      expect(normalizeFunctionDefinition({
+        ...validDefinition,
+        code: exactLimit,
+      })).toBeDefined();
+      expect(normalizeFunctionDefinition({
+        ...validDefinition,
+        code: `${exactLimit}x`,
+      })).toBeUndefined();
     });
 
     it('should reject definitions with invalid runtime type', () => {

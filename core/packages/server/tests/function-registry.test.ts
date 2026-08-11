@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { FunctionRegistry } from '../src/function-registry';
-import type { FunctionDefinition } from '@unzen/shared';
+import { MAX_FUNCTION_PAYLOAD_BYTES, type FunctionDefinition } from '@unzen/shared';
 
 const HASH_A = `sha256:${'a'.repeat(64)}`;
 const HASH_B = `sha256:${'b'.repeat(64)}`;
@@ -111,6 +111,16 @@ describe('FunctionRegistry', () => {
         name: '../escape',
         runtime: 'quickjs',
         code: 'function run() {}',
+        version: 1,
+        hash: HASH_A,
+      })).toThrow('Invalid function definition');
+    });
+
+    it('rejects function code over the shared payload limit', () => {
+      expect(() => registry.register({
+        name: 'tooLarge',
+        runtime: 'quickjs',
+        code: 'x'.repeat(MAX_FUNCTION_PAYLOAD_BYTES + 1),
         version: 1,
         hash: HASH_A,
       })).toThrow('Invalid function definition');
