@@ -153,15 +153,22 @@ describe('Unzen cache worker policy', () => {
 
   it('fails closed and never caches when response bytes do not match the URL hash', async () => {
     const storage = new MemoryCacheStorage();
-    const response = await respondWithUnzenCodeCache(codeRequest('expected'), {
-      cacheStorage: storage,
-      fetch: async () => immutableCodeResponse('tampered'),
-      digest: async (bytes) => hashBytes(bytes),
-    });
+    const networkResponse = immutableCodeResponse('tampered');
+    const cancel = vi.spyOn(ReadableStream.prototype, 'cancel');
+    try {
+      const response = await respondWithUnzenCodeCache(codeRequest('expected'), {
+        cacheStorage: storage,
+        fetch: async () => networkResponse,
+        digest: async (bytes) => hashBytes(bytes),
+      });
 
-    expect(response.status).toBe(502);
-    expect(response.headers.get('Cache-Control')).toBe('no-store');
-    expect(storage.cache.putCount).toBe(0);
+      expect(response.status).toBe(502);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(storage.cache.putCount).toBe(0);
+    } finally {
+      cancel.mockRestore();
+    }
   });
 
   it('fails closed before digesting a response over the code payload limit', async () => {

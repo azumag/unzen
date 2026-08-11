@@ -166,7 +166,10 @@ export async function respondWithUnzenCodeCache(
         'Unzen code response',
       );
       const actualHash = await runtime.digest(bytes);
-      if (actualHash !== expectedHash) return integrityFailure();
+      if (actualHash !== expectedHash) {
+        cancelResponse(response, new Error('Unzen code integrity check failed'));
+        return integrityFailure();
+      }
     } catch (error) {
       if (error instanceof ResponseBodyLimitError) {
         if (verificationResponse !== undefined) {
