@@ -590,7 +590,7 @@ interface UnzenExecutionRequest {
   fetch より前に request field を一度だけ読む。top-level の引数 slot は iterator を
   呼ばない bounded indexed copy で浅く snapshot する。`signal` / `onEvent` も型検証して
   参照を固定し、違反は副作用前に `UnzenFunctionError` / `function_failed` として返す。
-- **イベント**: `accepted` / `manifest-fetch-started|completed` / `code-fetch-started|completed` / `sandbox-initializing`（サンドボックスの遅延初期化時のみ）/ `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、terminal event は1実行につき正確に1回。`cancel-requested` 以降は新しい phase event を emit しない。
+- **イベント**: `accepted` / `manifest-fetch-started|completed`（developmentを含む全mode）/ `code-fetch-started|completed` / `sandbox-initializing`（サンドボックスの遅延初期化時のみ）/ `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、terminal event は1実行につき正確に1回。`cancel-requested` 以降は新しい phase event を emit しない。
 - **キャンセル**: 1つの AbortSignal が manifest/code fetch・sandbox・fallback へ一貫して伝播する。`UnzenCancelledError` (code `CANCELLED`) は **server fallback を開始しない**。dispose() は進行中 execution を cancel して settle させる。
 - **診断**: `ExecutionDiagnostics` は browser/server の attempt chain (`attempts`)、`fallbackUsed`、`finalRoute`、`totalDurationMs`、`manifestCache` を保持。browser 失敗→server 成功の経緯を確認できる。
 - **エラーコード**: `cancelled` / `manifest_fetch_failed` / `code_fetch_failed` / `browser_runtime_failed` / `deadline_exceeded`（タイムアウト）/ `function_failed` / `server_fallback_failed` / `server_network_failed`（fallback のネットワーク失敗）/ `client_disposed`。UI 状態は message 解析ではなく code で判定する。

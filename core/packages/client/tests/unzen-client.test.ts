@@ -272,6 +272,37 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('should emit manifest and server lifecycle phases in development mode', async () => {
+      const events: string[] = [];
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/exec/add')) return jsonResponse({ result: 3 });
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+
+      const result = await client.executeWithDiagnostics<number>({
+        name: 'add',
+        args: [1, 2],
+        onEvent: (event) => events.push(event.type),
+      });
+
+      expect(result.success).toBe(true);
+      expect(events).toEqual([
+        'accepted',
+        'manifest-fetch-started',
+        'manifest-fetch-completed',
+        'server-execution-started',
+        'completed',
+      ]);
+      client.dispose();
+    });
+
     it('should cancel a development request when fetch ignores its signal', async () => {
       let markExecStarted: (() => void) | undefined;
       const execStarted = new Promise<void>((resolve) => {
@@ -2061,6 +2092,7 @@ describe('UnzenClient', () => {
 
     it('does not send inputs to /exec when the development manifest fetch fails', async () => {
       const execBodies: string[] = [];
+      const events: string[] = [];
       const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.includes('/manifest')) return Promise.reject(new Error('network down'));
         if (url.includes('/exec/')) {
@@ -2079,12 +2111,15 @@ describe('UnzenClient', () => {
       const result = await client.executeWithDiagnostics({
         name: 'hashPassword',
         args: ['secret-marker', 'salt', 100, 32],
+        onEvent: (event) => events.push(event.type),
       });
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('manifest_fetch_failed');
       }
+      expect(result.diagnostics.lastAttemptedOn).toBe('server');
+      expect(events).toEqual(['accepted', 'manifest-fetch-started', 'failed']);
       expect(execBodies).toHaveLength(0);
       client.dispose();
     });

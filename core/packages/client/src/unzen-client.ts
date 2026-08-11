@@ -749,9 +749,18 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
         // EVERY mode: development mode must not send password/MoonBit inputs
         // to /exec just because it skips the browser. Resolve the manifest
         // metadata first and refuse server execution for noFallback/MoonBit.
+        lastAttemptedOn = 'server';
+        emit({ type: 'manifest-fetch-started' });
         let devEntry: FunctionManifestEntry | undefined;
         try {
           const manifest = await this.manifestFetcher.fetch(internalController.signal);
+          if (internalController.signal.aborted) {
+            return cancelledOutcome();
+          }
+          emit({ type: 'manifest-fetch-completed' });
+          if (internalController.signal.aborted) {
+            return cancelledOutcome();
+          }
           devEntry = Object.hasOwn(manifest.functions, request.name)
             ? manifest.functions[request.name]
             : undefined;
@@ -765,9 +774,6 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
           }
           emit({ type: 'failed', errorCode: 'manifest_fetch_failed' });
           return buildOutcome(false, undefined, err, 'manifest_fetch_failed');
-        }
-        if (internalController.signal.aborted) {
-          return cancelledOutcome();
         }
         if (!devEntry) {
           const err = new UnzenFunctionError(
@@ -784,7 +790,6 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
           return buildOutcome(false, undefined, err, 'browser_runtime_failed');
         }
 
-        lastAttemptedOn = 'server';
         emit({ type: 'server-execution-started' });
         if (internalController.signal.aborted) {
           return cancelledOutcome();
