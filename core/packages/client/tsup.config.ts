@@ -5,7 +5,7 @@ import { defineConfig } from 'tsup';
  *
  * Design choices:
  * - ESM-only for modern browsers (ES2022+)
- * - Three entry points: main SDK + browser bundle + Web Worker script
+ * - Main/browser SDK entries + self-contained execution/cache worker scripts
  * - Main entry externalizes @unzen/shared (for npm consumers)
  * - Browser bundle inlines all deps (for direct <script> usage)
  * - Worker script bundles all dependencies (self-contained for browser)
@@ -64,5 +64,18 @@ export default defineConfig([
     sourcemap: true,
     splitting: false,
     noExternal: [/.*/],
+  },
+  // Cache Service Worker — classic IIFE for broad Service Worker support.
+  // The entry has no exports and bundles its cache policy into one script.
+  {
+    entry: { 'unzen-cache-worker': 'src/worker/unzen-cache-worker.ts' },
+    format: ['iife'],
+    platform: 'browser',
+    dts: false,
+    clean: false,
+    sourcemap: true,
+    splitting: false,
+    noExternal: [/.*/],
+    outExtension: () => ({ js: '.js' }),
   },
 ]);

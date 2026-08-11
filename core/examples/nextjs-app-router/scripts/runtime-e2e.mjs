@@ -54,6 +54,9 @@ async function verifyHttpEndpoints() {
     typeof entry.codeUrl === 'string' && entry.codeUrl.startsWith(`${endpoint}/code/jsonSchemaValidate?v=`),
     `unexpected codeUrl: ${entry.codeUrl}`
   );
+  const codeUrl = new URL(entry.codeUrl, origin);
+  assert(/^sha256:[a-f0-9]{64}$/.test(codeUrl.searchParams.get('h') ?? ''),
+    `codeUrl is missing its SHA-256 identity: ${entry.codeUrl}`);
 
   const codeResponse = await fetch(entry.codeUrl);
   assert(codeResponse.ok, `GET ${entry.codeUrl} failed with HTTP ${codeResponse.status}`);
@@ -80,6 +83,16 @@ async function verifyHttpEndpoints() {
   assert(
     workerResponse.headers.get('content-type')?.includes('javascript'),
     'worker asset should be served as JavaScript'
+  );
+
+  const cacheWorkerResponse = await fetch(`${origin}/unzen-cache-worker.js`);
+  assert(
+    cacheWorkerResponse.ok,
+    `GET /unzen-cache-worker.js failed with HTTP ${cacheWorkerResponse.status}`
+  );
+  assert(
+    cacheWorkerResponse.headers.get('content-type')?.includes('javascript'),
+    'cache worker asset should be served as JavaScript'
   );
 }
 
@@ -115,6 +128,11 @@ async function verifyBrowserFlow() {
     try {
       await page.goto(origin, { waitUntil: 'networkidle' });
 
+      await page.evaluate(async () => {
+        await navigator.serviceWorker.ready;
+      });
+      await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
       const button = page.getByRole('button', { name: 'Run validation' });
       await button.waitFor({ state: 'visible' });
       await button.click();
@@ -134,6 +152,32 @@ async function verifyBrowserFlow() {
         payload.diagnostics?.executedOn === 'browser',
         `expected browser execution, got ${payload.diagnostics?.executedOn}`
       );
+
+      const cachedCode = await page.evaluate(async () => {
+        const manifest = await fetch('/api/unzen/manifest').then((response) => response.json());
+        const codeUrl = new URL(
+          manifest.functions.jsonSchemaValidate.codeUrl,
+          location.href
+        ).href;
+        const cached = await (await caches.open('unzen-code-v1')).match(codeUrl);
+        return { codeUrl, stored: cached !== undefined };
+      });
+      assert(cachedCode.stored, 'versioned function code should be stored in CacheStorage');
+
+      await context.setOffline(true);
+      try {
+        const offlineCode = await page.evaluate(async (codeUrl) => {
+          const response = await fetch(codeUrl);
+          return { ok: response.ok, body: await response.text() };
+        }, cachedCode.codeUrl);
+        assert(offlineCode.ok, 'cached function code should be readable offline');
+        assert(
+          offlineCode.body.includes('function validate'),
+          'offline cache returned unexpected function code'
+        );
+      } finally {
+        await context.setOffline(false);
+      }
 
       await context.tracing.stop();
     } catch (error) {

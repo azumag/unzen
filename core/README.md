@@ -298,6 +298,32 @@ const client = new UnzenClient({
 client bundle と worker bundle は必ず同じ build/version から同時配信する。
 異なる protocol version の Worker response は fail closed で拒否される。
 
+## 永続 code / Wasm キャッシュ
+
+`@unzen/client` は versioned function code と MoonBit Wasm 専用の classic Service
+Worker bundle を出力する。root scope で明示的に登録する:
+
+```typescript
+import { registerUnzenCacheWorker } from '@unzen/client';
+
+await registerUnzenCacheWorker({
+  workerUrl: '/unzen-cache-worker.js',
+  scope: '/',
+});
+```
+
+`packages/client/dist/unzen-cache-worker.js` は JavaScript MIME type、
+`Cache-Control: no-cache` で配信する。root 以外に配置して `/` scope を指定する場合は
+`Service-Worker-Allowed: /` も必要になる。
+
+worker が intercept するのは同一 origin の
+`/code/<name>?v=<positive>&h=sha256:<64hex>` のみ。server が 200・
+JavaScript/Wasm・`immutable` と認めた応答を URL の SHA-256 と再照合してから
+`unzen-code-v1` に保存する。manifest、fallback API、version/hash が欠けた URL、
+別 origin の asset は保存しない。`clearUnzenCodeCache()` で Unzen の cache
+generation だけを削除できる。この機能は code/Wasm payload の offline 再利用であり、
+新規 navigation を完全 offline にするにはアプリ shell と manifest の別戦略が必要。
+
 ## プロジェクト構成
 
 ```

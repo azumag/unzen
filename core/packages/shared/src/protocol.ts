@@ -99,7 +99,7 @@ export interface ExecutionResponse {
  * //       runtime: 'quickjs',
  * //       hash: 'sha256:abc123',
  * //       version: 1,
- * //       codeUrl: 'https://example.com/unzen/code/spamCheck?v=1',
+ * //       codeUrl: 'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aabc123',
  * //     },
  * //   },
  * // }
@@ -123,8 +123,11 @@ export function createManifestResponse(
       runtime: def.runtime,
       hash: def.hash,
       version: def.version,
-      // Construct immutable URL with version query parameter
-      codeUrl: `${baseUrl}/code/${name}?v=${def.version}`,
+      // Both values are required for persistent cache identity. The numeric
+      // version distinguishes registrations within one server process; the
+      // content hash keeps the URL unique across restarts/deployments where
+      // version counters may start again from 1.
+      codeUrl: `${baseUrl}/code/${name}?v=${def.version}&h=${encodeURIComponent(def.hash)}`,
       // MoonBit modules may export under their pub fn name rather than 'run'
       exportName: def.exportName,
       moonbitAbi,

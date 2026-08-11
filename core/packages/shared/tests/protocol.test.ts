@@ -148,13 +148,33 @@ describe('createManifestResponse', () => {
     expect(response.functions.spamCheck.runtime).toBe('quickjs');
     expect(response.functions.spamCheck.hash).toBe('sha256:abc123');
     expect(response.functions.spamCheck.version).toBe(1);
-    expect(response.functions.spamCheck.codeUrl).toBe('https://example.com/unzen/code/spamCheck?v=1');
+    expect(response.functions.spamCheck.codeUrl).toBe(
+      'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aabc123',
+    );
   });
 
   it('should handle empty function list', () => {
     const response = createManifestResponse({}, 'https://example.com/unzen');
 
     expect(response.functions).toEqual({});
+  });
+
+  it('keeps cache URLs unique when a restarted server reuses a version number', () => {
+    const definition = {
+      name: 'calculate',
+      runtime: 'quickjs' as RuntimeType,
+      code: 'function run() {}',
+      version: 1,
+      hash: 'sha256:first',
+    };
+    const first = createManifestResponse({ calculate: definition }, '/unzen');
+    const second = createManifestResponse({
+      calculate: { ...definition, hash: 'sha256:second' },
+    }, '/unzen');
+
+    expect(first.functions.calculate.codeUrl).not.toBe(second.functions.calculate.codeUrl);
+    expect(first.functions.calculate.codeUrl).toContain('v=1&h=sha256%3Afirst');
+    expect(second.functions.calculate.codeUrl).toContain('v=1&h=sha256%3Asecond');
   });
 
   it('copies MoonBit ABI metadata into the manifest', () => {

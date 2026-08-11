@@ -43,7 +43,7 @@ describe('ManifestBuilder', () => {
         runtime: 'quickjs',
         hash: 'sha256:abc123',
         version: 1,
-        codeUrl: 'https://example.com/unzen/code/spamCheck?v=1',
+        codeUrl: 'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aabc123',
       });
     });
 
@@ -71,8 +71,12 @@ describe('ManifestBuilder', () => {
       const manifest = builder.build();
 
       expect(Object.keys(manifest.functions)).toHaveLength(2);
-      expect(manifest.functions.func1.codeUrl).toBe('https://example.com/unzen/code/func1?v=1');
-      expect(manifest.functions.func2.codeUrl).toBe('https://example.com/unzen/code/func2?v=2');
+      expect(manifest.functions.func1.codeUrl).toBe(
+        'https://example.com/unzen/code/func1?v=1&h=sha256%3Aa',
+      );
+      expect(manifest.functions.func2.codeUrl).toBe(
+        'https://example.com/unzen/code/func2?v=2&h=sha256%3Ab',
+      );
     });
 
     it('should handle baseUrl without trailing slash', () => {
@@ -88,7 +92,9 @@ describe('ManifestBuilder', () => {
       const builder = new ManifestBuilder(registry, 'https://example.com/unzen');
       const manifest = builder.build();
 
-      expect(manifest.functions.testFunc.codeUrl).toBe('https://example.com/unzen/code/testFunc?v=1');
+      expect(manifest.functions.testFunc.codeUrl).toBe(
+        'https://example.com/unzen/code/testFunc?v=1&h=sha256%3Aabc',
+      );
     });
 
     it('should handle baseUrl with trailing slash', () => {
@@ -105,7 +111,9 @@ describe('ManifestBuilder', () => {
       const manifest = builder.build();
 
       // Should not have double slashes
-      expect(manifest.functions.testFunc.codeUrl).toBe('https://example.com/unzen/code/testFunc?v=1');
+      expect(manifest.functions.testFunc.codeUrl).toBe(
+        'https://example.com/unzen/code/testFunc?v=1&h=sha256%3Aabc',
+      );
     });
 
     it('should preserve function runtime types', () => {

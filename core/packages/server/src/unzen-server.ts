@@ -46,13 +46,15 @@ export class UnzenServer {
   private manifestBuilder: ManifestBuilder;
   private baseUrl: string;
   private runtime: QuickJSRuntime;
-  /** Versioned immutable payloads per {name, version}, captured at
+  /** Versioned immutable payloads per {name, version, hash}, captured at
    * registration time. `code` is served verbatim for whatever runtime that
    * version was registered with (wasm bytes for moonbit, JS source for
    * quickjs), so a re-registration can never change what an already-published
-   * ?v=N URL delivers. */
+   * ?v=N&h=HASH URL delivers. */
   private readonly versionedCode = new Map<string, Map<number, {
     runtime: 'quickjs' | 'moonbit';
+    /** Content identity advertised in the manifest URL. */
+    hash: string;
     /** JS source for quickjs, validated wasm bytes for moonbit */
     payload: Buffer;
   }>>();
@@ -179,7 +181,13 @@ export class UnzenServer {
     };
 
     // Register the function definition
-    this.captureVersionedCode(name, this.versionCounter, 'quickjs', Buffer.from(wrappedCode, 'utf-8'));
+    this.captureVersionedCode(
+      name,
+      this.versionCounter,
+      'quickjs',
+      hash,
+      Buffer.from(wrappedCode, 'utf-8'),
+    );
     this.registry.register(definition);
   }
 
@@ -254,20 +262,21 @@ export class UnzenServer {
 
     // Capture the exact validated bytes for immutable delivery, keyed by
     // version so a re-registration with different bytes cannot change what an
-    // already-published ?v=N URL delivers.
-    this.captureVersionedCode(name, this.versionCounter, 'moonbit', bytes);
+    // already-published ?v=N&h=HASH URL delivers.
+    this.captureVersionedCode(name, this.versionCounter, 'moonbit', definition.hash, bytes);
     this.registry.register(definition);
   }
 
-  /** Record the exact payload served by a published ?v=N URL. */
+  /** Record the exact payload served by a published ?v=N&h=HASH URL. */
   private captureVersionedCode(
     name: string,
     version: number,
     runtime: 'quickjs' | 'moonbit',
+    hash: string,
     payload: Buffer,
   ): void {
     const byVersion = this.versionedCode.get(name) ?? new Map();
-    byVersion.set(version, { runtime, payload });
+    byVersion.set(version, { runtime, hash, payload });
     this.versionedCode.set(name, byVersion);
   }
 
@@ -335,33 +344,47 @@ export class UnzenServer {
         return c.json({ error: 'Function not found' }, 404);
       }
 
-      // Set cache headers for immutable content
-      // Version query parameter (?v=N) ensures cache invalidation on updates
+      // Set cache headers for immutable content. Version + SHA-256 query
+      // parameters ensure cache invalidation both within a process and across
+      // restarts where the numeric counter may reset.
       // Resolve the versioned immutable payload FIRST, independent of the
       // current registry runtime: a same-name re-registration (moonbit→quickjs
-      // or quickjs→moonbit) must not change what an already-published ?v=N URL
+      // or quickjs→moonbit) must not change what an already-published
+      // ?v=N&h=HASH URL
       // delivers. An EXPLICIT version must exist in the versioned store — an
       // unknown version is a 404 (never serve the current code under a stale
       // immutable URL, which would poison CDN caches). Only a MISSING ?v=
       // resolves to the current registry version.
       const rawVersion = c.req.query('v');
+      const rawHash = c.req.query('h');
+      if (rawVersion === undefined && rawHash !== undefined) {
+        return c.json({ error: 'Hash requires an explicit version' }, 400, {
+          'Cache-Control': 'no-store',
+        });
+      }
       let version = fn.version;
       if (rawVersion !== undefined) {
         if (!/^[1-9][0-9]*$/.test(rawVersion)) {
-          return c.json({ error: 'Invalid version' }, 400);
+          return c.json({ error: 'Invalid version' }, 400, {
+            'Cache-Control': 'no-store',
+          });
         }
         version = Number(rawVersion);
       }
       const byVersion = this.versionedCode.get(name);
       const entry = byVersion?.get(version);
       if (entry) {
+        if (rawHash !== undefined && rawHash !== entry.hash) {
+          return c.body(null, 404, { 'Cache-Control': 'no-store' });
+        }
         const isWasm = entry.runtime === 'moonbit';
+        const hasImmutableIdentity = rawVersion !== undefined && rawHash === entry.hash;
         return c.body(Uint8Array.from(entry.payload), 200, {
           'Content-Type': isWasm ? 'application/wasm' : 'text/javascript; charset=utf-8',
-          // Only an EXPLICIT ?v= URL is immutable. Without ?v= the same URL
-          // can resolve to a newer version after a re-registration, so it must
-          // be revalidated.
-          'Cache-Control': rawVersion !== undefined
+          // Only an explicit version + matching content hash is immutable.
+          // Legacy ?v=N URLs still resolve, but must revalidate because that
+          // numeric identity can be reused after a server restart.
+          'Cache-Control': hasImmutableIdentity
             ? 'public, max-age=31536000, immutable'
             : 'no-cache',
         });

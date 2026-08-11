@@ -46,6 +46,32 @@ async function injectHangingWorker(page: Page): Promise<void> {
   );
 }
 
+/** Wait until the root cache worker is active and controls the current page. */
+async function waitForCacheWorker(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.register('/unzen-cache-worker.js', {
+      scope: '/',
+      updateViaCache: 'none',
+    });
+    await navigator.serviceWorker.ready;
+    if (navigator.serviceWorker.controller) return;
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('cache worker did not claim the page')),
+        10_000,
+      );
+      const done = () => {
+        clearTimeout(timeout);
+        navigator.serviceWorker.removeEventListener('controllerchange', done);
+        resolve();
+      };
+      navigator.serviceWorker.addEventListener('controllerchange', done);
+      if (navigator.serviceWorker.controller) done();
+    });
+  });
+}
+
 test.describe('browser execution (happy path)', () => {
   test('multiply runs in the browser sandbox and succeeds', async ({ page }) => {
     await page.goto('/');
@@ -66,6 +92,79 @@ test.describe('browser execution (happy path)', () => {
     await page.click('#multiply-run');
     await expect(page.locator('#demo-multiply')).toHaveAttribute('data-state', 'succeeded');
     await expect(status.locator('.status-text')).not.toBeEmpty();
+  });
+});
+
+test.describe('persistent versioned code cache', () => {
+  test('serves hash-verified function code while the browser is offline', async ({
+    context,
+    page,
+  }) => {
+    await page.goto('/');
+    await waitForCacheWorker(page);
+
+    const cached = await page.evaluate(async () => {
+      const manifest = await fetch('/unzen/manifest').then((response) => response.json());
+      const codeUrl = new URL(manifest.functions.multiply.codeUrl, location.href).href;
+      const wasmUrl = new URL(
+        manifest.functions.moonbitFibonacci.codeUrl,
+        location.href,
+      ).href;
+      const first = await fetch(codeUrl);
+      if (!first.ok) throw new Error(`initial code fetch failed: ${first.status}`);
+      const firstBody = await first.text();
+      const firstWasm = await fetch(wasmUrl);
+      if (!firstWasm.ok) throw new Error(`initial Wasm fetch failed: ${firstWasm.status}`);
+      const firstWasmBytes = await firstWasm.arrayBuffer();
+      const toHash = async (bytes: ArrayBuffer) => {
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(
+          new Uint8Array(digest),
+          (value) => value.toString(16).padStart(2, '0'),
+        ).join('');
+      };
+      const cache = await caches.open('unzen-code-v1');
+      const stored = await cache.match(codeUrl);
+      const storedWasm = await cache.match(wasmUrl);
+      return {
+        codeUrl,
+        wasmUrl,
+        firstBody,
+        firstWasmHash: await toHash(firstWasmBytes),
+        storedBody: stored ? await stored.text() : null,
+        storedWasmHash: storedWasm ? await toHash(await storedWasm.arrayBuffer()) : null,
+      };
+    });
+    expect(cached.codeUrl).toContain('&h=sha256%3A');
+    expect(cached.wasmUrl).toContain('&h=sha256%3A');
+    expect(cached.storedBody).toBe(cached.firstBody);
+    expect(cached.storedWasmHash).toBe(cached.firstWasmHash);
+
+    await context.setOffline(true);
+    try {
+      const offline = await page.evaluate(async ({ codeUrl, wasmUrl }) => {
+        const codeResponse = await fetch(codeUrl);
+        if (!codeResponse.ok) {
+          throw new Error(`offline code fetch failed: ${codeResponse.status}`);
+        }
+        const wasmResponse = await fetch(wasmUrl);
+        if (!wasmResponse.ok) {
+          throw new Error(`offline Wasm fetch failed: ${wasmResponse.status}`);
+        }
+        const digest = await crypto.subtle.digest('SHA-256', await wasmResponse.arrayBuffer());
+        return {
+          code: await codeResponse.text(),
+          wasmHash: Array.from(
+            new Uint8Array(digest),
+            (value) => value.toString(16).padStart(2, '0'),
+          ).join(''),
+        };
+      }, { codeUrl: cached.codeUrl, wasmUrl: cached.wasmUrl });
+      expect(offline.code).toBe(cached.firstBody);
+      expect(offline.wasmHash).toBe(cached.firstWasmHash);
+    } finally {
+      await context.setOffline(false);
+    }
   });
 });
 

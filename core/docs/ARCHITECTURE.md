@@ -204,7 +204,7 @@ Error
       "runtime": "quickjs",
       "hash": "sha256:abc123...",
       "version": 1,
-      "codeUrl": "http://localhost:3000/unzen/code/spamCheck?v=1"
+      "codeUrl": "http://localhost:3000/unzen/code/spamCheck?v=1&h=sha256%3Aabc123..."
     }
   }
 }
@@ -412,6 +412,22 @@ fetch(entry) → entry.hash をキーにキャッシュ検索
 - 同一コードの関数が複数あっても1回だけダウンロードする
 - ハッシュが変わらない限りキャッシュは永続する
 
+#### 永続コードキャッシュ (Unzen Cache Service Worker)
+
+```
+GET /code/name?v=N&h=sha256:... → CacheStorage (`unzen-code-v1`)
+  cache hit  → version/hashが同一の検証済みResponseを返す
+  cache miss → network 200 + immutable + JS/Wasm + SHA-256一致時だけ保存
+```
+
+- manifest の `codeUrl` は version と SHA-256 の両方を含む。version counter が
+  server restart で再利用されても、異なる payload は同じ cache key にならない
+- server は保存済み `{name, version, hash}` と一致する URL だけを immutable とし、
+  hash mismatch は `404 no-store`、旧 version-only URL は `no-cache` で扱う
+- Service Worker は同一 origin の versioned `/code/` GET だけを intercept し、
+  manifest・fallback・一般 asset・cross-origin request には介入しない
+- activation 時は `unzen-code-` prefix の旧 generation のみ削除する
+
 ### 6.4 SandboxExecutor インターフェース
 
 ```typescript
@@ -554,13 +570,13 @@ defineRaw('add', '(a, b) => a + b')
 2. ManifestFetcher.fetch()
    → [キャッシュミス] GET /unzen/manifest
    → { functions: { add: { runtime:'quickjs', hash:'sha256:...', version:1,
-                           codeUrl:'http://localhost:3000/unzen/code/add?v=1' } } }
+                           codeUrl:'http://localhost:3000/unzen/code/add?v=1&h=sha256%3A...' } } }
    → キャッシュに保存
 
 3. manifest.functions['add'] → entry 取得
 
 4. CodeFetcher.fetch(entry)
-   → [キャッシュミス] GET /unzen/code/add?v=1
+   → [キャッシュミス] GET /unzen/code/add?v=1&h=sha256%3A...
    → 'function run(...args) { return ((a, b) => a + b)(...args); }'
    → entry.hash をキーにキャッシュ
 
@@ -607,7 +623,7 @@ defineRaw('add', '(a, b) => a + b')
 | 制約 | 詳細 | Phase 2 対応 |
 |------|------|-------------|
 | 同期関数のみ | async/Promise 未対応 | QuickJS の Promise 対応検討 |
-| バージョンカウンタ揮発 | サーバー再起動でリセット | コンテンツハッシュベースに移行 |
+| バージョンカウンタ揮発 | サーバー再起動でリセット | code URL に version + SHA-256 を含めて解決済み |
 | JSON引数制約 | `undefined` → `null`, `Date`/`Map`/`Set` 非対応 | 構造化クローン検討 |
 | セキュリティ不足 (クライアント) | MockSandboxExecutor はセキュリティなし | WebWorker + QuickJS Wasm |
 | WeakRef/FinalizationRegistry | QuickJSバージョン依存 (存在時のみ無効化) | 最小グローバルアプローチ |
@@ -622,7 +638,7 @@ defineRaw('add', '(a, b) => a + b')
 | Web Worker + QuickJS Wasm | 本物のブラウザサンドボックス (4層隔離) |
 | ETag/Conditional GET | マニフェストの効率的キャッシュ更新 |
 | MoonBit wasm-gc | 高性能計算用ランタイム統合 (**実装済み**: `MoonBitSandboxExecutor` + `defineMoonbit`) |
-| Service Worker | オフラインキャッシュ対応 |
+| Service Worker | versioned code/Wasm の hash 検証付き CacheStorage (**実装済み**) |
 | ビルドツール統合 | Vite/webpack プラグインでコンパイル時関数抽出 |
 
 ### MoonBit wasm-gc 統合 (Phase 3)
@@ -632,8 +648,8 @@ defineRaw('add', '(a, b) => a + b')
   マニフェストエントリは `runtime: 'moonbit'`、`exportName`、指定時は
   `moonbitAbi` を持つ。ABI は export ごとの `params` / `result` を
   `scalar` / `i32[]` / `f64[]` で表す。
-  登録時に検証した正確なバイトを `{name, version}` キーで保持し、`?v=N` の
-  immutable URL は常にその version のバイトを返す（同名再登録で旧 URL の
+  登録時に検証した正確なバイトを `{name, version, hash}` identity で保持し、
+  `?v=N&h=HASH` の immutable URL は常にその version のバイトを返す（同名再登録で旧 URL の
   内容が変わらない）。registry 上で quickjs に上書きされても、既に公開済みの
   versioned URL を守るため旧バイトは保持される。
 - `MoonBitSandboxExecutor` (client) は wasm をフェッチ・`WebAssembly.compile` で

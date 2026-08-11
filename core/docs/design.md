@@ -330,7 +330,7 @@ MoonBit wasm-gcは `externref` を通じてJSオブジェクトを受け渡し�
   "functions": {
     "stdDev": {
       "runtime": "moonbit",
-      "codeUrl": "/unzen/code/stdDev?v=1",
+      "codeUrl": "/unzen/code/stdDev?v=1&h=sha256%3Adef456...",
       "exportName": "std_dev",
       "moonbitAbi": { "params": ["f64[]"], "result": "scalar" }
     }
@@ -442,13 +442,13 @@ const check = unzen.define('check', (text: string) => {
       "runtime": "quickjs",
       "hash": "sha256:abc123...",   // 関数コードのハッシュ
       "version": 3,
-      "codeUrl": "/unzen/code/spamCheck?v=3"
+      "codeUrl": "/unzen/code/spamCheck?v=3&h=sha256%3Aabc123..."
     },
     "stdDev": {
       "runtime": "moonbit",
       "hash": "sha256:def456...",   // Wasmバイナリのハッシュ
       "version": 1,
-      "wasmUrl": "/unzen/wasm/stats.wasm?v=1"
+      "codeUrl": "/unzen/code/stdDev?v=1&h=sha256%3Adef456..."
     }
   }
 }
@@ -456,8 +456,8 @@ const check = unzen.define('check', (text: string) => {
 
 キャッシュ戦略:
 1. **マニフェスト**: ETag/Last-Modified ヘッダで条件付きリクエストを行う
-2. **関数コード/Wasm**: ハッシュベースの URL でイミュータブルキャッシュを使用する (Cache-Control: immutable)
-3. **Service Worker**: マニフェストを定期チェックし、ハッシュ変更時のみコードを再取得する
+2. **関数コード/Wasm**: version + SHA-256 の URL でイミュータブルキャッシュを使用する (`Cache-Control: immutable`)
+3. **Service Worker**: SHA-256 を再検証した同一 origin の versioned code/Wasm のみ CacheStorage に永続化する
 4. **更新フロー**: サーバー側で関数を変更 → ハッシュが変わる → 次回マニフェスト取得時に検出する
 
 ---
@@ -732,9 +732,9 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 - [ ] 開発モード (常時サーバー実行)
 
 ### Phase 2: MoonBit対応・キャッシュ
-- [ ] MoonBit wasm-gc ランタイム統合
-- [ ] Service Worker による関数コード・Wasmキャッシュ
-- [ ] ハッシュベースのバージョニングと差分検出
+- [x] MoonBit wasm-gc ランタイム統合
+- [x] Service Worker による関数コード・Wasmキャッシュ
+- [x] ハッシュベースのバージョニングと差分検出
 - [x] wasm-gc / JS String Builtins 未対応ブラウザの検出（安定した runtime error。MoonBit は server fallback なし）
 
 ### Phase 3: DX向上

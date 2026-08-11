@@ -35,7 +35,7 @@ const app = new Hono();
 // same origin/scheme as the page that requested it. A hard-coded
 // 'http://localhost:3000/unzen' would be blocked as mixed content when the
 // demo is served over HTTPS (issue #104). createManifestResponse() appends
-// "/code/<name>?v=..." to this value, which fetch() resolves against the
+// "/code/<name>?v=...&h=..." to this value, which fetch() resolves against the
 // current origin.
 const unzenServer = new UnzenServer({
   baseUrl: '/unzen',
@@ -94,6 +94,13 @@ unzenServer.defineRaw('hashPassword', hashPasswordCode, {
   noFallback: true, // password must never leave the browser
 });
 
+// Real MoonBit payload used by the Service Worker code/Wasm cache E2E.
+unzenServer.defineMoonbit(
+  'moonbitFibonacci',
+  join(__dirname, 'public/moonbit/fibonacci.wasm'),
+  { exportName: 'fibonacci' },
+);
+
 // Initialize the server
 await unzenServer.initialize();
 
@@ -115,6 +122,10 @@ const workerCode = readFileSync(
 const moonbitWorkerCode = readFileSync(
   join(__dirname, '../packages/client/dist/moonbit-worker.js'), 'utf-8'
 );
+// Classic Service Worker bundle for persistent immutable function/Wasm cache.
+const unzenCacheWorkerCode = readFileSync(
+  join(__dirname, '../packages/client/dist/unzen-cache-worker.js'), 'utf-8'
+);
 
 app.get('/client.js', (c) => {
   return c.text(clientCode, 200, {
@@ -134,6 +145,16 @@ app.get('/moonbit-worker.js', (c) => {
   return c.text(moonbitWorkerCode, 200, {
     'Content-Type': 'application/javascript',
     'Cache-Control': 'public, max-age=3600',
+  });
+});
+
+app.get('/unzen-cache-worker.js', (c) => {
+  return c.text(unzenCacheWorkerCode, 200, {
+    'Content-Type': 'application/javascript',
+    // The worker manages immutable code payloads, but its own update check must
+    // always reach the server rather than being pinned by an HTTP cache.
+    'Cache-Control': 'no-cache',
+    'Service-Worker-Allowed': '/',
   });
 });
 

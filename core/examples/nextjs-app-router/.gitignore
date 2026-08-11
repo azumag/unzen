@@ -1,4 +1,5 @@
 .next/
 node_modules/
 public/unzen/*.js
+public/unzen-cache-worker.js
 test-results/

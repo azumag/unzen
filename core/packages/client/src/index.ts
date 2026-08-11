@@ -67,6 +67,12 @@ export {
   type MoonBitExecutorDiagnostics,
 } from './moonbit-worker-sandbox';
 export type { MoonBitImportedStringConstants } from './moonbit-compile-options';
+export {
+  clearUnzenCodeCache,
+  registerUnzenCacheWorker,
+  UNZEN_CODE_CACHE_NAME,
+  type UnzenCacheWorkerOptions,
+} from './unzen-cache';
 
 // Re-export commonly used types from @unzen/shared for convenience
 export type {

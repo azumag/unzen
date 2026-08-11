@@ -487,11 +487,17 @@ describe('UnzenServer', () => {
 
       server.defineMoonbit('fibImmutable', wasmPath, { exportName: 'fibonacci' });
       const app = server.middleware();
-      const before = await (await app.request('/code/fibImmutable?v=1')).arrayBuffer();
+      const manifest = await (await app.request('/manifest')).json();
+      const immutableSearch = new URL(manifest.functions.fibImmutable.codeUrl).search;
+      const before = await (
+        await app.request(`/code/fibImmutable${immutableSearch}`)
+      ).arrayBuffer();
 
       // Overwrite with different bytes (a trivial different module header).
       writeFileSync(wasmPath, original.subarray(0, 100));
-      const after = await (await app.request('/code/fibImmutable?v=1')).arrayBuffer();
+      const after = await (
+        await app.request(`/code/fibImmutable${immutableSearch}`)
+      ).arrayBuffer();
 
       expect(Buffer.from(after).equals(Buffer.from(before))).toBe(true);
       expect(Buffer.from(before).equals(original)).toBe(true);
@@ -518,14 +524,20 @@ describe('UnzenServer', () => {
         exportName: 'fibonacci',
       }); // version 1
       const app = server.middleware();
-      const v1 = await (await app.request('/code/rebound?v=1')).arrayBuffer();
+      const manifestV1 = await (await app.request('/manifest')).json();
+      const v1Search = new URL(manifestV1.functions.rebound.codeUrl).search;
+      const v1Response = await app.request(`/code/rebound${v1Search}`);
+      const v1 = await v1Response.arrayBuffer();
+      expect(v1Response.headers.get('Cache-Control')).toContain('immutable');
 
       server.defineMoonbit('rebound', join(fixtureDir, 'sort.wasm'), {
         exportName: 'sort_benchmark',
       }); // version 2
-      const v2 = await (await app.request('/code/rebound?v=2')).arrayBuffer();
+      const manifestV2 = await (await app.request('/manifest')).json();
+      const v2Search = new URL(manifestV2.functions.rebound.codeUrl).search;
+      const v2 = await (await app.request(`/code/rebound${v2Search}`)).arrayBuffer();
       // The already-published v1 URL must keep serving the original bytes.
-      const v1After = await (await app.request('/code/rebound?v=1')).arrayBuffer();
+      const v1After = await (await app.request(`/code/rebound${v1Search}`)).arrayBuffer();
 
       expect(Buffer.from(v1).equals(fibBytes)).toBe(true);
       expect(Buffer.from(v2).equals(sortBytes)).toBe(true);
@@ -540,14 +552,22 @@ describe('UnzenServer', () => {
         exportName: 'fibonacci',
       }); // version 1 (moonbit)
       const app = server.middleware();
-      const v1Before = await (await app.request('/code/crossRuntime?v=1')).arrayBuffer();
-      expect((await app.request('/code/crossRuntime?v=1')).headers.get('Content-Type'))
+      const manifestV1 = await (await app.request('/manifest')).json();
+      const v1Search = new URL(manifestV1.functions.crossRuntime.codeUrl).search;
+      const v1Before = await (
+        await app.request(`/code/crossRuntime${v1Search}`)
+      ).arrayBuffer();
+      expect((await app.request(`/code/crossRuntime${v1Search}`)).headers.get('Content-Type'))
         .toContain('application/wasm');
 
       server.defineRaw('crossRuntime', 'function run() { return "js"; }'); // version 2 (quickjs)
-      const v1After = await (await app.request('/code/crossRuntime?v=1')).arrayBuffer();
-      const v1AfterHeaders = (await app.request('/code/crossRuntime?v=1')).headers;
-      const v2 = await (await app.request('/code/crossRuntime?v=2')).text();
+      const manifestV2 = await (await app.request('/manifest')).json();
+      const v2Search = new URL(manifestV2.functions.crossRuntime.codeUrl).search;
+      const v1After = await (
+        await app.request(`/code/crossRuntime${v1Search}`)
+      ).arrayBuffer();
+      const v1AfterHeaders = (await app.request(`/code/crossRuntime${v1Search}`)).headers;
+      const v2 = await (await app.request(`/code/crossRuntime${v2Search}`)).text();
 
       // v1 stays the original wasm bytes + content type; v2 is the JS source.
       expect(Buffer.from(v1After).equals(fibBytes)).toBe(true);
@@ -590,9 +610,15 @@ describe('UnzenServer', () => {
       expect(moonbitCurrent.headers.get('Content-Type')).toContain('application/wasm');
       expect(moonbitCurrent.headers.get('Cache-Control')).not.toContain('immutable');
 
-      // Explicit versions keep the immutable header.
-      const quickjsV1 = await app.request('/code/verCheck?v=1');
+      // The manifest's version + hash identity is immutable. A legacy
+      // version-only URL remains readable but must revalidate across restarts.
+      const manifest = await (await app.request('/manifest')).json();
+      const immutableUrl = new URL(manifest.functions.verCheck.codeUrl);
+      const quickjsV1 = await app.request(`/code/verCheck${immutableUrl.search}`);
+      expect(quickjsV1.status).toBe(200);
       expect(quickjsV1.headers.get('Cache-Control')).toContain('immutable');
+      const legacyV1 = await app.request('/code/verCheck?v=1');
+      expect(legacyV1.headers.get('Cache-Control')).toBe('no-cache');
     });
   });
 });

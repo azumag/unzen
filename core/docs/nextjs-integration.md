@@ -129,10 +129,13 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const clientDir = join(root, 'node_modules', '@unzen', 'client', 'dist');
 const publicDir = join(root, 'public', 'unzen');
+const publicRoot = join(root, 'public');
 
 await mkdir(publicDir, { recursive: true });
 await copyFile(join(clientDir, 'index.browser.js'), join(publicDir, 'client.js'));
 await copyFile(join(clientDir, 'quickjs-worker.js'), join(publicDir, 'worker.js'));
+// Root placement gives the cache worker `/` scope without a broadened-scope header.
+await copyFile(join(clientDir, 'unzen-cache-worker.js'), join(publicRoot, 'unzen-cache-worker.js'));
 ```
 
 ```json
@@ -173,6 +176,10 @@ export function UnzenDemo() {
 
     async function load() {
       const mod = await import(/* webpackIgnore: true */ '/unzen/client.js');
+      await mod.registerUnzenCacheWorker({
+        workerUrl: '/unzen-cache-worker.js',
+        scope: '/',
+      });
       instance = new mod.UnzenClient({
         endpoint: '/api/unzen',
         mode: 'production',

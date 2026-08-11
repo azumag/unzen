@@ -20,7 +20,7 @@
  * error copy/visuals come from stable error codes.
  */
 
-import { UnzenClient } from '/client.js';
+import { registerUnzenCacheWorker, UnzenClient } from '/client.js';
 import {
   DemoState,
   createDemoState,
@@ -68,6 +68,16 @@ function resolveEndpoint() {
   }
   return new URL('/unzen', window.location.origin).href;
 }
+
+// Persistent cache is an optimization: registration failure must not prevent
+// the execution UI from loading. The worker only intercepts hash-addressed
+// immutable Unzen code/Wasm requests.
+void registerUnzenCacheWorker({
+  workerUrl: '/unzen-cache-worker.js',
+  scope: '/',
+}).catch((error) => {
+  console.warn('[unzen] cache worker registration failed', error);
+});
 
 const client = new UnzenClient({
   endpoint: resolveEndpoint(),

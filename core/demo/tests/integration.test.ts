@@ -80,7 +80,8 @@ describe('E2E Integration Tests', () => {
     });
 
     it('should set cache headers for immutable code', async () => {
-      const res = await app.request('/unzen/code/spamCheck?v=1');
+      const manifest = await (await app.request('/unzen/manifest')).json();
+      const res = await app.request(manifest.functions.spamCheck.codeUrl);
 
       expect(res.status).toBe(200);
       expect(res.headers.get('cache-control')).toContain('immutable');
@@ -283,6 +284,18 @@ describe('E2E Integration Tests', () => {
 
       const code = await res.text();
       expect(code).toContain('UnzenClient');
+    });
+
+    it('serves the classic cache worker with update-safe headers', async () => {
+      const res = await app.request('/unzen-cache-worker.js');
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('application/javascript');
+      expect(res.headers.get('cache-control')).toBe('no-cache');
+      expect(res.headers.get('service-worker-allowed')).toBe('/');
+      const worker = await res.text();
+      expect(worker).toContain('unzen-code-');
+      expect(worker).toContain('addEventListener("fetch"');
     });
   });
 });

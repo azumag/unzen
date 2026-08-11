@@ -32,14 +32,18 @@ describe('Next.js App Router example', () => {
     expect(source).toContain('export { handle as GET, handle as POST }');
   });
 
-  it('serves the browser client and QuickJS worker from public assets', async () => {
+  it('serves and registers the client, execution worker, and cache worker', async () => {
     const script = await readExampleFile('scripts/copy-unzen-assets.mjs');
     const component = await readExampleFile('app/components/UnzenDemo.tsx');
 
     expect(script).toContain("index.browser.js'), join(publicDir, 'client.js')");
     expect(script).toContain("quickjs-worker.js'), join(publicDir, 'worker.js')");
+    expect(script).toContain("unzen-cache-worker.js'),");
+    expect(script).toContain("join(publicRoot, 'unzen-cache-worker.js')");
     expect(component).toContain("endpoint: '/api/unzen'");
     expect(component).toContain("workerUrl: '/unzen/worker.js'");
+    expect(component).toContain('registerUnzenCacheWorker');
+    expect(component).toContain("workerUrl: '/unzen-cache-worker.js'");
     expect(component).toContain('callWithDiagnostics');
   });
 
@@ -53,6 +57,9 @@ describe('Next.js App Router example', () => {
     expect(e2eScript).toContain('/api/unzen/manifest');
     expect(e2eScript).toContain('/api/unzen/exec/jsonSchemaValidate');
     expect(e2eScript).toContain('/unzen/worker.js');
+    expect(e2eScript).toContain('/unzen-cache-worker.js');
+    expect(e2eScript).toContain("caches.open('unzen-code-v1')");
+    expect(e2eScript).toContain('context.setOffline(true)');
     expect(e2eScript).toContain("getByRole('button', { name: 'Run validation' })");
     expect(e2eScript).toContain("payload.diagnostics?.executedOn === 'browser'");
     expect(e2eScript).toContain('Next.js runtime E2E timed out');

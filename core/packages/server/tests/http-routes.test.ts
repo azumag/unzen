@@ -45,8 +45,12 @@ describe('HTTP Routes', () => {
       expect(data.functions.func2).toBeDefined();
 
       expect(data.functions.func1.runtime).toBe('quickjs');
-      expect(data.functions.func1.codeUrl).toBe('https://example.com/unzen/code/func1?v=1');
-      expect(data.functions.func2.codeUrl).toBe('https://example.com/unzen/code/func2?v=2');
+      expect(data.functions.func1.codeUrl).toBe(
+        `https://example.com/unzen/code/func1?v=1&h=${encodeURIComponent(data.functions.func1.hash)}`,
+      );
+      expect(data.functions.func2.codeUrl).toBe(
+        `https://example.com/unzen/code/func2?v=2&h=${encodeURIComponent(data.functions.func2.hash)}`,
+      );
     });
 
     it('should return correct content-type header', async () => {
@@ -86,11 +90,49 @@ describe('HTTP Routes', () => {
 
     it('should set cache headers for immutable code', async () => {
       server.define('test', () => 1);
-      const res = await app.request('/unzen/code/test?v=1');
+      const manifest = await (await app.request('/unzen/manifest')).json();
+      const res = await app.request(manifest.functions.test.codeUrl);
 
       expect(res.status).toBe(200);
       // Immutable content should have long cache duration
       expect(res.headers.get('cache-control')).toContain('immutable');
+    });
+
+    it('requires the matching content hash before marking a version immutable', async () => {
+      server.define('test', () => 1);
+
+      const legacy = await app.request('/unzen/code/test?v=1');
+      expect(legacy.status).toBe(200);
+      expect(legacy.headers.get('cache-control')).toBe('no-cache');
+
+      const mismatch = await app.request('/unzen/code/test?v=1&h=sha256%3Awrong');
+      expect(mismatch.status).toBe(404);
+      expect(mismatch.headers.get('cache-control')).toBe('no-store');
+    });
+
+    it('rejects an old URL when a restarted server reuses its numeric version', async () => {
+      server.defineRaw('restartSafe', '() => "old"');
+      const oldManifest = await (await app.request('/unzen/manifest')).json();
+      const oldEntry = oldManifest.functions.restartSafe;
+
+      const restartedApp = new Hono();
+      const restartedServer = new UnzenServer({ baseUrl: 'https://example.com/unzen' });
+      await restartedServer.initialize();
+      restartedServer.defineRaw('restartSafe', '() => "new"');
+      restartedApp.route('/unzen', restartedServer.middleware());
+      const newManifest = await (await restartedApp.request('/unzen/manifest')).json();
+      const newEntry = newManifest.functions.restartSafe;
+
+      expect(oldEntry.version).toBe(1);
+      expect(newEntry.version).toBe(1);
+      expect(oldEntry.hash).not.toBe(newEntry.hash);
+      const stale = await restartedApp.request(oldEntry.codeUrl);
+      expect(stale.status).toBe(404);
+      expect(stale.headers.get('cache-control')).toBe('no-store');
+      const current = await restartedApp.request(newEntry.codeUrl);
+      expect(current.status).toBe(200);
+      expect(current.headers.get('cache-control')).toContain('immutable');
+      expect(await current.text()).toContain('"new"');
     });
   });
 

@@ -30,6 +30,15 @@ export function UnzenDemo() {
         /* webpackIgnore: true */ clientModuleUrl
       )) as BrowserClientModule;
 
+      try {
+        await mod.registerUnzenCacheWorker({
+          workerUrl: '/unzen-cache-worker.js',
+          scope: '/',
+        });
+      } catch (error) {
+        console.warn('[unzen] cache worker registration failed', error);
+      }
+
       instance = new mod.UnzenClient({
         endpoint: '/api/unzen',
         mode: 'production',
