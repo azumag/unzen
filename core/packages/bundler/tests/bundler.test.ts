@@ -56,6 +56,16 @@ describe('bundler', () => {
     expect(result.code).toContain('run');
   });
 
+  it('should emit code that defineRaw can register without wrapping', async () => {
+    const result = await bundle({
+      code: `export function run(value) { return value * 2; }`,
+      allowedModules: [],
+    });
+
+    expect(result.code.trimStart()).toMatch(/^function run\(\.\.\.args\)/);
+    expect(new Function(`${result.code}\nreturn run(6);`)()).toBe(12);
+  });
+
   it('should report bundle size in bytes', async () => {
     const result = await bundle({
       code: `export function run() { return 42; }`,

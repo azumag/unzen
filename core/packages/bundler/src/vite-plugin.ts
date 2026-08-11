@@ -2,7 +2,9 @@
 
 import {
   transformUnzenDefinitions,
+  transformUnzenDefinitionsWithDependencies,
   type ExtractedUnzenDefinition,
+  type UnzenDependencyBundlingOptions,
   type UnzenSourceTransformResult,
 } from './source-transform';
 import { generateUnzenTypeDeclarations, UnzenTypeGenerationError } from './type-declarations';
@@ -16,6 +18,8 @@ export interface UnzenVitePluginOptions {
   exclude?: RegExp | RegExp[];
   /** Build asset path for generated declarations; omitted to disable emission. */
   declarationFile?: string | false;
+  /** Opt in to bundling runtime imports referenced by extracted functions. */
+  dependencyBundling?: UnzenDependencyBundlingOptions;
 }
 
 export interface UnzenViteTransformResult {
@@ -28,7 +32,10 @@ export interface UnzenVitePlugin {
   name: 'unzen-function-extraction';
   enforce: 'pre';
   buildStart(): void;
-  transform(code: string, id: string): UnzenViteTransformResult | null;
+  transform(
+    code: string,
+    id: string,
+  ): UnzenViteTransformResult | null | Promise<UnzenViteTransformResult | null>;
   generateBundle(this: UnzenViteEmitContext): void;
 }
 
@@ -92,13 +99,25 @@ export function unzenVitePlugin(options: UnzenVitePluginOptions = {}): UnzenVite
     },
     transform(code, id) {
       if (!shouldTransform(id, options)) return null;
-      const result = transformUnzenDefinitions(code, id);
-      // Replace the complete per-module snapshot. Watch rebuilds and plugins
-      // that request a module more than once must not retain definitions that
-      // were removed or moved by the latest transform.
-      if (result) definitionsByFile.set(id, result.definitions);
-      else definitionsByFile.delete(id);
-      return result ? { code: result.code, map: result.map } : null;
+      const recordResult = (
+        result: UnzenSourceTransformResult | null,
+      ): UnzenViteTransformResult | null => {
+        // Replace the complete per-module snapshot. Watch rebuilds and plugins
+        // that request a module more than once must not retain definitions that
+        // were removed or moved by the latest transform.
+        if (result) definitionsByFile.set(id, result.definitions);
+        else definitionsByFile.delete(id);
+        return result ? { code: result.code, map: result.map } : null;
+      };
+
+      if (options.dependencyBundling) {
+        return transformUnzenDefinitionsWithDependencies(
+          code,
+          id,
+          options.dependencyBundling,
+        ).then(recordResult);
+      }
+      return recordResult(transformUnzenDefinitions(code, id));
     },
     generateBundle() {
       if (declarationFile === undefined) return;

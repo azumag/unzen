@@ -19,6 +19,13 @@ export interface UnzenPurityAnalyzer {
   check(functionNode: ExtractableFunction): UnzenPurityViolation[];
 }
 
+export interface UnzenPurityAnalyzerOptions {
+  /** Reuse an existing binding pass when another analyzer needs the same symbols. */
+  checker?: ts.TypeChecker;
+  /** Permit selected read-only references declared outside the extracted function. */
+  allowExternalReference?: (node: ts.Identifier, symbol: ts.Symbol) => boolean;
+}
+
 const PURE_GLOBALS = new Set([
   'Array',
   'ArrayBuffer',
@@ -299,8 +306,11 @@ function mutationTargets(node: ts.Node): ts.Expression[] {
  * aliases or dynamically computed property access that static analysis cannot
  * soundly resolve.
  */
-export function createUnzenPurityAnalyzer(sourceFile: ts.SourceFile): UnzenPurityAnalyzer {
-  const checker = createLexicalTypeChecker(sourceFile);
+export function createUnzenPurityAnalyzer(
+  sourceFile: ts.SourceFile,
+  options: UnzenPurityAnalyzerOptions = {},
+): UnzenPurityAnalyzer {
+  const checker = options.checker ?? createLexicalTypeChecker(sourceFile);
 
   return {
     check(functionNode) {
@@ -451,6 +461,9 @@ export function createUnzenPurityAnalyzer(sourceFile: ts.SourceFile): UnzenPurit
             // A local binding may intentionally shadow a restricted global.
           } else if (node.text === 'arguments' && hasArgumentsBinding(node, functionNode)) {
             // Regular functions receive their own arguments object; arrows do not.
+          } else if (symbol && options.allowExternalReference?.(node, symbol)) {
+            // Build-time dependency bundling may explicitly provide imported
+            // values. Mutation remains forbidden by the assignment checks above.
           } else if ((symbol?.declarations?.length ?? 0) > 0) {
             add(
               node,

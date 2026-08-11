@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { unzenVitePlugin } from '../src/vite-plugin';
 
@@ -39,6 +42,40 @@ describe('unzenVitePlugin', () => {
   it('returns null when an eligible module has no matching definition', () => {
     const plugin = unzenVitePlugin();
     expect(plugin.transform('export const value = 1;', '/src/value.ts')).toBeNull();
+  });
+
+  it('uses the asynchronous dependency transform only when explicitly configured', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'unzen-vite-plugin-'));
+    const packageDirectory = join(root, 'node_modules', 'unzen-safe-math');
+    mkdirSync(packageDirectory, { recursive: true });
+    writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify({
+      name: 'unzen-safe-math',
+      version: '1.0.0',
+      type: 'module',
+      exports: './index.js',
+    }));
+    writeFileSync(
+      join(packageDirectory, 'index.js'),
+      'export const triple = (value) => value * 3;',
+    );
+    const source = `import { triple } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('triple', (value: number) => triple(value));`;
+
+    try {
+      const plugin = unzenVitePlugin({
+        dependencyBundling: { allowedModules: ['unzen-safe-math'] },
+      });
+      const pending = plugin.transform(source, join(root, 'functions.ts'));
+      expect(pending).toBeInstanceOf(Promise);
+
+      const result = await pending;
+      expect(result?.code).toContain('server.defineRaw');
+      expect(result?.code).toContain('function run(...args)');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('emits one generated declaration asset when configured', () => {

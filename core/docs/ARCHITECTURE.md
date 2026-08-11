@@ -650,26 +650,30 @@ TypeScript source
   → TypeScript symbol/scopeで外部capture・入力/global代入・禁止/非決定的APIを検査
   → 型引数 / parameter / return annotationを抽出（未注釈はunknown）
   → inline関数だけをES2018 JavaScriptへtranspile
+  → [dependencyBundling指定時] 参照runtime importだけをesbuildで自己完結化
+     → entry / 推移依存をallowlist検証 → bundle後の禁止API検査
   → MagicStringで defineRaw(name, code, options) に局所置換 + source map
-  → Vite pre-transform / webpack loaderへ同じ結果を返す
+  → Vite pre-transform / webpack loaderへ同じ結果を返す（依存bundle時だけ非同期）
   → Vite build時は名前順のunzen-functions.d.ts assetをemit
 ```
 
 - 対象をトップレベルのinline同期関数に限定し、動的名・外部関数・async/generatorは
   build時にfile/line/column付きで拒否する
 - 関数内のlocal bindingと外部captureをsymbolで区別するため、コメント・文字列・local
-  shadowingは誤検知せず、runtime import、`this`/`super`、禁止global、dynamic import、
+  shadowingは誤検知せず、標準モードのruntime import、`this`/`super`、禁止global、dynamic import、
   `import.meta`、入力/globalへの代入、`Math.random()`、`Date.now()`、
   引数なし`Date`生成を位置付きerrorにする。local working stateへの代入は許可する
 - unrelated `.define()`、nested call、`node_modules`は変換しない
 - webpack loaderはESM/CJS両方で配布し、raw TypeScriptを読むためloader chainの
   最初（`use`配列の右端）に置く
-- AST変換はクロージャ値を埋め込まない。外部依存を含むコードは既存の
-  `bundle()` + module whitelist + AST/symbol/scope禁止API scanを使用する
+- AST変換はクロージャ値を埋め込まない。runtime importは標準では拒否し、Vite plugin /
+  webpack loaderで`dependencyBundling.allowedModules`を明示した場合だけ、関数が実際に
+  参照するimport bindingを`bundle()`へ渡す。type-only importと同じmoduleの無関係な
+  runtime importは抽出entryに含めない
 - `bundle()`はin-memory entryを`resolveDir`（省略時`process.cwd()`）基準で解決する。
   entryの静的import / re-exportはASTで収集し、dynamic importはesbuild変換前に拒否する。
   bare packageの推移依存も`onResolve`で個別にallowlist検証し、依存内のdynamic importも
-  lower前に拒否する
+  lower前に拒否する。出力は`defineRaw()`へ直接登録できる自己完結した`function run`
 - Viteの`declarationFile`指定時は、重複名を位置付きerrorにし、生成された
   `UnzenFunctions`を`UnzenClient<UnzenFunctions>`へ渡してcall境界を型付けする。
   webpack loaderはmodule単位の変換だけを行い、宣言集約は行わない

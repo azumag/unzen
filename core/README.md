@@ -4,7 +4,8 @@
 QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行する。
 
 > **ステータス**: Phase 3 完了。モジュールバンドラー、Vite/webpackの
-> コンパイル時関数抽出、型定義生成、symbol/scopeベースの純粋性・禁止API検査
+> コンパイル時関数抽出、許可npm依存の関数単位bundle、型定義生成、
+> symbol/scopeベースの純粋性・禁止API検査
 > (`@unzen/bundler`) が稼働中。
 > ユニット・統合テストは `npm test`、ブラウザE2Eは `npm run e2e -w @unzen/demo` で通過状態を確認できる。
 
@@ -57,7 +58,11 @@ import { defineConfig } from 'vite';
 import { unzenVitePlugin } from '@unzen/bundler';
 
 export default defineConfig({
-  plugins: [unzenVitePlugin({ declarationFile: 'unzen-functions.d.ts' })],
+  plugins: [unzenVitePlugin({
+    declarationFile: 'unzen-functions.d.ts',
+    // npm importをinline関数で使う場合だけ明示する
+    // dependencyBundling: { allowedModules: ['lodash', 'lodash/*'] },
+  })],
 });
 ```
 
@@ -71,9 +76,10 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 
 `declarationFile`はViteの`outDir`へ`UnzenFunctions`と`TypedUnzenClient`を生成する。
 生成型を使うと`client.call('sum', 1, 2)`の関数名・引数・戻り値を検査できる。
-抽出対象の関数はTypeScriptのsymbol/scope解析も通り、クロージャ・runtime import・
-禁止global・入力/globalへの代入・`Math.random()`や現在時刻への依存をsource位置付き
-build errorで拒否する。
+抽出対象の関数はTypeScriptのsymbol/scope解析も通り、クロージャ・禁止global・
+入力/globalへの代入・`Math.random()`や現在時刻への依存をsource位置付きbuild errorで
+拒否する。runtime importは標準では拒否し、`dependencyBundling`を明示した場合だけ
+allowlist検証とbundle後の禁止API検査を経て自己完結コードへ変換する。
 webpack loader設定、生成型の利用例、対象構文の制約は
 [モジュールバンドラーガイド](docs/bundler.md)を参照。
 

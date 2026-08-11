@@ -1,12 +1,21 @@
 /** Compile-time extraction of inline Unzen function definitions. */
 
 import MagicString, { type SourceMap } from 'magic-string';
+import { dirname } from 'node:path';
 import ts from 'typescript';
+import { bundle } from './bundler';
+import {
+  createLexicalTypeChecker,
+  isIdentifierReference,
+  symbolForReference,
+} from './lexical-scope';
 import { createUnzenPurityAnalyzer } from './pure-function-check';
 
 const UNZEN_SERVER_MODULE = '@unzen/server';
 const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
 const TYPE_PRINTER = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+
+type ExtractableFunction = ts.ArrowFunction | ts.FunctionExpression;
 
 export interface ExtractedUnzenDefinition {
   name: string;
@@ -35,6 +44,34 @@ export interface UnzenSourceTransformResult {
   code: string;
   map: SourceMap;
   definitions: ExtractedUnzenDefinition[];
+}
+
+/** Explicit opt-in for bundling runtime imports referenced by inline functions. */
+export interface UnzenDependencyBundlingOptions {
+  /** Package patterns permitted inside extracted functions and their dependencies. */
+  allowedModules: string[];
+  /** Project directory used to resolve packages; defaults to the source file directory. */
+  resolveDir?: string;
+}
+
+interface UnzenDefinitionPlan {
+  call: ts.CallExpression;
+  receiver: ts.PropertyAccessExpression;
+  functionNode: ExtractableFunction;
+  name: string;
+  optionsText: string;
+  definition: ExtractedUnzenDefinition;
+}
+
+interface UnzenSourceAnalysis {
+  sourceFile: ts.SourceFile;
+  checker: ts.TypeChecker;
+  plans: UnzenDefinitionPlan[];
+}
+
+interface RuntimeImportBinding {
+  declaration: ts.ImportDeclaration;
+  localName: string;
 }
 
 /** Build error with a stable file/line/column location for adapter diagnostics. */
@@ -160,7 +197,7 @@ function unwrapFunctionExpression(expression: ts.Expression): ts.Expression {
   return current;
 }
 
-function isAsyncFunction(node: ts.ArrowFunction | ts.FunctionExpression): boolean {
+function isAsyncFunction(node: ExtractableFunction): boolean {
   return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
 }
 
@@ -172,7 +209,7 @@ function isAsyncFunction(node: ts.ArrowFunction | ts.FunctionExpression): boolea
  */
 function extractSignature(
   sourceFile: ts.SourceFile,
-  node: ts.ArrowFunction | ts.FunctionExpression,
+  node: ExtractableFunction,
 ): Pick<ExtractedUnzenDefinition, 'typeParameters' | 'parameters' | 'returnType'> {
   const typeParameters = node.typeParameters?.map((parameter) => (
     parameter.getText(sourceFile)
@@ -224,7 +261,7 @@ function extractSignature(
  */
 function transpileFunction(
   sourceFile: ts.SourceFile,
-  node: ts.ArrowFunction | ts.FunctionExpression,
+  node: ExtractableFunction,
 ): string {
   const wrappedSource = `const __unzen_function__ = ${node.getText(sourceFile)};`;
   const transpiled = ts.transpileModule(wrappedSource, {
@@ -292,17 +329,128 @@ function isKnownDefineCall(call: ts.CallExpression, serverInstances: Set<string>
     && serverInstances.has(call.expression.expression.text);
 }
 
-/**
- * Rewrite supported top-level `UnzenServer#define` calls to `defineRaw`.
- *
- * Only a const initialized directly from an imported UnzenServer constructor
- * is eligible. This explicit binding check prevents unrelated `.define()` APIs
- * from being rewritten. Returning null lets build tools skip unchanged files.
- */
-export function transformUnzenDefinitions(
+function enclosingImportDeclaration(node: ts.Node): ts.ImportDeclaration | undefined {
+  let current: ts.Node | undefined = node;
+  while (current && !ts.isSourceFile(current)) {
+    if (ts.isImportDeclaration(current)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function runtimeImportBindingForSymbol(symbol: ts.Symbol): RuntimeImportBinding | undefined {
+  for (const declaration of symbol.declarations ?? []) {
+    const importDeclaration = enclosingImportDeclaration(declaration);
+    const importClause = importDeclaration?.importClause;
+    if (!importDeclaration || !importClause || importClause.isTypeOnly) continue;
+
+    if (
+      ts.isImportSpecifier(declaration)
+      && !declaration.isTypeOnly
+    ) {
+      return { declaration: importDeclaration, localName: declaration.name.text };
+    }
+    if (ts.isNamespaceImport(declaration)) {
+      return { declaration: importDeclaration, localName: declaration.name.text };
+    }
+    if (ts.isImportClause(declaration) && declaration.name) {
+      return { declaration: importDeclaration, localName: declaration.name.text };
+    }
+  }
+  return undefined;
+}
+
+function collectRuntimeImports(
+  functionNode: ExtractableFunction,
+  checker: ts.TypeChecker,
+): Map<ts.ImportDeclaration, Set<string>> {
+  const imports = new Map<ts.ImportDeclaration, Set<string>>();
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isPartOfTypeNode(node)) return;
+    if (ts.isIdentifier(node) && isIdentifierReference(node)) {
+      const symbol = symbolForReference(node, checker);
+      const binding = symbol && runtimeImportBindingForSymbol(symbol);
+      if (binding) {
+        const names = imports.get(binding.declaration) ?? new Set<string>();
+        names.add(binding.localName);
+        imports.set(binding.declaration, names);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(functionNode);
+  return imports;
+}
+
+function filterRuntimeImport(
+  declaration: ts.ImportDeclaration,
+  localNames: Set<string>,
+): ts.ImportDeclaration | undefined {
+  const clause = declaration.importClause;
+  if (!clause || clause.isTypeOnly) return undefined;
+
+  const defaultImport = clause.name && localNames.has(clause.name.text)
+    ? clause.name
+    : undefined;
+  let namedBindings: ts.NamedImportBindings | undefined;
+  if (
+    clause.namedBindings
+    && ts.isNamespaceImport(clause.namedBindings)
+    && localNames.has(clause.namedBindings.name.text)
+  ) {
+    namedBindings = clause.namedBindings;
+  } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+    const elements = clause.namedBindings.elements.filter(
+      (element) => !element.isTypeOnly && localNames.has(element.name.text),
+    );
+    if (elements.length > 0) {
+      namedBindings = ts.factory.updateNamedImports(clause.namedBindings, elements);
+    }
+  }
+
+  if (!defaultImport && !namedBindings) return undefined;
+  const importClause = ts.factory.updateImportClause(
+    clause,
+    clause.phaseModifier,
+    defaultImport,
+    namedBindings,
+  );
+  return ts.factory.updateImportDeclaration(
+    declaration,
+    declaration.modifiers,
+    importClause,
+    declaration.moduleSpecifier,
+    declaration.attributes,
+  );
+}
+
+function renderRuntimeImports(
+  functionNode: ExtractableFunction,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): string[] {
+  const imports = collectRuntimeImports(functionNode, checker);
+  const rendered: string[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const localNames = imports.get(statement);
+    if (!localNames) continue;
+    const declaration = statement;
+    const filtered = filterRuntimeImport(declaration, localNames);
+    if (filtered) {
+      rendered.push(TYPE_PRINTER.printNode(ts.EmitHint.Unspecified, filtered, sourceFile));
+    }
+  }
+  return rendered;
+}
+
+function analyzeUnzenSource(
   source: string,
   fileName: string,
-): UnzenSourceTransformResult | null {
+  allowRuntimeImports: boolean,
+): UnzenSourceAnalysis | null {
   const sourceFile = ts.createSourceFile(
     fileName,
     source,
@@ -316,9 +464,14 @@ export function transformUnzenDefinitions(
   const serverInstances = collectServerInstances(sourceFile, constructors, namespaces);
   if (serverInstances.size === 0) return null;
 
-  const output = new MagicString(source);
-  const definitions: ExtractedUnzenDefinition[] = [];
-  const purityAnalyzer = createUnzenPurityAnalyzer(sourceFile);
+  const checker = createLexicalTypeChecker(sourceFile);
+  const purityAnalyzer = createUnzenPurityAnalyzer(sourceFile, {
+    checker,
+    allowExternalReference: allowRuntimeImports
+      ? (_node, symbol) => runtimeImportBindingForSymbol(symbol) !== undefined
+      : undefined,
+  });
+  const plans: UnzenDefinitionPlan[] = [];
 
   for (const statement of sourceFile.statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) {
@@ -352,26 +505,41 @@ export function transformUnzenDefinitions(
       fail(sourceFile, purityViolation.node, purityViolation.message);
     }
 
-    const receiver = call.expression as ts.PropertyAccessExpression;
-    const functionCode = transpileFunction(sourceFile, functionNode);
-    const options = call.arguments[2]
-      ? `, ${call.arguments[2]!.getText(sourceFile)}`
-      : '';
-    const replacement = `${receiver.expression.getText(sourceFile)}.defineRaw(`
-      + `${JSON.stringify(name)}, ${JSON.stringify(functionCode)}${options})`;
-    output.overwrite(call.getStart(sourceFile), call.end, replacement);
-
     const { line, column } = locationOf(sourceFile, call);
-    definitions.push({
+    plans.push({
+      call,
+      receiver: call.expression as ts.PropertyAccessExpression,
+      functionNode,
       name,
-      fileName: sourceFile.fileName,
-      line,
-      column,
-      ...extractSignature(sourceFile, functionNode),
+      optionsText: call.arguments[2]
+        ? `, ${call.arguments[2]!.getText(sourceFile)}`
+        : '',
+      definition: {
+        name,
+        fileName: sourceFile.fileName,
+        line,
+        column,
+        ...extractSignature(sourceFile, functionNode),
+      },
     });
   }
 
-  if (definitions.length === 0) return null;
+  return plans.length > 0 ? { sourceFile, checker, plans } : null;
+}
+
+function renderTransformResult(
+  source: string,
+  fileName: string,
+  analysis: UnzenSourceAnalysis,
+  functionCodes: string[],
+): UnzenSourceTransformResult {
+  const output = new MagicString(source);
+  for (const [index, plan] of analysis.plans.entries()) {
+    const replacement = `${plan.receiver.expression.getText(analysis.sourceFile)}.defineRaw(`
+      + `${JSON.stringify(plan.name)}, ${JSON.stringify(functionCodes[index]!)}${plan.optionsText})`;
+    output.overwrite(plan.call.getStart(analysis.sourceFile), plan.call.end, replacement);
+  }
+
   return {
     code: output.toString(),
     map: output.generateMap({
@@ -380,6 +548,75 @@ export function transformUnzenDefinitions(
       includeContent: true,
       hires: true,
     }),
-    definitions,
+    definitions: analysis.plans.map((plan) => plan.definition),
   };
+}
+
+/**
+ * Rewrite supported top-level `UnzenServer#define` calls to `defineRaw`.
+ *
+ * Only a const initialized directly from an imported UnzenServer constructor
+ * is eligible. This explicit binding check prevents unrelated `.define()` APIs
+ * from being rewritten. Returning null lets build tools skip unchanged files.
+ */
+export function transformUnzenDefinitions(
+  source: string,
+  fileName: string,
+): UnzenSourceTransformResult | null {
+  const analysis = analyzeUnzenSource(source, fileName, false);
+  if (!analysis) return null;
+  return renderTransformResult(
+    source,
+    fileName,
+    analysis,
+    analysis.plans.map((plan) => transpileFunction(analysis.sourceFile, plan.functionNode)),
+  );
+}
+
+/**
+ * Rewrite inline definitions while bundling only the runtime imports each
+ * extracted function actually reads. Enabling this mode is explicit because
+ * dependency resolution and esbuild make the transform asynchronous.
+ */
+export async function transformUnzenDefinitionsWithDependencies(
+  source: string,
+  fileName: string,
+  options: UnzenDependencyBundlingOptions,
+): Promise<UnzenSourceTransformResult | null> {
+  const analysis = analyzeUnzenSource(source, fileName, true);
+  if (!analysis) return null;
+  const allowedModules = [...options.allowedModules];
+  const resolveDir = options.resolveDir ?? dirname(fileName);
+
+  const functionCodes: string[] = [];
+  for (const plan of analysis.plans) {
+    const functionCode = transpileFunction(analysis.sourceFile, plan.functionNode);
+    const imports = renderRuntimeImports(
+      plan.functionNode,
+      analysis.checker,
+      analysis.sourceFile,
+    );
+    if (imports.length === 0) {
+      functionCodes.push(functionCode);
+      continue;
+    }
+
+    try {
+      const result = await bundle({
+        code: `${imports.join('\n')}\nexport const run = ${functionCode};`,
+        allowedModules,
+        resolveDir,
+      });
+      functionCodes.push(result.code);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      fail(
+        analysis.sourceFile,
+        plan.call,
+        `cannot bundle dependencies for ${JSON.stringify(plan.name)}: ${message}`,
+      );
+    }
+  }
+
+  return renderTransformResult(source, fileName, analysis, functionCodes);
 }

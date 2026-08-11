@@ -201,21 +201,22 @@ function analyzeEntryImports(code: string): EntryImportAnalysis {
 }
 
 /**
- * Extract and wrap the run function from esbuild IIFE output
- *
- * esbuild generates: `var __unzen_module = (() => { ... })();`
- * We append code that extracts the run function from the IIFE exports.
- *
- * The fallback chain handles different export styles:
- * 1. __unzen_module.run - normal named export
- * 2. Global run - if somehow defined at top level
- * 3. Error - if no run function is found
+ * Wrap the esbuild module in the sandbox's `function run` contract.
  *
  * @param iifeOutput - Raw esbuild IIFE output
- * @returns Transformed code with accessible run() function
+ * @returns Self-contained code that defineRaw can register verbatim
  */
 function extractRunFunction(iifeOutput: string): string {
-  return `${iifeOutput}\nvar run = typeof __unzen_module !== 'undefined' && __unzen_module.run ? __unzen_module.run : (typeof run !== 'undefined' ? run : function() { throw new Error('No run function exported'); });`;
+  const moduleCode = iifeOutput.trimEnd().split('\n')
+    .map(line => `  ${line}`)
+    .join('\n');
+  return `function run(...args) {\n${moduleCode}\n`
+    + `  const __unzen_entry = __unzen_module && __unzen_module.run;\n`
+    + `  if (typeof __unzen_entry !== 'function') {\n`
+    + `    throw new Error('No run function exported');\n`
+    + `  }\n`
+    + `  return __unzen_entry(...args);\n`
+    + `}`;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build } from 'vite';
@@ -42,6 +42,64 @@ export { server };`);
       expect(declaration?.type).toBe('asset');
       expect(declaration && declaration.type === 'asset' ? declaration.source : '')
         .toContain('readonly "double": (value: number) => number;');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bundles an imported dependency into the extracted registration', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'unzen-vite-dependency-'));
+    const packageDirectory = join(root, 'node_modules', 'unzen-safe-math');
+    mkdirSync(packageDirectory, { recursive: true });
+    writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify({
+      name: 'unzen-safe-math',
+      version: '1.0.0',
+      type: 'module',
+      exports: './index.js',
+    }));
+    writeFileSync(
+      join(packageDirectory, 'index.js'),
+      'export const triple = (value) => value * 3;',
+    );
+    const entry = join(root, 'functions.ts');
+    writeFileSync(entry, `import { triple } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('triple', (value: number): number => triple(value));
+export { server };`);
+
+    try {
+      const buildResult = await build({
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [unzenVitePlugin({
+          dependencyBundling: { allowedModules: ['unzen-safe-math'] },
+          declarationFile: 'unzen-functions.d.ts',
+        })],
+        build: {
+          write: false,
+          minify: false,
+          lib: { entry, formats: ['es'] },
+          rollupOptions: { external: ['@unzen/server'] },
+        },
+      });
+      const outputs = Array.isArray(buildResult) ? buildResult : [buildResult];
+      const generated = outputs.flatMap((output) => (
+        'output' in output ? output.output : []
+      ));
+      const chunk = generated.find((item) => item.type === 'chunk');
+      const declaration = generated.find((item) => (
+        item.type === 'asset' && item.fileName === 'unzen-functions.d.ts'
+      ));
+      const code = chunk?.type === 'chunk' ? chunk.code : '';
+
+      expect(code).toContain('server.defineRaw');
+      expect(code).toContain('function run(...args)');
+      expect(code).toContain('value * 3');
+      expect(code).not.toContain("from 'unzen-safe-math'");
+      expect(declaration?.type).toBe('asset');
+      expect(declaration && declaration.type === 'asset' ? declaration.source : '')
+        .toContain('readonly "triple": (value: number) => number;');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

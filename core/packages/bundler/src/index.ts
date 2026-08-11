@@ -23,9 +23,11 @@ export {
 export { checkForbiddenApis } from './forbidden-api-check';
 export {
   transformUnzenDefinitions,
+  transformUnzenDefinitionsWithDependencies,
   UnzenTransformError,
   type ExtractedUnzenDefinition,
   type ExtractedUnzenParameter,
+  type UnzenDependencyBundlingOptions,
   type UnzenSourceTransformResult,
 } from './source-transform';
 export {
@@ -41,5 +43,7 @@ export {
 } from './vite-plugin';
 export {
   unzenWebpackLoader,
+  type UnzenWebpackLoaderCallback,
   type UnzenWebpackLoaderContext,
+  type UnzenWebpackLoaderOptions,
 } from './webpack-loader';

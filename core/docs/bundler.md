@@ -66,7 +66,7 @@ server.defineRaw("sum", "(a, b) => a + b", { timeout: 500 });
 ```
 
 変換前にTypeScriptのsymbol/scope解析でinline関数の実行時参照を検査する。関数外の
-変数・runtime import、`this`/`super`、禁止global（`fetch`、`globalThis`、`eval`、
+変数・標準モードのruntime import、`this`/`super`、禁止global（`fetch`、`globalThis`、`eval`、
 `require`等）、dynamic import、`import.meta`、入力/globalへの代入、
 `Math.random()`、`Date.now()`、`Date()`、引数なしの`new Date()`は、参照元の
 file/line/columnを含むbuild errorになる。local binding、local shadowing、local working
@@ -90,6 +90,31 @@ export default defineConfig({
     }),
   ],
 });
+```
+
+inline関数からnpm packageを参照する場合は`dependencyBundling`を明示する。関数が実際に
+読むruntime importだけがesbuild entryへコピーされ、元moduleの無関係なimportや
+type-only importは抽出コードへ入らない。外部のlocal変数は引き続きclosure errorになる。
+
+```typescript
+import { defineConfig } from 'vite';
+import { unzenVitePlugin } from '@unzen/bundler';
+
+export default defineConfig({
+  plugins: [unzenVitePlugin({
+    dependencyBundling: {
+      allowedModules: ['lodash', 'lodash/*'],
+    },
+  })],
+});
+```
+
+```typescript
+import { sortBy } from 'lodash';
+import { UnzenServer } from '@unzen/server';
+
+const server = new UnzenServer();
+server.define('sortUsers', (users: Array<{ name: string }>) => sortBy(users, ['name']));
 ```
 
 `declarationFile`を指定すると、Vite buildの`outDir`内へ型定義assetを出力する。
@@ -138,7 +163,14 @@ module.exports = {
       exclude: /node_modules/,
       use: [
         { loader: 'ts-loader' },
-        { loader: require.resolve('@unzen/bundler/webpack-loader') },
+        {
+          loader: require.resolve('@unzen/bundler/webpack-loader'),
+          options: {
+            dependencyBundling: {
+              allowedModules: ['lodash', 'lodash/*'],
+            },
+          },
+        },
       ],
     }],
   },
@@ -153,10 +185,10 @@ module.exports = {
 - `name` は静的文字列、`fn` はinline arrow/function expressionかつ同期関数に限る
 - 動的な名前、外部変数に入れた関数、async/generatorは位置付きbuild errorになる
 - nestedな`.define()`と無関係なライブラリの`.define()`は誤変換を避けるため触らない
-- クロージャ・runtime import・入力/globalへの代入・禁止global・直接の乱数/現在時刻
-  参照はsymbol/scope検査で位置付きbuild errorになる。関数は引数、local binding、
-  許可されたsandbox組み込みで完結させる
-- npm依存を関数へ含める場合は下記`bundle()`を使い、module whitelistを適用する
+- クロージャ・入力/globalへの代入・禁止global・直接の乱数/現在時刻参照はsymbol/scope
+  検査で位置付きbuild errorになる。runtime importも標準では拒否する
+- npm依存を関数へ含める場合はVite plugin / webpack loaderの`dependencyBundling`を
+  明示し、`allowedModules`を最小限にする。共有APIまたは下記`bundle()`も直接使用できる
 
 #### 型定義生成の契約
 
@@ -175,6 +207,9 @@ module.exports = {
 
 ```typescript
 import { bundle } from '@unzen/bundler';
+import { UnzenServer } from '@unzen/server';
+
+const server = new UnzenServer();
 
 // npm 依存を含む関数をバンドル
 const result = await bundle({
@@ -188,9 +223,11 @@ const result = await bundle({
   resolveDir: process.cwd(),
 });
 
-console.log(result.code);    // バンドルされたコード（IIFE形式）
+console.log(result.code);    // defineRawへ直接渡せるfunction runコード
 console.log(result.size);    // バイトサイズ
 console.log(result.modules); // ['lodash']
+
+server.defineRaw('sortUsers', result.code, { timeout: 500 });
 ```
 
 ## API
@@ -205,7 +242,7 @@ console.log(result.modules); // ['lodash']
 
 | 結果 | 型 | 説明 |
 |---|---|---|
-| `code` | `string` | バンドルされた自己完結型コード |
+| `code` | `string` | `function run(...args)`形式の自己完結型コード（`defineRaw()`へ直接登録可能） |
 | `size` | `number` | バイトサイズ |
 | `modules` | `string[]` | entryの静的import / re-exportから検出したspecifier（重複除去） |
 
@@ -233,6 +270,12 @@ Node.js 組み込みモジュールかどうかを判定する。`node:` プレ�
 adapter共通のAST変換。変更がなければ`null`、変更時は`code`、`map`、抽出した
 `definitions`（source位置、型引数、引数、戻り値）を返す。
 
+### `transformUnzenDefinitionsWithDependencies(source, fileName, options)`
+
+runtime importを関数単位でbundleする非同期AST変換。`options.allowedModules`は必須で、
+`options.resolveDir`は省略時にsource fileのdirectoryとなる。関数が参照したimport binding
+だけを含め、module allowlist、推移依存の解決時検査、bundle後の禁止API検査を適用する。
+
 ### `generateUnzenTypeDeclarations(definitions)`
 
 抽出済みdefinitionを名前順に並べ、`UnzenFunctions`、関数名・引数・戻り値utility、
@@ -244,21 +287,23 @@ adapter共通のAST変換。変更がなければ`null`、変更時は`code`、`
 Vite/Rollup互換のpre-transform pluginを返す。標準ではJS/TS系拡張子だけを処理し、
 `node_modules`、virtual module、query付きrequestを除外する。`include` / `exclude`には
 単一または複数の正規表現を指定できる。`declarationFile`は親directory traversalを含まない
-相対`.d.ts` asset pathだけを受け付ける。
+相対`.d.ts` asset pathだけを受け付ける。`dependencyBundling`指定時だけtransform hookが
+非同期になり、許可したruntime importを自己完結コードへbundleする。
 
 ### `@unzen/bundler/webpack-loader`
 
 ESMとCommonJSの両方で公開するwebpack loader。変換結果とsource mapをwebpackの
-loader callbackへ渡す。
+loader callbackへ渡す。`dependencyBundling`指定時はwebpackのasync callbackを使い、
+esbuildが読む依存graphに対する古いloader cacheを再利用しない。
 
 ## バンドルパイプライン
 
 1. entryをAST解析し、静的import / re-exportを抽出する。dynamic importはここで拒否する
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
-3. `stdin.resolveDir`を基準にesbuildでバンドルする（IIFE形式、ES2018、browser platform）
+3. `stdin.resolveDir`を基準にesbuildでバンドルする（内部IIFE、ES2018、browser platform）
    - `onResolve`で全bare moduleをallowlist検証し、推移依存内のdynamic importも拒否する
 4. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
-5. run() 関数を抽出可能な形に変換する
+5. IIFEとexportされたentryを自己完結した`function run(...args)`で包む
 
 ## テスト
 
@@ -285,7 +330,10 @@ npx vitest run
   明示する。relative / absolute local importは既存契約どおりmodule allowlistの対象外
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
-- compile-time抽出はinline関数を文字列化するが、クロージャ値やimportを自動bundleしない
+- compile-time抽出はクロージャ値を埋め込まない。runtime importのbundleは
+  `dependencyBundling`を明示した場合だけ行う
+- 元moduleのimport宣言はbuild toolのmodule graphとwatch対象を保つため残る。bindingが
+  抽出後に未使用なら通常のtree shaking対象になるが、副作用を持つmoduleはhost側でも実行される
 - 生成`.d.ts`はsource annotationを型検査・module解決せず保持する。import/local typeを
   使用する場合は生成先で解決できる構成が必要
 
