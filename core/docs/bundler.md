@@ -261,6 +261,9 @@ server.defineRaw('sortUsers', result.code, { timeout: 500 });
 | `resolveDir` | `string?` | import解決の基準directory。省略時は`process.cwd()` |
 | `maxBundleSize` | `number?` | 最終コードの最大UTF-8 byte数。省略時は102400 (100KiB) |
 
+entry sourceはnamed `run` exportを必ず持つ。欠けている場合は、実行時まで遅延せず
+bundle時にerrorになる。
+
 | 結果 | 型 | 説明 |
 |---|---|---|
 | `code` | `string` | `function run(...args)`形式の自己完結型コード（`defineRaw()`へ直接登録可能） |
@@ -340,7 +343,8 @@ loader contextの`addDependency()`へ登録する。
 
 ## バンドルパイプライン
 
-1. entryをAST解析し、静的import / re-exportを抽出する。dynamic importはここで拒否する
+1. entryをAST解析し、静的import / re-exportを抽出する。named `run` exportがなく、
+   `export *`から提供される可能性もないentryと、dynamic importはここで拒否する
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
 3. `stdin.resolveDir`を基準にesbuildでバンドルする（内部IIFE、ES2018、browser platform）
    - `onResolve`で全bare moduleをallowlist検証し、推移依存内のdynamic importも拒否する

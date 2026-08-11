@@ -98,6 +98,14 @@ describe('bundler', () => {
     expect(result.code).toContain('run');
   });
 
+  it.each([
+    `export default function calculate() { return 42; }`,
+    `export default function run() { return 42; }`,
+  ])('should reject source without a named run export', async (code) => {
+    await expect(bundle({ code, allowedModules: [] }))
+      .rejects.toThrow('must export a named "run" entry function');
+  });
+
   it('should emit code that defineRaw can register without wrapping', async () => {
     const result = await bundle({
       code: `export function run(value) { return value * 2; }`,
@@ -426,6 +434,25 @@ describe('bundler', () => {
     await expect(bundle({
       code: `
         import { secret } from './node_modules/unzen-hidden-helper/index.js';
+        export function run() { return secret; }
+      `,
+      allowedModules: [],
+      resolveDir,
+    })).rejects.toThrow(/must be imported by name.*allowedModules/);
+  });
+
+  it('should reject application-relative symlinks into node_modules', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-hidden-helper': `export const secret = 'not allowed';`,
+    });
+    symlinkSync(
+      join(resolveDir, 'node_modules', 'unzen-hidden-helper', 'index.js'),
+      join(resolveDir, 'linked-hidden-helper.js'),
+    );
+
+    await expect(bundle({
+      code: `
+        import { secret } from './linked-hidden-helper.js';
         export function run() { return secret; }
       `,
       allowedModules: [],

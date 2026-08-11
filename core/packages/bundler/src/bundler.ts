@@ -15,7 +15,7 @@
  *   to fail fast with clear error messages
  *
  * Bundle pipeline:
- * 1. Analyze static imports/re-exports and reject dynamic imports
+ * 1. Analyze static imports/re-exports, require a run entry, and reject dynamic imports
  * 2. Validate each static module against whitelist + Node.js built-in blocklist
  * 3. Bundle the in-memory entry from the configured project directory
  *    (IIFE, ES2018, browser platform)
@@ -72,6 +72,7 @@ export interface BundleResult {
 interface EntryImportAnalysis {
   modules: string[];
   hasDynamicImport: boolean;
+  hasPotentialRunExport: boolean;
 }
 
 interface DependencyPackageBoundary {
@@ -270,7 +271,7 @@ function snapshotBundleOptions(value: unknown): BundleOptionsSnapshot {
  * Bundle function code with npm dependencies into self-contained sandbox code.
  *
  * Process:
- * 1. Analyze module syntax, reject dynamic imports, and validate static modules
+ * 1. Analyze module syntax, require a run entry, reject dynamic imports, and validate modules
  * 2. Bundle the in-memory entry relative to resolveDir
  * 3. Collect absolute dependency files from esbuild's metafile
  * 4. Wrap the output and enforce the configured UTF-8 byte limit
@@ -299,6 +300,9 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
       'Source code contains forbidden APIs:\n' +
       `  - ${DYNAMIC_IMPORT_VIOLATION}`,
     );
+  }
+  if (!importAnalysis.hasPotentialRunExport) {
+    throw new Error('Bundled source must export a named "run" entry function.');
   }
   for (const mod of importedModules) {
     // Local application modules are resolved from resolveDir. Dependency-local
@@ -405,6 +409,22 @@ function analyzeEntryImports(code: string): EntryImportAnalysis {
   );
   const modules = new Set<string>();
   let hasDynamicImport = false;
+  let hasPotentialRunExport = false;
+
+  const hasModifier = (node: ts.Node, kind: ts.SyntaxKind): boolean => (
+    ts.canHaveModifiers(node)
+    && ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) === true
+  );
+  const isNamedExported = (node: ts.Node): boolean => (
+    hasModifier(node, ts.SyntaxKind.ExportKeyword)
+    && !hasModifier(node, ts.SyntaxKind.DefaultKeyword)
+  );
+  const bindingExportsRun = (name: ts.BindingName): boolean => {
+    if (ts.isIdentifier(name)) return name.text === 'run';
+    return name.elements.some((element) => (
+      !ts.isOmittedExpression(element) && bindingExportsRun(element.name)
+    ));
+  };
 
   for (const statement of sourceFile.statements) {
     if (
@@ -413,6 +433,28 @@ function analyzeEntryImports(code: string): EntryImportAnalysis {
       && ts.isStringLiteralLike(statement.moduleSpecifier)
     ) {
       modules.add(statement.moduleSpecifier.text);
+    }
+    if (
+      (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement))
+      && isNamedExported(statement)
+      && statement.name?.text === 'run'
+    ) {
+      hasPotentialRunExport = true;
+    } else if (ts.isVariableStatement(statement) && isNamedExported(statement)) {
+      hasPotentialRunExport ||= statement.declarationList.declarations.some(
+        (declaration) => bindingExportsRun(declaration.name),
+      );
+    } else if (ts.isExportDeclaration(statement) && !statement.isTypeOnly) {
+      if (!statement.exportClause) {
+        // `export *` may provide run after esbuild resolves the target module.
+        hasPotentialRunExport = true;
+      } else if (ts.isNamespaceExport(statement.exportClause)) {
+        hasPotentialRunExport ||= statement.exportClause.name.text === 'run';
+      } else {
+        hasPotentialRunExport ||= statement.exportClause.elements.some((element) => (
+          !element.isTypeOnly && element.name.text === 'run'
+        ));
+      }
     }
   }
 
@@ -427,7 +469,7 @@ function analyzeEntryImports(code: string): EntryImportAnalysis {
   };
   visit(sourceFile);
 
-  return { modules: Array.from(modules), hasDynamicImport };
+  return { modules: Array.from(modules), hasDynamicImport, hasPotentialRunExport };
 }
 
 /**
