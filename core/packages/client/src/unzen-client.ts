@@ -59,6 +59,7 @@ import { MoonBitSandboxExecutor } from './moonbit-sandbox';
 import { MoonBitWorkerSandboxExecutor } from './moonbit-worker-sandbox';
 import type { MoonBitImportedStringConstants } from './moonbit-compile-options';
 import { normalizeUnzenClientOptions } from './unzen-client-options';
+import { readAbortSignalAborted, subscribeToAbortSignal } from './abort';
 
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
@@ -125,16 +126,10 @@ export interface UnzenExecutionRequest {
   onEvent?: (event: UnzenExecutionEvent) => void;
 }
 
-interface AbortSignalSnapshot {
-  isAborted(): boolean;
-  addAbortListener(listener: () => void): void;
-  removeAbortListener(listener: () => void): void;
-}
-
 interface NormalizedExecutionRequest {
   readonly name: string;
   readonly args: unknown[];
-  readonly signal?: AbortSignalSnapshot;
+  readonly signal?: AbortSignal;
   readonly onEvent?: (event: UnzenExecutionEvent) => void;
 }
 
@@ -686,7 +681,7 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
     // covers both dispose and caller abort.
     const internalController = new AbortController();
     this.inFlightControllers.add(internalController);
-    let abortListenerAttached = false;
+    let removeCallerAbortListener: (() => void) | undefined;
 
     const forwardAbort = () => {
       emit({ type: 'cancel-requested' });
@@ -697,18 +692,21 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
       // Caller signal forwarding (removed on completion).
       if (request.signal) {
         try {
-          if (request.signal.isAborted()) {
+          if (readAbortSignalAborted(request.signal)) {
             return cancelledOutcome();
           }
-          request.signal.addAbortListener(forwardAbort);
-          abortListenerAttached = true;
-          // A signal can abort while its listener is being registered. Re-read
-          // live state so an already-fired AbortSignal cannot be missed.
-          if (request.signal.isAborted()) {
-            forwardAbort();
+          removeCallerAbortListener = subscribeToAbortSignal(request.signal, forwardAbort);
+          // subscribeToAbortSignal closes the check/listen race and may invoke
+          // forwardAbort synchronously before returning.
+          if (internalController.signal.aborted) {
             return cancelledOutcome();
           }
         } catch {
+          // A structural signal can notify abort and then throw from its
+          // registration method. Caller cancellation remains authoritative.
+          if (internalController.signal.aborted) {
+            return cancelledOutcome();
+          }
           const error = invalidExecutionRequest('signal could not be subscribed');
           emit({ type: 'failed', errorCode: 'function_failed' });
           return buildOutcome(false, undefined, error, 'function_failed');
@@ -992,13 +990,7 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
       }
     } finally {
       // Always deregister: no listener, no in-flight controller survives.
-      if (request.signal && abortListenerAttached) {
-        try {
-          request.signal.removeAbortListener(forwardAbort);
-        } catch {
-          // A caller-owned signal must not make executeWithDiagnostics reject.
-        }
-      }
+      removeCallerAbortListener?.();
       this.inFlightControllers.delete(internalController);
     }
   }
@@ -1070,7 +1062,7 @@ function normalizeExecutionRequest(value: unknown): ExecutionRequestNormalizatio
     }
 
     const rawSignal = record.signal;
-    let signal: AbortSignalSnapshot | undefined;
+    let signal: AbortSignal | undefined;
     if (rawSignal !== undefined) {
       if (typeof rawSignal !== 'object' || rawSignal === null) {
         return { ok: false, error: invalidExecutionRequest('signal must be an AbortSignal') };
@@ -1087,20 +1079,20 @@ function normalizeExecutionRequest(value: unknown): ExecutionRequestNormalizatio
         return { ok: false, error: invalidExecutionRequest('signal must be an AbortSignal') };
       }
       signal = {
-        isAborted() {
+        get aborted() {
           const current = signalRecord.aborted;
           if (typeof current !== 'boolean') {
             throw new TypeError('signal aborted state could not be read');
           }
           return current;
         },
-        addAbortListener(listener) {
-          Reflect.apply(addEventListener, rawSignal, ['abort', listener, { once: true }]);
+        addEventListener(_type: string, listener: EventListenerOrEventListenerObject, options?: unknown) {
+          Reflect.apply(addEventListener, rawSignal, ['abort', listener, options]);
         },
-        removeAbortListener(listener) {
+        removeEventListener(_type: string, listener: EventListenerOrEventListenerObject) {
           Reflect.apply(removeEventListener, rawSignal, ['abort', listener]);
         },
-      };
+      } as unknown as AbortSignal;
     }
 
     const onEvent = record.onEvent;

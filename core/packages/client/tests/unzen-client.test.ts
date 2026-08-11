@@ -1011,6 +1011,64 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('keeps synchronous abort authoritative when signal registration throws', async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const events: string[] = [];
+      const signal = {
+        aborted: false,
+        addEventListener(_type: string, listener: EventListenerOrEventListenerObject) {
+          if (typeof listener === 'function') listener(new Event('abort'));
+          else listener.handleEvent(new Event('abort'));
+          throw new Error('registration failed after abort');
+        },
+        removeEventListener() {},
+      } as unknown as AbortSignal;
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+
+      const result = await client.executeWithDiagnostics({
+        name: 'add',
+        args: [1, 2],
+        signal,
+        onEvent: (event) => events.push(event.type),
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe('cancelled');
+      expect(events).toEqual(['cancel-requested', 'cancelled']);
+      expect(fetchMock).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
+    it('cleans up a partially registered signal listener before failing', async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const listeners = new Set<EventListenerOrEventListenerObject>();
+      const signal = {
+        aborted: false,
+        addEventListener(_type: string, listener: EventListenerOrEventListenerObject) {
+          listeners.add(listener);
+          throw new Error('registration failed');
+        },
+        removeEventListener(_type: string, listener: EventListenerOrEventListenerObject) {
+          listeners.delete(listener);
+        },
+      } as unknown as AbortSignal;
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+
+      const result = await client.executeWithDiagnostics({
+        name: 'add',
+        args: [1, 2],
+        signal,
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe('function_failed');
+      expect(listeners.size).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
     it('should cancel during manifest fetch and never fall back', async () => {
       // Manifest fetch hangs until the signal aborts (then rejects as AbortError)
       const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
