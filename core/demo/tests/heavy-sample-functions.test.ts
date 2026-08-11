@@ -110,14 +110,21 @@ describe('hashPassword', () => {
   });
 
   it('rejects invalid parameters', async () => {
-    await expect(runtime.execute(hashPasswordCode, ['p', 's', -1, 32], { timeout: 2000 }))
-      .rejects.toThrow();
+    for (const args of [
+      ['p', 's', 0, 32],
+      ['p', 's', 1501, 32],
+      ['p', 's', 1, 0],
+      ['p', 's', 1, 65],
+    ]) {
+      await expect(runtime.execute(hashPasswordCode, args, { timeout: 2000 }))
+        .rejects.toThrow();
+    }
   });
 
   it('completes within the heavy timeout at the allowed maximum inputs', async () => {
     // The documented input range must finish inside the 2000ms heavy tier.
     const started = Date.now();
-    const hex = await runHash('p@ss', 'salt', 2000, 64);
+    const hex = await runHash('p@ss', 'salt', 1500, 64);
     const elapsed = Date.now() - started;
 
     expect(typeof hex).toBe('string');

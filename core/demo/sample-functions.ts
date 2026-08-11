@@ -731,7 +731,7 @@ export const textStatsCode = `(text) => {
 //
 // Input: (password, salt, iterations, dkLen)
 //   - password/salt: strings (encoded as UTF-8)
-//   - iterations: positive integer (1..2000; bounded so the heaviest allowed
+//   - iterations: positive integer (1..1500; bounded so the heaviest allowed
 //     input completes comfortably inside the 2000ms heavy-tier timeout)
 //   - dkLen: derived key length in bytes (1..64)
 // Output: derived key as lowercase hex string
@@ -740,8 +740,8 @@ export const hashPasswordCode = `function run(password, salt, iterations, dkLen)
   if (typeof password !== 'string' || typeof salt !== 'string') {
     throw new Error('password and salt must be strings');
   }
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 2000) {
-    throw new Error('iterations must be an integer in [1, 2000]');
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 1500) {
+    throw new Error('iterations must be an integer in [1, 1500]');
   }
   if (!Number.isInteger(dkLen) || dkLen < 1 || dkLen > 64) {
     throw new Error('dkLen must be an integer in [1, 64] bytes');

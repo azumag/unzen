@@ -27,7 +27,7 @@ server.defineRaw('hashPassword', code, { timeout: 2000, noFallback: true });
 
 | # | サンプル | V8推定CPU/回 | QuickJS Wasm推定 | 優先度 | 状態 |
 |---|---------|-------------|-----------------|--------|------|
-| 1 | PBKDF2パスワードハッシュ | 50-80ms | 1.75-4.4s | Phase 3 | **実装済** (`hashPassword`) |
+| 1 | PBKDF2パスワードハッシュ | 入力依存 | heavy tier (2秒) 内 | Phase 3 | **実装済** (`hashPassword`) |
 | 2 | 大規模配列ソート（10K要素） | 15-25ms | 525ms-1.4s | Phase 1 | **実装済** |
 | 3 | 画像メタデータ抽出（EXIF） | 10-20ms | 350ms-1.1s | Phase 2 | 保留（バイナリ入力のため） |
 | 4 | 大規模Markdown変換（10K行） | 20-35ms | 700ms-1.9s | Phase 2 | **実装済** (`markdownToHtml`) |
@@ -55,7 +55,9 @@ server.defineRaw('hashPassword', code, { timeout: 2000, noFallback: true });
 - **メモリ**: ~1MB以下
 - **コード量**: ~200-300行
 - **Unzenに適する理由**: 自己消費（自分のパスワード）、プライバシー向上（平文がサーバーに送信されない）
-- **注意**: QuickJS Wasmで1.75-4.4秒はローディング表示必須。サインアップは低頻度なので許容できる
+- **注意**: `iterations` は 1,500、派生鍵長は 64 bytes を上限とし、heavy tier
+  (2秒) に実行余裕を確保する。端末性能やCPU競合で所要時間は変動するため、UI側では
+  実行中状態を表示する
 
 #### 2. 大規模配列ソート
 - **説明**: データテーブルUIでの10,000-50,000行のマルチキーソートを行う

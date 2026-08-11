@@ -382,7 +382,7 @@ await client.call('levenshteinDistance', '', 'abc');
 type Input = [
   password: string,  // UTF-8（lone surrogate は U+FFFD に置換）
   salt: string,      // UTF-8
-  iterations: number, // 1..2000（上限は 2,000ms 内で完了する値に制限）
+  iterations: number, // 1..1500（上限は 2,000ms 内で余裕を持って完了する値に制限）
   dkLen: number       // 1..64（派生鍵のバイト数）
 ];
 ```
