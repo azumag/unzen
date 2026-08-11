@@ -45,6 +45,8 @@ export function unzenWebpackLoader(
     // accounting, so dependency mode must not reuse a stale loader result.
     this.cacheable?.(false);
     const callback = this.async?.() ?? this.callback.bind(this);
+    const addDependency = this.addDependency;
+    const sourceMapEnabled = this.sourceMap === true;
     void transformUnzenDefinitionsWithDependencies(
       source,
       this.resourcePath,
@@ -55,10 +57,17 @@ export function unzenWebpackLoader(
           callback(null, source, inputSourceMap, meta);
           return;
         }
-        for (const watchFile of result.watchFiles) {
-          this.addDependency?.(watchFile);
+        let outputMap: unknown;
+        try {
+          for (const watchFile of result.watchFiles) {
+            if (addDependency) Reflect.apply(addDependency, this, [watchFile]);
+          }
+          outputMap = sourceMapEnabled ? result.map : undefined;
+        } catch (error) {
+          callback(error instanceof Error ? error : new Error(String(error)));
+          return;
         }
-        callback(null, result.code, this.sourceMap ? result.map : undefined, meta);
+        callback(null, result.code, outputMap, meta);
       },
       (error: unknown) => {
         callback(error instanceof Error ? error : new Error(String(error)));
