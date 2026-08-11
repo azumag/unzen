@@ -28,6 +28,23 @@ MoonBit CLI v0.1.20260126 / 10 iterations + 1 warm-up、P50 (中央値) を採�
   同一系列になるようにしている (固定系列の先頭要素は両 runtime とも 9 で一致)。
   plain JS 乗算は safe-integer を超え、系列がずれて比較が無効になる。
 
+### Cross-browser 検証 (2026-08-11)
+
+MoonBit 専用 Worker (`MoonBitWorkerSandboxExecutor`) を Chromium 145.0.7632.6
+(Playwright) と Firefox 146.0.1 (Playwright) の両方で実ブラウザ検証した:
+
+| 検証 | Chromium 145 | Firefox 146 |
+|---|---|---|
+| fibonacci wasm 実行 (worker) | fib(10)=55, fib(15)=610 | 同左 |
+| 無限ループの hard timeout | DEADLINE_EXCEEDED (Worker terminate) | 同左 |
+| 無限ループの cancel | CANCELLED (Worker terminate) | 同左 |
+| terminate 後の recovery | 次実行が新 generation で成功 | 同左 |
+| メインスレッド応答性 | hang 中も interval tick 継続 | 同左 |
+
+注: Firefox の wasm 実行は Chrome より遅く、`bounded_hang` のループは
+Chrome の約 1.5-3 倍の時間がかかる。強制終了テストの timeout は
+Firefox でも確実に完了する値 (800ms budget / 1200ms hard kill) に設定している。
+
 ### 再現手順
 
 ```bash

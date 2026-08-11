@@ -34,6 +34,13 @@ export default defineConfig({
         hasTouch: true,
       },
     },
+    {
+      name: 'desktop-firefox',
+      use: {
+        browserName: 'firefox',
+        viewport: { width: 1280, height: 900 },
+      },
+    },
   ],
   webServer: {
     command: 'npm run start',

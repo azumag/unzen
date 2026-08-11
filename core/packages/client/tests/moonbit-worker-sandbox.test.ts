@@ -64,6 +64,8 @@ class MockMoonbitWorker {
   lastTransfer: Transferable[] | null = null;
   /** The wasm bytes of the last execute message the mock received. */
   lastReceivedWasm: ArrayBuffer | null = null;
+  /** Number of terminate() calls (verifies Worker.terminate enforcement). */
+  terminateCount = 0;
 
   postMessage(msg: MoonbitWorkerMessage, transfer?: Transferable[]) {
     if (this.throwOnPostMessage?.(msg)) {
@@ -82,7 +84,7 @@ class MockMoonbitWorker {
   }
 
   terminate() {
-    // No-op in mock; tests inspect diagnostics instead.
+    this.terminateCount++;
   }
 
   respond(data: RespondFixture) {
@@ -293,6 +295,8 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     await expect(
       executor.execute('https://example.com/fibonacci.wasm', [10], { exportName: 'fibonacci' }),
     ).rejects.toThrow(UnzenDeadlineExceededError);
+    // The hung worker was actually terminated, not just abandoned.
+    expect(worker.terminateCount).toBe(1);
     expect(executor.diagnostics.forcedTerminationCount).toBe(1);
     expect(executor.diagnostics.generationRestartCount).toBe(0);
     executor.dispose();
@@ -313,6 +317,7 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     controller.abort();
 
     await expect(p).rejects.toThrow(UnzenCancelledError);
+    expect(worker.terminateCount).toBe(1);
     expect(executor.diagnostics.cancelCount).toBe(1);
     expect(executor.diagnostics.forcedTerminationCount).toBe(1);
     executor.dispose();

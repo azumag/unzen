@@ -204,4 +204,32 @@ test.describe('MoonBit worker (real wasm-gc in the browser)', () => {
       timeout: 30_000,
     });
   });
+
+  test('terminates a hung export by hard timeout and cancel, then recovers', async ({ page }) => {
+    await page.goto('/moonbit-hang-test.html');
+
+    await expect(page.locator('#result')).toContainText('bounded_hang(1) = 1', {
+      timeout: 30_000,
+    });
+    // hang_forever must be force-terminated (deadline exceeded), not resolved.
+    await expect(page.locator('#result')).toContainText('hang_forever → DEADLINE_EXCEEDED', {
+      timeout: 30_000,
+    });
+    // The executor recovers on a fresh generation.
+    await expect(page.locator('#result')).toContainText('recovery fib(10) = 55');
+    // A real Worker.terminate() was called for the hard timeout.
+    await expect(page.locator('#result')).toContainText('worker.terminate() calls: 2');
+    // Cancel during a hang settles as cancelled (never fallback).
+    await expect(page.locator('#result')).toContainText('cancel hang_forever → CANCELLED');
+    await expect(page.locator('#result')).toContainText('recovery fib(15) = 610');
+    // The main thread kept ticking DURING the hangs (positive tick delta over
+    // the actual execution window — a zero would mean the worker blocked it).
+    for (const label of ['deadline', 'cancel']) {
+      const line = await page.locator('#result').textContent();
+      const match = line?.match(new RegExp(`ticks during ${label} hang: (\\d+)`));
+      expect(match).not.toBeNull();
+      expect(Number(match![1])).toBeGreaterThan(0);
+    }
+    await expect(page.locator('#result')).toContainText('main-thread responsive: yes');
+  });
 });

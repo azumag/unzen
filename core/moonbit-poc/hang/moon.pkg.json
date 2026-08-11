@@ -1,0 +1,9 @@
+{
+  "is-main": true,
+  "link": {
+    "wasm-gc": {
+      "exports": ["hang_forever", "bounded_hang"],
+      "use-js-string-builtin": true
+    }
+  }
+}

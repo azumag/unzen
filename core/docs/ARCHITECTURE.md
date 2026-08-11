@@ -648,6 +648,19 @@ defineRaw('add', '(a, b) => a + b')
   JS-GC interop が未対応）。
 - サーバーフォールバックは非対応 (`/exec/:name` は 501)。ブラウザ実行のみ。
 
+### MoonBit Worker 強制終了の検証 (2026-08-11)
+
+`moonbit-poc/hang` パッケージ（`hang_forever` / `bounded_hang`）を実ブラウザで
+実行し、以下を確認した:
+
+- `hang_forever` は hard timeout で `DEADLINE_EXCEEDED`、cancel で `CANCELLED`
+  となり、いずれも `Worker.terminate()` で強制終了される
+- terminate 後は新 generation で再初期化され、後続実行が成功する
+- hang 実行中もメインスレッドは応答し続ける（50ms interval の tick が
+  実行区間中も正数で継続することを E2E で検証）
+- Chromium 145 (Playwright) / Firefox 146 の両方で同一動作（Firefox は wasm 実行が遅く、
+  テストの timeout は 800ms budget / 1200ms hard kill に設定）
+
 ---
 
 ## 11. テスト一覧

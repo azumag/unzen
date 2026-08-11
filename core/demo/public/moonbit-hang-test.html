@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MoonBit worker termination test</title>
+</head>
+<body>
+  <h1>MoonBit worker termination E2E test</h1>
+  <pre id="result">running…</pre>
+  <script type="module">
+    import { MoonBitWorkerSandboxExecutor } from '/client.js';
+
+    const resultEl = document.getElementById('result');
+    const lines = [];
+    const log = (line) => {
+      lines.push(line);
+      resultEl.textContent = lines.join('\n');
+    };
+    // Count actual Worker.terminate() calls by wrapping the global Worker.
+    let terminateCount = 0;
+    const OriginalWorker = globalThis.Worker;
+    globalThis.Worker = class extends OriginalWorker {
+      terminate() {
+        terminateCount++;
+        super.terminate();
+      }
+    };
+    const restoreWorker = () => {
+      globalThis.Worker = OriginalWorker;
+    };
+
+    // Main-thread responsiveness probe: interval ticks observed WHILE a
+    // hanging export runs in the worker. The delta before/after each hang is
+    // recorded so a zero-ticks regression is caught.
+    let ticks = 0;
+    const ticker = setInterval(() => { ticks++; }, 50);
+
+    try {
+      const executor = new MoonBitWorkerSandboxExecutor({
+        workerUrl: '/moonbit-worker.js',
+        timeout: 800,      // 800ms budget; hard kill at 1200ms (Firefox wasm
+                           // executes slower than Chrome, so keep headroom)
+        hardKillMultiplier: 1.5,
+        initTimeoutMs: 5000,
+      });
+
+      // 1. A bounded long call still succeeds inside the timeout.
+      const t0 = performance.now();
+      const bounded = await executor.execute('/moonbit/hang.wasm', [1], {
+        exportName: 'bounded_hang',
+      });
+      log(`bounded_hang(1) = ${bounded} (${Math.round(performance.now() - t0)}ms)`);
+
+      // 2. hang_forever exceeds the hard-kill timeout → deadline error.
+      const ticksBeforeDeadline = ticks;
+      const t1 = performance.now();
+      let deadlineCode = 'none';
+      try {
+        await executor.execute('/moonbit/hang.wasm', [], {
+          exportName: 'hang_forever',
+        });
+        deadlineCode = 'resolved-unexpectedly';
+      } catch (error) {
+        deadlineCode = `${error && error.code ? error.code : error.constructor.name}:${error && error.message ? error.message : ''}`;
+      }
+      const deadlineMs = Math.round(performance.now() - t1);
+      log(`hang_forever → ${deadlineCode} (${deadlineMs}ms)`);
+      const ticksAfterDeadline = ticks;
+      log(
+        `ticks during deadline hang: ${ticksAfterDeadline - ticksBeforeDeadline} `
+        + `(baseline ${ticksBeforeDeadline})`,
+      );
+
+      // 3. The executor recovers on a fresh generation after termination.
+      const fib = await executor.execute('/moonbit/fibonacci.wasm', [10], {
+        exportName: 'fibonacci',
+      });
+      log(`recovery fib(10) = ${fib}`);
+
+      // 4. Cancel during hang_forever → cancelled (never fallback), worker
+      //    terminated, main thread still responsive.
+      const ticksBeforeCancel = ticks;
+      const controller = new AbortController();
+      const t2 = performance.now();
+      const cancelPromise = executor.execute('/moonbit/hang.wasm', [], {
+        exportName: 'hang_forever',
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 100);
+      let cancelCode = 'none';
+      try {
+        await cancelPromise;
+        cancelCode = 'resolved-unexpectedly';
+      } catch (error) {
+        cancelCode = `${error && error.code ? error.code : error.constructor.name}`;
+      }
+      log(`cancel hang_forever → ${cancelCode} (${Math.round(performance.now() - t2)}ms)`);
+      const ticksAfterCancel = ticks;
+      const deadlineTicks = ticksAfterDeadline - ticksBeforeDeadline;
+      const cancelTicks = ticksAfterCancel - ticksBeforeCancel;
+      log(
+        `ticks during cancel hang: ${cancelTicks} `
+        + `(baseline ${ticksBeforeCancel})`,
+      );
+
+      // 5. Recovery again after cancellation.
+      const fib2 = await executor.execute('/moonbit/fibonacci.wasm', [15], {
+        exportName: 'fibonacci',
+      });
+      log(`recovery fib(15) = ${fib2}`);
+      log(`worker.terminate() calls: ${terminateCount}`);
+
+      log(`main-thread responsive: ${deadlineTicks > 0 && cancelTicks > 0 ? 'yes' : 'NO'}`);
+      executor.dispose();
+      restoreWorker();
+    } catch (error) {
+      log(`ERROR: ${error && error.message ? error.message : error}`);
+      restoreWorker();
+    } finally {
+      clearInterval(ticker);
+    }
+  </script>
+</body>
+</html>
