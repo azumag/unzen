@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { unzenVitePlugin } from '../src/vite-plugin';
+import { MAX_VITE_FILTER_PATTERNS, unzenVitePlugin } from '../src/vite-plugin';
 
 const SOURCE = `import { UnzenServer } from '@unzen/server';
 const server = new UnzenServer();
@@ -39,6 +39,28 @@ describe('unzenVitePlugin', () => {
     expect(plugin.transform(SOURCE, '/src/server/functions.ts')).not.toBeNull();
   });
 
+  it('owns filter snapshots without invoking caller array iterators', () => {
+    const sourcePattern = /\/server\//g;
+    sourcePattern.lastIndex = 3;
+    const include = [sourcePattern];
+    Object.defineProperty(include, Symbol.iterator, {
+      value() {
+        throw new Error('filter iterator must not run');
+      },
+    });
+    const plugin = unzenVitePlugin({ include });
+    include[0] = /never-match/;
+
+    expect(plugin.transform(SOURCE, '/src/server/functions.ts')).not.toBeNull();
+    expect(sourcePattern.lastIndex).toBe(3);
+  });
+
+  it('rejects oversized sparse filter arrays at plugin construction', () => {
+    expect(() => unzenVitePlugin({
+      include: new Array(MAX_VITE_FILTER_PATTERNS + 1),
+    })).toThrow(`at most ${MAX_VITE_FILTER_PATTERNS} filters`);
+  });
+
   it('returns null when an eligible module has no matching definition', () => {
     const plugin = unzenVitePlugin();
     expect(plugin.transform('export const value = 1;', '/src/value.ts')).toBeNull();
@@ -64,9 +86,9 @@ const server = new UnzenServer();
 server.define('triple', (value: number) => triple(value));`;
 
     try {
-      const plugin = unzenVitePlugin({
-        dependencyBundling: { allowedModules: ['unzen-safe-math'] },
-      });
+      const allowedModules = ['unzen-safe-math'];
+      const plugin = unzenVitePlugin({ dependencyBundling: { allowedModules } });
+      allowedModules.length = 0;
       const addWatchFile = vi.fn();
       const pending = plugin.transform.call(
         { addWatchFile },

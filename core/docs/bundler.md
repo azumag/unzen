@@ -323,10 +323,13 @@ bindingと同じ宣言内の無関係なbindingは保持する。
 
 Vite/Rollup互換のpre-transform pluginを返す。標準ではJS/TS系拡張子だけを処理し、
 `node_modules`、virtual module、query付きrequestを除外する。`include` / `exclude`には
-単一または複数の正規表現を指定できる。`declarationFile`は親directory traversalを含まない
+単一または最大1024件の正規表現を指定できる。plugin作成時に正規表現と
+`dependencyBundling`を所有snapshotへ固定する。`declarationFile`は親directory traversalを含まない
 相対`.d.ts` asset pathだけを受け付ける。`dependencyBundling`指定時だけtransform hookが
 非同期になり、許可したruntime importを自己完結コードへbundleする。返された
 `watchFiles`はplugin contextの`addWatchFile()`へ登録する。
+
+`MAX_VITE_FILTER_PATTERNS`は`include` / `exclude`それぞれの上限`1024`を表す。
 
 ### `@unzen/bundler/webpack-loader`
 

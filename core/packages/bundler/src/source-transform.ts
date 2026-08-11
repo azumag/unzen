@@ -64,6 +64,43 @@ export interface UnzenDependencyBundlingOptions {
   maxBundleSize?: number;
 }
 
+interface UnzenDependencyBundlingOptionsSnapshot {
+  readonly allowedModules: string[];
+  readonly resolveDir?: string;
+  readonly maxBundleSize: number;
+}
+
+/** Own build-tool configuration before any asynchronous dependency work. */
+export function snapshotUnzenDependencyBundlingOptions(
+  value: unknown,
+): UnzenDependencyBundlingOptionsSnapshot {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Dependency bundling options must be an object');
+  }
+  let rawAllowedModules: unknown;
+  let rawResolveDir: unknown;
+  let rawMaxBundleSize: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    rawAllowedModules = record.allowedModules;
+    rawResolveDir = record.resolveDir;
+    rawMaxBundleSize = record.maxBundleSize;
+  } catch {
+    throw new TypeError('Dependency bundling options could not be read');
+  }
+  if (
+    rawResolveDir !== undefined
+    && (typeof rawResolveDir !== 'string' || rawResolveDir.length === 0)
+  ) {
+    throw new TypeError('resolveDir must be a non-empty string when provided');
+  }
+  return {
+    allowedModules: snapshotAllowedModules(rawAllowedModules),
+    ...(rawResolveDir !== undefined && { resolveDir: rawResolveDir as string }),
+    maxBundleSize: normalizeMaxBundleSize(rawMaxBundleSize),
+  };
+}
+
 interface UnzenDefinitionPlan {
   call: ts.CallExpression;
   receiver: ts.PropertyAccessExpression;
@@ -692,29 +729,8 @@ export async function transformUnzenDefinitionsWithDependencies(
   fileName: string,
   options: UnzenDependencyBundlingOptions,
 ): Promise<UnzenSourceTransformResult | null> {
-  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
-    throw new TypeError('Dependency bundling options must be an object');
-  }
-  let rawAllowedModules: unknown;
-  let rawResolveDir: unknown;
-  let rawMaxBundleSize: unknown;
-  try {
-    const record = options as unknown as Record<string, unknown>;
-    rawAllowedModules = record.allowedModules;
-    rawResolveDir = record.resolveDir;
-    rawMaxBundleSize = record.maxBundleSize;
-  } catch {
-    throw new TypeError('Dependency bundling options could not be read');
-  }
-  if (
-    rawResolveDir !== undefined
-    && (typeof rawResolveDir !== 'string' || rawResolveDir.length === 0)
-  ) {
-    throw new TypeError('resolveDir must be a non-empty string when provided');
-  }
-  const allowedModules = snapshotAllowedModules(rawAllowedModules);
-  const resolveDir = (rawResolveDir as string | undefined) ?? dirname(fileName);
-  const maxBundleSize = normalizeMaxBundleSize(rawMaxBundleSize);
+  const snapshot = snapshotUnzenDependencyBundlingOptions(options);
+  const resolveDir = snapshot.resolveDir ?? dirname(fileName);
 
   const analysis = analyzeUnzenSource(source, fileName, true);
   if (!analysis) return null;
@@ -738,9 +754,9 @@ export async function transformUnzenDefinitionsWithDependencies(
     try {
       const result = await bundle({
         code: `${imports.join('\n')}\nexport const run = ${functionCode};`,
-        allowedModules,
+        allowedModules: snapshot.allowedModules,
         resolveDir,
-        maxBundleSize,
+        maxBundleSize: snapshot.maxBundleSize,
       });
       functionCodes.push(result.code);
       for (const watchFile of result.watchFiles) watchFiles.add(watchFile);

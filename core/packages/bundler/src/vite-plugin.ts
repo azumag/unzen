@@ -3,6 +3,7 @@
 import {
   transformUnzenDefinitions,
   transformUnzenDefinitionsWithDependencies,
+  snapshotUnzenDependencyBundlingOptions,
   type ExtractedUnzenDefinition,
   type UnzenDependencyBundlingOptions,
   type UnzenSourceTransformResult,
@@ -10,6 +11,10 @@ import {
 import { generateUnzenTypeDeclarations, UnzenTypeGenerationError } from './type-declarations';
 
 const MODULE_EXTENSION = /\.(?:[cm]?[jt]sx?)$/i;
+export const MAX_VITE_FILTER_PATTERNS = 1024;
+
+const REGEXP_SOURCE_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source')!.get!;
+const REGEXP_FLAGS_GETTER = Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags')!.get!;
 
 export interface UnzenVitePluginOptions {
   /** Optional path filter applied after the default JS/TS and node_modules checks. */
@@ -52,16 +57,85 @@ export interface UnzenViteEmitContext {
   }): string;
 }
 
-function matches(patterns: RegExp | RegExp[] | undefined, value: string): boolean {
+interface UnzenVitePluginOptionsSnapshot {
+  readonly include?: RegExp[];
+  readonly exclude?: RegExp[];
+  readonly declarationFile?: string;
+  readonly dependencyBundling?: ReturnType<typeof snapshotUnzenDependencyBundlingOptions>;
+}
+
+function snapshotFilters(value: unknown, name: 'include' | 'exclude'): RegExp[] | undefined {
+  if (value === undefined) return undefined;
+  const source = Array.isArray(value) ? value : [value];
+  let count: unknown;
+  try {
+    count = source.length;
+  } catch {
+    throw new TypeError(`${name} filters could not be read`);
+  }
+  if (
+    typeof count !== 'number'
+    || !Number.isSafeInteger(count)
+    || count < 0
+    || count > MAX_VITE_FILTER_PATTERNS
+  ) {
+    throw new TypeError(`${name} must contain at most ${MAX_VITE_FILTER_PATTERNS} filters`);
+  }
+
+  const filters = new Array<RegExp>(count);
+  try {
+    for (let index = 0; index < count; index += 1) {
+      const pattern = source[index];
+      const expression = Reflect.apply(REGEXP_SOURCE_GETTER, pattern, []) as string;
+      const flags = Reflect.apply(REGEXP_FLAGS_GETTER, pattern, []) as string;
+      filters[index] = new RegExp(expression, flags);
+    }
+  } catch {
+    throw new TypeError(`${name} must be a RegExp or an array of RegExp values`);
+  }
+  return filters;
+}
+
+function snapshotVitePluginOptions(value: unknown): UnzenVitePluginOptionsSnapshot {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Unzen Vite plugin options must be an object');
+  }
+  let include: unknown;
+  let exclude: unknown;
+  let declarationFile: unknown;
+  let dependencyBundling: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    include = record.include;
+    exclude = record.exclude;
+    declarationFile = record.declarationFile;
+    dependencyBundling = record.dependencyBundling;
+  } catch {
+    throw new TypeError('Unzen Vite plugin options could not be read');
+  }
+  const normalizedDeclarationFile = normalizeDeclarationFile(declarationFile);
+
+  return {
+    ...(include !== undefined && { include: snapshotFilters(include, 'include') }),
+    ...(exclude !== undefined && { exclude: snapshotFilters(exclude, 'exclude') }),
+    ...(normalizedDeclarationFile !== undefined && {
+      declarationFile: normalizedDeclarationFile,
+    }),
+    ...(dependencyBundling !== undefined && {
+      dependencyBundling: snapshotUnzenDependencyBundlingOptions(dependencyBundling),
+    }),
+  };
+}
+
+function matches(patterns: RegExp[] | undefined, value: string): boolean {
   if (patterns === undefined) return false;
-  const list = Array.isArray(patterns) ? patterns : [patterns];
-  return list.some((pattern) => {
+  return patterns.some((pattern) => {
     pattern.lastIndex = 0;
     return pattern.test(value);
   });
 }
 
-function shouldTransform(id: string, options: UnzenVitePluginOptions): boolean {
+function shouldTransform(id: string, options: UnzenVitePluginOptionsSnapshot): boolean {
   if (
     id.startsWith('\0')
     || id.includes('?')
@@ -74,8 +148,13 @@ function shouldTransform(id: string, options: UnzenVitePluginOptions): boolean {
   return options.include === undefined || matches(options.include, id);
 }
 
-function normalizeDeclarationFile(value: string | false | undefined): string | undefined {
+function normalizeDeclarationFile(value: unknown): string | undefined {
   if (value === undefined || value === false) return undefined;
+  if (typeof value !== 'string') {
+    throw new UnzenTypeGenerationError(
+      'declarationFile must be a relative .d.ts asset path without parent traversal',
+    );
+  }
   const normalized = value.replace(/\\/g, '/');
   const segments = normalized.split('/');
   if (
@@ -94,7 +173,8 @@ function normalizeDeclarationFile(value: string | false | undefined): string | u
 
 /** Create a Vite pre-transform plugin using the shared AST transformation. */
 export function unzenVitePlugin(options: UnzenVitePluginOptions = {}): UnzenVitePlugin {
-  const declarationFile = normalizeDeclarationFile(options.declarationFile);
+  const snapshot = snapshotVitePluginOptions(options);
+  const declarationFile = snapshot.declarationFile;
   const definitionsByFile = new Map<string, ExtractedUnzenDefinition[]>();
   const latestTransformByFile = new Map<string, object>();
   let activeBuildToken: object = {};
@@ -107,7 +187,7 @@ export function unzenVitePlugin(options: UnzenVitePluginOptions = {}): UnzenVite
       definitionsByFile.clear();
     },
     transform(code, id) {
-      if (!shouldTransform(id, options)) return null;
+      if (!shouldTransform(id, snapshot)) return null;
       const transformBuildToken = activeBuildToken;
       const transformToken = {};
       latestTransformByFile.set(id, transformToken);
@@ -129,11 +209,11 @@ export function unzenVitePlugin(options: UnzenVitePluginOptions = {}): UnzenVite
         return result ? { code: result.code, map: result.map } : null;
       };
 
-      if (options.dependencyBundling) {
+      if (snapshot.dependencyBundling) {
         return transformUnzenDefinitionsWithDependencies(
           code,
           id,
-          options.dependencyBundling,
+          snapshot.dependencyBundling,
         ).then(recordResult);
       }
       return recordResult(transformUnzenDefinitions(code, id));

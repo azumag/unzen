@@ -793,6 +793,7 @@ TypeScript source
   禁止APIのAST scanとsandbox投入より前に拒否する。`maxBundleSize`で明示的に調整できる
 - Viteの`declarationFile`指定時は、重複名を位置付きerrorにし、生成された
   `UnzenFunctions`を`UnzenClient<UnzenFunctions>`へ渡してcall境界を型付けする。
+  plugin optionは作成時にsnapshotし、`include` / `exclude`は各最大1024 RegExpとする。
   webpack loaderはmodule単位の変換だけを行い、宣言集約は行わない
 
 ### MoonBit wasm-gc 統合 (Phase 3)

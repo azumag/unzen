@@ -42,6 +42,7 @@ export {
 } from './type-declarations';
 export {
   unzenVitePlugin,
+  MAX_VITE_FILTER_PATTERNS,
   type UnzenViteEmitContext,
   type UnzenVitePlugin,
   type UnzenVitePluginOptions,
