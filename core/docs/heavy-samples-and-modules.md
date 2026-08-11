@@ -341,11 +341,11 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 
 ### Phase 2: モジュールシステム（Phase 1の価値実証後）
 
-- [ ] esbuild/rollupベースのビルドパイプライン
+- [x] esbuild/rollupベースのビルドパイプライン
 - [ ] useModule() API
-- [ ] モジュールホワイトリスト（security-perf P0要件）
-- [ ] 禁止API静的解析ツール
-- [ ] IndexedDB + Service Workerキャッシュ
+- [x] モジュールホワイトリスト（security-perf P0要件）
+- [x] 禁止API静的解析ツール（AST + symbol/scopeベース）
+- [ ] IndexedDB + Service Workerキャッシュ（Service Worker CacheStorageは実装済み、IndexedDBは未実装）
 - [ ] サンプル実装:
   - 画像メタデータ抽出（~300-400行）
   - 大規模Markdown変換（~800-1000行）

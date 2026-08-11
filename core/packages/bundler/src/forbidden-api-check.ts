@@ -1,101 +1,177 @@
-/**
- * Forbidden API detection for bundled sandbox code
- *
- * Scans bundled JavaScript output for APIs that would be blocked
- * by the QuickJS sandbox. These APIs require network or system access
- * that violates the sandbox isolation model.
- *
- * This is a defense-in-depth measure: even if a module passes the
- * whitelist check, its bundled output might contain forbidden API calls
- * from transitive dependencies. For example, a whitelisted module
- * might internally use fetch() through a dependency chain.
- *
- * Detection approach:
- * - Regex-based pattern matching on the bundled output
- * - Each pattern uses word boundaries (\b) to avoid false positives
- *   from variable names containing forbidden words
- * - Patterns match function call syntax (e.g., 'fetch(' not just 'fetch')
- *   to reduce false positives from comments or string literals
- *
- * Limitations:
- * - Cannot detect dynamically constructed API calls (e.g., window['fe'+'tch'])
- * - May produce false positives for string literals containing API names
- * - This is a heuristic, not a formal proof of safety
- */
+/** Scope-aware forbidden API detection for bundled sandbox code. */
 
-/**
- * Patterns for APIs forbidden in sandbox functions.
- *
- * Each entry includes:
- * - pattern: Regex to match the forbidden API usage
- * - description: Human-readable explanation of why it's blocked
- *
- * Categories of forbidden APIs:
- * 1. Network access: fetch, XMLHttpRequest, WebSocket
- * 2. Dynamic code loading: importScripts, eval, Function constructor
- * 3. Module loading: require(), dynamic import()
- */
-const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
+import ts from 'typescript';
+import {
+  createLexicalTypeChecker,
+  isIdentifierReference,
+  isUnboundGlobalReference,
+} from './lexical-scope';
+
+interface ForbiddenApiRule {
+  name: string;
+  description: string;
+}
+
+const FORBIDDEN_API_RULES: ForbiddenApiRule[] = [
   {
-    pattern: /\bfetch\s*\(/,
+    name: 'fetch',
     description: 'fetch() - network requests are blocked in sandbox',
   },
   {
-    pattern: /\bXMLHttpRequest\b/,
+    name: 'XMLHttpRequest',
     description: 'XMLHttpRequest - network requests are blocked in sandbox',
   },
   {
-    pattern: /\bWebSocket\b/,
+    name: 'WebSocket',
     description: 'WebSocket - network connections are blocked in sandbox',
   },
   {
-    pattern: /\bimportScripts\b/,
+    name: 'importScripts',
     description: 'importScripts - dynamic script loading is blocked in sandbox',
   },
   {
-    pattern: /\beval\s*\(/,
+    name: 'eval',
     description: 'eval() - dynamic code execution is blocked in sandbox',
   },
   {
-    // Detect `new Function(...)` which allows arbitrary code execution.
-    // Uses word boundary + capital F to distinguish from regular function declarations.
-    pattern: /\bnew\s+Function\s*\(/,
+    name: 'Function',
     description: 'new Function() - dynamic code execution is blocked in sandbox',
   },
   {
-    // Detect `require(...)` calls which can load arbitrary Node.js modules.
-    // In bundled output, require() should never appear since esbuild resolves
-    // all imports. Its presence indicates an intentional bypass attempt.
-    pattern: /\brequire\s*\(/,
+    name: 'require',
     description: 'require() - dynamic module loading is blocked in sandbox',
-  },
-  {
-    // Detect dynamic `import(...)` calls (ES2020 dynamic imports).
-    // These can load modules at runtime, bypassing the whitelist.
-    // We match `import(` NOT preceded by a word char to avoid matching
-    // static import statements (which don't have parentheses).
-    pattern: /\bimport\s*\(/,
-    description: 'dynamic import() - dynamic module loading is blocked in sandbox',
   },
 ];
 
+const DYNAMIC_IMPORT_DESCRIPTION =
+  'dynamic import() - dynamic module loading is blocked in sandbox';
+const FORBIDDEN_API_NAMES = new Set(FORBIDDEN_API_RULES.map(rule => rule.name));
+const GLOBAL_OBJECT_NAMES = new Set(['globalThis', 'self', 'window']);
+
+function staticPropertyName(
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)) {
+    return node.argumentExpression.text;
+  }
+  return undefined;
+}
+
+function staticNamedPropertyName(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  if (
+    ts.isComputedPropertyName(name)
+    && ts.isStringLiteralLike(name.expression)
+  ) {
+    return name.expression.text;
+  }
+  return undefined;
+}
+
+function staticBindingPropertyName(element: ts.BindingElement): string | undefined {
+  const property = element.propertyName ?? (
+    ts.isIdentifier(element.name) ? element.name : undefined
+  );
+  return property ? staticNamedPropertyName(property) : undefined;
+}
+
+function unwrapParentheses(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
 /**
- * Check bundled code for forbidden API usage
+ * Check bundled JavaScript for sandbox-forbidden global APIs.
  *
- * Scans the entire bundled output (including inlined dependencies)
- * for patterns that indicate usage of APIs forbidden in the sandbox.
- *
- * @param code - Bundled JavaScript code to scan
- * @returns Array of violation descriptions (empty array if clean)
+ * TypeScript's binder distinguishes real global reads from local bindings, so
+ * comments, strings, property keys, and intentionally shadowed names are not
+ * violations. Static access through browser global objects is checked as well.
+ * Each API is reported at most once.
  */
 export function checkForbiddenApis(code: string): string[] {
-  const violations: string[] = [];
+  const sourceFile = ts.createSourceFile(
+    '__unzen_bundle__.js',
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const checker = createLexicalTypeChecker(sourceFile);
+  const foundApis = new Set<string>();
+  let foundDynamicImport = false;
 
-  for (const { pattern, description } of FORBIDDEN_PATTERNS) {
-    if (pattern.test(code)) {
-      violations.push(description);
+  const isUnboundGlobalObject = (expression: ts.Expression): boolean => {
+    const target = unwrapParentheses(expression);
+    return ts.isIdentifier(target)
+      && GLOBAL_OBJECT_NAMES.has(target.text)
+      && isUnboundGlobalReference(target, checker);
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      foundDynamicImport = true;
     }
-  }
 
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node))
+      && node.initializer
+      && ts.isObjectBindingPattern(node.name)
+      && isUnboundGlobalObject(node.initializer)
+    ) {
+      for (const element of node.name.elements) {
+        const name = staticBindingPropertyName(element);
+        if (name && FORBIDDEN_API_NAMES.has(name)) foundApis.add(name);
+      }
+    }
+
+    if (
+      ts.isBinaryExpression(node)
+      && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && isUnboundGlobalObject(node.right)
+    ) {
+      const target = unwrapParentheses(node.left);
+      if (ts.isObjectLiteralExpression(target)) {
+        for (const property of target.properties) {
+          const name = ts.isShorthandPropertyAssignment(property)
+            ? property.name.text
+            : ts.isPropertyAssignment(property)
+              ? staticNamedPropertyName(property.name)
+              : undefined;
+          if (name && FORBIDDEN_API_NAMES.has(name)) foundApis.add(name);
+        }
+      }
+    }
+
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
+      && isUnboundGlobalObject(node.expression)
+    ) {
+      const name = staticPropertyName(node);
+      if (name && FORBIDDEN_API_NAMES.has(name)) foundApis.add(name);
+    }
+
+    if (
+      ts.isIdentifier(node)
+      && FORBIDDEN_API_NAMES.has(node.text)
+      && isIdentifierReference(node)
+      && isUnboundGlobalReference(node, checker)
+    ) {
+      foundApis.add(node.text);
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+
+  const violations = FORBIDDEN_API_RULES
+    .filter(rule => foundApis.has(rule.name))
+    .map(rule => rule.description);
+  if (foundDynamicImport) violations.push(DYNAMIC_IMPORT_DESCRIPTION);
   return violations;
 }

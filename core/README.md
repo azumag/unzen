@@ -3,8 +3,9 @@
 サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
 QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行する。
 
-> **ステータス**: Phase 3 進行中。モジュールバンドラー、Vite/webpackの
-> コンパイル時関数抽出、Vite buildでの型定義生成 (`@unzen/bundler`) が稼働中。
+> **ステータス**: Phase 3 完了。モジュールバンドラー、Vite/webpackの
+> コンパイル時関数抽出、型定義生成、symbol/scopeベースの純粋性・禁止API検査
+> (`@unzen/bundler`) が稼働中。
 > ユニット・統合テストは `npm test`、ブラウザE2Eは `npm run e2e -w @unzen/demo` で通過状態を確認できる。
 
 ## コンセプト

@@ -19,7 +19,7 @@ Layer 2: esbuild onResolve プラグイン（解決時チェック）
   └── エイリアス・推移的依存を含む全てのモジュールをブロック可能
 
 Layer 3: 禁止API検出（バンドル後スキャン）
-  └── バンドルされた出力に禁止APIが含まれていないかスキャン
+  └── バンドル出力をAST + symbol/scopeで解析し、禁止global参照を検出
   └── fetch, WebSocket, eval, new Function, require, import() 等を検出
 ```
 
@@ -217,7 +217,10 @@ Node.js 組み込みモジュールかどうかを判定する。`node:` プレ�
 
 ### `checkForbiddenApis(code): string[]`
 
-コード内の禁止API使用を検出する。違反がなければ空配列を返す。
+バンドル済みJavaScriptをTypeScript ASTとsymbol/scopeで解析し、禁止APIのglobal参照を
+検出する。`globalThis` / `self` / `window`経由の静的property accessと分割代入にも対応し、
+コメント・文字列・通常オブジェクトの同名property・local shadowingは無視する。同じAPIは
+一度だけ報告し、違反がなければ空配列を返す。
 
 ### `DEFAULT_ALLOWED_MODULES`
 
@@ -252,7 +255,7 @@ loader callbackへ渡す。
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
 3. esbuild でバンドルする（IIFE形式、ES2018ターゲット、ブラウザプラットフォーム）
    - `onResolve` プラグインで全モジュール解決を検証する
-4. バンドル出力に禁止APIがないかスキャンする
+4. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
 5. run() 関数を抽出可能な形に変換する
 
 ## テスト
@@ -270,8 +273,11 @@ npx vitest run
 - inline `define()`の純粋性検査はASTとsymbol/scopeを使うため、コメント・文字列やlocal
   shadowingをAPI使用とは判定しない。ただしaliasを介した呼び出しや動的に構築したpropertyを
   データフロー追跡するものではない。alias経由の入力mutationも同じ制限を持つ
-- `bundle()`のバンドル後禁止API検出と`defineRaw()`のruntime警告は引き続き正規表現ベースの
-  defense-in-depthであり、コメント・文字列を含む可能性がある
+- `bundle()`の禁止API検出はAST + symbol/scopeベースで、禁止global自身をaliasへ代入する
+  参照も検出する。ただしglobal objectをいったん別名へ代入した後のproperty accessや、動的に
+  組み立てたproperty名を追跡するデータフロー解析ではない
+- `defineRaw()`のruntime警告は引き続き正規表現ベースのdefense-in-depthであり、コメント・
+  文字列を含む可能性がある
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
 - compile-time抽出はinline関数を文字列化するが、クロージャ値やimportを自動bundleしない

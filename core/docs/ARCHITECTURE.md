@@ -665,7 +665,7 @@ TypeScript source
 - webpack loaderはESM/CJS両方で配布し、raw TypeScriptを読むためloader chainの
   最初（`use`配列の右端）に置く
 - AST変換はクロージャ値を埋め込まない。外部依存を含むコードは既存の
-  `bundle()` + module whitelist + forbidden API scanを使用する
+  `bundle()` + module whitelist + AST/symbol/scope禁止API scanを使用する
 - Viteの`declarationFile`指定時は、重複名を位置付きerrorにし、生成された
   `UnzenFunctions`を`UnzenClient<UnzenFunctions>`へ渡してcall境界を型付けする。
   webpack loaderはmodule単位の変換だけを行い、宣言集約は行わない

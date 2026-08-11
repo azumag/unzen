@@ -750,6 +750,7 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 - [x] TypeScript型定義の自動生成 (Vite build asset + typed UnzenClient schema)
 - [x] 診断情報API (実行場所・時間の可視化)
 - [x] 純粋関数チェッカー (symbol/scopeベースの定義時静的解析)
+- [x] バンドル後禁止APIチェッカー (AST + symbol/scopeベースのglobal参照解析)
 
 ---
 

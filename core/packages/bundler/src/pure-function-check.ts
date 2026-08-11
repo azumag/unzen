@@ -1,6 +1,12 @@
 /** Scope-aware purity checks for functions extracted into an isolated runtime. */
 
 import ts from 'typescript';
+import {
+  createLexicalTypeChecker,
+  isIdentifierReference,
+  isWithin,
+  symbolForReference,
+} from './lexical-scope';
 
 type ExtractableFunction = ts.ArrowFunction | ts.FunctionExpression;
 
@@ -109,68 +115,6 @@ const FORBIDDEN_GLOBALS = new Set([
   'window',
 ]);
 
-function createLexicalTypeChecker(sourceFile: ts.SourceFile): ts.TypeChecker {
-  const compilerOptions: ts.CompilerOptions = {
-    allowJs: true,
-    checkJs: false,
-    jsx: ts.JsxEmit.Preserve,
-    module: ts.ModuleKind.ESNext,
-    noLib: true,
-    noResolve: true,
-    target: ts.ScriptTarget.Latest,
-  };
-  const canonicalFileName = (fileName: string): string => (
-    ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase()
-  );
-  const rootName = canonicalFileName(sourceFile.fileName);
-
-  // A no-lib, no-resolve Program runs TypeScript's binder without touching the
-  // application graph. Its symbols give us production-grade lexical scope
-  // resolution (including block shadowing, catch bindings, and function names)
-  // while keeping a Vite transform local and deterministic.
-  const host: ts.CompilerHost = {
-    fileExists: (fileName) => canonicalFileName(fileName) === rootName,
-    getCanonicalFileName: canonicalFileName,
-    getCurrentDirectory: () => '',
-    getDefaultLibFileName: () => 'lib.d.ts',
-    getDirectories: () => [],
-    getNewLine: () => '\n',
-    getSourceFile: (fileName) => (
-      canonicalFileName(fileName) === rootName ? sourceFile : undefined
-    ),
-    readFile: (fileName) => (
-      canonicalFileName(fileName) === rootName ? sourceFile.text : undefined
-    ),
-    useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
-    writeFile: () => undefined,
-  };
-  const program = ts.createProgram({
-    rootNames: [sourceFile.fileName],
-    options: compilerOptions,
-    host,
-  });
-  return program.getTypeChecker();
-}
-
-function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
-  let current: ts.Node | undefined = node;
-  while (current) {
-    if (current === ancestor) return true;
-    current = current.parent;
-  }
-  return false;
-}
-
-function symbolForReference(node: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
-  if (ts.isShorthandPropertyAssignment(node.parent)) {
-    // getSymbolAtLocation() returns the synthesized object-property symbol for
-    // `{ value }`, not the lexical `value` read. Ask the checker for the value
-    // symbol explicitly so an outer capture cannot masquerade as a local key.
-    return checker.getShorthandAssignmentValueSymbol(node.parent);
-  }
-  return checker.getSymbolAtLocation(node);
-}
-
 function isLocalReference(
   node: ts.Identifier,
   functionNode: ExtractableFunction,
@@ -206,26 +150,6 @@ function parameterForReference(
     if (parameter) return parameter;
   }
   return undefined;
-}
-
-function isIdentifierReference(node: ts.Identifier): boolean {
-  const parent = node.parent;
-
-  // Most declaration/property nodes expose their syntactic key as `name`.
-  // Those identifiers do not read a runtime binding. Shorthand properties are
-  // deliberately excluded because `{ value }` both names a key and reads value.
-  if (
-    !ts.isShorthandPropertyAssignment(parent)
-    && 'name' in parent
-    && (parent as ts.NamedDeclaration).name === node
-  ) {
-    return false;
-  }
-  if (ts.isBindingElement(parent) && parent.propertyName === node) return false;
-  if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
-  if (ts.isLabeledStatement(parent) && parent.label === node) return false;
-  if (ts.isBreakOrContinueStatement(parent) && parent.label === node) return false;
-  return true;
 }
 
 function hasArgumentsBinding(node: ts.Identifier, functionNode: ExtractableFunction): boolean {
