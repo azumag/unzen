@@ -1473,6 +1473,66 @@ describe('WebWorkerSandboxExecutor', () => {
       expect(factoryCalls).toBe(2);
       executor.dispose();
     });
+
+    it('contains malformed worker instances and cleanup faults without a stale timeout', async () => {
+      let factoryCalls = 0;
+      const brokenWorker = {
+        onmessage: null,
+        set onerror(_handler: unknown) {
+          throw new Error('handler assignment failed');
+        },
+        postMessage() {},
+        terminate() {
+          throw new Error('termination failed');
+        },
+      } as unknown as Worker;
+      const readyHandlerTarget = createAutoRespondingMockWorker();
+      let readyHandlerAssignments = 0;
+      const readyHandlerFailure = new Proxy(readyHandlerTarget as unknown as Worker, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+        set(target, property, value) {
+          if (property === 'onmessage' && value !== null && ++readyHandlerAssignments === 2) {
+            throw new Error('ready handler assignment failed');
+          }
+          return Reflect.set(target, property, value, target);
+        },
+      });
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        initTimeoutMs: 20,
+        createWorker: () => {
+          factoryCalls++;
+          if (factoryCalls === 1) return null as unknown as Worker;
+          if (factoryCalls === 2) return brokenWorker;
+          if (factoryCalls === 3) return readyHandlerFailure;
+          return createAutoRespondingMockWorker() as unknown as Worker;
+        },
+      });
+
+      await expect(executor.execute('function run() { return 1; }', []))
+        .rejects.toThrow('createWorker must return a Worker-like object');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(executor.diagnostics.initTimeoutCount).toBe(0);
+
+      await expect(executor.execute('function run() { return 2; }', []))
+        .rejects.toThrow('Failed to configure Worker: handler assignment failed');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(executor.diagnostics.initTimeoutCount).toBe(0);
+
+      await expect(executor.execute('function run() { return 3; }', []))
+        .rejects.toThrow('Failed to configure Worker: ready handler assignment failed');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(executor.diagnostics.initTimeoutCount).toBe(0);
+
+      await expect(executor.execute('function run() { return 4; }', []))
+        .resolves.toBe('__mock_result__');
+      expect(executor.diagnostics.initFailureCount).toBe(3);
+      expect(factoryCalls).toBe(4);
+      expect(() => executor.dispose()).not.toThrow();
+    });
   });
 
   describe('generation lifecycle', () => {

@@ -78,7 +78,9 @@ import {
   type MoonbitExecuteResultMessage,
 } from './worker/moonbit-worker-protocol';
 import {
+  assertWorkerInstance,
   assertValidHardKillDelay,
+  detachAndTerminateWorker,
   normalizeHardKillMultiplier,
   normalizeQueueSize,
   normalizeTimerMs,
@@ -738,6 +740,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       let worker: Worker;
       try {
         worker = this.createWorkerFn(this.workerUrl);
+        assertWorkerInstance(worker);
       } catch (error) {
         this.diagnosticsState.initFailureCount++;
         this.resetToEmptyIfNotDisposed();
@@ -770,7 +773,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         reject(error);
       };
 
-      worker.onerror = (event: ErrorEvent) => {
+      const handleWorkerError = (event: ErrorEvent) => {
         if (settled) return;
         settled = true;
         clearTimeout(initTimer);
@@ -783,7 +786,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         ));
       };
 
-      worker.onmessage = (event: MessageEvent<unknown>) => {
+      const handleWorkerMessage = (event: MessageEvent<unknown>) => {
         const validated = validateMoonbitWorkerResponse(event.data);
         if (!validated.ok) {
           this.diagnosticsState.malformedResponseCount++;
@@ -807,7 +810,17 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         clearTimeout(initTimer);
         this.initReject = null;
         if (msg.success) {
-          this.setupMessageHandler(generationId, worker);
+          try {
+            this.setupMessageHandler(generationId, worker);
+          } catch (error) {
+            this.diagnosticsState.initFailureCount++;
+            this.teardownWorker();
+            this.resetToEmptyIfNotDisposed();
+            reject(new UnzenRuntimeError(
+              `Failed to configure Worker: ${error instanceof Error ? error.message : String(error)}`,
+            ));
+            return;
+          }
           resolve();
         } else {
           this.diagnosticsState.initFailureCount++;
@@ -816,6 +829,25 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
           reject(new UnzenRuntimeError(msg.error ?? 'MoonBit worker initialization failed'));
         }
       };
+
+      try {
+        worker.onerror = handleWorkerError;
+        if (settled) return;
+        worker.onmessage = handleWorkerMessage;
+        if (settled) return;
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(initTimer);
+        this.diagnosticsState.initFailureCount++;
+        this.initReject = null;
+        this.teardownWorker();
+        this.resetToEmptyIfNotDisposed();
+        reject(new UnzenRuntimeError(
+          `Failed to configure Worker: ${error instanceof Error ? error.message : String(error)}`,
+        ));
+        return;
+      }
 
       try {
         worker.postMessage(createMoonbitInitMessage(
@@ -1026,12 +1058,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   }
 
   private teardownWorker(): void {
-    if (this.worker) {
-      this.worker.onmessage = null;
-      this.worker.onerror = null;
-      this.worker.terminate();
-      this.worker = null;
-    }
+    const worker = this.worker;
+    this.worker = null;
+    if (worker) detachAndTerminateWorker(worker);
     this.initReject = null;
     this.initPromise = null;
   }

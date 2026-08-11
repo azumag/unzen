@@ -938,6 +938,70 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('contains malformed worker instances and cleanup faults without a stale timeout', async () => {
+    const bytes = fibonacciBytes.buffer.slice(
+      fibonacciBytes.byteOffset,
+      fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+    ) as ArrayBuffer;
+    let factoryCalls = 0;
+    const brokenWorker = {
+      onmessage: null,
+      set onerror(_handler: unknown) {
+        throw new Error('handler assignment failed');
+      },
+      postMessage() {},
+      terminate() {
+        throw new Error('termination failed');
+      },
+    } as unknown as Worker;
+    const readyHandlerTarget = createRealWorker();
+    let readyHandlerAssignments = 0;
+    const readyHandlerFailure = new Proxy(readyHandlerTarget as unknown as Worker, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+      set(target, property, value) {
+        if (property === 'onmessage' && value !== null && ++readyHandlerAssignments === 2) {
+          throw new Error('ready handler assignment failed');
+        }
+        return Reflect.set(target, property, value, target);
+      },
+    });
+    const executor = new MoonBitWorkerSandboxExecutor({
+      workerUrl: '/moonbit-worker.js',
+      initTimeoutMs: 20,
+      createWorker: () => {
+        factoryCalls++;
+        if (factoryCalls === 1) return null as unknown as Worker;
+        if (factoryCalls === 2) return brokenWorker;
+        if (factoryCalls === 3) return readyHandlerFailure;
+        return createRealWorker() as unknown as Worker;
+      },
+    });
+
+    await expect(executor.execute(bytes, [10], { exportName: 'fibonacci' }))
+      .rejects.toThrow('createWorker must return a Worker-like object');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(executor.diagnostics.initTimeoutCount).toBe(0);
+
+    await expect(executor.execute(bytes, [10], { exportName: 'fibonacci' }))
+      .rejects.toThrow('Failed to configure Worker: handler assignment failed');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(executor.diagnostics.initTimeoutCount).toBe(0);
+
+    await expect(executor.execute(bytes, [10], { exportName: 'fibonacci' }))
+      .rejects.toThrow('Failed to configure Worker: ready handler assignment failed');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(executor.diagnostics.initTimeoutCount).toBe(0);
+
+    await expect(executor.execute(bytes, [10], { exportName: 'fibonacci' }))
+      .resolves.toBe(55);
+    expect(executor.diagnostics.initFailureCount).toBe(3);
+    expect(factoryCalls).toBe(4);
+    expect(() => executor.dispose()).not.toThrow();
+  });
+
   it('settles immediately when the execute postMessage throws, then continues', async () => {
     mockFetchBytes();
     const worker = createRealWorker();

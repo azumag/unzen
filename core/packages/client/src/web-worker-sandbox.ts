@@ -64,7 +64,9 @@ import {
   type ExecuteResultMessage,
 } from './worker/worker-protocol';
 import {
+  assertWorkerInstance,
   assertValidHardKillDelay,
+  detachAndTerminateWorker,
   normalizeHardKillMultiplier,
   normalizeQueueSize,
   normalizeTimerMs,
@@ -545,6 +547,7 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       let worker: Worker;
       try {
         worker = this.createWorkerFn(this.workerUrl);
+        assertWorkerInstance(worker);
       } catch (error) {
         this.diagnosticsState.initFailureCount++;
         this.resetToEmptyIfNotDisposed();
@@ -581,7 +584,7 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       };
 
       // Handle fatal worker errors (script load failure, CSP violation, Wasm compile crash).
-      worker.onerror = (event: ErrorEvent) => {
+      const handleWorkerError = (event: ErrorEvent) => {
         if (settled) return;
         settled = true;
         clearTimeout(initTimer);
@@ -596,7 +599,7 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
 
       // Validate the init response against the versioned schema and the
       // generation id before trusting it.
-      worker.onmessage = (event: MessageEvent<unknown>) => {
+      const handleWorkerMessage = (event: MessageEvent<unknown>) => {
         const validated = validateWorkerResponse(event.data);
         if (!validated.ok) {
           // Malformed response during init → treat as an init failure.
@@ -628,7 +631,17 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
 
         if (msg.success) {
           // Init succeeded — switch to the execution/cancel message handler.
-          this.setupMessageHandler(generationId, worker);
+          try {
+            this.setupMessageHandler(generationId, worker);
+          } catch (error) {
+            this.diagnosticsState.initFailureCount++;
+            this.teardownWorker();
+            this.resetToEmptyIfNotDisposed();
+            reject(new UnzenRuntimeError(
+              `Failed to configure Worker: ${error instanceof Error ? error.message : String(error)}`,
+            ));
+            return;
+          }
           resolve();
         } else {
           // Init failed (e.g. Wasm load error inside the worker).
@@ -638,6 +651,25 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
           reject(new UnzenRuntimeError(msg.error ?? 'QuickJS Wasm initialization failed'));
         }
       };
+
+      try {
+        worker.onerror = handleWorkerError;
+        if (settled) return;
+        worker.onmessage = handleWorkerMessage;
+        if (settled) return;
+      } catch (error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(initTimer);
+        this.diagnosticsState.initFailureCount++;
+        this.initReject = null;
+        this.teardownWorker();
+        this.resetToEmptyIfNotDisposed();
+        reject(new UnzenRuntimeError(
+          `Failed to configure Worker: ${error instanceof Error ? error.message : String(error)}`,
+        ));
+        return;
+      }
 
       try {
         worker.postMessage(createInitMessage(generationId));
@@ -1160,12 +1192,9 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
    * Does NOT mutate `state` — callers own the state transition.
    */
   private teardownWorker(): void {
-    if (this.worker) {
-      this.worker.onmessage = null;
-      this.worker.onerror = null;
-      this.worker.terminate();
-      this.worker = null;
-    }
+    const worker = this.worker;
+    this.worker = null;
+    if (worker) detachAndTerminateWorker(worker);
     this.initReject = null;
     this.initPromise = null;
   }

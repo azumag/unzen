@@ -94,3 +94,42 @@ export function normalizeWorkerFactory(
   }
   return value as WorkerFactory;
 }
+
+/** Validate the minimal Worker surface used by the executors. */
+export function assertWorkerInstance(value: unknown): asserts value is Worker {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
+    throw new TypeError('createWorker must return a Worker-like object');
+  }
+
+  let postMessage: unknown;
+  let terminate: unknown;
+  try {
+    postMessage = (value as { postMessage?: unknown }).postMessage;
+    terminate = (value as { terminate?: unknown }).terminate;
+  } catch {
+    throw new TypeError('createWorker result could not be inspected');
+  }
+
+  if (typeof postMessage !== 'function' || typeof terminate !== 'function') {
+    throw new TypeError('createWorker must return a Worker-like object');
+  }
+}
+
+/** Detach caller-owned handlers and terminate without letting cleanup faults escape. */
+export function detachAndTerminateWorker(worker: Worker): void {
+  try {
+    worker.onmessage = null;
+  } catch {
+    // A custom Worker implementation must not prevent the remaining cleanup.
+  }
+  try {
+    worker.onerror = null;
+  } catch {
+    // A custom Worker implementation must not prevent termination.
+  }
+  try {
+    worker.terminate();
+  } catch {
+    // Cleanup is best-effort; the executor still has to settle its callers.
+  }
+}
