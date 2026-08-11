@@ -282,7 +282,7 @@ export interface UnzenClientOptions {
    * URL to the QuickJS worker script (e.g., '/worker.js').
    * When provided, uses WebWorkerSandboxExecutor for browser-side execution
    * with 4-layer isolation (Web Worker + Wasm + QuickJS + API restrictions).
-   * When omitted, falls back to MockSandboxExecutor (NOT secure, for testing only).
+   * When omitted, a custom SandboxExecutor must be provided via `sandbox`.
    */
   workerUrl?: string;
 

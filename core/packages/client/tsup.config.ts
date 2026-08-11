@@ -33,7 +33,11 @@ export default defineConfig([
   {
     entry: { 'index.browser': 'src/index.browser.ts' },
     format: ['esm'],
-    dts: false,
+    dts: {
+      compilerOptions: {
+        skipLibCheck: true,
+      },
+    },
     clean: false,
     sourcemap: true,
     splitting: false,

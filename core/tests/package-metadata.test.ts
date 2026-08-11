@@ -22,4 +22,12 @@ describe('published package metadata', () => {
         .toBe(sharedVersion);
     }
   });
+
+  it('publishes a browser-specific client declaration entry', async () => {
+    const client = await readPackage('client');
+    const exports = client.exports as Record<string, { types?: unknown }>;
+
+    expect(exports['.']?.types).toBe('./dist/index.d.ts');
+    expect(exports['./browser']?.types).toBe('./dist/index.browser.d.ts');
+  });
 });
