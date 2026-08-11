@@ -200,7 +200,8 @@ Error
 - fallback request は UTF-8 JSON 4 MiB、client の response body は manifest 1 MiB、
   function code / MoonBit module 16 MiB、fallback response 16 MiB を上限とする。送信前の
   serialized request と受信時の宣言 `Content-Length` を検証し、stream 実 byte 数も読みながら
-  検証して、上限超過時は body を cancel する。server は request 超過を構造化 413 で返す
+  検証して、上限超過時は body を cancel する。server は request 超過を構造化 413 で返す。
+  fallback result も一度だけ JSON 化し、過大または JSON 化不能なら構造化 422 を返す
 - server 登録境界は raw source の UTF-8 byte 数と MoonBit file の stat/captured byte 数を
   16 MiB に制限し、超過時は version 採番・hash・registry 変更前に拒否する。code response は
   captured payload と一致する `Content-Length` を返す。shared definition validator と公開

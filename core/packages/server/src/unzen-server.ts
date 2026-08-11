@@ -23,7 +23,6 @@ import type {
 } from '@unzen/shared';
 import {
   createManifestResponse,
-  createExecutionResponse,
   MAX_EXECUTION_ARGUMENTS,
   MAX_FUNCTION_PAYLOAD_BYTES,
   MAX_EXECUTION_REQUEST_BYTES,
@@ -40,6 +39,7 @@ import { QuickJSRuntime } from './quickjs-runtime';
 import { readBoundedJsonRequest, RequestBodyLimitError } from './request-body';
 import { normalizeUnzenBaseUrl } from './base-url';
 import { matchesIfNoneMatch } from './etag';
+import { createExecutionHttpResponse } from './execution-response';
 
 /**
  * Configuration options for UnzenServer
@@ -550,11 +550,11 @@ export class UnzenServer {
       const fn = this.registry.get(name);
 
       if (!fn) {
-        return c.json(
-          createExecutionResponse({
+        return createExecutionHttpResponse(
+          {
             success: false,
             error: 'Function not found',
-          }),
+          },
           404
         );
       }
@@ -563,11 +563,11 @@ export class UnzenServer {
       // functions like password hashing) execute in the browser only — the
       // server never receives their inputs or provides fallback execution.
       if (fn.noFallback || fn.runtime === 'moonbit') {
-        return c.json(
-          createExecutionResponse({
+        return createExecutionHttpResponse(
+          {
             success: false,
             error: 'This function requires browser execution (server fallback is disabled)',
-          }),
+          },
           501
         );
       }
@@ -583,19 +583,19 @@ export class UnzenServer {
           );
         } catch (error) {
           if (error instanceof RequestBodyLimitError) {
-            return c.json(
-              createExecutionResponse({
+            return createExecutionHttpResponse(
+              {
                 success: false,
                 error: error.message,
-              }),
+              },
               413,
             );
           }
-          return c.json(
-            createExecutionResponse({
+          return createExecutionHttpResponse(
+            {
               success: false,
               error: 'Invalid JSON in request body',
-            }),
+            },
             400
           );
         }
@@ -609,22 +609,22 @@ export class UnzenServer {
           || Array.isArray(body)
           || !Array.isArray((body as Record<string, unknown>).args)
         ) {
-          return c.json(
-            createExecutionResponse({
+          return createExecutionHttpResponse(
+            {
               success: false,
               error: 'Request body must contain "args" array',
-            }),
+            },
             400
           );
         }
         const args = (body as { args: unknown[] }).args;
         // The shared bound is generous; no legitimate function needs more.
         if (args.length > MAX_EXECUTION_ARGUMENTS) {
-          return c.json(
-            createExecutionResponse({
+          return createExecutionHttpResponse(
+            {
               success: false,
               error: `Too many arguments (max ${MAX_EXECUTION_ARGUMENTS})`,
-            }),
+            },
             400
           );
         }
@@ -636,11 +636,11 @@ export class UnzenServer {
           fn.timeout !== undefined ? { timeout: fn.timeout } : undefined
         );
 
-        return c.json(
-          createExecutionResponse({
+        return createExecutionHttpResponse(
+          {
             success: true,
             result,
-          })
+          },
         );
       } catch (error) {
         // Distinguish between function errors and runtime errors
@@ -669,12 +669,12 @@ export class UnzenServer {
           statusCode = 500; // Server error - unknown issue
         }
 
-        return c.json(
-          createExecutionResponse({
+        return createExecutionHttpResponse(
+          {
             success: false,
             error: errorMessage,
-          }),
-          statusCode as 400 | 500
+          },
+          statusCode,
         );
       }
     });
