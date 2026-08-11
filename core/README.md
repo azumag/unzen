@@ -385,7 +385,8 @@ timer値は1〜2,147,483,647msの整数、`maxQueueSize`は0以上のsafe intege
 `hardKillMultiplier`は正の有限値で、`timeout`との積もtimer範囲内である必要がある。
 QuickJS executor の直接 `execute()` は非空 code と最大128引数を受け付け、worker 初期化・
 queue 登録前に indexed copy と JSON round-trip で引数を所有する。循環値や BigInt など
-JSON 化できない入力は worker を作らず `UnzenFunctionError` で拒否する。
+JSON 化できない入力は worker を作らず `UnzenFunctionError` で拒否する。per-call option bag と
+`signal` も code/args より先に一度だけ検証・snapshot し、Mock と Worker で同じ error 契約にする。
 
 ## 永続 code / Wasm キャッシュ
 

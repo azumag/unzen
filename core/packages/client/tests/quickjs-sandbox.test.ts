@@ -18,7 +18,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { MAX_EXECUTION_ARGUMENTS, UnzenFunctionError } from '@unzen/shared';
+import {
+  MAX_EXECUTION_ARGUMENTS,
+  UnzenCancelledError,
+  UnzenFunctionError,
+} from '@unzen/shared';
 import { MockSandboxExecutor } from '../src/quickjs-sandbox';
 
 describe('MockSandboxExecutor', () => {
@@ -33,6 +37,46 @@ describe('MockSandboxExecutor', () => {
     const result = await executor.execute(code, [1, 2]);
 
     expect(result).toBe(3);
+    executor.dispose();
+  });
+
+  it('rejects invalid execution options before reading arguments', async () => {
+    const executor = new MockSandboxExecutor();
+    let lengthReads = 0;
+    const args = new Proxy([], {
+      get(target, property, receiver) {
+        if (property === 'length') lengthReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await expect(executor.execute(
+      'function run() { return 1; }',
+      args,
+      { signal: { aborted: false } } as never,
+    )).rejects.toThrow(UnzenFunctionError);
+    expect(lengthReads).toBe(0);
+    executor.dispose();
+  });
+
+  it('rejects a pre-aborted signal before reading arguments', async () => {
+    const executor = new MockSandboxExecutor();
+    let lengthReads = 0;
+    const args = new Proxy([], {
+      get(target, property, receiver) {
+        if (property === 'length') lengthReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(executor.execute(
+      'function run() { return 1; }',
+      args,
+      { signal: controller.signal },
+    )).rejects.toThrow(UnzenCancelledError);
+    expect(lengthReads).toBe(0);
     executor.dispose();
   });
 

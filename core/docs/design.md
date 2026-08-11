@@ -288,7 +288,8 @@ JavaScriptのデータとWasm関数間のデータ受け渡し方法。
 QuickJSは完全なJSエンジンであるため、マーシャリングは不要。
 引数はJSON文字列としてQuickJSに渡し、QuickJS内部でパースされる。
 client / Mock executor は非同期初期化やqueue登録より前に最大128件の引数を index 順に読み、
-JSON round-trip した所有 snapshot を作る。循環値や BigInt は `UnzenFunctionError` で拒否する。
+JSON round-trip した所有 snapshot を作る。per-call option bag と `signal` はその前に一度だけ
+検証・snapshot する。循環値や BigInt は `UnzenFunctionError` で拒否する。
 
 ```typescript
 // Client SDK内部の実装イメージ

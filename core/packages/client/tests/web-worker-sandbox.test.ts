@@ -211,6 +211,33 @@ describe('WebWorkerSandboxExecutor', () => {
       executor.dispose();
     });
 
+    it('rejects invalid execution options before reading args or reserving the worker', async () => {
+      const factory = vi.fn();
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: factory,
+      });
+      let lengthReads = 0;
+      const args = new Proxy([], {
+        get(target, property, receiver) {
+          if (property === 'length') lengthReads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      await expect(executor.execute(
+        'function run() { return 1; }',
+        args,
+        { signal: { aborted: false } } as never,
+      )).rejects.toThrow(UnzenFunctionError);
+      expect(lengthReads).toBe(0);
+      expect(factory).not.toHaveBeenCalled();
+
+      // Invalid input must not leave a phantom running request behind.
+      expect((executor as unknown as { runningRequest: unknown }).runningRequest).toBeNull();
+      executor.dispose();
+    });
+
     it('should snapshot JSON arguments before asynchronous worker initialization', async () => {
       const worker = new MockWorker();
       let postedArgs: unknown[] | undefined;

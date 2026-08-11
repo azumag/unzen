@@ -510,7 +510,7 @@ interface SandboxExecutor {
 | 初期化タイムアウト | `initTimeoutMs` (既定10000) 以内に `init-result` が返らない場合、init waiter を `RUNTIME_ERROR` で settle し Worker を終了 |
 | キャンセル | `execute(code, args, { signal })` で AbortSignal を受け付ける。queued 中は queue から除去して即時 `UnzenCancelledError` (`CANCELLED`) で reject。実行中は worker protocol へ cancel を送信し、`cancelAckTimeoutMs` 内に acknowledgement がなければ generation を強制終了 |
 | Constructor境界 | QuickJS / MoonBit worker executor とも、空`workerUrl`、非関数`createWorker`、非正・非整数・2,147,483,647ms超のtimer、0未満/非整数のqueue、非有限のmultiplier、timer範囲外になるhard-kill積を同期的に拒否 |
-| QuickJS call境界 | 非空code、最大128引数、JSON化可能性をworker生成前に検証する。引数はiteratorを呼ばないindexed copy後にJSON round-tripし、queue/init待機中のcaller mutationとworker側serialization失敗を防ぐ。Mock executorも同じ契約 |
+| QuickJS call境界 | per-call option bag / signal、非空code、最大128引数、JSON化可能性をworker生成前に検証する。optionは一度だけ読み、引数はiteratorを呼ばないindexed copy後にJSON round-tripし、queue/init待機中のcaller mutationとworker側serialization失敗を防ぐ。Mock executorも同じ契約 |
 | Generation 管理 | Worker を (再)生成するたびに `generationId` を採番。worker はrequestのprotocol versionと正のsafe generationをstate変更/実行前に検証し、mainは全responseのversion / generation / success-error envelopeを検証する。旧generationのlate response・duplicate completion・malformed responseを拒否してdiagnosticsに集計 |
 | Generation-fatal 失敗 | hard timeout / worker crash / protocol violation は generation-fatal。実行中 request を即時 settle → Worker 終了 → queue の残りを新 generation で再開 (各 request の AbortSignal を再確認) |
 | エラー分類 | `function_error` → `UnzenFunctionError` (fallback なし)、`runtime_error` → `UnzenRuntimeError` (fallback あり)、キャンセル → `UnzenCancelledError` (fallback なし) |

@@ -1,8 +1,41 @@
 import { MAX_EXECUTION_ARGUMENTS } from '@unzen/shared';
+import { snapshotAbortSignalInput } from './abort';
 
 export interface QuickJsCallSnapshot {
   readonly code: string;
   readonly args: unknown[];
+}
+
+export interface QuickJsExecutionOptionsSnapshot {
+  readonly signal?: AbortSignal;
+  readonly signalInitiallyAborted: boolean;
+}
+
+/** Read the QuickJS per-call option bag once before code/argument work. */
+export function snapshotQuickJsExecutionOptions(
+  value: unknown,
+): QuickJsExecutionOptionsSnapshot {
+  if (value === undefined) return { signalInitiallyAborted: false };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('QuickJS execution options must be an object');
+  }
+
+  let signal: unknown;
+  try {
+    signal = (value as Record<string, unknown>).signal;
+  } catch {
+    throw new Error('QuickJS execution options could not be read');
+  }
+
+  try {
+    const snapshot = snapshotAbortSignalInput(signal);
+    return {
+      signal: snapshot.signal,
+      signalInitiallyAborted: snapshot.initiallyAborted,
+    };
+  } catch {
+    throw new Error('QuickJS execution signal must be an AbortSignal');
+  }
 }
 
 /**

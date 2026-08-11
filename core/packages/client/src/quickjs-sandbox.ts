@@ -24,9 +24,12 @@ import {
   UnzenFunctionError,
   assertSynchronousUnzenResult,
 } from '@unzen/shared';
-import { snapshotQuickJsCall } from './quickjs-call';
+import {
+  snapshotQuickJsCall,
+  snapshotQuickJsExecutionOptions,
+} from './quickjs-call';
 import { createContext, Script } from 'vm';
-import type { SandboxExecutor } from './sandbox-executor';
+import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 
 // Re-export SandboxExecutor from its own file for backwards compatibility.
 // The interface is in a separate file so browser entry points can import it
@@ -81,12 +84,17 @@ export class MockSandboxExecutor implements SandboxExecutor {
   async execute(
     code: string,
     args: unknown[],
-    options?: { signal?: AbortSignal },
+    options?: ExecuteOptions,
   ): Promise<unknown> {
+    let executionOptions: ReturnType<typeof snapshotQuickJsExecutionOptions>;
+    try {
+      executionOptions = snapshotQuickJsExecutionOptions(options);
+    } catch (error) {
+      throw new UnzenFunctionError(error instanceof Error ? error.message : String(error));
+    }
     // Honour caller cancellation even for the synchronous mock executor:
     // a request that was already aborted must not start executing.
-    const signal = options?.signal;
-    if (signal?.aborted) {
+    if (executionOptions.signalInitiallyAborted) {
       throw new UnzenCancelledError('Execution cancelled by caller');
     }
     try {

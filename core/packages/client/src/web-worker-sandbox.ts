@@ -71,7 +71,10 @@ import {
   normalizeWorkerFactory,
   normalizeWorkerUrl,
 } from './worker-executor-options';
-import { snapshotQuickJsCall } from './quickjs-call';
+import {
+  snapshotQuickJsCall,
+  snapshotQuickJsExecutionOptions,
+} from './quickjs-call';
 
 /**
  * Configuration options for WebWorkerSandboxExecutor
@@ -345,10 +348,16 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
-    const signal = options?.signal;
+    let executionOptions: ReturnType<typeof snapshotQuickJsExecutionOptions>;
+    try {
+      executionOptions = snapshotQuickJsExecutionOptions(options);
+    } catch (error) {
+      throw new UnzenFunctionError(error instanceof Error ? error.message : String(error));
+    }
+    const signal = executionOptions.signal;
     // Reject immediately if the caller already aborted before calling.
     // Cancellation is a deliberate caller decision, never a runtime error.
-    if (signal?.aborted) {
+    if (executionOptions.signalInitiallyAborted) {
       this.diagnosticsState.cancelCount++;
       throw new UnzenCancelledError('Execution cancelled by caller');
     }
