@@ -283,7 +283,8 @@ server.defineRaw('add', `(a, b) => a + b`);
       → 制約: undefined は null に変換される (JSON.stringify の仕様)
    f. setInterruptHandler → 50msタイムアウト設定
       → タイムアウト検出: interruptHandler + 'interrupted'文字列チェックの二重判定
-   g. evalCode('run(...globalThis.__args__)') → 実行
+   g. `SANDBOX_SYNCHRONOUS_EXECUTION`で`run(...globalThis.__args__)`を実行
+      → Promise/thenableまたはiterator/generator結果を拒否
    h. dump(result) → JS値に変換
    i. context.dispose() → メモリ解放 (finally)
 ```
@@ -300,6 +301,7 @@ server.defineRaw('add', `(a, b) => a + b`);
 | Reflect禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
 | WeakRef / FinalizationRegistry禁止 | 存在時undefined化 | `Object.defineProperty(configurable:false)` |
 | WebAssembly禁止 | 存在時undefined化 | `Object.defineProperty(configurable:false)` |
+| 戻り値契約 | 同期materialized値のみ | shared実行guardでthenable/iteratorを拒否 |
 | プロトタイプ凍結 | 6種類 | `Object.freeze()` (Object/Array/String/Number/Boolean/RegExp) |
 | コンテキスト隔離 | 毎回新規 | `this.quickJS.newContext()` |
 
@@ -442,6 +444,7 @@ interface SandboxExecutor {
 **規約**:
 - コードは `function run(...args) { ... }` を定義すること
 - executor は `run(...args)` を呼び出して結果を返す
+- 関数は同期的にmaterializedな値を返すこと。Promise/thenableとiterator/generator結果は拒否する
 - 実行エラーは `UnzenFunctionError` としてスローする
 - `dispose()` は冪等である (複数回呼び出しても安全)
 
@@ -449,7 +452,7 @@ interface SandboxExecutor {
 - Node.js `vm` モジュールで実行する
 - セキュリティはない (テスト用のみ)
 - 最小限のグローバルを提供する (Array, Object, String, Number, Boolean, Math, JSON, Error)
-- **同期関数のみサポートする** (Phase 1 制約: async/Promise は未対応)
+- **同期materialized戻り値のみサポートする** (QuickJS executorと同じshared guardを適用)
 
 **Phase 2 (実装済み)**: `WebWorkerSandboxExecutor`
 - Web Worker 内で QuickJS Wasm を実行する
@@ -611,7 +614,7 @@ defineRaw('add', '(a, b) => a + b')
      → Object.defineProperty で eval/Function/Proxy/Reflect 無効化
      → evalCode(code) → run関数ロード
      → globalThis.__args__ = [1,2]  (※ undefined → null 変換あり)
-     → evalCode('run(...globalThis.__args__)') → 3
+     → shared guard経由で run(...globalThis.__args__) → 3
      → context.dispose()
    → { "result": 3 }
 
@@ -624,7 +627,7 @@ defineRaw('add', '(a, b) => a + b')
 
 | 制約 | 詳細 | Phase 2 対応 |
 |------|------|-------------|
-| 同期関数のみ | async/Promise 未対応 | QuickJS の Promise 対応検討 |
+| 同期戻り値のみ | async/Promise/generatorとthenable/iterator結果を拒否 | 全executorへ契約適用済み |
 | バージョンカウンタ揮発 | サーバー再起動でリセット | code URL に version + SHA-256 を含めて解決済み |
 | JSON引数制約 | `undefined` → `null`, `Date`/`Map`/`Set` 非対応 | 構造化クローン検討 |
 | セキュリティ不足 (クライアント) | MockSandboxExecutor はセキュリティなし | WebWorker + QuickJS Wasm |
@@ -661,8 +664,8 @@ TypeScript source
   → Vite build時は名前順のunzen-functions.d.ts assetをemit
 ```
 
-- 対象をトップレベルのinline同期関数に限定し、動的名・外部関数・async/generatorは
-  build時にfile/line/column付きで拒否する
+- 対象をトップレベルのinline同期関数に限定し、動的名・外部関数・入れ子を含む
+  async/generator構文とglobal `Promise`はbuild時にfile/line/column付きで拒否する
 - 関数内のlocal bindingと外部captureをsymbolで区別するため、コメント・文字列・local
   shadowingは誤検知せず、標準モードのruntime import、`this`/`super`、禁止global、dynamic import、
   `import.meta`、入力/globalへの代入、`Math.random()`、`Date.now()`、

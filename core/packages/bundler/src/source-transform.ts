@@ -11,6 +11,7 @@ import {
   symbolForReference,
 } from './lexical-scope';
 import { createUnzenPurityAnalyzer } from './pure-function-check';
+import { isAsyncFunctionLike, isGeneratorFunctionLike } from './function-kind';
 
 const UNZEN_SERVER_MODULE = '@unzen/server';
 const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
@@ -200,10 +201,6 @@ function unwrapFunctionExpression(expression: ts.Expression): ts.Expression {
     current = current.expression;
   }
   return current;
-}
-
-function isAsyncFunction(node: ExtractableFunction): boolean {
-  return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
 }
 
 /**
@@ -581,7 +578,7 @@ function analyzeUnzenSource(
     if (!ts.isArrowFunction(functionNode) && !ts.isFunctionExpression(functionNode)) {
       fail(sourceFile, call, 'define() requires an inline arrow or function expression');
     }
-    if (isAsyncFunction(functionNode) || functionNode.asteriskToken !== undefined) {
+    if (isAsyncFunctionLike(functionNode) || isGeneratorFunctionLike(functionNode)) {
       fail(sourceFile, call, 'Unzen build extraction supports synchronous functions only');
     }
 

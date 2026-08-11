@@ -168,6 +168,11 @@ schema.define('sum', (a, b) => a + b);`;
       statement: `server.define('sum', async (a: number) => a);`,
       message: 'synchronous',
     },
+    {
+      label: 'generator function',
+      statement: `server.define('values', function* () { yield 1; });`,
+      message: 'synchronous',
+    },
   ])('fails the build for an unsupported $label registration', ({ statement, message }) => {
     const source = `import { UnzenServer } from '@unzen/server';
 const server = new UnzenServer();
@@ -267,6 +272,30 @@ server.define('unsafe', () => ${expression});`;
   });
 
   it.each([
+    [
+      'a nested async function',
+      'const task = async () => 1; return task();',
+      'async functions are unsupported',
+    ],
+    [
+      'a nested generator function',
+      'function* values() { yield 1; } return values();',
+      'generator functions are unsupported',
+    ],
+    [
+      'the Promise API',
+      'return Promise.resolve(1);',
+      'async API "Promise" is unsupported',
+    ],
+  ])('rejects %s in an extracted function body', (_label, body, message) => {
+    const source = `import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('deferred', () => { ${body} });`;
+
+    expect(() => transformUnzenDefinitions(source, '/src/async-result.ts')).toThrow(message);
+  });
+
+  it.each([
     ['Math.random', 'Math.random()'],
     ['Date.now', 'Date.now()'],
     ['the current Date', 'new Date()'],
@@ -343,10 +372,11 @@ server.define('safeNames', function (value: number) {
   const fetch = (input: number) => input + 1;
   const Proxy = (input: number) => input;
   const Reflect = { get: (input: number) => input };
+  const Promise = { resolve: (input: number) => input };
   const apply = (input: number) => fetch(input);
   return {
     note,
-    value: Math.max(Proxy(Reflect.get(apply(value))), arguments.length),
+    value: Math.max(Promise.resolve(Proxy(Reflect.get(apply(value)))), arguments.length),
   };
 });`;
 

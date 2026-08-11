@@ -81,13 +81,18 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 生成型を使うと`client.call('sum', 1, 2)`の関数名・引数・戻り値を検査できる。
 抽出対象の関数はTypeScriptのsymbol/scope解析も通り、クロージャ・禁止global・
 入力/globalへの代入・`Math.random()`や現在時刻への依存をsource位置付きbuild errorで
-拒否する。runtime importは標準では拒否し、`dependencyBundling`を明示した場合だけ
+拒否する。async/generator構文とglobal `Promise`も、入れ子や依存bundle内を含めて拒否する。
+runtime importは標準では拒否し、`dependencyBundling`を明示した場合だけ
 allowlist検証とbundle後の禁止API検査を経て自己完結コードへ変換する。
 依存bundleは最終コードをUTF-8で計測し、既定100KiBを超える場合はbuild errorになる。
 抽出関数だけが使うruntime import bindingはhost bundleから除去し、host codeでも使う
 bindingは保持する。実際に読んだ依存fileはVite / webpackのwatch graphへ登録される。
 webpack loader設定、生成型の利用例、対象構文の制約は
 [モジュールバンドラーガイド](docs/bundler.md)を参照。
+
+JavaScript関数の実行契約は同期かつmaterializedな戻り値に限定される。`define()`は
+async/generator関数を登録時に拒否し、QuickJS（browser/server）とMock executorは
+Promise/thenableまたはiterator/generator結果を同じ契約エラーとして拒否する。
 
 ```typescript
 // client.ts - ブラウザ側

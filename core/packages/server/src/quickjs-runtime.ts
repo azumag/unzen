@@ -14,11 +14,18 @@
  * - Memory limit: 16MB (prevents excessive memory consumption)
  * - Timeout: 50ms default (prevents infinite loops)
  * - No eval/Function: prevents arbitrary code injection
+ * - Synchronous materialized results only (no thenables or iterators)
  * - Fresh context per execution: prevents cross-execution pollution
  */
 
 import { getQuickJS, type QuickJSWASMModule } from 'quickjs-emscripten';
-import { UnzenRuntimeError, UnzenFunctionError, SANDBOX_SECURITY_INIT, type ExecutionOptions } from '@unzen/shared';
+import {
+  SANDBOX_SECURITY_INIT,
+  SANDBOX_SYNCHRONOUS_EXECUTION,
+  UnzenFunctionError,
+  UnzenRuntimeError,
+  type ExecutionOptions,
+} from '@unzen/shared';
 
 export class QuickJSRuntime {
   private quickJS: QuickJSWASMModule | null = null;
@@ -95,9 +102,6 @@ export class QuickJSRuntime {
       }
       argsResult.value.dispose();
 
-      // Call the run() function with spread arguments
-      const wrappedCode = `run(...globalThis.__args__)`;
-
       // Set timeout by configuring interrupt handler
       // QuickJS will check this periodically during execution
       const startTime = Date.now();
@@ -108,8 +112,8 @@ export class QuickJSRuntime {
         return exceeded;
       });
 
-      // Execute the wrapped code
-      const result = context.evalCode(wrappedCode);
+      // Execute and reject deferred or iterator results at the sandbox boundary
+      const result = context.evalCode(SANDBOX_SYNCHRONOUS_EXECUTION);
 
       // Check if execution failed
       if (result.error) {

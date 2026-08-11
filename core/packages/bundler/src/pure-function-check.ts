@@ -8,6 +8,7 @@ import {
   isWithin,
   symbolForReference,
 } from './lexical-scope';
+import { isAsyncFunctionLike, isGeneratorFunctionLike } from './function-kind';
 
 type ExtractableFunction = ts.ArrowFunction | ts.FunctionExpression;
 
@@ -329,6 +330,13 @@ export function createUnzenPurityAnalyzer(
         // `class Derived extends Base` and let a broken capture through.
         if (ts.isPartOfTypeNode(node)) return;
 
+        if (isAsyncFunctionLike(node)) {
+          add(node, 'async functions are unsupported in synchronous Unzen execution');
+        }
+        if (isGeneratorFunctionLike(node)) {
+          add(node, 'generator functions are unsupported in synchronous Unzen execution');
+        }
+
         if (
           ts.isCallExpression(node)
           && node.expression.kind === ts.SyntaxKind.ImportKeyword
@@ -466,6 +474,8 @@ export function createUnzenPurityAnalyzer(
               node,
               `closure reference ${JSON.stringify(node.text)} is unavailable after extraction`,
             );
+          } else if (node.text === 'Promise') {
+            add(node, 'async API "Promise" is unsupported in synchronous Unzen execution');
           } else if (FORBIDDEN_GLOBALS.has(node.text)) {
             add(
               node,

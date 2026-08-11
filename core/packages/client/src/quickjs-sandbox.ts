@@ -19,7 +19,11 @@
  * - Real implementation will be added in Phase 2
  */
 
-import { UnzenCancelledError, UnzenFunctionError } from '@unzen/shared';
+import {
+  UnzenCancelledError,
+  UnzenFunctionError,
+  assertSynchronousUnzenResult,
+} from '@unzen/shared';
 import { createContext, Script } from 'vm';
 import type { SandboxExecutor } from './sandbox-executor';
 
@@ -115,6 +119,7 @@ export class MockSandboxExecutor implements SandboxExecutor {
 
       // Call 'run' function with provided arguments
       const result = (context.run as (...a: unknown[]) => unknown)(...args);
+      assertSynchronousUnzenResult(result);
 
       return result;
     } catch (error) {

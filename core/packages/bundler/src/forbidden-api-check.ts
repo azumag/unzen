@@ -7,6 +7,7 @@ import {
   isIdentifierReference,
   isUnboundGlobalReference,
 } from './lexical-scope';
+import { isAsyncFunctionLike, isGeneratorFunctionLike } from './function-kind';
 
 interface ForbiddenApiRule {
   name: string;
@@ -52,10 +53,18 @@ const FORBIDDEN_API_RULES: ForbiddenApiRule[] = [
     name: 'require',
     description: 'require() - dynamic module loading is blocked in sandbox',
   },
+  {
+    name: 'Promise',
+    description: 'Promise - asynchronous execution is unsupported in sandbox functions',
+  },
 ];
 
 const DYNAMIC_IMPORT_DESCRIPTION =
   'dynamic import() - dynamic module loading is blocked in sandbox';
+const ASYNC_FUNCTION_DESCRIPTION =
+  'async function - asynchronous execution is unsupported in sandbox functions';
+const GENERATOR_FUNCTION_DESCRIPTION =
+  'generator function - iterator results are unsupported in sandbox functions';
 const FORBIDDEN_API_NAMES = new Set(FORBIDDEN_API_RULES.map(rule => rule.name));
 const GLOBAL_OBJECT_NAMES = new Set(['globalThis', 'self', 'window']);
 
@@ -112,6 +121,8 @@ export function checkForbiddenApis(code: string): string[] {
   const checker = createLexicalTypeChecker(sourceFile);
   const foundApis = new Set<string>();
   let foundDynamicImport = false;
+  let foundAsyncFunction = false;
+  let foundGeneratorFunction = false;
 
   const isUnboundGlobalObject = (expression: ts.Expression): boolean => {
     const target = unwrapParentheses(expression);
@@ -121,6 +132,8 @@ export function checkForbiddenApis(code: string): string[] {
   };
 
   const visit = (node: ts.Node): void => {
+    if (isAsyncFunctionLike(node)) foundAsyncFunction = true;
+    if (isGeneratorFunctionLike(node)) foundGeneratorFunction = true;
     if (
       ts.isCallExpression(node)
       && node.expression.kind === ts.SyntaxKind.ImportKeyword
@@ -184,5 +197,7 @@ export function checkForbiddenApis(code: string): string[] {
     .filter(rule => foundApis.has(rule.name))
     .map(rule => rule.description);
   if (foundDynamicImport) violations.push(DYNAMIC_IMPORT_DESCRIPTION);
+  if (foundAsyncFunction) violations.push(ASYNC_FUNCTION_DESCRIPTION);
+  if (foundGeneratorFunction) violations.push(GENERATOR_FUNCTION_DESCRIPTION);
   return violations;
 }

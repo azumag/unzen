@@ -110,6 +110,14 @@ describe('forbidden-api-check', () => {
     expect(violations.some(v => v.includes('import'))).toBe(true);
   });
 
+  it.each([
+    ['Promise usage', 'function run() { return Promise.resolve(1); }', 'Promise'],
+    ['async syntax', 'async function run() { return 1; }', 'async function'],
+    ['generator syntax', 'function* run() { yield 1; }', 'generator function'],
+  ])('should detect unsupported %s', (_label, code, message) => {
+    expect(checkForbiddenApis(code).some(v => v.includes(message))).toBe(true);
+  });
+
   it('should detect forbidden globals when they are aliased before use', () => {
     const code = `
       const request = fetch;
@@ -196,10 +204,11 @@ describe('forbidden-api-check', () => {
         const WebSocket = class LocalSocket {};
         const globalThis = { eval: value => value };
         const Reflect = { get: value => value };
+        const Promise = { resolve: value => value };
         fetch("local");
         require("local");
         globalThis.eval("local");
-        return [new WebSocket(), Proxy(Reflect.get("local"))];
+        return [new WebSocket(), Proxy(Reflect.get("local")), Promise.resolve("local")];
       }
     `;
 

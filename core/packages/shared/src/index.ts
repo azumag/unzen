@@ -48,6 +48,12 @@ export {
   SANDBOX_DISABLED_GLOBALS,
   SANDBOX_SECURITY_INIT,
 } from './sandbox-security';
+export {
+  SANDBOX_SYNCHRONOUS_EXECUTION,
+  UNZEN_ASYNC_RESULT_ERROR,
+  UNZEN_ITERATOR_RESULT_ERROR,
+  assertSynchronousUnzenResult,
+} from './sandbox-execution';
 
 // Protocol types
 export {

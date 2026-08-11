@@ -173,6 +173,14 @@ describe('bundler', () => {
     expect(result.code).not.toContain('??');
   });
 
+  it.each([
+    ['async function', 'export async function run() { return 1; }', 'async function'],
+    ['Promise', 'export function run() { return Promise.resolve(1); }', 'Promise'],
+    ['generator', 'export function* run() { yield 1; }', 'generator function'],
+  ])('should reject unsupported %s execution after bundling', async (_label, code, message) => {
+    await expect(bundle({ code, allowedModules: [] })).rejects.toThrow(message);
+  });
+
   it('should return empty modules array for code without imports', async () => {
     const result = await bundle({
       code: `export function run() { return 'hello'; }`,
@@ -230,6 +238,25 @@ describe('bundler', () => {
     ]);
     expect(result.code).not.toContain(basename(resolveDir));
     expect(new Function(`${result.code}\nreturn run(7);`)()).toBe(21);
+  });
+
+  it('should reject asynchronous execution inside an allowed dependency', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-async-helper': `
+        export function calculate(value) {
+          return Promise.resolve(value * 2);
+        }
+      `,
+    });
+
+    await expect(bundle({
+      code: `
+        import { calculate } from 'unzen-async-helper';
+        export function run(value) { return calculate(value); }
+      `,
+      allowedModules: ['unzen-async-helper'],
+      resolveDir,
+    })).rejects.toThrow(/Promise.*asynchronous execution/);
   });
 
   it('should collect modules from re-export declarations', async () => {

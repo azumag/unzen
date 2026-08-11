@@ -47,6 +47,19 @@ describe('QuickJSRuntime', () => {
       expect(result).toBe('HELLO');
     });
 
+    it.each([
+      ['an async function', 'async function run() { return 42; }', 'return synchronously'],
+      ['a Promise', 'function run() { return Promise.resolve(42); }', 'return synchronously'],
+      [
+        'a generator',
+        'function run() { return (function* () { yield 42; })(); }',
+        'materialized value',
+      ],
+    ])('should reject %s result', async (_label, code, message) => {
+      await expect(runtime.execute(code, [])).rejects.toThrow(UnzenFunctionError);
+      await expect(runtime.execute(code, [])).rejects.toThrow(message);
+    });
+
     it('should execute function with array operations', async () => {
       const code = 'function run(arr) { return arr.map(x => x * 2); }';
       const result = await runtime.execute(code, [[1, 2, 3]]);

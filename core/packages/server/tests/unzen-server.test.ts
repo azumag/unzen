@@ -42,6 +42,15 @@ describe('UnzenServer', () => {
       expect(fn?.code).toContain('toUpperCase');
     });
 
+    it.each([
+      ['async', async () => 1],
+      ['generator', function* () { yield 1; }],
+      ['async generator', async function* () { yield 1; }],
+    ])('should reject an %s function at registration', (_label, fn) => {
+      expect(() => server.define('unsupported', fn)).toThrow('synchronous non-generator');
+      expect(server.getFunction('unsupported')).toBeUndefined();
+    });
+
     it('should wrap function code with run() function', () => {
       const testFunc = function (x: number) {
         return x * 2;

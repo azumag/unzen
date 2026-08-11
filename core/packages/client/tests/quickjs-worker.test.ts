@@ -136,6 +136,8 @@ describe('quickjs-worker handleWorkerMessage', () => {
         success: true,
         value: 42,
       });
+      expect(context.evalCode.mock.calls[3][0]).toContain('return synchronously');
+      expect(context.evalCode.mock.calls[3][0]).toContain('materialized value');
       // Context should be disposed after execution
       expect(context.dispose).toHaveBeenCalled();
     });

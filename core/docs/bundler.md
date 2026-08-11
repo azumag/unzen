@@ -194,12 +194,20 @@ module.exports = {
 - `const server = new UnzenServer(...)` の直接初期化が必要
 - `server.define(name, fn, options?)` はトップレベルのexpression statementに置く
 - `name` は静的文字列、`fn` はinline arrow/function expressionかつ同期関数に限る
-- 動的な名前、外部変数に入れた関数、async/generatorは位置付きbuild errorになる
+- 動的な名前、外部変数に入れた関数、入れ子を含むasync/generator構文、global `Promise`は
+  位置付きbuild errorになる
 - nestedな`.define()`と無関係なライブラリの`.define()`は誤変換を避けるため触らない
 - クロージャ・入力/globalへの代入・禁止global・直接の乱数/現在時刻参照はsymbol/scope
   検査で位置付きbuild errorになる。runtime importも標準では拒否する
 - npm依存を関数へ含める場合はVite plugin / webpack loaderの`dependencyBundling`を
   明示し、`allowedModules`を最小限にする。共有APIまたは下記`bundle()`も直接使用できる
+
+#### 同期実行契約
+
+抽出関数と依存bundleは同期処理だけを含み、同期的にmaterializedな値を返す必要がある。
+静的検査で判定できない、許可依存や`defineRaw()`由来のPromise/thenable、iterator/generator
+結果も、browser/server QuickJSとMock executorの実行境界で拒否される。なお、
+`client.call()`自体はtransport APIなので引き続き`Promise`を返す。
 
 #### 型定義生成の契約
 

@@ -13,7 +13,7 @@
  *   3. Apply security hardening (SANDBOX_SECURITY_INIT from @unzen/shared)
  *   4. Load user code (defines `run` function)
  *   5. Inject arguments via JSON serialization
- *   6. Execute `run(...args)` and return result
+ *   6. Execute `run(...args)` and require a synchronous materialized result
  *   7. Dispose context (manual memory management required by QuickJS C model)
  *
  * Error classification:
@@ -24,7 +24,10 @@
  *   - QuickJS not initialized → runtime_error (triggers server fallback)
  */
 
-import { SANDBOX_SECURITY_INIT } from '@unzen/shared';
+import {
+  SANDBOX_SECURITY_INIT,
+  SANDBOX_SYNCHRONOUS_EXECUTION,
+} from '@unzen/shared';
 import {
   type WorkerMessage,
   type WorkerResponse,
@@ -266,8 +269,8 @@ async function handleExecute(
       return isCancelled || exceeded;
     });
 
-    // Step 5: Execute run() with spread arguments
-    const execResult = context.evalCode('run(...globalThis.__args__)');
+    // Step 6: Execute run() and reject deferred or iterator results
+    const execResult = context.evalCode(SANDBOX_SYNCHRONOUS_EXECUTION);
     if (execResult.error) {
       const error = execResult.error.consume((handle) => context.dump(handle));
 

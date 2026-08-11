@@ -49,6 +49,18 @@ export interface UnzenFunctionOptions {
   noFallback?: boolean;
 }
 
+const UNSUPPORTED_FUNCTION_TAGS = new Set([
+  '[object AsyncFunction]',
+  '[object GeneratorFunction]',
+  '[object AsyncGeneratorFunction]',
+]);
+
+function assertSynchronousFunction(fn: Function): void {
+  if (UNSUPPORTED_FUNCTION_TAGS.has(Object.prototype.toString.call(fn))) {
+    throw new Error('Unzen define() supports synchronous non-generator functions only');
+  }
+}
+
 export class UnzenServer {
   private registry: FunctionRegistry;
   private manifestBuilder: ManifestBuilder;
@@ -100,6 +112,8 @@ export class UnzenServer {
    *
    * Extracts function source code using Function.prototype.toString()
    * and generates hash for integrity verification.
+   * The function must execute synchronously and return a materialized value;
+   * async and generator functions are rejected at registration.
    * Generic type parameters preserve argument/return type information
    * for better IDE support and compile-time checking.
    *
@@ -112,6 +126,7 @@ export class UnzenServer {
     fn: (...args: TArgs) => TReturn,
     options?: UnzenFunctionOptions,
   ): void {
+    assertSynchronousFunction(fn);
     // Extract function source code
     // Function.toString() returns the complete function definition as a string
     const code = fn.toString();

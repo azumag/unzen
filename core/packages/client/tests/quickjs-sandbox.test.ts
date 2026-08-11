@@ -63,6 +63,22 @@ describe('MockSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it.each([
+    ['an async function', 'async function run() { return 42; }', 'return synchronously'],
+    ['a Promise', 'function run() { return Promise.resolve(42); }', 'return synchronously'],
+    [
+      'a generator',
+      'function run() { return (function* () { yield 42; })(); }',
+      'materialized value',
+    ],
+  ])('should reject %s result', async (_label, code, message) => {
+    const executor = new MockSandboxExecutor();
+
+    await expect(executor.execute(code, [])).rejects.toThrow(UnzenFunctionError);
+    await expect(executor.execute(code, [])).rejects.toThrow(message);
+    executor.dispose();
+  });
+
   it('should throw UnzenFunctionError on execution error', async () => {
     const executor = new MockSandboxExecutor();
     const code = 'function run() { throw new Error("Test error"); }';
