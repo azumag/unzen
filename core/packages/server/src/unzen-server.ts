@@ -38,6 +38,7 @@ import { FunctionRegistry } from './function-registry';
 import { ManifestBuilder } from './manifest-builder';
 import { QuickJSRuntime } from './quickjs-runtime';
 import { readBoundedJsonRequest, RequestBodyLimitError } from './request-body';
+import { normalizeUnzenBaseUrl } from './base-url';
 
 /**
  * Configuration options for UnzenServer
@@ -123,8 +124,18 @@ export class UnzenServer {
    * @param config - Server configuration
    */
   constructor(config: UnzenServerConfig = {}) {
-    const baseUrl = config.baseUrl || 'http://localhost:3000';
-    this.baseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+    if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+      throw new TypeError('UnzenServer baseUrl configuration must be an object');
+    }
+    let configuredBaseUrl: unknown;
+    try {
+      configuredBaseUrl = (config as Record<string, unknown>).baseUrl;
+    } catch {
+      throw new TypeError('UnzenServer baseUrl could not be read');
+    }
+    this.baseUrl = normalizeUnzenBaseUrl(
+      configuredBaseUrl === undefined ? 'http://localhost:3000' : configuredBaseUrl,
+    );
     this.registry = new FunctionRegistry();
     this.manifestBuilder = new ManifestBuilder(this.registry, this.baseUrl);
     this.runtime = new QuickJSRuntime();

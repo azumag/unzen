@@ -392,6 +392,35 @@ describe('UnzenServer', () => {
       defaultServer.define('test', () => 1);
       expect(defaultServer.getFunction('test')).toBeDefined();
     });
+
+    it('normalizes an absolute or origin-relative baseUrl from one config read', async () => {
+      let reads = 0;
+      const configured = new UnzenServer({
+        get baseUrl() {
+          reads += 1;
+          return reads === 1 ? '  /unzen///  ' : 'javascript:alert(1)';
+        },
+      });
+      configured.defineRaw('testBase', '() => 1');
+      const manifest = await (await configured.middleware().request('/manifest')).json();
+
+      expect(reads).toBe(1);
+      expect(manifest.functions.testBase.codeUrl).toMatch(/^\/unzen\/code\/testBase\?/);
+    });
+
+    it.each([
+      null,
+      [],
+      { baseUrl: '' },
+      { baseUrl: 'javascript:alert(1)' },
+      { baseUrl: 'relative/path' },
+      { baseUrl: '//attacker.example/unzen' },
+      { baseUrl: 'https://user:secret@example.com/unzen' },
+      { baseUrl: 'https://example.com/unzen?tenant=1' },
+      { baseUrl: 'https://example.com/unzen#fragment' },
+    ])('rejects invalid server configuration %j', (config) => {
+      expect(() => new UnzenServer(config as never)).toThrow('baseUrl');
+    });
   });
 
   describe('defineRaw with timeout option', () => {

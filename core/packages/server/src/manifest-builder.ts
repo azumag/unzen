@@ -13,6 +13,7 @@
 
 import { createManifestResponse, type ManifestResponse, type FunctionDefinition } from '@unzen/shared';
 import type { FunctionRegistry } from './function-registry';
+import { normalizeUnzenBaseUrl } from './base-url';
 
 export class ManifestBuilder {
   private registry: FunctionRegistry;
@@ -26,9 +27,7 @@ export class ManifestBuilder {
    */
   constructor(registry: FunctionRegistry, baseUrl: string) {
     this.registry = registry;
-    // Normalize baseUrl by removing trailing slash if present
-    // This ensures consistent URL construction regardless of input format
-    this.baseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+    this.baseUrl = normalizeUnzenBaseUrl(baseUrl);
   }
 
   /**

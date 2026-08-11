@@ -207,6 +207,9 @@ Error
 - candidate definition を含む aggregate manifest を登録前に生成し、UTF-8 1 MiB 超なら
   version counter / registry / immutable payload store を変更せず拒否する。manifest response は
   同じ serialized body から `Content-Length` と ETag を返す
+- server `baseUrl` は credential / query / fragment のない HTTP(S) absolute URL または
+  origin-relative path に構築時正規化する。config field は一度だけ読み、protocol-relative URL と
+  schemeなし相対 path を fail fast で拒否する。公開 `ManifestBuilder` も同じ normalizer を使う
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`

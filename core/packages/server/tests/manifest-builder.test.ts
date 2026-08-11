@@ -21,6 +21,29 @@ describe('ManifestBuilder', () => {
   });
 
   describe('build', () => {
+    it('rejects an invalid base URL during construction', () => {
+      expect(() => new ManifestBuilder(registry, 'javascript:alert(1)'))
+        .toThrow('baseUrl');
+      expect(() => new ManifestBuilder(registry, 'relative/path'))
+        .toThrow('baseUrl');
+    });
+
+    it('normalizes a root-relative base URL', () => {
+      const def: FunctionDefinition = {
+        name: 'rootFunction',
+        runtime: 'quickjs',
+        code: 'return 1',
+        version: 1,
+        hash: HASH_A,
+      };
+      registry.register(def);
+      const builder = new ManifestBuilder(registry, '  /unzen///  ');
+
+      expect(builder.build().functions.rootFunction.codeUrl).toBe(
+        `/unzen/code/rootFunction?v=1&h=${encodeURIComponent(HASH_A)}`,
+      );
+    });
+
     it('should build empty manifest from empty registry', () => {
       const builder = new ManifestBuilder(registry, 'https://example.com/unzen');
       const manifest = builder.build();
