@@ -75,19 +75,24 @@ describe('ManifestFetcher', () => {
   });
 
   it('should fetch manifest from server', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => mockManifest,
     });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const fetcher = new ManifestFetcher('  https://example.com///  ');
     const manifest = await fetcher.fetch();
 
     expect(manifest).toEqual(mockManifest);
-    expect(globalThis.fetch).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
       'https://example.com/manifest',
-      expect.any(Object)
+      expect.objectContaining({
+        method: 'GET',
+        signal: expect.any(AbortSignal),
+      }),
     );
+    expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('headers');
   });
 
   it('rejects an oversized manifest response before parsing its body', async () => {
@@ -306,9 +311,7 @@ describe('ManifestFetcher', () => {
     expect(fetcher.getEntry('add')).toBeUndefined();
 
     await expect(fetcher.fetch()).resolves.toEqual(mockManifest);
-    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
-      headers: expect.not.objectContaining({ 'If-None-Match': expect.anything() }),
-    }));
+    expect(fetchMock.mock.calls[1]?.[1]).not.toHaveProperty('headers');
   });
 
   it('should deduplicate concurrent fetch calls', async () => {

@@ -422,6 +422,8 @@ query・fragment のない 2,048 byte 以下の HTTP(S) URL または origin-rel
 custom executor が選ばれた場合、shadow された worker option は評価しない。
 直接利用できる `FallbackHandler` / `ManifestFetcher` も同じ endpoint 正規化を行い、
 protocol-relative URL、scheme なし相対 path、不正 endpoint を同期的に拒否する。
+body のない初回 manifest GET には entity header を付けず、cross-origin でも simple request を
+維持する。ETag 再検証時だけ `If-None-Match` を送る。
 
 `/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは

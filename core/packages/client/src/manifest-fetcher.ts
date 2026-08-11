@@ -219,11 +219,6 @@ export class ManifestFetcher {
   private async fetchFromServer(signal: AbortSignal): Promise<ManifestResponse> {
     const url = `${this.endpoint}/manifest`;
 
-    // Build request headers
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
     const revalidationEtag = this.etag && this.lastManifest
       ? this.etag
       : null;
@@ -237,15 +232,15 @@ export class ManifestFetcher {
     // Only send if we also have lastManifest to use on 304 response.
     // Without lastManifest, a 304 would have no manifest to return,
     // and 304 responses have no body per HTTP spec (can't call .json()).
-    if (revalidationEtag !== null) {
-      headers['If-None-Match'] = revalidationEtag;
-    }
+    const headers = revalidationEtag === null
+      ? undefined
+      : { 'If-None-Match': revalidationEtag };
 
     try {
       // Fetch manifest from server
       const response = await globalThis.fetch(url, {
         method: 'GET',
-        headers,
+        ...(headers !== undefined && { headers }),
         signal,
       });
 
