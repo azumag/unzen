@@ -90,6 +90,20 @@ describe('ManifestFetcher', () => {
     );
   });
 
+  it('rejects an oversized manifest response before parsing its body', async () => {
+    const parseBody = vi.fn().mockResolvedValue(mockManifest);
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Length': String(1024 * 1024 + 1) }),
+      json: parseBody,
+    });
+    const fetcher = new ManifestFetcher('https://example.com');
+
+    await expect(fetcher.fetch()).rejects.toThrow('exceeds');
+    expect(parseBody).not.toHaveBeenCalled();
+  });
+
   it('should cache manifest after first fetch', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

@@ -31,6 +31,7 @@
 import {
   UnzenCancelledError,
   UnzenNetworkError,
+  MAX_MANIFEST_RESPONSE_BYTES,
   normalizeManifestResponse,
   type ManifestResponse,
   type FunctionManifestEntry,
@@ -43,6 +44,7 @@ import {
   throwIfAborted,
 } from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
+import { readBoundedJsonResponse } from './response-body';
 
 /** A shared in-flight manifest request with per-caller waiter tracking. */
 interface InflightManifestRequest {
@@ -261,7 +263,11 @@ export class ManifestFetcher {
       // must not be stored for a manifest we never committed — otherwise a
       // later 304 would pair the new ETag with the old manifest.
       const etag = response.headers?.get('ETag') ?? null;
-      const payload: unknown = await response.json();
+      const payload = await readBoundedJsonResponse(
+        response,
+        MAX_MANIFEST_RESPONSE_BYTES,
+        'Manifest response',
+      );
       // A response body implementation may ignore AbortSignal. Do not commit
       // a late body after the last waiter has cancelled or invalidate() has
       // explicitly aborted this request.

@@ -197,6 +197,9 @@ Error
   循環値・BigInt・caller mutation を QuickJS の外側で遮断する
 - QuickJSRuntime の `initialize()` は single-flight とし、`dispose()` は terminal state とする。
   dispose 中に完了した非同期初期化は module を公開せず、runtime を復活させない
+- client の network body は manifest 1 MiB、function code / MoonBit module 16 MiB、fallback
+  response 16 MiB を上限とする。宣言 `Content-Length` を事前検証し、stream 実 byte 数も
+  読みながら検証して、上限超過時は body を cancel する
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`

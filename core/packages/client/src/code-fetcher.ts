@@ -25,11 +25,13 @@
 import {
   UnzenCancelledError,
   UnzenNetworkError,
+  MAX_FUNCTION_PAYLOAD_BYTES,
   normalizeManifestResponse,
   type FunctionManifestEntry,
 } from '@unzen/shared';
 import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort';
 import { assertUnzenContentIntegrity } from './content-integrity';
+import { readBoundedResponseBytes } from './response-body';
 
 /** Validate and own the manifest fields consumed by this fetcher. */
 function snapshotCodeManifestEntry(value: unknown): FunctionManifestEntry | undefined {
@@ -126,7 +128,11 @@ export class CodeFetcher {
       // Read and verify raw bytes before decoding or caching. The optional
       // Service Worker cache is an optimization, not a security dependency,
       // so every normal fetch path repeats this integrity check.
-      const bytes = await response.arrayBuffer();
+      const bytes = await readBoundedResponseBytes(
+        response,
+        MAX_FUNCTION_PAYLOAD_BYTES,
+        'Function code response',
+      );
       throwIfAborted(requestSignal);
       await assertUnzenContentIntegrity(bytes, hash);
       throwIfAborted(requestSignal);

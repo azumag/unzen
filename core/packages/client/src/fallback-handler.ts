@@ -17,6 +17,7 @@
  */
 
 import {
+  MAX_EXECUTION_RESPONSE_BYTES,
   MAX_EXECUTION_ARGUMENTS,
   UnzenCancelledError,
   UnzenFunctionError,
@@ -26,6 +27,7 @@ import {
 } from '@unzen/shared';
 import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
+import { readBoundedJsonResponse, ResponseBodyLimitError } from './response-body';
 
 export class FallbackHandler {
   /**
@@ -127,10 +129,17 @@ export class FallbackHandler {
       // not a network error)
       let payload: unknown;
       try {
-        payload = await response.json();
+        payload = await readBoundedJsonResponse(
+          response,
+          MAX_EXECUTION_RESPONSE_BYTES,
+          'Fallback response',
+        );
       } catch (error) {
         if (isAbortError(error) || requestSignal?.aborted) {
           throw new UnzenCancelledError('Execution cancelled by caller');
+        }
+        if (error instanceof ResponseBodyLimitError) {
+          throw new UnzenNetworkError(error.message);
         }
         // Response body not parseable as JSON → network/infrastructure error
         throw new UnzenNetworkError(

@@ -27,6 +27,7 @@
  */
 
 import {
+  MAX_FUNCTION_PAYLOAD_BYTES,
   UnzenCancelledError,
   UnzenFunctionError,
   UnzenNetworkError,
@@ -56,6 +57,7 @@ import {
   snapshotMoonBitExecutionOptions,
 } from './moonbit-call';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
+import { readBoundedResponseBytes } from './response-body';
 
 /** A compiled MoonBit module ready for instantiation. */
 export interface PreparedMoonBitModule {
@@ -379,7 +381,11 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
 
     let bytes: ArrayBuffer;
     try {
-      bytes = await response.arrayBuffer();
+      bytes = await readBoundedResponseBytes(
+        response,
+        MAX_FUNCTION_PAYLOAD_BYTES,
+        'MoonBit module response',
+      );
     } catch (error) {
       if (isAbortError(error) || signal.aborted) {
         throw new UnzenRuntimeError('MoonBit module fetch aborted');

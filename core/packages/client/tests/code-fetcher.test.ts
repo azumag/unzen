@@ -65,6 +65,21 @@ describe('CodeFetcher', () => {
     );
   });
 
+  it('rejects an oversized code response before reading its body', async () => {
+    const readBody = vi.fn().mockResolvedValue(new TextEncoder().encode(mockCode).buffer);
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'Content-Length': String(16 * 1024 * 1024 + 1) }),
+      arrayBuffer: readBody,
+    });
+    const fetcher = new CodeFetcher('https://example.com');
+
+    await expect(fetcher.fetch(mockEntry)).rejects.toThrow('exceeds');
+    expect(readBody).not.toHaveBeenCalled();
+  });
+
   it('snapshots a manifest entry before asynchronous response handling', async () => {
     let resolveFetch: ((response: Response) => void) | undefined;
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {

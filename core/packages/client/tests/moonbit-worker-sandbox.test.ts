@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  MAX_FUNCTION_PAYLOAD_BYTES,
   UnzenCancelledError,
   UnzenDeadlineExceededError,
   UnzenFunctionError,
@@ -185,6 +186,28 @@ describe('MoonBitWorkerSandboxExecutor', () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  it('rejects an oversized module response before reading its body', async () => {
+    const readBody = vi.fn().mockResolvedValue(new ArrayBuffer(0));
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({
+        'Content-Length': String(MAX_FUNCTION_PAYLOAD_BYTES + 1),
+      }),
+      arrayBuffer: readBody,
+    });
+    const executor = createExecutor(new MockMoonbitWorker());
+
+    await expect(executor.execute(
+      'https://example.com/oversized.wasm',
+      [1],
+      { exportName: 'fibonacci' },
+    )).rejects.toThrow('exceeds');
+    expect(readBody).not.toHaveBeenCalled();
+    executor.dispose();
   });
 
   it.each([

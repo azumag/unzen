@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_RESPONSE_BYTES,
   UnzenCancelledError,
   UnzenFunctionError,
   UnzenNetworkError,
@@ -105,6 +106,23 @@ describe('FallbackHandler', () => {
         body: JSON.stringify({ args: [1, 2] }),
       }
     );
+  });
+
+  it('rejects an oversized fallback response before parsing its body', async () => {
+    const parseBody = vi.fn().mockResolvedValue({ result: 42 });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({
+        'Content-Length': String(MAX_EXECUTION_RESPONSE_BYTES + 1),
+      }),
+      json: parseBody,
+    });
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute('add', [1, 2])).rejects.toThrow('exceeds');
+    expect(parseBody).not.toHaveBeenCalled();
   });
 
   it('should throw UnzenFunctionError when server returns error', async () => {
