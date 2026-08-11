@@ -45,6 +45,29 @@ describe('createExecutionHttpResponse', () => {
     });
   });
 
+  it.each([
+    ['symbol', Symbol('value')],
+    ['function', () => 1],
+    ['NaN', Number.NaN],
+    ['positive infinity', Number.POSITIVE_INFINITY],
+    ['negative infinity', Number.NEGATIVE_INFINITY],
+  ])('rejects a top-level %s result instead of silently coercing it', async (_label, result) => {
+    const response = createExecutionHttpResponse({ success: true, result });
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      result: null,
+      error: 'Fallback result is not JSON-serializable',
+    });
+  });
+
+  it('retains the legacy undefined success envelope', async () => {
+    const response = createExecutionHttpResponse({ success: true, result: undefined });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({});
+  });
+
   it('replaces an oversized error without changing its status', async () => {
     const response = createExecutionHttpResponse({
       success: false,

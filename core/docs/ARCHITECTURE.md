@@ -267,6 +267,8 @@ function run(...args) { return ((text) => /spam/i.test(text))(...args); }
 - client は top-level 配列を iterator を使わず index 順に snapshot し、JSON 化できない
   入力を network request 前に `UnzenFunctionError` で拒否する
 - server は top-level JSON object と `args` array を型検証し、違反を 400 で返す
+- result の top-level `Symbol` / function / 非有限 number は JSON の欠落・`null` 化を許さず
+  422 で返す（legacy の `undefined` 成功 `{}` は維持する）
 
 成功レスポンス:
 ```json
