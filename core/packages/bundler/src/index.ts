@@ -17,6 +17,7 @@
 export {
   bundle,
   DEFAULT_MAX_BUNDLE_SIZE_BYTES,
+  MAX_ALLOWED_MODULE_PATTERNS,
   type BundleOptions,
   type BundleResult,
 } from './bundler';

@@ -7,6 +7,7 @@ import {
   transformUnzenDefinitionsWithDependencies,
   UnzenTransformError,
 } from '../src/source-transform';
+import { MAX_ALLOWED_MODULE_PATTERNS } from '../src/bundler';
 
 const fixtureDirectories: string[] = [];
 
@@ -82,6 +83,30 @@ afterEach(() => {
 });
 
 describe('transformUnzenDefinitionsWithDependencies', () => {
+  it('rejects an oversized sparse whitelist before source analysis', async () => {
+    await expect(transformUnzenDefinitionsWithDependencies(
+      'export const untouched = true;',
+      '/src/functions.ts',
+      { allowedModules: new Array(MAX_ALLOWED_MODULE_PATTERNS + 1) },
+    )).rejects.toThrow(`at most ${MAX_ALLOWED_MODULE_PATTERNS} patterns`);
+  });
+
+  it('snapshots a whitelist without invoking its iterator', async () => {
+    const allowedModules = ['unzen-safe-math'];
+    Object.defineProperty(allowedModules, Symbol.iterator, {
+      value() {
+        throw new Error('whitelist iterator must not run');
+      },
+    });
+    const result = await transformUnzenDefinitionsWithDependencies(
+      'export const untouched = true;',
+      '/src/functions.ts',
+      { allowedModules },
+    );
+
+    expect(result).toBeNull();
+  });
+
   it('bundles referenced runtime imports into registerable run code', async () => {
     const resolveDir = createPackageProject();
     const source = `import { triple, type TripleOptions } from 'unzen-safe-math';

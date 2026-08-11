@@ -9,7 +9,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
-import { bundle, DEFAULT_MAX_BUNDLE_SIZE_BYTES } from '../src/bundler';
+import {
+  bundle,
+  DEFAULT_MAX_BUNDLE_SIZE_BYTES,
+  MAX_ALLOWED_MODULE_PATTERNS,
+} from '../src/bundler';
 
 const fixtureDirectories: string[] = [];
 
@@ -46,6 +50,42 @@ describe('bundler', () => {
     expect(result.size).toBeGreaterThan(0);
     expect(result.modules).toEqual([]);
     expect(result.watchFiles).toEqual([]);
+  });
+
+  it('copies allowedModules by index without invoking its iterator', async () => {
+    const allowedModules: string[] = [];
+    Object.defineProperty(allowedModules, Symbol.iterator, {
+      value() {
+        throw new Error('whitelist iterator must not run');
+      },
+    });
+
+    const result = await bundle({
+      code: 'export function run() { return 1; }',
+      allowedModules,
+    });
+
+    expect(result.modules).toEqual([]);
+  });
+
+  it('rejects an oversized sparse module whitelist before iterating it', async () => {
+    await expect(bundle({
+      code: 'export function run() { return 1; }',
+      allowedModules: new Array(MAX_ALLOWED_MODULE_PATTERNS + 1),
+    })).rejects.toThrow(`at most ${MAX_ALLOWED_MODULE_PATTERNS} patterns`);
+  });
+
+  it.each([
+    undefined,
+    'lodash',
+    [42],
+    [''],
+    ['x'.repeat(1025)],
+  ])('rejects invalid allowedModules %j', async (allowedModules) => {
+    await expect(bundle({
+      code: 'export function run() { return 1; }',
+      allowedModules: allowedModules as never,
+    })).rejects.toThrow(/allowedModules/);
   });
 
   it('should produce code containing function run', async () => {

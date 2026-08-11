@@ -257,7 +257,7 @@ server.defineRaw('sortUsers', result.code, { timeout: 500 });
 | オプション | 型 | 説明 |
 |---|---|---|
 | `code` | `string` | import文を含む関数コード |
-| `allowedModules` | `string[]` | 許可モジュールパターン（例: `['lodash/*']`） |
+| `allowedModules` | `string[]` | 許可モジュールパターン（例: `['lodash/*']`）。最大1024件 |
 | `resolveDir` | `string?` | import解決の基準directory。省略時は`process.cwd()` |
 | `maxBundleSize` | `number?` | 最終コードの最大UTF-8 byte数。省略時は102400 (100KiB) |
 
@@ -271,6 +271,11 @@ server.defineRaw('sortUsers', result.code, { timeout: 500 });
 ### `DEFAULT_MAX_BUNDLE_SIZE_BYTES`
 
 既定の関数bundle上限を表す`102400`。`BundleOptions.maxBundleSize`を省略した場合に使われる。
+
+### `MAX_ALLOWED_MODULE_PATTERNS`
+
+1回のbundle設定で受け付ける`allowedModules`上限を表す`1024`。配列はiteratorを使わず
+indexed snapshotされ、上限超過はsource解析・dependency解決より前に拒否される。
 
 ### `checkModuleAllowed(moduleName, patterns): boolean`
 

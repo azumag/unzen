@@ -36,6 +36,9 @@ import { checkForbiddenApis } from './forbidden-api-check';
 
 /** Default maximum size of one self-contained sandbox function (100 KiB). */
 export const DEFAULT_MAX_BUNDLE_SIZE_BYTES = 100 * 1024;
+/** Keep whitelist validation/copy work bounded for JavaScript build configs. */
+export const MAX_ALLOWED_MODULE_PATTERNS = 1024;
+const MAX_ALLOWED_MODULE_PATTERN_BYTES = 1024;
 
 /**
  * Bundle options for configuring the bundling process
@@ -154,15 +157,106 @@ function isWithinDirectory(filePath: string, directory: string): boolean {
   return filePath === directory || filePath.startsWith(`${directory}/`);
 }
 
-function normalizeMaxBundleSize(value: number | undefined): number {
+export function normalizeMaxBundleSize(value: unknown): number {
   if (value === undefined) return DEFAULT_MAX_BUNDLE_SIZE_BYTES;
-  if (!Number.isSafeInteger(value) || value <= 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error(
       `Invalid maxBundleSize ${String(value)}: `
       + "maxBundleSize must be a positive integer within JavaScript's safe range",
     );
   }
   return value;
+}
+
+/** Validate and copy a whitelist without invoking its array iterator. */
+export function snapshotAllowedModules(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError('allowedModules must be an array');
+  }
+
+  let patternCount: unknown;
+  try {
+    patternCount = value.length;
+  } catch {
+    throw new TypeError('allowedModules could not be read');
+  }
+  if (
+    typeof patternCount !== 'number'
+    || !Number.isSafeInteger(patternCount)
+    || patternCount < 0
+    || patternCount > MAX_ALLOWED_MODULE_PATTERNS
+  ) {
+    throw new TypeError(
+      `allowedModules must contain at most ${MAX_ALLOWED_MODULE_PATTERNS} patterns`,
+    );
+  }
+
+  const snapshot = new Array<string>(patternCount);
+  try {
+    for (let index = 0; index < patternCount; index += 1) {
+      const pattern = value[index];
+      if (
+        typeof pattern !== 'string'
+        || pattern.length === 0
+        || Buffer.byteLength(pattern, 'utf8') > MAX_ALLOWED_MODULE_PATTERN_BYTES
+      ) {
+        throw new TypeError(
+          `allowedModules[${index}] must be a non-empty string no larger than `
+          + `${MAX_ALLOWED_MODULE_PATTERN_BYTES} bytes`,
+        );
+      }
+      snapshot[index] = pattern;
+    }
+  } catch (error) {
+    if (error instanceof TypeError && error.message.startsWith('allowedModules[')) {
+      throw error;
+    }
+    throw new TypeError('allowedModules could not be read');
+  }
+  return snapshot;
+}
+
+interface BundleOptionsSnapshot {
+  code: string;
+  allowedModules: string[];
+  resolveDir: string;
+  maxBundleSize: number;
+}
+
+function snapshotBundleOptions(value: unknown): BundleOptionsSnapshot {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Bundle options must be an object');
+  }
+
+  let code: unknown;
+  let allowedModules: unknown;
+  let rawResolveDir: unknown;
+  let maxBundleSize: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    code = record.code;
+    allowedModules = record.allowedModules;
+    rawResolveDir = record.resolveDir;
+    maxBundleSize = record.maxBundleSize;
+  } catch {
+    throw new TypeError('Bundle options could not be read');
+  }
+  if (typeof code !== 'string') {
+    throw new TypeError('Bundle code must be a string');
+  }
+  if (
+    rawResolveDir !== undefined
+    && (typeof rawResolveDir !== 'string' || rawResolveDir.length === 0)
+  ) {
+    throw new TypeError('resolveDir must be a non-empty string when provided');
+  }
+
+  return {
+    code,
+    allowedModules: snapshotAllowedModules(allowedModules),
+    resolveDir: resolve((rawResolveDir as string | undefined) ?? process.cwd()),
+    maxBundleSize: normalizeMaxBundleSize(maxBundleSize),
+  };
 }
 
 /**
@@ -182,9 +276,12 @@ function normalizeMaxBundleSize(value: number | undefined): number {
  * or an API is forbidden
  */
 export async function bundle(options: BundleOptions): Promise<BundleResult> {
-  const { code, allowedModules } = options;
-  const resolveDir = resolve(options.resolveDir ?? process.cwd());
-  const maxBundleSize = normalizeMaxBundleSize(options.maxBundleSize);
+  const {
+    code,
+    allowedModules,
+    resolveDir,
+    maxBundleSize,
+  } = snapshotBundleOptions(options);
 
   // Step 1: Analyze and validate module syntax.
   // We validate BEFORE invoking esbuild to fail fast with clear error messages

@@ -787,6 +787,7 @@ TypeScript source
   bare packageの推移依存も`onResolve`で個別にallowlist検証し、依存内のdynamic importも
   lower前に拒否する。dependency packageのrelative / absolute importはsymlink解決後も同じ
   package root内に制限し、applicationから`node_modules`を相対指定する迂回も拒否する。
+  `allowedModules`はiteratorを使わずcopyし、最大1024パターンに制限する。
   出力は`defineRaw()`へ直接登録できる自己完結した`function run`
 - `bundle()`は最終`function run`をUTF-8 byte数で計測し、既定100KiBを超えるpayloadを
   禁止APIのAST scanとsandbox投入より前に拒否する。`maxBundleSize`で明示的に調整できる

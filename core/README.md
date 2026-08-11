@@ -87,6 +87,7 @@ direct `define()` は組み込みの `Function.prototype.toString` で source �
 拒否する。async/generator構文とglobal `Promise`も、入れ子や依存bundle内を含めて拒否する。
 runtime importは標準では拒否し、`dependencyBundling`を明示した場合だけ
 allowlist検証とbundle後の禁止API検査を経て自己完結コードへ変換する。
+`allowedModules`はindexed snapshotされ、1設定あたり最大1024パターンに制限される。
 依存bundleは最終コードをUTF-8で計測し、既定100KiBを超える場合はbuild errorになる。
 抽出関数だけが使うruntime import bindingはhost bundleから除去し、host codeでも使う
 bindingは保持する。実際に読んだ依存fileはVite / webpackのwatch graphへ登録される。

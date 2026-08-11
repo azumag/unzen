@@ -3,7 +3,11 @@
 import MagicString, { type SourceMap } from 'magic-string';
 import { dirname } from 'node:path';
 import ts from 'typescript';
-import { bundle } from './bundler';
+import {
+  bundle,
+  normalizeMaxBundleSize,
+  snapshotAllowedModules,
+} from './bundler';
 import {
   createLexicalTypeChecker,
   isIdentifierReference,
@@ -688,10 +692,32 @@ export async function transformUnzenDefinitionsWithDependencies(
   fileName: string,
   options: UnzenDependencyBundlingOptions,
 ): Promise<UnzenSourceTransformResult | null> {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new TypeError('Dependency bundling options must be an object');
+  }
+  let rawAllowedModules: unknown;
+  let rawResolveDir: unknown;
+  let rawMaxBundleSize: unknown;
+  try {
+    const record = options as unknown as Record<string, unknown>;
+    rawAllowedModules = record.allowedModules;
+    rawResolveDir = record.resolveDir;
+    rawMaxBundleSize = record.maxBundleSize;
+  } catch {
+    throw new TypeError('Dependency bundling options could not be read');
+  }
+  if (
+    rawResolveDir !== undefined
+    && (typeof rawResolveDir !== 'string' || rawResolveDir.length === 0)
+  ) {
+    throw new TypeError('resolveDir must be a non-empty string when provided');
+  }
+  const allowedModules = snapshotAllowedModules(rawAllowedModules);
+  const resolveDir = (rawResolveDir as string | undefined) ?? dirname(fileName);
+  const maxBundleSize = normalizeMaxBundleSize(rawMaxBundleSize);
+
   const analysis = analyzeUnzenSource(source, fileName, true);
   if (!analysis) return null;
-  const allowedModules = [...options.allowedModules];
-  const resolveDir = options.resolveDir ?? dirname(fileName);
 
   const functionCodes: string[] = [];
   const bundledImports = new Map<ts.ImportDeclaration, Set<string>>();
@@ -714,7 +740,7 @@ export async function transformUnzenDefinitionsWithDependencies(
         code: `${imports.join('\n')}\nexport const run = ${functionCode};`,
         allowedModules,
         resolveDir,
-        maxBundleSize: options.maxBundleSize,
+        maxBundleSize,
       });
       functionCodes.push(result.code);
       for (const watchFile of result.watchFiles) watchFiles.add(watchFile);
