@@ -11,11 +11,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHash } from 'crypto';
 import { join, dirname } from 'node:path';
-import { readFileSync, copyFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import {
+  readFileSync,
+  copyFileSync,
+  writeFileSync,
+  mkdtempSync,
+  rmSync,
+  truncateSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { UnzenServer } from '../src/unzen-server';
-import type { FunctionDefinition } from '@unzen/shared';
+import { MAX_FUNCTION_PAYLOAD_BYTES, type FunctionDefinition } from '@unzen/shared';
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -250,6 +257,20 @@ describe('UnzenServer', () => {
       )).toThrow('Invalid noFallback option');
       expect(server.getFunction('badOptions')).toBeUndefined();
     });
+
+    it('rejects oversized source without consuming a version', () => {
+      server.defineRaw('beforeLarge', '() => 1');
+      expect(server.getFunction('beforeLarge')?.version).toBe(1);
+
+      expect(() => server.defineRaw(
+        'tooLarge',
+        'x'.repeat(MAX_FUNCTION_PAYLOAD_BYTES),
+      )).toThrow(`exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+      expect(server.getFunction('tooLarge')).toBeUndefined();
+
+      server.defineRaw('afterLarge', '() => 2');
+      expect(server.getFunction('afterLarge')?.version).toBe(2);
+    });
   });
 
   describe('pure function warnings', () => {
@@ -465,6 +486,19 @@ describe('UnzenServer', () => {
   });
 
   describe('defineMoonbit', () => {
+    it('rejects an oversized module before reading it', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'unzen-large-mb-'));
+      const wasmPath = join(dir, 'oversized.wasm');
+      try {
+        writeFileSync(wasmPath, '');
+        truncateSync(wasmPath, MAX_FUNCTION_PAYLOAD_BYTES + 1);
+        expect(() => server.defineMoonbit('tooLargeWasm', wasmPath))
+          .toThrow(`exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+        expect(server.getFunction('tooLargeWasm')).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
     it('should register a MoonBit wasm module with export metadata', () => {
       server.defineMoonbit('fibonacci', join(fixtureDir, 'fibonacci.wasm'), {
         exportName: 'fibonacci',

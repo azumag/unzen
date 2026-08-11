@@ -74,6 +74,7 @@ describe('HTTP Routes', () => {
       expect(res.status).toBe(200);
       const code = await res.text();
       expect(code).toContain('toUpperCase');
+      expect(res.headers.get('content-length')).toBe(String(Buffer.byteLength(code)));
     });
 
     it('should return 404 for non-existent function', async () => {

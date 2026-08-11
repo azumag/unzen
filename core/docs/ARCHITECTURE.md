@@ -201,6 +201,9 @@ Error
   function code / MoonBit module 16 MiB、fallback response 16 MiB を上限とする。送信前の
   serialized request と受信時の宣言 `Content-Length` を検証し、stream 実 byte 数も読みながら
   検証して、上限超過時は body を cancel する。server は request 超過を構造化 413 で返す
+- server 登録境界は raw source の UTF-8 byte 数と MoonBit file の stat/captured byte 数を
+  16 MiB に制限し、超過時は version 採番・hash・registry 変更前に拒否する。code response は
+  captured payload と一致する `Content-Length` を返す
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`

@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
 import { Hono } from 'hono';
 import type {
   FunctionDefinition,
@@ -24,6 +24,7 @@ import type {
 import {
   createExecutionResponse,
   MAX_EXECUTION_ARGUMENTS,
+  MAX_FUNCTION_PAYLOAD_BYTES,
   MAX_EXECUTION_REQUEST_BYTES,
   UnzenFunctionError,
   UnzenRuntimeError,
@@ -198,10 +199,9 @@ export class UnzenServer {
       throw new Error('Invalid noFallback option: expected a boolean');
     }
 
-    // Warn if function code contains non-pure APIs that won't work in sandbox
-    // This is a DX convenience: developers get early feedback during registration
-    // rather than cryptic runtime errors in the sandbox
-    this.warnIfImpure(name, code);
+    if (Buffer.byteLength(code, 'utf8') > MAX_FUNCTION_PAYLOAD_BYTES) {
+      throw new Error(`Function code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+    }
 
     // If code is already in `function run(...)` form, use it directly
     // to avoid double-wrapping which would break execution.
@@ -213,6 +213,12 @@ export class UnzenServer {
     const wrappedCode = RUN_FUNCTION_DECLARATION.test(code.trimStart())
       ? code
       : `function run(...args) { return (${code})(...args); }`;
+    if (Buffer.byteLength(wrappedCode, 'utf8') > MAX_FUNCTION_PAYLOAD_BYTES) {
+      throw new Error(`Function code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+    }
+
+    // Warn only for definitions that passed every registration boundary.
+    this.warnIfImpure(name, code);
 
     // Increment version counter for this registration
     // This ensures each function registration gets a unique version
@@ -282,7 +288,20 @@ export class UnzenServer {
       throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
     }
 
-    // Fail fast: the .wasm must exist and be a valid module at registration.
+    // Fail fast on declared size before reading the file into process memory.
+    let declaredSize: number;
+    try {
+      declaredSize = statSync(wasmPath).size;
+    } catch (error) {
+      throw new Error(
+        `Cannot read MoonBit module for "${name}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (declaredSize > MAX_FUNCTION_PAYLOAD_BYTES) {
+      throw new Error(`MoonBit module exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+    }
+
+    // The .wasm must exist and be a valid module at registration.
     let bytes: Buffer;
     try {
       bytes = readFileSync(wasmPath);
@@ -290,6 +309,10 @@ export class UnzenServer {
       throw new Error(
         `Cannot read MoonBit module for "${name}": ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+    // Re-check the captured bytes in case the file changed after stat().
+    if (bytes.byteLength > MAX_FUNCTION_PAYLOAD_BYTES) {
+      throw new Error(`MoonBit module exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
     }
     // Node's @types/node does not declare the WebAssembly global on the
     // server tsconfig (no DOM lib), so access it through the global object.
@@ -441,6 +464,7 @@ export class UnzenServer {
         const hasImmutableIdentity = rawVersion !== undefined && rawHash === entry.hash;
         return c.body(Uint8Array.from(entry.payload), 200, {
           'Content-Type': isWasm ? 'application/wasm' : 'text/javascript; charset=utf-8',
+          'Content-Length': String(entry.payload.byteLength),
           // Only an explicit version + matching content hash is immutable.
           // Legacy ?v=N URLs still resolve, but must revalidate because that
           // numeric identity can be reused after a server restart.
@@ -461,6 +485,7 @@ export class UnzenServer {
       }
       return c.text(fn.code, 200, {
         'Content-Type': 'text/javascript; charset=utf-8',
+        'Content-Length': String(Buffer.byteLength(fn.code, 'utf8')),
         // No explicit ?v=: the URL can resolve to a NEWER version after a
         // re-registration, so it must not be cached as immutable.
         'Cache-Control': 'no-cache',

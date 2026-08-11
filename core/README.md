@@ -266,6 +266,8 @@ fallback request は UTF-8 JSON 4 MiB、client が受信する untrusted body �
 function code / MoonBit module 16 MiB、fallback response 16 MiB を上限とする。client は送信前に
 request を拒否し、server/client の受信側は `Content-Length` だけに依存せず stream の実 byte 数を
 計測する。chunked body も上限を越えた時点で cancel し、JSON parse・cache・compile 前に拒否する。
+server は 16 MiB を超える raw source / MoonBit file を version 採番前に登録拒否し、
+`/code/:name` は検証済み payload の正確な `Content-Length` を返す。
 
 ## 4層隔離モデル
 

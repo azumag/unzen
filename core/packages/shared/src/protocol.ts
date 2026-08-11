@@ -23,7 +23,7 @@ export interface ManifestRequest {}
 /** Maximum encoded JSON size accepted for a manifest response (1 MiB). */
 export const MAX_MANIFEST_RESPONSE_BYTES = 1024 * 1024;
 
-/** Maximum JavaScript or MoonBit payload downloaded for one function (16 MiB). */
+/** Maximum JavaScript or MoonBit payload registered or downloaded per function (16 MiB). */
 export const MAX_FUNCTION_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 /** Maximum encoded JSON size accepted for one fallback response (16 MiB). */
