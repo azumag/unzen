@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   readBoundedJsonRequest,
   RequestBodyLimitError,
@@ -53,5 +53,47 @@ describe('bounded request bodies', () => {
       .rejects.toThrow(RequestBodyLimitError);
     expect(pullCount).toBe(2);
     expect(cancelled).toBe(true);
+  });
+
+  it('rejects non-byte chunks without letting cleanup mask the error', async () => {
+    const reader = {
+      read: vi.fn().mockResolvedValue({
+        done: false,
+        value: { byteLength: 1, slice: () => new Uint8Array([123]) },
+      }),
+      cancel: vi.fn(() => { throw new Error('cancel failed'); }),
+      releaseLock: vi.fn(() => { throw new Error('release failed'); }),
+    };
+    const request = {
+      headers: new Headers(),
+      body: { getReader: () => reader },
+    } as unknown as Request;
+
+    await expect(readBoundedJsonRequest(request, 100, 'Test request'))
+      .rejects.toThrow('body returned a non-byte chunk');
+    expect(reader.cancel).toHaveBeenCalledOnce();
+    expect(reader.releaseLock).toHaveBeenCalledOnce();
+  });
+
+  it('owns byte chunks and ignores release cleanup failures', async () => {
+    const source = new TextEncoder().encode('{"args":[1]}');
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({ done: false, value: source })
+        .mockImplementationOnce(async () => {
+          source.fill(0);
+          return { done: true, value: undefined };
+        }),
+      cancel: vi.fn(),
+      releaseLock: vi.fn(() => { throw new Error('release failed'); }),
+    };
+    const request = {
+      headers: new Headers(),
+      body: { getReader: () => reader },
+    } as unknown as Request;
+
+    await expect(readBoundedJsonRequest(request, 100, 'Test request'))
+      .resolves.toEqual({ args: [1] });
+    expect(reader.cancel).not.toHaveBeenCalled();
   });
 });

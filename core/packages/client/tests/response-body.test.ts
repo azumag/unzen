@@ -107,6 +107,44 @@ describe('bounded response bodies', () => {
     expect(cancelled).toBe(true);
   });
 
+  it('preserves the body error when custom reader cleanup throws', async () => {
+    const reader = {
+      read: vi.fn().mockResolvedValue({
+        done: false,
+        value: { byteLength: 1 },
+      }),
+      cancel: vi.fn(() => { throw new Error('cancel failed'); }),
+      releaseLock: vi.fn(() => { throw new Error('release failed'); }),
+    };
+    const response = {
+      headers: new Headers(),
+      body: { getReader: () => reader },
+    } as unknown as Response;
+
+    await expect(readBoundedResponseBytes(response, 10, 'Byte response'))
+      .rejects.toThrow('non-byte chunk');
+    expect(reader.cancel).toHaveBeenCalledOnce();
+    expect(reader.releaseLock).toHaveBeenCalledOnce();
+  });
+
+  it('does not let release cleanup invalidate captured bytes', async () => {
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({ done: false, value: new Uint8Array([1, 2, 3]) })
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+      cancel: vi.fn(),
+      releaseLock: vi.fn(() => { throw new Error('release failed'); }),
+    };
+    const response = {
+      headers: new Headers(),
+      body: { getReader: () => reader },
+    } as unknown as Response;
+
+    await expect(readBoundedResponseBytes(response, 10, 'Byte response'))
+      .resolves.toEqual(new Uint8Array([1, 2, 3]).buffer);
+    expect(reader.cancel).not.toHaveBeenCalled();
+  });
+
   it('round-trips json-only adapter payloads into an owned wire snapshot', async () => {
     const nested = { value: 1 };
     const response = {

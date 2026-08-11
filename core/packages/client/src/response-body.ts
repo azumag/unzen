@@ -91,6 +91,25 @@ function cancelResponseBody(response: Response, reason: unknown): void {
   }
 }
 
+function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: unknown,
+): void {
+  try {
+    void Promise.resolve(reader.cancel(reason)).catch(() => {});
+  } catch {
+    // Reader cleanup is best-effort and must not replace the body error.
+  }
+}
+
+function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    reader.releaseLock();
+  } catch {
+    // A custom adapter's cleanup failure cannot invalidate captured bytes.
+  }
+}
+
 function assertDeclaredResponseSizeOrCancel(
   response: Response,
   maximumBytes: number,
@@ -131,7 +150,7 @@ export async function readBoundedResponseBytes(
         } catch (error) {
           if (error instanceof ResponseBodyLimitError) {
             readerCancelled = true;
-            void reader.cancel(responseSizeError(label, maximumBytes)).catch(() => {});
+            cancelReader(reader, responseSizeError(label, maximumBytes));
             throw responseSizeError(label, maximumBytes);
           }
           throw error;
@@ -140,10 +159,10 @@ export async function readBoundedResponseBytes(
         chunks.push(chunk);
       }
     } catch (error) {
-      if (!readerCancelled) void reader.cancel(error).catch(() => {});
+      if (!readerCancelled) cancelReader(reader, error);
       throw error;
     } finally {
-      reader.releaseLock();
+      releaseReaderLock(reader);
     }
 
     const bytes = new Uint8Array(totalBytes);

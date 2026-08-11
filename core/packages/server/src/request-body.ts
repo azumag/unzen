@@ -11,6 +11,58 @@ function bodyLimitError(label: string, maximumBytes: number): RequestBodyLimitEr
   return new RequestBodyLimitError(label, maximumBytes);
 }
 
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteLength',
+)?.get;
+const TYPED_ARRAY_TAG_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  Symbol.toStringTag,
+)?.get;
+const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+
+function snapshotRequestChunk(
+  value: unknown,
+  maximumBytes: number,
+  label: string,
+): Uint8Array {
+  try {
+    if (!TYPED_ARRAY_BYTE_LENGTH_GETTER || !TYPED_ARRAY_TAG_GETTER) {
+      throw new TypeError('missing typed array getter');
+    }
+    const tag = Reflect.apply(TYPED_ARRAY_TAG_GETTER, value, []) as string;
+    if (tag !== 'Uint8Array') throw new TypeError('invalid request chunk');
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []) as number;
+    if (byteLength > maximumBytes) throw bodyLimitError(label, maximumBytes);
+    const snapshot = new Uint8Array(byteLength);
+    Reflect.apply(UINT8_ARRAY_SET, snapshot, [value, 0]);
+    return snapshot;
+  } catch (error) {
+    if (error instanceof RequestBodyLimitError) throw error;
+    throw new TypeError(`${label} body returned a non-byte chunk`);
+  }
+}
+
+function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: unknown,
+): void {
+  try {
+    void Promise.resolve(reader.cancel(reason)).catch(() => {});
+  } catch {
+    // Reader cleanup is best-effort and must not replace the body error.
+  }
+}
+
+function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    reader.releaseLock();
+  } catch {
+    // A custom request adapter's cleanup failure must not mask the result.
+  }
+}
+
 /** Release an inbound body when a route rejects it before parsing. */
 export function cancelUnreadRequestBody(request: Request): void {
   try {
@@ -62,20 +114,31 @@ export async function readBoundedJsonRequest(
   const body = request.body;
   if (body) {
     const reader = body.getReader();
+    let readerCancelled = false;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (value === undefined) continue;
-        totalBytes += value.byteLength;
-        if (totalBytes > maximumBytes) {
-          void reader.cancel(bodyLimitError(label, maximumBytes)).catch(() => {});
-          throw bodyLimitError(label, maximumBytes);
+        let chunk: Uint8Array;
+        try {
+          chunk = snapshotRequestChunk(value, maximumBytes - totalBytes, label);
+        } catch (error) {
+          if (error instanceof RequestBodyLimitError) {
+            readerCancelled = true;
+            cancelReader(reader, bodyLimitError(label, maximumBytes));
+            throw bodyLimitError(label, maximumBytes);
+          }
+          throw error;
         }
-        chunks.push(value.slice());
+        totalBytes += chunk.byteLength;
+        chunks.push(chunk);
       }
+    } catch (error) {
+      if (!readerCancelled) cancelReader(reader, error);
+      throw error;
     } finally {
-      reader.releaseLock();
+      releaseReaderLock(reader);
     }
   }
 
