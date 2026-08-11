@@ -372,6 +372,9 @@ fail closed で拒否される。成功した`null`はerrorと区別され、そ
 advanced API から worker executor を直接構築する場合、`workerUrl`は空文字不可、
 timer値は1〜2,147,483,647msの整数、`maxQueueSize`は0以上のsafe integer、
 `hardKillMultiplier`は正の有限値で、`timeout`との積もtimer範囲内である必要がある。
+QuickJS executor の直接 `execute()` は非空 code と最大128引数を受け付け、worker 初期化・
+queue 登録前に indexed copy と JSON round-trip で引数を所有する。循環値や BigInt など
+JSON 化できない入力は worker を作らず `UnzenFunctionError` で拒否する。
 
 ## 永続 code / Wasm キャッシュ
 

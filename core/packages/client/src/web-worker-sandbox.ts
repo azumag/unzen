@@ -71,6 +71,7 @@ import {
   normalizeWorkerFactory,
   normalizeWorkerUrl,
 } from './worker-executor-options';
+import { snapshotQuickJsCall } from './quickjs-call';
 
 /**
  * Configuration options for WebWorkerSandboxExecutor
@@ -344,11 +345,19 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
+    const signal = options?.signal;
     // Reject immediately if the caller already aborted before calling.
     // Cancellation is a deliberate caller decision, never a runtime error.
-    if (options?.signal?.aborted) {
+    if (signal?.aborted) {
       this.diagnosticsState.cancelCount++;
       throw new UnzenCancelledError('Execution cancelled by caller');
+    }
+
+    let call: ReturnType<typeof snapshotQuickJsCall>;
+    try {
+      call = snapshotQuickJsCall(code, args);
+    } catch (error) {
+      throw new UnzenFunctionError(error instanceof Error ? error.message : String(error));
     }
 
     // Generate unique request ID for tracking concurrent executions
@@ -357,11 +366,11 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     return new Promise<unknown>((resolve, reject) => {
       const base: BaseRequest = {
         requestId,
-        code,
-        args,
+        code: call.code,
+        args: call.args,
         resolve,
         reject,
-        signal: options?.signal,
+        signal,
       };
 
       // Single-flight: while a request is running OR the worker is still

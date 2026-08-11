@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
+  MAX_EXECUTION_ARGUMENTS,
   UnzenCancelledError,
   UnzenDeadlineExceededError,
   UnzenFunctionError,
@@ -184,6 +185,69 @@ describe('WebWorkerSandboxExecutor', () => {
   });
 
   describe('execute', () => {
+    it('should reject invalid calls before creating a worker', async () => {
+      const factory = vi.fn();
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: factory,
+      });
+      const cyclic: unknown[] = [];
+      cyclic.push(cyclic);
+      const validCode = 'function run() { return 1; }';
+      const invalidCalls: Array<{ code: unknown; args: unknown }> = [
+        { code: '   ', args: [] },
+        { code: validCode, args: {} },
+        { code: validCode, args: new Array(MAX_EXECUTION_ARGUMENTS + 1) },
+        { code: validCode, args: cyclic },
+        { code: validCode, args: [1n] },
+      ];
+
+      for (const { code, args } of invalidCalls) {
+        await expect(executor.execute(code as string, args as unknown[]))
+          .rejects.toThrow(UnzenFunctionError);
+      }
+
+      expect(factory).not.toHaveBeenCalled();
+      executor.dispose();
+    });
+
+    it('should snapshot JSON arguments before asynchronous worker initialization', async () => {
+      const worker = new MockWorker();
+      let postedArgs: unknown[] | undefined;
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          postedArgs = msg.args;
+          worker.respond({
+            type: 'execute-result',
+            requestId: msg.requestId,
+            success: true,
+            value: 'ok',
+          });
+        }
+      });
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+      const args = [{ value: 1 }];
+      Object.defineProperty(args, Symbol.iterator, {
+        value: () => {
+          throw new Error('argument iterator must not run at the executor boundary');
+        },
+      });
+
+      const execution = executor.execute('function run(value) { return value; }', args);
+      args[0].value = 999;
+      args.push({ value: 2 });
+
+      await expect(execution).resolves.toBe('ok');
+      expect(postedArgs).toEqual([{ value: 1 }]);
+      expect(postedArgs).not.toBe(args);
+      executor.dispose();
+    });
+
     it('should initialize worker on first execute (lazy init)', async () => {
       const worker = createAutoRespondingMockWorker();
       const factory = vi.fn(createMockWorkerFactory(worker));

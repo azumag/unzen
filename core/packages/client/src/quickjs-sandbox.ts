@@ -24,6 +24,7 @@ import {
   UnzenFunctionError,
   assertSynchronousUnzenResult,
 } from '@unzen/shared';
+import { snapshotQuickJsCall } from './quickjs-call';
 import { createContext, Script } from 'vm';
 import type { SandboxExecutor } from './sandbox-executor';
 
@@ -84,10 +85,12 @@ export class MockSandboxExecutor implements SandboxExecutor {
   ): Promise<unknown> {
     // Honour caller cancellation even for the synchronous mock executor:
     // a request that was already aborted must not start executing.
-    if (options?.signal?.aborted) {
+    const signal = options?.signal;
+    if (signal?.aborted) {
       throw new UnzenCancelledError('Execution cancelled by caller');
     }
     try {
+      const call = snapshotQuickJsCall(code, args);
       // Create fresh context for this execution
       // Rationale: Each execution should be isolated from others
       // Note: vm.createContext provides limited isolation, not security
@@ -106,7 +109,7 @@ export class MockSandboxExecutor implements SandboxExecutor {
 
       // Execute code to define 'run' function
       // This compiles and runs the user code in the context
-      const script = new Script(code);
+      const script = new Script(call.code);
       script.runInContext(context);
 
       // Check if 'run' function was defined
@@ -118,7 +121,7 @@ export class MockSandboxExecutor implements SandboxExecutor {
       }
 
       // Call 'run' function with provided arguments
-      const result = (context.run as (...a: unknown[]) => unknown)(...args);
+      const result = (context.run as (...a: unknown[]) => unknown)(...call.args);
       assertSynchronousUnzenResult(result);
 
       return result;

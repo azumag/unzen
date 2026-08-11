@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { UnzenFunctionError } from '@unzen/shared';
+import { MAX_EXECUTION_ARGUMENTS, UnzenFunctionError } from '@unzen/shared';
 import { MockSandboxExecutor } from '../src/quickjs-sandbox';
 
 describe('MockSandboxExecutor', () => {
@@ -42,6 +42,29 @@ describe('MockSandboxExecutor', () => {
     const result = await executor.execute(code, []);
 
     expect(result).toBe(42);
+    executor.dispose();
+  });
+
+  it('should enforce the JSON call boundary without invoking the args iterator', async () => {
+    const executor = new MockSandboxExecutor();
+    const args = [1, 2];
+    Object.defineProperty(args, Symbol.iterator, {
+      value: () => {
+        throw new Error('argument iterator must not run at the executor boundary');
+      },
+    });
+
+    await expect(executor.execute('function run(a, b) { return a + b; }', args))
+      .resolves.toBe(3);
+
+    const cyclic: unknown[] = [];
+    cyclic.push(cyclic);
+    await expect(executor.execute('function run() { return 1; }', cyclic))
+      .rejects.toThrow(UnzenFunctionError);
+    await expect(executor.execute(
+      'function run() { return 1; }',
+      new Array(MAX_EXECUTION_ARGUMENTS + 1),
+    )).rejects.toThrow(UnzenFunctionError);
     executor.dispose();
   });
 
