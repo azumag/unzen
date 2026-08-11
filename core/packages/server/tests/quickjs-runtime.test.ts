@@ -140,6 +140,13 @@ describe('QuickJSRuntime', () => {
       await expect(runtime.execute(code, [{}])).rejects.toThrow(UnzenFunctionError);
     });
 
+    it('preserves JSON-omitted thrown values as function errors', async () => {
+      await expect(runtime.execute('function run() { throw undefined; }', []))
+        .rejects.toThrow('Function execution failed: undefined');
+      await expect(runtime.execute('throw Symbol("load"); function run() {}', []))
+        .rejects.toThrow('Failed to load function code: Symbol(load)');
+    });
+
     it('should throw UnzenRuntimeError for timeout', async () => {
       // Infinite loop should trigger timeout
       const code = 'function run() { while(true) {} }';

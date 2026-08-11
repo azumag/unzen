@@ -26,6 +26,7 @@ import {
   MAX_FUNCTION_TIMEOUT,
   SANDBOX_SECURITY_INIT,
   SANDBOX_SYNCHRONOUS_EXECUTION,
+  formatSandboxError,
   UnzenFunctionError,
   UnzenRuntimeError,
   type ExecutionOptions,
@@ -233,11 +234,12 @@ export class QuickJSRuntime {
       const loadCodeResult = context.evalCode(execution.code);
       if (loadCodeResult.error) {
         const error = context.dump(loadCodeResult.error);
+        const errorMessage = formatSandboxError(error);
         loadCodeResult.error.dispose();
-        if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
+        if (timeoutTriggered || errorMessage.includes('interrupted')) {
           throw new UnzenRuntimeError(`Execution timeout exceeded (${execution.timeout}ms)`);
         }
-        throw new UnzenFunctionError(`Failed to load function code: ${JSON.stringify(error)}`);
+        throw new UnzenFunctionError(`Failed to load function code: ${errorMessage}`);
       }
       loadCodeResult.value.dispose();
 
@@ -247,14 +249,15 @@ export class QuickJSRuntime {
       // Check if execution failed
       if (result.error) {
         const error = context.dump(result.error);
+        const errorMessage = formatSandboxError(error);
         result.error.dispose();
 
         // Check if this was a timeout
-        if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
+        if (timeoutTriggered || errorMessage.includes('interrupted')) {
           throw new UnzenRuntimeError(`Execution timeout exceeded (${execution.timeout}ms)`);
         }
 
-        throw new UnzenFunctionError(`Function execution failed: ${JSON.stringify(error)}`);
+        throw new UnzenFunctionError(`Function execution failed: ${errorMessage}`);
       }
 
       // Dump the result to JavaScript value

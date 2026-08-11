@@ -27,6 +27,7 @@
 import {
   SANDBOX_SECURITY_INIT,
   SANDBOX_SYNCHRONOUS_EXECUTION,
+  formatSandboxError,
 } from '@unzen/shared';
 import {
   type WorkerResponse,
@@ -257,10 +258,11 @@ async function handleExecute(
     const securityResult = context.evalCode(SANDBOX_SECURITY_INIT);
     if (securityResult.error) {
       const error = securityResult.error.consume((handle) => context.dump(handle));
+      const errorMessage = formatSandboxError(error);
       postMessage(createExecuteErrorMessage(
         requestId,
         'runtime_error',
-        `Failed to apply security hardening: ${JSON.stringify(error)}`,
+        `Failed to apply security hardening: ${errorMessage}`,
         generationId,
       ));
       return;
@@ -277,10 +279,11 @@ async function handleExecute(
     );
     if (argsResult.error) {
       const error = argsResult.error.consume((handle) => context.dump(handle));
+      const errorMessage = formatSandboxError(error);
       postMessage(createExecuteErrorMessage(
         requestId,
         'runtime_error',
-        `Failed to inject arguments: ${JSON.stringify(error)}`,
+        `Failed to inject arguments: ${errorMessage}`,
         generationId,
       ));
       return;
@@ -312,6 +315,7 @@ async function handleExecute(
     const loadResult = context.evalCode(code);
     if (loadResult.error) {
       const error = loadResult.error.consume((handle) => context.dump(handle));
+      const errorMessage = formatSandboxError(error);
       if (cancelledTriggered) {
         postMessage(createExecuteErrorMessage(
           requestId,
@@ -319,7 +323,7 @@ async function handleExecute(
           'Execution cancelled',
           generationId,
         ));
-      } else if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
+      } else if (timeoutTriggered || errorMessage.includes('interrupted')) {
         postMessage(createExecuteErrorMessage(
           requestId,
           'deadline_exceeded',
@@ -330,7 +334,7 @@ async function handleExecute(
         postMessage(createExecuteErrorMessage(
           requestId,
           'function_error',
-          `Failed to load function code: ${JSON.stringify(error)}`,
+          `Failed to load function code: ${errorMessage}`,
           generationId,
         ));
       }
@@ -342,6 +346,7 @@ async function handleExecute(
     const execResult = context.evalCode(SANDBOX_SYNCHRONOUS_EXECUTION);
     if (execResult.error) {
       const error = execResult.error.consume((handle) => context.dump(handle));
+      const errorMessage = formatSandboxError(error);
 
       // Cancellation is reported distinctly (the main thread turns it into
       // UnzenCancelledError; it must NOT trigger server fallback).
@@ -356,7 +361,7 @@ async function handleExecute(
       }
 
       // Timeout errors are runtime errors (trigger fallback)
-      if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
+      if (timeoutTriggered || errorMessage.includes('interrupted')) {
         postMessage(createExecuteErrorMessage(
           requestId,
           'deadline_exceeded',
@@ -370,7 +375,7 @@ async function handleExecute(
       postMessage(createExecuteErrorMessage(
         requestId,
         'function_error',
-        `Function execution failed: ${JSON.stringify(error)}`,
+        `Function execution failed: ${errorMessage}`,
         generationId,
       ));
       return;

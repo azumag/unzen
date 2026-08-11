@@ -32,7 +32,7 @@ function createMockContext(evalResults: Array<{ error?: unknown; value?: unknown
   return {
     evalCode: vi.fn((_code: string) => {
       const result = evalResults[callIndex++];
-      if (result?.error !== undefined) {
+      if (result && Object.hasOwn(result, 'error')) {
         return {
           error: {
             consume: vi.fn((fn: (h: unknown) => unknown) => fn(result.error)),
@@ -294,6 +294,31 @@ describe('quickjs-worker handleWorkerMessage', () => {
         success: false,
         errorType: 'function_error',
       });
+    });
+
+    it('returns function_error when sandbox code throws undefined', async () => {
+      const context = createMockContext([
+        { value: undefined },
+        { value: undefined },
+        { value: undefined },
+        { error: undefined },
+      ]);
+      const state: WorkerState = { quickJS: createMockQuickJS(context) as never };
+
+      await handleWorkerMessage(
+        { data: createExecuteMessage('req-undefined', 'function run(){throw undefined;}', [], 1) },
+        state,
+        postMessage,
+      );
+
+      expect(responses).toHaveLength(1);
+      expect(responses[0]).toMatchObject({
+        requestId: 'req-undefined',
+        success: false,
+        errorType: 'function_error',
+        error: 'Function execution failed: undefined',
+      });
+      expect(context.dispose).toHaveBeenCalled();
     });
 
     it('should return function_error when code syntax is invalid', async () => {

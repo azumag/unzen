@@ -56,6 +56,7 @@ export {
   UNZEN_ASYNC_RESULT_ERROR,
   UNZEN_ITERATOR_RESULT_ERROR,
   assertSynchronousUnzenResult,
+  formatSandboxError,
 } from './sandbox-execution';
 export { utf8ByteLength, exceedsUtf8ByteLength } from './utf8';
 

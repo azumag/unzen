@@ -6,6 +6,22 @@ export const UNZEN_ASYNC_RESULT_ERROR =
 export const UNZEN_ITERATOR_RESULT_ERROR =
   'Unzen functions must return a materialized value; iterator and generator results are unsupported.';
 
+/** Format a value thrown by sandboxed code without assuming JSON produces text. */
+export function formatSandboxError(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (typeof serialized === 'string') return serialized;
+  } catch {
+    // Circular and otherwise non-JSON values fall back to their string form.
+  }
+
+  try {
+    return String(value);
+  } catch {
+    return 'Unknown thrown value';
+  }
+}
+
 /** Reject deferred and iterator results before they cross the execution boundary. */
 export function assertSynchronousUnzenResult(value: unknown): void {
   if (

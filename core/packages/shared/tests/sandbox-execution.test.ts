@@ -4,6 +4,7 @@ import {
   UNZEN_ASYNC_RESULT_ERROR,
   UNZEN_ITERATOR_RESULT_ERROR,
   assertSynchronousUnzenResult,
+  formatSandboxError,
 } from '../src/sandbox-execution';
 
 describe('sandbox execution contract', () => {
@@ -30,5 +31,14 @@ describe('sandbox execution contract', () => {
   it('embeds both errors in the QuickJS execution expression', () => {
     expect(SANDBOX_SYNCHRONOUS_EXECUTION).toContain(UNZEN_ASYNC_RESULT_ERROR);
     expect(SANDBOX_SYNCHRONOUS_EXECUTION).toContain(UNZEN_ITERATOR_RESULT_ERROR);
+  });
+
+  it('formats JSON-omitted and circular thrown values without throwing', () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+
+    expect(formatSandboxError(undefined)).toBe('undefined');
+    expect(formatSandboxError(Symbol('failure'))).toBe('Symbol(failure)');
+    expect(formatSandboxError(circular)).toBe('[object Object]');
   });
 });
