@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import { MAX_EXECUTION_REQUEST_BYTES } from '@unzen/shared';
 import { UnzenServer } from '../src/unzen-server';
 
 describe('HTTP Routes', () => {
@@ -299,6 +300,25 @@ describe('HTTP Routes', () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toBeDefined();
+    });
+
+    it('should return 413 for an oversized declared request before reading JSON', async () => {
+      server.defineRaw('testSize', '() => 1');
+
+      const res = await app.request('/unzen/exec/testSize', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(MAX_EXECUTION_REQUEST_BYTES + 1),
+        },
+        body: JSON.stringify({ args: [] }),
+      });
+
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual({
+        result: null,
+        error: `Fallback request exceeds ${MAX_EXECUTION_REQUEST_BYTES} bytes`,
+      });
     });
 
     // === Error message sanitization tests (H3 finding) ===

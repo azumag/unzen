@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_REQUEST_BYTES,
   MAX_EXECUTION_RESPONSE_BYTES,
   UnzenCancelledError,
   UnzenFunctionError,
@@ -220,6 +221,22 @@ describe('FallbackHandler', () => {
     );
   });
 
+  it('classifies HTTP 413 as a fallback input error', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 413,
+      statusText: 'Payload Too Large',
+      json: async () => ({
+        result: null,
+        error: `Fallback request exceeds ${MAX_EXECUTION_REQUEST_BYTES} bytes`,
+      }),
+    });
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute('test', []))
+      .rejects.toThrow(UnzenFunctionError);
+  });
+
   it('should handle complex return values', async () => {
     const complexResult = {
       data: [1, 2, 3],
@@ -346,6 +363,19 @@ describe('FallbackHandler', () => {
     const handler = new FallbackHandler('https://example.com');
 
     await expect(handler.execute('test', [1n])).rejects.toThrow(UnzenFunctionError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized fallback request before fetch', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const handler = new FallbackHandler('https://example.com');
+    const oversized = 'x'.repeat(MAX_EXECUTION_REQUEST_BYTES);
+
+    await expect(handler.execute('test', [oversized]))
+      .rejects.toThrow(UnzenFunctionError);
+    await expect(handler.execute('test', [oversized]))
+      .rejects.toThrow('exceeds');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

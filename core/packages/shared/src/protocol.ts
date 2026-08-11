@@ -198,6 +198,9 @@ export interface ExecutionRequest {
 /** Maximum number of arguments accepted by the fallback transport. */
 export const MAX_EXECUTION_ARGUMENTS = 128;
 
+/** Maximum encoded JSON size accepted for one fallback request (4 MiB). */
+export const MAX_EXECUTION_REQUEST_BYTES = 4 * 1024 * 1024;
+
 /**
  * Response type for function execution (fallback API)
  *

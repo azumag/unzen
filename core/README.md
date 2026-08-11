@@ -260,9 +260,10 @@ JSON serialization を完了するため、循環値・BigInt・過大な引数�
 `initialize()` は同時呼び出しを single-flight 化し、`dispose()` は terminal なので、破棄後は
 新しい `QuickJSRuntime` instance を生成する。
 
-client が受信する untrusted body は manifest 1 MiB、function code / MoonBit module 16 MiB、
-fallback response 16 MiB を上限とする。`Content-Length` だけに依存せず stream の実 byte 数を
-計測し、chunked response も上限を越えた時点で cancel して cache・compile・JSON parse 前に拒否する。
+fallback request は UTF-8 JSON 4 MiB、client が受信する untrusted body は manifest 1 MiB、
+function code / MoonBit module 16 MiB、fallback response 16 MiB を上限とする。client は送信前に
+request を拒否し、server/client の受信側は `Content-Length` だけに依存せず stream の実 byte 数を
+計測する。chunked body も上限を越えた時点で cancel し、JSON parse・cache・compile 前に拒否する。
 
 ## 4層隔離モデル
 

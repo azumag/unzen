@@ -24,6 +24,7 @@ import type {
 import {
   createExecutionResponse,
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_REQUEST_BYTES,
   UnzenFunctionError,
   UnzenRuntimeError,
   MAX_FUNCTION_TIMEOUT,
@@ -33,6 +34,7 @@ import {
 import { FunctionRegistry } from './function-registry';
 import { ManifestBuilder } from './manifest-builder';
 import { QuickJSRuntime } from './quickjs-runtime';
+import { readBoundedJsonRequest, RequestBodyLimitError } from './request-body';
 
 /**
  * Configuration options for UnzenServer
@@ -496,8 +498,21 @@ export class UnzenServer {
         // Parse request body with JSON error handling (H2 fix)
         let body: unknown;
         try {
-          body = await c.req.json();
-        } catch {
+          body = await readBoundedJsonRequest(
+            c.req.raw,
+            MAX_EXECUTION_REQUEST_BYTES,
+            'Fallback request',
+          );
+        } catch (error) {
+          if (error instanceof RequestBodyLimitError) {
+            return c.json(
+              createExecutionResponse({
+                success: false,
+                error: error.message,
+              }),
+              413,
+            );
+          }
           return c.json(
             createExecutionResponse({
               success: false,

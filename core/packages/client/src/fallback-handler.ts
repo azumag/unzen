@@ -19,6 +19,7 @@
 import {
   MAX_EXECUTION_RESPONSE_BYTES,
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_REQUEST_BYTES,
   UnzenCancelledError,
   UnzenFunctionError,
   UnzenNetworkError,
@@ -104,6 +105,14 @@ export class FallbackHandler {
       );
     }
     throwIfAborted(requestSignal);
+    if (
+      body.length > MAX_EXECUTION_REQUEST_BYTES
+      || new TextEncoder().encode(body).byteLength > MAX_EXECUTION_REQUEST_BYTES
+    ) {
+      throw new UnzenFunctionError(
+        `Fallback request exceeds ${MAX_EXECUTION_REQUEST_BYTES} bytes`,
+      );
+    }
 
     const url = `${this.endpoint}/exec/${name}`;
 
@@ -162,6 +171,7 @@ export class FallbackHandler {
           response.ok
           || response.status === 400
           || response.status === 404
+          || response.status === 413
           || response.status === 422
         ) {
           throw new UnzenFunctionError(data.error);
