@@ -242,6 +242,17 @@ describe('WorkerProtocol', () => {
       if (!result.ok) expect(result.reason).toContain('not an object');
     });
 
+    it('should reject response objects whose fields cannot be read', () => {
+      const response = new Proxy({}, {
+        get() {
+          throw new Error('boom');
+        },
+      });
+      const result = validateWorkerResponse(response);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('could not be read');
+    });
+
     it('should reject a protocol version mismatch', () => {
       const result = validateWorkerResponse({
         type: 'init-result',

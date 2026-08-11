@@ -281,6 +281,16 @@ export function validateWorkerRequest(
 export function validateWorkerResponse(
   data: unknown,
 ): { ok: true; msg: WorkerResponse } | { ok: false; reason: string } {
+  try {
+    return validateWorkerResponseFields(data);
+  } catch {
+    return { ok: false, reason: 'response could not be read' };
+  }
+}
+
+function validateWorkerResponseFields(
+  data: unknown,
+): { ok: true; msg: WorkerResponse } | { ok: false; reason: string } {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return { ok: false, reason: 'response is not an object' };
   }

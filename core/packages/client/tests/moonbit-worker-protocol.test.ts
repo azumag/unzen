@@ -130,6 +130,17 @@ describe('MoonBit worker protocol', () => {
     expect(ok.ok).toBe(true);
   });
 
+  it('rejects response objects whose fields cannot be read', () => {
+    const response = new Proxy({}, {
+      get() {
+        throw new Error('boom');
+      },
+    });
+    const result = validateMoonbitWorkerResponse(response);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('could not be read');
+  });
+
   it('rejects missing version / generation / unknown types', () => {
     const missingVersion = validateMoonbitWorkerResponse({
       type: 'init-result',

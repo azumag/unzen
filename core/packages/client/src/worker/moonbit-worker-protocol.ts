@@ -344,6 +344,16 @@ export function validateMoonbitWorkerRequest(
 export function validateMoonbitWorkerResponse(
   data: unknown,
 ): { ok: true; msg: MoonbitWorkerResponse } | { ok: false; reason: string } {
+  try {
+    return validateMoonbitWorkerResponseFields(data);
+  } catch {
+    return { ok: false, reason: 'response could not be read' };
+  }
+}
+
+function validateMoonbitWorkerResponseFields(
+  data: unknown,
+): { ok: true; msg: MoonbitWorkerResponse } | { ok: false; reason: string } {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return { ok: false, reason: 'response is not an object' };
   }
