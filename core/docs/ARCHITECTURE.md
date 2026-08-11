@@ -556,8 +556,9 @@ interface UnzenExecutionRequest {
 - **constructor 境界**: option bag、非空 `endpoint`、3種類の `mode`、選択した worker URL / MoonBit
   compile option、custom executor の callable surface を component 生成前に検証する。選択肢は
   一度だけ読み、custom executor の method reference は元 instance に bind した snapshot として
-  保持する。endpoint は trim し末尾 slash を除去して `//manifest` / `//exec` を作らない。
-  public `FallbackHandler` / `ManifestFetcher` の直接構築にも同じ正規化を適用する。
+  保持する。endpoint は 2,048 byte 以下、credential / query / fragment のない HTTP(S) absolute
+  URL または origin-relative path に限定して正規化する。protocol-relative URL と scheme なし
+  relative path は拒否し、public `FallbackHandler` / `ManifestFetcher` にも同じ境界を適用する。
 - **request 境界**: `name` は safe identifier、`args` は最大128件の配列とし、manifest
   fetch より前に request field を一度だけ読む。top-level の引数 slot は iterator を
   呼ばない bounded indexed copy で浅く snapshot する。`signal` / `onEvent` も型検証して
