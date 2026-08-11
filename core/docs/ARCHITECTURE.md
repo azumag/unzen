@@ -477,6 +477,8 @@ fetch(entry) → entry.hash をキーにキャッシュ検索
 ```
 
 - **ハッシュベースキャッシュ**: URL ではなくコンテンツハッシュをキーに使用する
+- 同じ hash の concurrent miss は1つの HTTP request に single-flight 化する。各 caller は
+  独立して cancel でき、最後の waiter が離れた時だけ共有 request を abort する
 - public `fetch()` は QuickJS manifest entry と `AbortSignal` を副作用前に検証し、entry を
   一度だけ snapshot する。応答待機中の caller mutation は URL / hash / cache key を変えない
 - `ManifestFetcher.fetch()` も signal を cache hit / HTTP request より前に検証する

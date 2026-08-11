@@ -452,7 +452,9 @@ cache hit、同時 waiter、304 revalidation、`getEntry()` は entry と MoonBi
 caller-owned copy を返し、内部 cache / ETag snapshot を外部 mutation へ公開しない。
 direct `ManifestFetcher.fetch(signal)` は signal を HTTP 前に検証する。`CodeFetcher.fetch()` は
 QuickJS manifest entry と signal を cache/network 前に検証・snapshot し、非同期応答中の
-caller mutation で URL、integrity hash、cache key が変わらないようにする。
+caller mutation で URL、integrity hash、cache key が変わらないようにする。同じ hash の
+同時取得は single-flight 化し、各 caller の cancel はその waiter だけを外し、最後の waiter が
+離れた時だけ共有 HTTP request を中止する。
 
 Service Worker の有無にかかわらず、`UnzenClient` はダウンロードした JavaScript と
 MoonBit Wasm の生バイトを manifest の `sha256:<64hex>` と照合し、一致した payload

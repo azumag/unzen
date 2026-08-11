@@ -164,6 +164,75 @@ describe('CodeFetcher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // Still 1, not 2
   });
 
+  it('deduplicates concurrent downloads with the same hash', async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new CodeFetcher('https://example.com');
+
+    const first = fetcher.fetch(mockEntry);
+    const second = fetcher.fetch({
+      ...mockEntry,
+      codeUrl: 'https://cdn.example.com/same-code.js',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveFetch(codeResponse(mockCode));
+    await expect(Promise.all([first, second])).resolves.toEqual([mockCode, mockCode]);
+  });
+
+  it('keeps a shared download alive when one waiter cancels', async () => {
+    let resolveFetch!: (response: Response) => void;
+    let sharedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      sharedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new CodeFetcher('https://example.com');
+    const controller = new AbortController();
+
+    const cancelled = fetcher.fetch(mockEntry, controller.signal);
+    const retained = fetcher.fetch(mockEntry);
+    controller.abort();
+
+    await expect(cancelled).rejects.toThrow(UnzenCancelledError);
+    expect(sharedSignal?.aborted).toBe(false);
+    resolveFetch(codeResponse(mockCode));
+    await expect(retained).resolves.toBe(mockCode);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an unneeded download and does not cache its late body', async () => {
+    let resolveFirst!: (response: Response) => void;
+    let sharedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce((_url: string, init?: RequestInit) => {
+        sharedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        });
+      })
+      .mockResolvedValueOnce(codeResponse(mockCode));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new CodeFetcher('https://example.com');
+    const controller = new AbortController();
+
+    const cancelled = fetcher.fetch(mockEntry, controller.signal);
+    controller.abort();
+    await expect(cancelled).rejects.toThrow(UnzenCancelledError);
+    expect(sharedSignal?.aborted).toBe(true);
+
+    resolveFirst(codeResponse(mockCode));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(fetcher.fetch(mockEntry)).resolves.toBe(mockCode);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('should fetch again if hash changes', async () => {
     const updatedCode = `${mockCode}\n`;
     const fetchMock = vi.fn()

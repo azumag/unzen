@@ -29,9 +29,20 @@ import {
   normalizeManifestResponse,
   type FunctionManifestEntry,
 } from '@unzen/shared';
-import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort';
+import {
+  isAbortError,
+  raceWithAbort,
+  snapshotAbortSignalInput,
+  throwIfAborted,
+} from './abort';
 import { assertUnzenContentIntegrity } from './content-integrity';
 import { readBoundedResponseBytes } from './response-body';
+
+interface InflightCodeRequest {
+  readonly promise: Promise<string>;
+  readonly controller: AbortController;
+  waiters: number;
+}
 
 /** Validate and own the manifest fields consumed by this fetcher. */
 function snapshotCodeManifestEntry(value: unknown): FunctionManifestEntry | undefined {
@@ -49,6 +60,9 @@ export class CodeFetcher {
    * Value: JavaScript source code
    */
   private readonly cache: Map<string, string> = new Map();
+
+  /** Shared downloads keyed by content identity, with per-caller cancellation. */
+  private readonly inflight: Map<string, InflightCodeRequest> = new Map();
 
   /**
    * Constructor
@@ -110,12 +124,49 @@ export class CodeFetcher {
       return cached;
     }
 
+    let pending = this.inflight.get(hash);
+    if (pending === undefined) {
+      const controller = new AbortController();
+      pending = {
+        promise: this.fetchAndCache(codeUrl, hash, controller.signal),
+        controller,
+        waiters: 0,
+      };
+      const created = pending;
+      created.promise.finally(() => {
+        if (this.inflight.get(hash) === created) {
+          this.inflight.delete(hash);
+        }
+      }).catch(() => {});
+      this.inflight.set(hash, created);
+    }
+
+    pending.waiters++;
     try {
-      // Fetch code from URL (signal cancels the request on abort)
+      return await (requestSignal
+        ? raceWithAbort(pending.promise, requestSignal)
+        : pending.promise);
+    } finally {
+      pending.waiters--;
+      if (pending.waiters === 0 && this.inflight.get(hash) === pending) {
+        this.inflight.delete(hash);
+        pending.controller.abort();
+      }
+    }
+  }
+
+  /** Fetch, verify, decode, and atomically publish one cache entry. */
+  private async fetchAndCache(
+    codeUrl: string,
+    hash: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    try {
+      // The shared signal is aborted only after the final waiter leaves.
       // Note: codeUrl is absolute URL from manifest, not relative to endpoint
       const response = await globalThis.fetch(codeUrl, {
         method: 'GET',
-        signal: requestSignal,
+        signal,
       });
 
       // Check HTTP status
@@ -133,9 +184,9 @@ export class CodeFetcher {
         MAX_FUNCTION_PAYLOAD_BYTES,
         'Function code response',
       );
-      throwIfAborted(requestSignal);
+      throwIfAborted(signal);
       await assertUnzenContentIntegrity(bytes, hash);
-      throwIfAborted(requestSignal);
+      throwIfAborted(signal);
 
       let code: string;
       try {
@@ -157,7 +208,7 @@ export class CodeFetcher {
 
       // Cancellation must surface as UnzenCancelledError, never as a network
       // error (which would look recoverable and trigger server fallback).
-      if (isAbortError(error) || requestSignal?.aborted) {
+      if (isAbortError(error) || signal.aborted) {
         throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
