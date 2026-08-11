@@ -1144,6 +1144,54 @@ describe('WebWorkerSandboxExecutor', () => {
       countingExecutor.dispose();
     });
 
+    it('recovers when abort listener registration throws', async () => {
+      const worker = createAutoRespondingMockWorker();
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+      const signal = {
+        aborted: false,
+        addEventListener() {
+          throw new Error('registration failed');
+        },
+        removeEventListener() {},
+      } as unknown as AbortSignal;
+
+      await expect(
+        executor.execute('function run() { return 1; }', [], { signal }),
+      ).rejects.toThrow(UnzenFunctionError);
+      await expect(
+        executor.execute('function run() { return 2; }', []),
+      ).resolves.toBe('__mock_result__');
+      executor.dispose();
+    });
+
+    it('cancels before worker creation when abort races listener registration', async () => {
+      let aborted = false;
+      const signal = {
+        get aborted() {
+          return aborted;
+        },
+        addEventListener() {
+          aborted = true;
+        },
+        removeEventListener() {},
+      } as unknown as AbortSignal;
+      const factory = vi.fn();
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: factory,
+      });
+
+      await expect(
+        executor.execute('function run() { return 1; }', [], { signal }),
+      ).rejects.toThrow(UnzenCancelledError);
+      expect(executor.diagnostics.cancelCount).toBe(1);
+      expect(factory).not.toHaveBeenCalled();
+      executor.dispose();
+    });
+
     it('must not commit a successful execute-result that races an abort (cancel wins)', async () => {
       // A real worker runs QuickJS synchronously, so a CancelMessage cannot be
       // processed mid-loop: an execute-result (success) can arrive AFTER the

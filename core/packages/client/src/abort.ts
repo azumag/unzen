@@ -15,6 +15,79 @@ export interface AbortSignalInputSnapshot {
   readonly initiallyAborted: boolean;
 }
 
+/** Live-read an AbortSignal without trusting a mutable structural stand-in. */
+export function readAbortSignalAborted(signal?: AbortSignal): boolean {
+  if (!signal) return false;
+
+  let aborted: unknown;
+  try {
+    aborted = signal.aborted;
+  } catch {
+    throw new TypeError('signal state could not be read');
+  }
+  if (typeof aborted !== 'boolean') {
+    throw new TypeError('signal state must be a boolean');
+  }
+  return aborted;
+}
+
+/**
+ * Subscribe once and close the check/listen race.
+ *
+ * AbortSignal is accepted structurally at the public boundary, so its methods
+ * can throw or invoke the listener synchronously. Cleanup is best-effort and
+ * never allowed to prevent the owning request from settling.
+ */
+export function subscribeToAbortSignal(
+  signal: AbortSignal,
+  onAbort: () => void,
+): () => void {
+  let active = true;
+  let mayBeRegistered = true;
+
+  const removeListener = () => {
+    if (!mayBeRegistered) return;
+    mayBeRegistered = false;
+    try {
+      signal.removeEventListener('abort', guardedAbort);
+    } catch {
+      // Caller-owned cleanup must not corrupt executor/request settlement.
+    }
+  };
+  const guardedAbort = () => {
+    if (!active) return;
+    active = false;
+    try {
+      onAbort();
+    } finally {
+      removeListener();
+    }
+  };
+  const unsubscribe = () => {
+    active = false;
+    removeListener();
+  };
+
+  try {
+    signal.addEventListener('abort', guardedAbort, { once: true });
+    if (!active) {
+      // A structural stand-in can invoke the callback before it finishes
+      // storing the listener. Remove once more after registration returns.
+      mayBeRegistered = true;
+      removeListener();
+    } else if (readAbortSignalAborted(signal)) {
+      guardedAbort();
+    }
+  } catch {
+    // addEventListener may throw after partially registering the callback.
+    mayBeRegistered = true;
+    unsubscribe();
+    throw new TypeError('signal could not be subscribed');
+  }
+
+  return unsubscribe;
+}
+
 /** Validate and snapshot an optional AbortSignal reference before side effects. */
 export function snapshotAbortSignalInput(value: unknown): AbortSignalInputSnapshot {
   if (value === undefined) return { initiallyAborted: false };
@@ -63,7 +136,7 @@ export function isAbortError(error: unknown): boolean {
  * Used at phase boundaries so an execution never starts work after cancel.
  */
 export function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
+  if (readAbortSignalAborted(signal)) {
     throw new UnzenCancelledError('Execution cancelled by caller');
   }
 }
@@ -77,21 +150,30 @@ export function throwIfAborted(signal?: AbortSignal): void {
  * others. The listener is always removed, so no leak survives.
  */
 export function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
+  if (readAbortSignalAborted(signal)) {
     return Promise.reject(new UnzenCancelledError('Execution cancelled by caller'));
   }
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new UnzenCancelledError('Execution cancelled by caller'));
-    signal.addEventListener('abort', onAbort, { once: true });
+    let settled = false;
+    let unsubscribe = () => {};
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      callback();
+    };
+
     promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      },
+      (value) => settle(() => resolve(value)),
+      (error) => settle(() => reject(error)),
     );
+
+    try {
+      unsubscribe = subscribeToAbortSignal(signal, () => {
+        settle(() => reject(new UnzenCancelledError('Execution cancelled by caller')));
+      });
+    } catch (error) {
+      settle(() => reject(error));
+    }
   });
 }

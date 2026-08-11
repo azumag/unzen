@@ -848,6 +848,59 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('recovers when abort listener registration throws', async () => {
+    const worker = createRealWorker();
+    const executor = createExecutor(worker);
+    const bytes = fibonacciBytes.buffer.slice(
+      fibonacciBytes.byteOffset,
+      fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+    ) as ArrayBuffer;
+    const signal = {
+      aborted: false,
+      addEventListener() {
+        throw new Error('registration failed');
+      },
+      removeEventListener() {},
+    } as unknown as AbortSignal;
+
+    await expect(
+      executor.execute(bytes, [10], { exportName: 'fibonacci', signal }),
+    ).rejects.toThrow(UnzenRuntimeError);
+    await expect(
+      executor.execute(bytes, [10], { exportName: 'fibonacci' }),
+    ).resolves.toBe(55);
+    executor.dispose();
+  });
+
+  it('cancels before worker creation when abort races listener registration', async () => {
+    const bytes = fibonacciBytes.buffer.slice(
+      fibonacciBytes.byteOffset,
+      fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+    ) as ArrayBuffer;
+    let aborted = false;
+    const signal = {
+      get aborted() {
+        return aborted;
+      },
+      addEventListener() {
+        aborted = true;
+      },
+      removeEventListener() {},
+    } as unknown as AbortSignal;
+    const factory = vi.fn();
+    const executor = new MoonBitWorkerSandboxExecutor({
+      workerUrl: '/moonbit-worker.js',
+      createWorker: factory,
+    });
+
+    await expect(
+      executor.execute(bytes, [10], { exportName: 'fibonacci', signal }),
+    ).rejects.toThrow(UnzenCancelledError);
+    expect(executor.diagnostics.cancelCount).toBe(1);
+    expect(factory).not.toHaveBeenCalled();
+    executor.dispose();
+  });
+
   it('recovers after a synchronous Worker creation failure', async () => {
     mockFetchBytes();
     let calls = 0;

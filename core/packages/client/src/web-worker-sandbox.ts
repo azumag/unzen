@@ -53,6 +53,7 @@ import {
   UnzenFunctionError,
   UnzenRuntimeError,
 } from '@unzen/shared';
+import { readAbortSignalAborted, subscribeToAbortSignal } from './abort';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import {
   createCancelMessage,
@@ -403,7 +404,14 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
    * occupant.
    */
   private enqueueOrReject(base: BaseRequest): void {
-    if (base.signal?.aborted) {
+    let signalAborted: boolean;
+    try {
+      signalAborted = this.readSignalAborted(base.signal);
+    } catch (error) {
+      base.reject(error instanceof Error ? error : new UnzenFunctionError(String(error)));
+      return;
+    }
+    if (signalAborted) {
       this.diagnosticsState.cancelCount++;
       base.reject(new UnzenCancelledError('Execution cancelled by caller'));
       return;
@@ -417,8 +425,19 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     }
     const queued: QueuedRequest = { ...base, enqueuedAt: Date.now() };
     this.queue.push(queued);
-    this.diagnosticsState.queueWaitCount++;
-    this.attachAbortListener(queued, base.requestId);
+    try {
+      this.attachAbortListener(queued, base.requestId);
+    } catch (error) {
+      const index = this.queue.findIndex((entry) => entry.requestId === base.requestId);
+      if (index >= 0) this.queue.splice(index, 1);
+      this.removeAbortListener(queued);
+      queued.reject(error instanceof Error ? error : new UnzenFunctionError(String(error)));
+      return;
+    }
+    // A structural signal may abort synchronously during registration.
+    if (this.queue.some((entry) => entry.requestId === base.requestId)) {
+      this.diagnosticsState.queueWaitCount++;
+    }
   }
 
   /**
@@ -647,7 +666,14 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       return;
     }
     // Re-check the caller's signal (it may have aborted while queued).
-    if (req.signal?.aborted) {
+    let signalAborted: boolean;
+    try {
+      signalAborted = this.readSignalAborted(req.signal);
+    } catch (error) {
+      req.reject(error instanceof Error ? error : new UnzenFunctionError(String(error)));
+      return;
+    }
+    if (signalAborted) {
       this.diagnosticsState.cancelCount++;
       req.reject(new UnzenCancelledError('Execution cancelled by caller'));
       return;
@@ -671,7 +697,21 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     // Detach it before attaching the running-request handler below — otherwise
     // the signal accumulates two listeners and cancelling fires twice.
     this.removeAbortListener(running);
-    this.attachAbortListener(running, requestId);
+    try {
+      this.attachAbortListener(running, requestId);
+    } catch (error) {
+      if (this.runningRequest?.requestId === requestId) {
+        this.runningRequest = null;
+      }
+      this.clearRunningTimers(running);
+      this.removeAbortListener(running);
+      running.reject(error instanceof Error ? error : new UnzenFunctionError(String(error)));
+      void this.drainQueue();
+      return;
+    }
+    // Registration can observe an abort that happened after the earlier
+    // state read. Its handler has already settled and released the slot.
+    if (this.runningRequest?.requestId !== requestId) return;
 
     if (this.state.status === 'ready') {
       this.postExecuteMessage(running, this.generationId);
@@ -833,14 +873,8 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       const next = this.queue.shift();
       if (!next) return;
 
-      // Re-check the caller's signal before starting on a fresh generation.
-      if (next.signal?.aborted) {
-        this.diagnosticsState.cancelCount++;
-        this.removeAbortListener(next);
-        next.reject(new UnzenCancelledError('Execution cancelled by caller'));
-        continue;
-      }
-
+      // startRequest performs the live abort-state read and settles malformed
+      // structural signals without losing the shifted queue entry.
       this.startRequest(next, next.requestId);
     }
   }
@@ -1009,12 +1043,12 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
     const handler = () => {
       const running = this.runningRequest;
       if (running?.requestId === requestId) {
-        if (this.state.status === 'ready') {
+        if (this.state.status === 'ready' && running.hardKillTimer !== null) {
           this.initiateCancel(requestId);
         } else {
-          // The request owns initialization and has not begun executing, so a
-          // worker cancel is neither possible nor needed: settle immediately
-          // (the shared init may continue for queued requests).
+          // The request has not posted its execute message yet (it is either
+          // initializing or between listener registration and dispatch), so
+          // a worker cancel is neither possible nor needed.
           this.diagnosticsState.cancelCount++;
           this.runningRequest = null;
           this.clearRunningTimers(running);
@@ -1032,15 +1066,30 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       }
     };
 
-    req.signal.addEventListener('abort', handler, { once: true });
-    req.abortHandler = () => req.signal!.removeEventListener('abort', handler);
+    try {
+      req.abortHandler = subscribeToAbortSignal(req.signal, handler);
+    } catch {
+      throw new UnzenFunctionError('QuickJS execution signal could not be subscribed');
+    }
   }
 
   /** Detach the abort listener (if any) — must be called when a request settles */
   private removeAbortListener(req: BaseRequest): void {
-    if (req.abortHandler) {
-      req.abortHandler();
-      req.abortHandler = undefined;
+    const abortHandler = req.abortHandler;
+    req.abortHandler = undefined;
+    if (!abortHandler) return;
+    try {
+      abortHandler();
+    } catch {
+      // Caller-owned cleanup must not corrupt executor settlement.
+    }
+  }
+
+  private readSignalAborted(signal?: AbortSignal): boolean {
+    try {
+      return readAbortSignalAborted(signal);
+    } catch {
+      throw new UnzenFunctionError('QuickJS execution signal state could not be read');
     }
   }
 

@@ -45,7 +45,13 @@ import {
   UnzenRuntimeError,
   type MoonBitAbi,
 } from '@unzen/shared';
-import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import {
+  isAbortError,
+  raceWithAbort,
+  readAbortSignalAborted,
+  subscribeToAbortSignal,
+  throwIfAborted,
+} from './abort';
 import {
   assertUnzenContentIntegrity,
   createUnzenContentCacheKey,
@@ -524,7 +530,14 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   }
 
   private enqueueOrReject(base: BaseRequest): void {
-    if (base.signal?.aborted) {
+    let signalAborted: boolean;
+    try {
+      signalAborted = this.readSignalAborted(base.signal);
+    } catch (error) {
+      base.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      return;
+    }
+    if (signalAborted) {
       this.diagnosticsState.cancelCount++;
       base.reject(new UnzenCancelledError('Execution cancelled by caller'));
       return;
@@ -538,8 +551,19 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     }
     const queued: QueuedRequest = { ...base, enqueuedAt: Date.now() };
     this.queue.push(queued);
-    this.diagnosticsState.queueWaitCount++;
-    this.attachAbortListener(queued, base.requestId);
+    try {
+      this.attachAbortListener(queued, base.requestId);
+    } catch (error) {
+      const index = this.queue.findIndex((entry) => entry.requestId === base.requestId);
+      if (index >= 0) this.queue.splice(index, 1);
+      this.removeAbortListener(queued);
+      queued.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      return;
+    }
+    // A structural signal may abort synchronously during registration.
+    if (this.queue.some((entry) => entry.requestId === base.requestId)) {
+      this.diagnosticsState.queueWaitCount++;
+    }
   }
 
   /**
@@ -554,7 +578,14 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       req.reject(new UnzenRuntimeError('Executor has been disposed.'));
       return;
     }
-    if (req.signal?.aborted) {
+    let signalAborted: boolean;
+    try {
+      signalAborted = this.readSignalAborted(req.signal);
+    } catch (error) {
+      req.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      return;
+    }
+    if (signalAborted) {
       this.diagnosticsState.cancelCount++;
       req.reject(new UnzenCancelledError('Execution cancelled by caller'));
       return;
@@ -569,7 +600,21 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     };
     this.runningRequest = running;
     this.removeAbortListener(running);
-    this.attachAbortListener(running, requestId);
+    try {
+      this.attachAbortListener(running, requestId);
+    } catch (error) {
+      if (this.runningRequest?.requestId === requestId) {
+        this.runningRequest = null;
+      }
+      this.clearRunningTimers(running);
+      this.removeAbortListener(running);
+      running.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      void this.drainQueue();
+      return;
+    }
+    // Registration can observe an abort that happened after the earlier
+    // state read. Its handler has already settled and released the slot.
+    if (this.runningRequest?.requestId !== requestId) return;
 
     if (this.state.status === 'ready') {
       this.postExecuteMessage(running, this.generationId);
@@ -892,15 +937,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
 
       const next = this.queue.shift();
       if (!next) return;
-      if (next.signal?.aborted) {
-        this.diagnosticsState.cancelCount++;
-        this.removeAbortListener(next);
-        next.reject(new UnzenCancelledError('Execution cancelled by caller'));
-        continue;
-      }
-
-      // The queued entry captured its wasm bytes and export name at enqueue
-      // time, so no re-fetch is needed here.
+      // startRequest performs the live abort-state read and settles malformed
+      // structural signals without losing the shifted queue entry. The queued
+      // entry already owns its bytes/export snapshot, so no re-fetch occurs.
       this.startRequest(next, next.requestId);
     }
   }
@@ -918,7 +957,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     const handler = () => {
       const running = this.runningRequest;
       if (running?.requestId === requestId) {
-        if (this.state.status === 'ready') {
+        if (this.state.status === 'ready' && running.hardKillTimer !== null) {
           // A running MoonBit export cannot be interrupted cooperatively:
           // record the intent (a racing result is settled as cancelled) and
           // terminate the worker so the caller settles promptly.
@@ -926,7 +965,8 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
           this.diagnosticsState.cancelCount++;
           this.failGeneration(new UnzenCancelledError('Execution cancelled by caller'));
         } else {
-          // The request owns initialization and has not begun executing.
+          // The request has not posted its execute message yet (it is either
+          // initializing or between listener registration and dispatch).
           this.diagnosticsState.cancelCount++;
           this.runningRequest = null;
           this.clearRunningTimers(running);
@@ -943,14 +983,29 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         queued.reject(new UnzenCancelledError('Execution cancelled while queued'));
       }
     };
-    req.signal.addEventListener('abort', handler, { once: true });
-    req.abortHandler = () => req.signal!.removeEventListener('abort', handler);
+    try {
+      req.abortHandler = subscribeToAbortSignal(req.signal, handler);
+    } catch {
+      throw new UnzenRuntimeError('MoonBit execution signal could not be subscribed');
+    }
   }
 
   private removeAbortListener(req: BaseRequest): void {
-    if (req.abortHandler) {
-      req.abortHandler();
-      req.abortHandler = undefined;
+    const abortHandler = req.abortHandler;
+    req.abortHandler = undefined;
+    if (!abortHandler) return;
+    try {
+      abortHandler();
+    } catch {
+      // Caller-owned cleanup must not corrupt executor settlement.
+    }
+  }
+
+  private readSignalAborted(signal?: AbortSignal): boolean {
+    try {
+      return readAbortSignalAborted(signal);
+    } catch {
+      throw new UnzenRuntimeError('MoonBit execution signal state could not be read');
     }
   }
 
