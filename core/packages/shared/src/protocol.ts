@@ -296,18 +296,23 @@ export function normalizeExecutionResponse(value: unknown): ExecutionResponse | 
   try {
     if (!isRecord(value)) return undefined;
 
-    if (Object.hasOwn(value, 'error')) {
+    const ownKeys = Reflect.ownKeys(value);
+    const hasError = ownKeys.includes('error');
+    const hasResult = ownKeys.includes('result');
+
+    if (hasError) {
       const error = value.error;
+      const result = hasResult ? value.result : undefined;
       if (typeof error !== 'string' || error.trim().length === 0) return undefined;
-      if (!Object.hasOwn(value, 'result') || value.result !== null) return undefined;
+      if (!hasResult || result !== null) return undefined;
       return { result: null, error };
     }
 
-    if (!Object.hasOwn(value, 'result') && Reflect.ownKeys(value).length !== 0) {
+    if (!hasResult && ownKeys.length !== 0) {
       return undefined;
     }
     return {
-      result: Object.hasOwn(value, 'result') ? value.result : undefined,
+      result: hasResult ? value.result : undefined,
     };
   } catch {
     return undefined;

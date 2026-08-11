@@ -307,6 +307,29 @@ describe('ExecutionResponse', () => {
     expect(() => normalizeExecutionResponse(hostile)).not.toThrow();
     expect(normalizeExecutionResponse(hostile)).toBeUndefined();
   });
+
+  it('snapshots response keys and fields once', () => {
+    let ownKeysReads = 0;
+    let resultReads = 0;
+    const hostile = new Proxy({ result: 42 }, {
+      ownKeys(target) {
+        ownKeysReads += 1;
+        if (ownKeysReads > 1) throw new Error('keys must only be read once');
+        return Reflect.ownKeys(target);
+      },
+      get(target, property, receiver) {
+        if (property === 'result') {
+          resultReads += 1;
+          if (resultReads > 1) throw new Error('result must only be read once');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(normalizeExecutionResponse(hostile)).toEqual({ result: 42 });
+    expect(ownKeysReads).toBe(1);
+    expect(resultReads).toBe(1);
+  });
 });
 
 describe('createManifestResponse', () => {
