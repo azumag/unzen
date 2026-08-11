@@ -6,8 +6,8 @@
  *
  * Execution model:
  * - The main thread transfers the module BYTES (ArrayBuffer) per execute;
- *   the worker compiles once per module URL (cached) and instantiates per
- *   call so per-execution state stays isolated.
+ *   the worker compiles once per URL + content-hash identity (cached) and
+ *   instantiates per call so per-execution state stays isolated.
  * - The export is called synchronously and CANNOT be interrupted mid-run.
  *   The main thread enforces timeouts/cancellation by terminating the worker,
  *   so a runaway export can only stall this dedicated worker, never the page.
@@ -44,9 +44,9 @@ import {
   validateMoonBitArguments,
 } from '../moonbit-array-bridge';
 
-/** Worker state — holds the per-URL compiled module cache. */
+/** Worker state — holds the content-identity compiled module cache. */
 export interface MoonbitWorkerState {
-  /** Compiled modules keyed by module URL (compile is the expensive step) */
+  /** Compiled modules keyed by main-thread-validated content identity. */
   compiledModules: Map<string, WebAssembly.Module>;
   /** Set by init; optional only for direct handler tests/backward compatibility. */
   importedStringConstants?: MoonBitImportedStringConstants;
@@ -146,7 +146,7 @@ async function handleMoonbitExecute(
   postMessage: (msg: MoonbitWorkerResponse) => void,
 ): Promise<void> {
   let module: WebAssembly.Module;
-  const cached = msg.cacheable ? state.compiledModules.get(msg.url) : undefined;
+  const cached = msg.cacheable ? state.compiledModules.get(msg.cacheKey) : undefined;
   if (cached) {
     module = cached;
   } else {
@@ -165,7 +165,7 @@ async function handleMoonbitExecute(
       // Only URL-based (cacheable) executions are stored; inline ArrayBuffer
       // executions compile per call and never accumulate in the cache.
       if (msg.cacheable) {
-        state.compiledModules.set(msg.url, module);
+        state.compiledModules.set(msg.cacheKey, module);
       }
     } catch (error) {
       postMessage(createMoonbitExecuteResultMessage(

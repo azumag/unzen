@@ -1160,7 +1160,7 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     });
     const executor = createExecutor(worker);
 
-    // URL execution caches one module per URL.
+    // URL execution caches one module per URL + optional content hash.
     await executor.execute('https://example.com/fibonacci.wasm', [10], { exportName: 'fibonacci' });
     await executor.execute('https://example.com/fibonacci.wasm', [15], { exportName: 'fibonacci' });
     expect(state.compiledModules.size).toBe(1);
@@ -1173,6 +1173,45 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     await executor.execute(inline, [10], { exportName: 'fibonacci' });
     await executor.execute(inline, [12], { exportName: 'fibonacci' });
     expect(state.compiledModules.size).toBe(1);
+    executor.dispose();
+  });
+
+  it('separates compiled modules when one URL is verified under different hashes', async () => {
+    const response = (bytes: Uint8Array) => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(fibonacciBytes))
+      .mockResolvedValueOnce(response(sortBytes));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import(
+      '../src/worker/moonbit-worker'
+    );
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (result) => worker.respond(result));
+    });
+    const executor = createExecutor(worker);
+    const url = 'https://example.com/current.wasm';
+
+    await expect(executor.execute(url, [10], {
+      exportName: 'fibonacci',
+      expectedHash: hashBytes(fibonacciBytes),
+    })).resolves.toBe(55);
+    await expect(executor.execute(url, [100], {
+      exportName: 'sort_benchmark',
+      expectedHash: hashBytes(sortBytes),
+    })).resolves.toBe(2264);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(state.compiledModules.size).toBe(2);
     executor.dispose();
   });
 

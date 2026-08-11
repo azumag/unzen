@@ -139,8 +139,10 @@ type ExecutorState =
 /** Common per-request bookkeeping */
 interface BaseRequest {
   requestId: string;
-  /** Module URL ('' for inline ArrayBuffer execution — see `bytes`) */
-  code: string;
+  /** Worker compile-cache identity; hash-bound for verified URL execution. */
+  cacheKey: string;
+  /** Inline buffers compile per call; URL-based payloads may be cached. */
+  cacheable: boolean;
   args: unknown[];
   /** wasm bytes to transfer (captured at execute/enqueue time) */
   bytes: ArrayBuffer;
@@ -395,6 +397,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     }
 
     let moduleUrl: string | undefined;
+    let workerCacheKey: string | undefined;
     let bytes: ArrayBuffer;
     try {
       if (typeof code === 'string') {
@@ -402,6 +405,10 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         bytes = await this.prepare(
           moduleUrl,
           executionOptions.signal,
+          executionOptions.expectedHash,
+        );
+        workerCacheKey = createUnzenContentCacheKey(
+          moduleUrl,
           executionOptions.expectedHash,
         );
       } else {
@@ -423,12 +430,10 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     return new Promise<unknown>((resolve, reject) => {
       const base: BaseRequest = {
         requestId,
-        // Inline ArrayBuffer execution: use a content-unique key so the worker
-        // never reuses a compiled module for different bytes (the worker caches
-        // compiled modules per URL). The byte identity is not recomputed per
-        // request; the key only needs to differ across distinct buffers in one
-        // executor, which the monotonic request id guarantees.
-        code: moduleUrl ?? `inline:${requestId}`,
+        // Inline execution is deliberately non-cacheable. Its unique key still
+        // makes the wire identity unambiguous for diagnostics and tests.
+        cacheKey: workerCacheKey ?? `inline:${requestId}`,
+        cacheable: workerCacheKey !== undefined,
         args: call.args,
         bytes,
         exportName: executionOptions.exportName,
@@ -590,11 +595,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       const transferable = running.bytes.slice(0);
       const msg = createMoonbitExecuteMessage(
         running.requestId,
-        running.code,
+        running.cacheKey,
         transferable,
-        // Only URL-based executions may share the worker's compile cache;
-        // inline ArrayBuffer executions compile per call (see worker).
-        !running.code.startsWith('inline:'),
+        running.cacheable,
         running.exportName,
         running.args,
         generationId,

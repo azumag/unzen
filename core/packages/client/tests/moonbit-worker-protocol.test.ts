@@ -34,7 +34,7 @@ describe('MoonBit worker protocol', () => {
     expect(exec).toMatchObject({
       type: 'execute',
       requestId: 'req-1',
-      url: 'fib.wasm',
+      cacheKey: 'fib.wasm',
       cacheable: true,
       exportName: 'fibonacci',
       args: [10],

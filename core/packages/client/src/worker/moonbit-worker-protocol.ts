@@ -31,7 +31,7 @@ import {
 import type { MoonBitAbi } from '@unzen/shared';
 
 // Version of the MoonBit worker wire protocol. Bump on incompatible changes.
-export const MOONBIT_WORKER_PROTOCOL_VERSION = 3;
+export const MOONBIT_WORKER_PROTOCOL_VERSION = 4;
 
 // ============================================================
 // Main Thread → Worker Messages
@@ -52,13 +52,13 @@ export interface MoonbitExecuteMessage {
   readonly requestId: string;
   readonly protocolVersion: number;
   readonly generationId: number;
-  /** Module URL (used as the worker-side compile cache key) */
-  readonly url: string;
+  /** Content identity used as the worker-side compile cache key. */
+  readonly cacheKey: string;
   /** wasm-gc module bytes; transferred to the worker (no copy) */
   readonly wasm: ArrayBuffer;
-  /** Whether the compiled module may be cached in the worker keyed by `url`.
-   * URL-based executions (true) reuse one compile per URL; inline ArrayBuffer
-   * executions (false) compile per call and never accumulate in the cache. */
+  /** Whether the compiled module may be cached in the worker by `cacheKey`.
+   * URL-based executions (true) reuse one compile per URL + expected hash;
+   * inline executions (false) never accumulate in the cache. */
   readonly cacheable: boolean;
   /** Export to call (defaults to 'run') */
   readonly exportName: string;
@@ -143,7 +143,7 @@ export function createMoonbitInitMessage(
 
 export function createMoonbitExecuteMessage(
   requestId: string,
-  url: string,
+  cacheKey: string,
   wasm: ArrayBuffer,
   cacheable: boolean,
   exportName: string,
@@ -156,7 +156,7 @@ export function createMoonbitExecuteMessage(
     requestId,
     protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
     generationId,
-    url,
+    cacheKey,
     wasm,
     cacheable,
     exportName,

@@ -808,7 +808,9 @@ TypeScript source
   単一実行のみ・有界キュー・init timeout・hard-kill timeout（Worker terminate）・
   generation 管理・キャンセル（終了）を備える。worker バンドルは
   `moonbit-worker.js`（tsup エントリ）として配信する。client/worker bundle は同じ
-  build/version から同時配信し、protocol v3 mismatch は fail closed で拒否する。
+  build/version から同時配信し、protocol v4 mismatch は fail closed で拒否する。
+  URL execution の compiled module cache key は URL と expected SHA-256 の組で作り、同じ
+  URL から更新された検証済み bytes が旧 module を再利用しないようにする。
 - Worker 内の MoonBit export は同期・中断不可のため、タイムアウト/キャンセルは
   `Worker.terminate()` で強制する。ABI 省略時は number / boolean / bigint /
   string のスカラーのみ、ABI 指定時は `i32[]` / `f64[]` も対応する。
@@ -850,7 +852,7 @@ Chromium 145 と Firefox 146 で probe した結果:
   側の `imported-string-constants` と一致させる。`null` はこの compile option
   を省略する（文字列定数を import しない module 用）。選択した namespace は
   文字列定数用に予約されるため、同 namespace の function import 等とは
-  併用できない。Worker は namespace を init protocol v3 で受け取り、generation
+  併用できない。Worker は namespace を init protocol v4 で受け取り、generation
   内の全 compile に同じ値を使う。
 - **raw wasm の Array は opaque handle**: plain JS 配列は wasm 境界で
   `type incompatibility when transforming from/to JS` となり渡せない。

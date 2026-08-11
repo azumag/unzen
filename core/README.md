@@ -411,7 +411,8 @@ protocol-relative URL、scheme なし相対 path、不正 endpoint を同期的�
 
 `/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは
-`/moonbit-worker.js` で配信済み）。Worker protocol v3 は配列 ABI を含むため、
+`/moonbit-worker.js` で配信済み）。Worker protocol v4 は配列 ABI と hash-bound な
+compiled module cache key を含むため、
 client bundle と worker bundle は必ず同じ build/version から同時配信する。
 worker は request の protocol version / 正のsafe generationを処理前に検証し、client は
 response の同じenvelopeに加えてsuccess/error metadataの整合性も検証する。不一致は
