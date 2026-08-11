@@ -131,6 +131,10 @@ describe('MoonBitSandboxExecutor', () => {
       [],
       { exportName: 42 } as never,
     )).rejects.toThrow('MoonBit exportName must be a string');
+    await expect(executor.prepare(
+      'https://example.com/fibonacci.wasm',
+      { aborted: false } as never,
+    )).rejects.toThrow(UnzenRuntimeError);
     await expect(executor.prepare('')).rejects.toThrow(UnzenRuntimeError);
     expect(fetchMock).not.toHaveBeenCalled();
     executor.dispose();
@@ -300,6 +304,23 @@ describe('MoonBitSandboxExecutor', () => {
     await expect(
       executor.execute('https://example.com/missing.wasm', [], { exportName: 'run' }),
     ).rejects.toThrow(UnzenNetworkError);
+    executor.dispose();
+  });
+
+  it('maps response body read failures to UnzenNetworkError', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => {
+        throw new Error('body stream failed');
+      },
+    }) as unknown as typeof fetch;
+    const executor = new MoonBitSandboxExecutor();
+
+    await expect(executor.prepare('https://example.com/broken-body.wasm'))
+      .rejects.toThrow(UnzenNetworkError);
+    await expect(executor.prepare('https://example.com/broken-body.wasm'))
+      .rejects.toThrow('Failed to read MoonBit module: body stream failed');
     executor.dispose();
   });
 

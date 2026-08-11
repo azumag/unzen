@@ -329,6 +329,8 @@ main-thread / worker executor は非同期 module 準備より前に、引数、
 worker に直接渡した inline `ArrayBuffer` も同時点でコピーするため、呼び出し後の
 option / byte mutation は実行へ反映されない。空 module URL や不正な option は
 fetch / Worker 生成前に `UnzenRuntimeError` で拒否する。
+advanced API の direct `prepare()` も `AbortSignal` を fetch 前に検証し、response body
+読み取り失敗を生の例外ではなく `UnzenNetworkError` として返す。
 String は Chromium / Firefox で
 動作確認済み。Safari は wasm-gc が 18.2+、JS String Builtins が 26.2+ で
 対応となり、本プロジェクトでは Safari 未検証。

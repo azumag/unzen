@@ -304,6 +304,10 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       [],
       { signal: { aborted: false } } as never,
     )).rejects.toThrow('MoonBit execution signal must be an AbortSignal');
+    await expect(executor.prepare(
+      'https://example.com/fibonacci.wasm',
+      { aborted: false } as never,
+    )).rejects.toThrow(UnzenRuntimeError);
     await expect(executor.prepare('')).rejects.toThrow(UnzenRuntimeError);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(worker.terminateCount).toBe(0);
@@ -528,6 +532,24 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     await expect(executor.prepare(url, undefined, hashBytes(fibonacciBytes)))
       .resolves.toBeInstanceOf(ArrayBuffer);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    executor.dispose();
+  });
+
+  it('maps response body read failures to UnzenNetworkError', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => {
+        throw new Error('body stream failed');
+      },
+    }) as unknown as typeof fetch;
+    const executor = createExecutor(new MockMoonbitWorker());
+
+    await expect(executor.prepare('https://example.com/broken-body.wasm'))
+      .rejects.toThrow(UnzenNetworkError);
+    await expect(executor.prepare('https://example.com/broken-body.wasm'))
+      .rejects.toThrow('Failed to read MoonBit module: body stream failed');
+    expect(executor.isReady()).toBe(false);
     executor.dispose();
   });
 

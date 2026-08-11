@@ -834,6 +834,8 @@ Chromium 145 と Firefox 146 で probe した結果:
   読み取ってスナップショットする。worker に直接渡す inline `ArrayBuffer` も
   同時点でコピーし、呼び出し後の caller mutation を実行中に反映させない。
   空 module URL / 不正 option / 非 `ArrayBuffer` は fetch・worker 生成前に拒否する。
+  direct `prepare()` の signal も副作用前に検証し、response body の読み取り失敗は
+  stable な network error、内部 abort は runtime error に分類する。
   ABI 省略時の配列拒否は維持する。
 
 ### MoonBit Worker 強制終了の検証 (2026-08-11)

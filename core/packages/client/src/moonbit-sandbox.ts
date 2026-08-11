@@ -52,6 +52,7 @@ import {
 } from './moonbit-array-bridge';
 import {
   normalizeMoonBitModuleUrl,
+  snapshotMoonBitAbortSignal,
   snapshotMoonBitExecutionOptions,
 } from './moonbit-call';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
@@ -144,7 +145,16 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     signal?: AbortSignal,
     expectedHash?: string,
   ): Promise<PreparedMoonBitModule> {
-    throwIfAborted(signal);
+    let signalSnapshot: ReturnType<typeof snapshotMoonBitAbortSignal>;
+    try {
+      signalSnapshot = snapshotMoonBitAbortSignal(signal);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+    if (signalSnapshot.initiallyAborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
+    const requestSignal = signalSnapshot.signal;
     if (this.disposed) {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
@@ -162,7 +172,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     const cached = this.moduleCache.get(cacheKey);
     if (cached && !isInflight(cached)) {
       // Already fetched and compiled: return the settled module.
-      throwIfAborted(signal);
+      throwIfAborted(requestSignal);
       return copyPreparedMoonBitModule(cached);
     }
 
@@ -202,7 +212,9 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     }
     pending.waiters++;
     try {
-      const result = signal ? raceWithAbort(pending.promise, signal) : pending.promise;
+      const result = requestSignal
+        ? raceWithAbort(pending.promise, requestSignal)
+        : pending.promise;
       return copyPreparedMoonBitModule(await result);
     } finally {
       pending.waiters--;
@@ -365,7 +377,17 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       );
     }
 
-    const bytes = await response.arrayBuffer();
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await response.arrayBuffer();
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        throw new UnzenRuntimeError('MoonBit module fetch aborted');
+      }
+      throw new UnzenNetworkError(
+        `Failed to read MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     // The shared request may have been aborted (last waiter left / dispose)
     // while the body was streaming. Stop publishing a result for work nobody
     // wants anymore.

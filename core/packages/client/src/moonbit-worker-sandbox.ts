@@ -53,6 +53,7 @@ import {
 import { snapshotMoonBitCall } from './moonbit-array-bridge';
 import {
   normalizeMoonBitModuleUrl,
+  snapshotMoonBitAbortSignal,
   snapshotMoonBitExecutionOptions,
   snapshotMoonBitModuleBytes,
 } from './moonbit-call';
@@ -280,7 +281,16 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     signal?: AbortSignal,
     expectedHash?: string,
   ): Promise<ArrayBuffer> {
-    throwIfAborted(signal);
+    let signalSnapshot: ReturnType<typeof snapshotMoonBitAbortSignal>;
+    try {
+      signalSnapshot = snapshotMoonBitAbortSignal(signal);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+    if (signalSnapshot.initiallyAborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
+    const requestSignal = signalSnapshot.signal;
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
@@ -329,7 +339,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
 
     pending.waiters++;
     try {
-      const bytes = await (signal ? raceWithAbort(pending.promise, signal) : pending.promise);
+      const bytes = await (requestSignal
+        ? raceWithAbort(pending.promise, requestSignal)
+        : pending.promise);
       // Each waiter receives an isolated snapshot while the original remains
       // private to the verified cache.
       return bytes.slice(0);
@@ -947,7 +959,17 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         `Failed to fetch MoonBit module: ${response.status} ${response.statusText}`,
       );
     }
-    const bytes = await response.arrayBuffer();
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await response.arrayBuffer();
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        throw new UnzenRuntimeError('MoonBit module fetch aborted');
+      }
+      throw new UnzenNetworkError(
+        `Failed to read MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     throwIfAborted(signal);
     if (expectedHash !== undefined) {
       try {

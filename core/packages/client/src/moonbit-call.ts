@@ -8,6 +8,39 @@ export interface MoonBitExecutionOptionsSnapshot {
   readonly expectedHash?: string;
 }
 
+export interface MoonBitAbortSignalSnapshot {
+  readonly signal?: AbortSignal;
+  readonly initiallyAborted: boolean;
+}
+
+/** Validate an optional signal before a fetch, queue, or worker side effect. */
+export function snapshotMoonBitAbortSignal(value: unknown): MoonBitAbortSignalSnapshot {
+  if (value === undefined) return { initiallyAborted: false };
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('MoonBit execution signal must be an AbortSignal');
+  }
+
+  let aborted: unknown;
+  let addEventListener: unknown;
+  let removeEventListener: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    aborted = record.aborted;
+    addEventListener = record.addEventListener;
+    removeEventListener = record.removeEventListener;
+  } catch {
+    throw new Error('MoonBit execution signal must be an AbortSignal');
+  }
+  if (
+    typeof aborted !== 'boolean'
+    || typeof addEventListener !== 'function'
+    || typeof removeEventListener !== 'function'
+  ) {
+    throw new Error('MoonBit execution signal must be an AbortSignal');
+  }
+  return { signal: value as AbortSignal, initiallyAborted: aborted };
+}
+
 /** Read per-execution options once before any asynchronous MoonBit work. */
 export function snapshotMoonBitExecutionOptions(
   value: unknown,
@@ -33,25 +66,7 @@ export function snapshotMoonBitExecutionOptions(
     throw new Error('MoonBit execution options could not be read');
   }
 
-  let signalInitiallyAborted = false;
-  if (signal !== undefined) {
-    if (typeof signal !== 'object' || signal === null) {
-      throw new Error('MoonBit execution signal must be an AbortSignal');
-    }
-    try {
-      const record = signal as Record<string, unknown>;
-      signalInitiallyAborted = record.aborted as boolean;
-      if (
-        typeof signalInitiallyAborted !== 'boolean'
-        || typeof record.addEventListener !== 'function'
-        || typeof record.removeEventListener !== 'function'
-      ) {
-        throw new Error();
-      }
-    } catch {
-      throw new Error('MoonBit execution signal must be an AbortSignal');
-    }
-  }
+  const signalSnapshot = snapshotMoonBitAbortSignal(signal);
   if (exportName !== undefined && typeof exportName !== 'string') {
     throw new Error('MoonBit exportName must be a string');
   }
@@ -63,8 +78,8 @@ export function snapshotMoonBitExecutionOptions(
   }
 
   return {
-    signal: signal as AbortSignal | undefined,
-    signalInitiallyAborted,
+    signal: signalSnapshot.signal,
+    signalInitiallyAborted: signalSnapshot.initiallyAborted,
     exportName: (exportName as string | undefined) ?? 'run',
     moonbitAbi: moonbitAbi as MoonBitAbi | undefined,
     expectedHash: expectedHash as string | undefined,
