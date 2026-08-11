@@ -126,7 +126,7 @@ export interface UnzenExecutionRequest {
 }
 
 interface AbortSignalSnapshot {
-  readonly aborted: boolean;
+  isAborted(): boolean;
   addAbortListener(listener: () => void): void;
   removeAbortListener(listener: () => void): void;
 }
@@ -696,12 +696,18 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
     try {
       // Caller signal forwarding (removed on completion).
       if (request.signal) {
-        if (request.signal.aborted) {
-          return cancelledOutcome();
-        }
-        abortListenerAttached = true;
         try {
+          if (request.signal.isAborted()) {
+            return cancelledOutcome();
+          }
           request.signal.addAbortListener(forwardAbort);
+          abortListenerAttached = true;
+          // A signal can abort while its listener is being registered. Re-read
+          // live state so an already-fired AbortSignal cannot be missed.
+          if (request.signal.isAborted()) {
+            forwardAbort();
+            return cancelledOutcome();
+          }
         } catch {
           const error = invalidExecutionRequest('signal could not be subscribed');
           emit({ type: 'failed', errorCode: 'function_failed' });
@@ -1081,7 +1087,13 @@ function normalizeExecutionRequest(value: unknown): ExecutionRequestNormalizatio
         return { ok: false, error: invalidExecutionRequest('signal must be an AbortSignal') };
       }
       signal = {
-        aborted,
+        isAborted() {
+          const current = signalRecord.aborted;
+          if (typeof current !== 'boolean') {
+            throw new TypeError('signal aborted state could not be read');
+          }
+          return current;
+        },
         addAbortListener(listener) {
           Reflect.apply(addEventListener, rawSignal, ['abort', listener, { once: true }]);
         },

@@ -991,6 +991,26 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('should observe an abort triggered by a later request getter', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('must not fetch'));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+      const controller = new AbortController();
+      const request = {
+        name: 'add',
+        args: [1, 2],
+        signal: controller.signal,
+        get onEvent() {
+          controller.abort();
+          return undefined;
+        },
+      };
+
+      await expect(client.execute(request)).rejects.toThrow(UnzenCancelledError);
+      expect(fetchMock).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
     it('should cancel during manifest fetch and never fall back', async () => {
       // Manifest fetch hangs until the signal aborts (then rejects as AbortError)
       const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
