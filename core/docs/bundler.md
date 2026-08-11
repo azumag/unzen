@@ -185,6 +185,7 @@ const result = await bundle({
     }
   `,
   allowedModules: ['lodash', 'lodash/*'],
+  resolveDir: process.cwd(),
 });
 
 console.log(result.code);    // バンドルされたコード（IIFE形式）
@@ -200,12 +201,13 @@ console.log(result.modules); // ['lodash']
 |---|---|---|
 | `code` | `string` | import文を含む関数コード |
 | `allowedModules` | `string[]` | 許可モジュールパターン（例: `['lodash/*']`） |
+| `resolveDir` | `string?` | import解決の基準directory。省略時は`process.cwd()` |
 
 | 結果 | 型 | 説明 |
 |---|---|---|
 | `code` | `string` | バンドルされた自己完結型コード |
 | `size` | `number` | バイトサイズ |
-| `modules` | `string[]` | 検出されたモジュール名 |
+| `modules` | `string[]` | entryの静的import / re-exportから検出したspecifier（重複除去） |
 
 ### `checkModuleAllowed(moduleName, patterns): boolean`
 
@@ -251,10 +253,10 @@ loader callbackへ渡す。
 
 ## バンドルパイプライン
 
-1. ソースコードから import 文を抽出する（静的プリチェック）
+1. entryをAST解析し、静的import / re-exportを抽出する。dynamic importはここで拒否する
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
-3. esbuild でバンドルする（IIFE形式、ES2018ターゲット、ブラウザプラットフォーム）
-   - `onResolve` プラグインで全モジュール解決を検証する
+3. `stdin.resolveDir`を基準にesbuildでバンドルする（IIFE形式、ES2018、browser platform）
+   - `onResolve`で全bare moduleをallowlist検証し、推移依存内のdynamic importも拒否する
 4. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
 5. run() 関数を抽出可能な形に変換する
 
@@ -278,6 +280,9 @@ npx vitest run
   組み立てたproperty名を追跡するデータフロー解析ではない
 - `defineRaw()`のruntime警告は引き続き正規表現ベースのdefense-in-depthであり、コメント・
   文字列を含む可能性がある
+- npm packageは`resolveDir`（省略時は実行時のcurrent working directory）から解決する。
+  entryで許可したpackageでも、別のbare packageを推移依存に持つ場合はその依存もallowlistへ
+  明示する。relative / absolute local importは既存契約どおりmodule allowlistの対象外
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
 - compile-time抽出はinline関数を文字列化するが、クロージャ値やimportを自動bundleしない

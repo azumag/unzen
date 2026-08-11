@@ -15,23 +15,22 @@
  *   to fail fast with clear error messages
  *
  * Bundle pipeline:
- * 1. Extract import statements from source code (pre-check for fast feedback)
- * 2. Validate each import against whitelist + Node.js built-in blocklist
- * 3. Write temp file for esbuild input
- * 4. Bundle with esbuild (IIFE, ES2018, browser platform)
+ * 1. Analyze static imports/re-exports and reject dynamic imports
+ * 2. Validate each static module against whitelist + Node.js built-in blocklist
+ * 3. Bundle the in-memory entry from the configured project directory
+ *    (IIFE, ES2018, browser platform)
  *    - esbuild onResolve plugin validates ALL modules at resolution time
  *      (catches aliased/transitive imports the pre-check might miss)
- * 5. Scan output for forbidden APIs (defense-in-depth)
- * 6. Transform IIFE output to expose run() function
- * 7. Return bundled code with metadata
+ * 4. Scan output for forbidden APIs (defense-in-depth)
+ * 5. Transform IIFE output to expose run() function
+ * 6. Return bundled code with metadata
  */
 
 import * as esbuild from 'esbuild';
+import { resolve } from 'node:path';
+import ts from 'typescript';
 import { checkModuleAllowed, isNodeBuiltin } from './module-whitelist';
 import { checkForbiddenApis } from './forbidden-api-check';
-import { writeFileSync, mkdtempSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
 
 /**
  * Bundle options for configuring the bundling process
@@ -41,6 +40,8 @@ export interface BundleOptions {
   code: string;
   /** Allowed module patterns (e.g., ['lodash/*', 'date-fns']) */
   allowedModules: string[];
+  /** Directory used to resolve imports; defaults to the caller's working directory. */
+  resolveDir?: string;
 }
 
 /**
@@ -51,19 +52,26 @@ export interface BundleResult {
   code: string;
   /** Bundle size in bytes (UTF-8 encoded) */
   size: number;
-  /** List of resolved module names found in import statements */
+  /** Static import and re-export specifiers found in the entry source */
   modules: string[];
 }
+
+interface EntryImportAnalysis {
+  modules: string[];
+  hasDynamicImport: boolean;
+}
+
+const DYNAMIC_IMPORT_VIOLATION =
+  'dynamic import() - dynamic module loading is blocked in sandbox';
 
 /**
  * Bundle function code with npm dependencies into self-contained sandbox code.
  *
  * Process:
- * 1. Parse import statements to validate against whitelist
- * 2. Write temp file for esbuild input
- * 3. Bundle with esbuild (IIFE, ES2018, browser platform)
- * 4. Scan output for forbidden APIs
- * 5. Return bundled code
+ * 1. Analyze module syntax, reject dynamic imports, and validate static modules
+ * 2. Bundle the in-memory entry relative to resolveDir
+ * 3. Scan output for forbidden APIs
+ * 4. Return bundled code
  *
  * @param options - Bundle configuration
  * @returns Bundled code, size, and module list
@@ -71,10 +79,18 @@ export interface BundleResult {
  */
 export async function bundle(options: BundleOptions): Promise<BundleResult> {
   const { code, allowedModules } = options;
+  const resolveDir = resolve(options.resolveDir ?? process.cwd());
 
-  // Step 1: Extract and validate import statements
+  // Step 1: Analyze and validate module syntax.
   // We validate BEFORE invoking esbuild to fail fast with clear error messages
-  const importedModules = extractImports(code);
+  const importAnalysis = analyzeEntryImports(code);
+  const importedModules = importAnalysis.modules;
+  if (importAnalysis.hasDynamicImport) {
+    throw new Error(
+      'Source code contains forbidden APIs:\n' +
+      `  - ${DYNAMIC_IMPORT_VIOLATION}`,
+    );
+  }
   for (const mod of importedModules) {
     // Check Node.js built-ins first (always blocked, even if in allowedModules)
     if (isNodeBuiltin(mod)) {
@@ -92,99 +108,96 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
     }
   }
 
-  // Step 2: Write to temp file for esbuild
-  // esbuild requires a file path as entry point, so we create a temp file
-  const tmpDir = mkdtempSync(join(tmpdir(), 'unzen-bundler-'));
-  const entryFile = join(tmpDir, 'entry.js');
+  // Step 2: Bundle the in-memory entry relative to the caller's project.
+  // stdin.resolveDir is required for esbuild to locate package dependencies.
+  const result = await esbuild.build({
+    absWorkingDir: resolveDir,
+    stdin: {
+      contents: code,
+      loader: 'js',
+      resolveDir,
+    },
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2018',
+    write: false,
+    globalName: '__unzen_module',
+    minify: false,
+    logLevel: 'silent',
+    plugins: [createModuleWhitelistPlugin(allowedModules)],
+  });
 
-  try {
-    writeFileSync(entryFile, code);
+  const output = result.outputFiles?.[0]?.text ?? '';
 
-    // Step 3: Bundle with esbuild
-    // Configuration choices:
-    // - IIFE format: QuickJS has no module system, IIFE is self-contained
-    // - browser platform: prevents Node.js polyfills from being injected
-    // - ES2018 target: QuickJS ES2018 compliance (safe lower bound)
-    // - write:false: return output in memory instead of writing to disk
-    // - globalName: IIFE assigns exports to this variable for extraction
-    // - plugins: onResolve hook validates ALL module resolutions (defense-in-depth)
-    const result = await esbuild.build({
-      entryPoints: [entryFile],
-      bundle: true,
-      format: 'iife',
-      platform: 'browser',
-      target: 'es2018',
-      write: false, // Return output as string instead of writing to disk
-      globalName: '__unzen_module', // IIFE assigns to this variable
-      minify: false, // Keep readable for debugging
-      logLevel: 'silent', // Suppress esbuild console output
-      plugins: [
-        // SECURITY: esbuild plugin validates module imports at resolution time.
-        // This catches modules that the static pre-check might miss:
-        // - Modules aliased via tsconfig paths
-        // - Modules resolved from transitive dependencies
-        // - Modules loaded via CommonJS require() that esbuild inlines
-        createModuleWhitelistPlugin(allowedModules),
-      ],
-    });
-
-    const output = result.outputFiles?.[0]?.text ?? '';
-
-    // Step 4: Check for forbidden APIs in bundled output (defense-in-depth)
-    // Even though imports are whitelisted, transitive dependencies
-    // might introduce forbidden API calls
-    const violations = checkForbiddenApis(output);
-    if (violations.length > 0) {
-      throw new Error(
-        `Bundled code contains forbidden APIs:\n` +
-        violations.map(v => `  - ${v}`).join('\n')
-      );
-    }
-
-    // Step 5: Transform IIFE output to expose run() function
-    // esbuild generates: var __unzen_module = (() => { ... })();
-    // We add a fallback chain to make run() accessible at the top level
-    const bundledCode = extractRunFunction(output);
-
-    return {
-      code: bundledCode,
-      size: Buffer.byteLength(bundledCode, 'utf-8'),
-      modules: importedModules,
-    };
-  } finally {
-    // Clean up temp directory regardless of success or failure
-    if (existsSync(tmpDir)) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+  // Step 3: Whitelisted transitive dependencies can still introduce APIs that
+  // the sandbox intentionally does not expose.
+  const violations = checkForbiddenApis(output);
+  if (violations.length > 0) {
+    throw new Error(
+      `Bundled code contains forbidden APIs:\n` +
+      violations.map(v => `  - ${v}`).join('\n')
+    );
   }
+
+  // Step 4: esbuild generates `var __unzen_module = (() => { ... })();`.
+  const bundledCode = extractRunFunction(output);
+
+  return {
+    code: bundledCode,
+    size: Buffer.byteLength(bundledCode, 'utf-8'),
+    modules: importedModules,
+  };
 }
 
 /**
- * Extract import module names from source code
+ * Analyze module syntax in the in-memory entry.
  *
- * Parses both static import forms:
+ * Collects static import forms:
  * - `import x from 'module'`
  * - `import { x } from 'module'`
  * - `import * as x from 'module'`
+ * - `export { x } from 'module'`
  *
- * Does NOT parse dynamic imports (import()) since those can't be
- * statically analyzed and should be caught by the forbidden API check.
+ * Dynamic imports are recorded separately and rejected before esbuild can
+ * lower them into promise-based loader code that no longer contains import().
  *
  * @param code - Source code with import statements
- * @returns Array of unique module names (deduplicated)
+ * @returns Static module specifiers and whether dynamic import is present
  */
-function extractImports(code: string): string[] {
-  // Match static import statements with single or double quotes
-  // Captures the module specifier (the string inside quotes)
-  const importRegex = /import\s+(?:.*?\s+from\s+)?['"](.*?)['"]/g;
+function analyzeEntryImports(code: string): EntryImportAnalysis {
+  const sourceFile = ts.createSourceFile(
+    'unzen-entry.js',
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
   const modules = new Set<string>();
+  let hasDynamicImport = false;
 
-  let match;
-  while ((match = importRegex.exec(code)) !== null) {
-    modules.add(match[1]);
+  for (const statement of sourceFile.statements) {
+    if (
+      (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
+      && statement.moduleSpecifier
+      && ts.isStringLiteralLike(statement.moduleSpecifier)
+    ) {
+      modules.add(statement.moduleSpecifier.text);
+    }
   }
 
-  return Array.from(modules);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      hasDynamicImport = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  return { modules: Array.from(modules), hasDynamicImport };
 }
 
 /**
@@ -224,6 +237,14 @@ function createModuleWhitelistPlugin(allowedModules: string[]): esbuild.Plugin {
   return {
     name: 'unzen-module-whitelist',
     setup(build) {
+      // Dynamic imports must be rejected before esbuild lowers them into code
+      // that no longer contains import(). This callback also covers relative
+      // imports inside transitive dependencies.
+      build.onResolve({ filter: /.*/ }, (args) => {
+        if (args.kind !== 'dynamic-import') return undefined;
+        return { errors: [{ text: DYNAMIC_IMPORT_VIOLATION }] };
+      });
+
       // Intercept all non-relative, non-absolute module resolutions.
       // Relative paths (./foo, ../bar) and absolute paths (/foo) are
       // local files, not npm modules, so they don't need whitelist checking.

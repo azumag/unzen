@@ -666,6 +666,10 @@ TypeScript source
   最初（`use`配列の右端）に置く
 - AST変換はクロージャ値を埋め込まない。外部依存を含むコードは既存の
   `bundle()` + module whitelist + AST/symbol/scope禁止API scanを使用する
+- `bundle()`はin-memory entryを`resolveDir`（省略時`process.cwd()`）基準で解決する。
+  entryの静的import / re-exportはASTで収集し、dynamic importはesbuild変換前に拒否する。
+  bare packageの推移依存も`onResolve`で個別にallowlist検証し、依存内のdynamic importも
+  lower前に拒否する
 - Viteの`declarationFile`指定時は、重複名を位置付きerrorにし、生成された
   `UnzenFunctions`を`UnzenClient<UnzenFunctions>`へ渡してcall境界を型付けする。
   webpack loaderはmodule単位の変換だけを行い、宣言集約は行わない

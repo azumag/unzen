@@ -5,8 +5,34 @@
  * self-contained code that can run in the QuickJS sandbox.
  */
 
-import { describe, it, expect } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { afterEach, describe, it, expect } from 'vitest';
 import { bundle } from '../src/bundler';
+
+const fixtureDirectories: string[] = [];
+
+function createPackageProject(packages: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), 'unzen-bundler-project-'));
+  fixtureDirectories.push(root);
+  for (const [name, source] of Object.entries(packages)) {
+    const packageDirectory = join(root, 'node_modules', name);
+    mkdirSync(packageDirectory, { recursive: true });
+    writeFileSync(
+      join(packageDirectory, 'package.json'),
+      JSON.stringify({ name, version: '1.0.0', type: 'module', exports: './index.js' }),
+    );
+    writeFileSync(join(packageDirectory, 'index.js'), source);
+  }
+  return root;
+}
+
+afterEach(() => {
+  for (const directory of fixtureDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe('bundler', () => {
   it('should bundle simple code without imports', async () => {
@@ -107,5 +133,111 @@ describe('bundler', () => {
       code: `import net from 'net'; export function run() { return net; }`,
       allowedModules: [],
     })).rejects.toThrow(/net/);
+  });
+
+  it('should resolve allowed packages from the configured project directory', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-safe-math': 'export function triple(value) { return value * 3; }',
+    });
+
+    const result = await bundle({
+      code: `
+        import {
+          triple
+        } from 'unzen-safe-math';
+        export function run(value) { return triple(value); }
+      `,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    });
+
+    expect(result.modules).toEqual(['unzen-safe-math']);
+    expect(result.code).not.toContain(basename(resolveDir));
+    expect(new Function(`${result.code}\nreturn run(7);`)()).toBe(21);
+  });
+
+  it('should collect modules from re-export declarations', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-safe-math': 'export function triple(value) { return value * 3; }',
+    });
+
+    const result = await bundle({
+      code: `export { triple as run } from 'unzen-safe-math';`,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    });
+
+    expect(result.modules).toEqual(['unzen-safe-math']);
+    expect(new Function(`${result.code}\nreturn run(5);`)()).toBe(15);
+  });
+
+  it('should ignore import-like text in comments and string literals', async () => {
+    const result = await bundle({
+      code: `
+        // import blocked from 'not-allowed';
+        const documentation = "import other from 'also-not-allowed'";
+        export function run() { return documentation.length; }
+      `,
+      allowedModules: [],
+    });
+
+    expect(result.modules).toEqual([]);
+  });
+
+  it('should reject non-whitelisted transitive package dependencies', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-safe-math': `
+        import { triple } from 'unzen-hidden-helper';
+        export { triple };
+      `,
+      'unzen-hidden-helper': 'export function triple(value) { return value * 3; }',
+    });
+
+    await expect(bundle({
+      code: `
+        import { triple } from 'unzen-safe-math';
+        export function run(value) { return triple(value); }
+      `,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    })).rejects.toThrow(/unzen-hidden-helper.*not in the allowed modules list/);
+  });
+
+  it('should reject dynamic imports before esbuild can lower them', async () => {
+    const resolveDir = createPackageProject({});
+    writeFileSync(join(resolveDir, 'helper.js'), 'export const value = 42;');
+
+    await expect(bundle({
+      code: `
+        export async function run() {
+          return (await import('./helper.js')).value;
+        }
+      `,
+      allowedModules: [],
+      resolveDir,
+    })).rejects.toThrow(/dynamic import.*blocked/);
+  });
+
+  it('should reject dynamic imports inside allowed dependencies', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-dynamic-loader': `
+        export async function load() {
+          return (await import('./helper.js')).value;
+        }
+      `,
+    });
+    writeFileSync(
+      join(resolveDir, 'node_modules', 'unzen-dynamic-loader', 'helper.js'),
+      'export const value = 42;',
+    );
+
+    await expect(bundle({
+      code: `
+        import { load } from 'unzen-dynamic-loader';
+        export function run() { return load(); }
+      `,
+      allowedModules: ['unzen-dynamic-loader'],
+      resolveDir,
+    })).rejects.toThrow(/dynamic import.*blocked/);
   });
 });
