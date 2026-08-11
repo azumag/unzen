@@ -270,6 +270,8 @@ server は 16 MiB を超える raw source / MoonBit file を version 採番前�
 `/code/:name` は検証済み payload の正確な `Content-Length` を返す。
 候補登録後の manifest が 1 MiB を超える場合も registry を変更せず拒否し、`/manifest` は
 一度だけ serialize した body と一致する `Content-Length` / ETag を返す。
+`If-None-Match` は weak comparison で strong/weak tag、tag list、`*` を評価し、
+不正文法の field は無視して通常の `200` manifest response を返す。
 server `baseUrl` は credential・query・fragment のない absolute HTTP(S) URL または
 origin-relative path（`/unzen`、root `/`）だけを受け付ける。前後空白と末尾 slash は
 構築時に正規化し、不正設定は最初の manifest fetch まで遅延させず同期的に拒否する。

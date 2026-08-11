@@ -39,6 +39,7 @@ import { ManifestBuilder } from './manifest-builder';
 import { QuickJSRuntime } from './quickjs-runtime';
 import { readBoundedJsonRequest, RequestBodyLimitError } from './request-body';
 import { normalizeUnzenBaseUrl } from './base-url';
+import { matchesIfNoneMatch } from './etag';
 
 /**
  * Configuration options for UnzenServer
@@ -439,12 +440,11 @@ export class UnzenServer {
       }
       const etag = this.generateManifestETag(manifest);
 
-      // Check If-None-Match header for conditional request (RFC 7232)
-      // If the client's cached ETag matches the current manifest ETag,
-      // respond with 304 to avoid re-transmitting the same data.
+      // Check If-None-Match using weak comparison, including lists and the
+      // wildcard condition. Malformed fields are ignored and receive 200.
       // RFC 7232 Section 4.1 requires 304 to include ETag header.
       const ifNoneMatch = c.req.header('If-None-Match');
-      if (ifNoneMatch === etag) {
+      if (matchesIfNoneMatch(ifNoneMatch, etag)) {
         return c.body(null, 304, {
           'ETag': etag,
           'Cache-Control': 'no-cache',

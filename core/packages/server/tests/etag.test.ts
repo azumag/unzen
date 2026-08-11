@@ -54,6 +54,42 @@ describe('ETag Caching', () => {
     expect(res2.status).toBe(304);
   });
 
+  it('uses weak comparison for ETag lists and wildcard conditions', async () => {
+    server.define('test', () => 1);
+    const initial = await app.request('/unzen/manifest');
+    const etag = initial.headers.get('ETag')!;
+    const strongEtag = etag.replace(/^W\//, '');
+
+    for (const condition of [
+      `W/"stale,opaque", ${etag}`,
+      strongEtag,
+      '*',
+    ]) {
+      const response = await app.request('/unzen/manifest', {
+        headers: { 'If-None-Match': condition },
+      });
+      expect(response.status).toBe(304);
+      expect(response.headers.get('ETag')).toBe(etag);
+    }
+  });
+
+  it('ignores malformed If-None-Match fields', async () => {
+    server.define('test', () => 1);
+    const initial = await app.request('/unzen/manifest');
+    const etag = initial.headers.get('ETag')!;
+
+    for (const condition of [
+      `W/"unterminated, ${etag}`,
+      `${etag} trailing`,
+      `W/"stale",,${etag}`,
+    ]) {
+      const response = await app.request('/unzen/manifest', {
+        headers: { 'If-None-Match': condition },
+      });
+      expect(response.status).toBe(200);
+    }
+  });
+
   it('should change ETag when functions are registered', async () => {
     server.define('func1', () => 1);
     const res1 = await app.request('/unzen/manifest');
