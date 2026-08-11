@@ -108,17 +108,40 @@ function snapshotExecution(
 
 export class QuickJSRuntime {
   private quickJS: QuickJSWASMModule | null = null;
+  private initialization: Promise<void> | null = null;
+  private disposed = false;
 
   /**
    * Initialize QuickJS Wasm module
    *
-   * Must be called before execute(). Loads the QuickJS Wasm binary
-   * and prepares the runtime for execution.
+   * Must be called before execute(). Concurrent calls share one initialization.
+   * Once dispose() is called, this instance cannot be initialized again.
    */
   async initialize(): Promise<void> {
-    // getQuickJS() returns a singleton WASM module instance
-    // This is a one-time initialization that loads the ~505KB Wasm binary
-    this.quickJS = await getQuickJS();
+    if (this.disposed) {
+      throw new UnzenRuntimeError('QuickJS runtime has been disposed. Create a new instance.');
+    }
+    if (this.quickJS) return;
+    if (this.initialization) return this.initialization;
+
+    // getQuickJS() returns a singleton WASM module instance. Keep initialization
+    // single-flight and re-check disposal after the asynchronous load so a late
+    // completion cannot resurrect a terminal runtime.
+    const initialization = (async () => {
+      const quickJS = await getQuickJS();
+      if (this.disposed) {
+        throw new UnzenRuntimeError('QuickJS runtime was disposed during initialization.');
+      }
+      this.quickJS = quickJS;
+    })();
+    this.initialization = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initialization === initialization) {
+        this.initialization = null;
+      }
+    }
   }
 
   /**
@@ -135,6 +158,9 @@ export class QuickJSRuntime {
    * @throws UnzenFunctionError for syntax/execution errors
    */
   async execute(code: string, args: unknown[], options?: ExecutionOptions): Promise<unknown> {
+    if (this.disposed) {
+      throw new UnzenRuntimeError('QuickJS runtime has been disposed. Create a new instance.');
+    }
     if (!this.quickJS) {
       throw new UnzenRuntimeError('QuickJS runtime not initialized. Call initialize() first.');
     }
@@ -231,11 +257,12 @@ export class QuickJSRuntime {
    * Clean up runtime resources
    *
    * Must be called when the runtime is no longer needed.
-   * After disposal, the runtime cannot be used for execution.
+   * After disposal, the runtime cannot be initialized or used again.
    */
   dispose(): void {
-    // Mark as disposed by setting to null
-    // Subsequent execute() calls will throw error
+    // Disposal is terminal. An in-flight initialize() checks this flag before
+    // publishing its module, so it cannot restore a disposed instance.
+    this.disposed = true;
     this.quickJS = null;
   }
 }

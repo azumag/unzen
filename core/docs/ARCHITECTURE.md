@@ -195,6 +195,8 @@ Error
 - QuickJSRuntime の公開 `execute()` 境界は timeout 1〜2,000ms、非空 code、最大128引数を
   context 作成前に検証する。引数は iterator を使わない indexed copy 後に JSON 化し、
   循環値・BigInt・caller mutation を QuickJS の外側で遮断する
+- QuickJSRuntime の `initialize()` は single-flight とし、`dispose()` は terminal state とする。
+  dispose 中に完了した非同期初期化は module を公開せず、runtime を復活させない
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`

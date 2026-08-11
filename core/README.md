@@ -257,6 +257,8 @@ unzen.defineRaw('heavyFunc', code, { timeout: 2000 }); // 2,000ms
 advanced API の `QuickJSRuntime.execute()` も timeout を 1〜2,000ms に制限し、
 非空 code と最大128引数だけを受け付ける。引数は QuickJS context 作成前に indexed copy と
 JSON serialization を完了するため、循環値・BigInt・過大な引数配列は実行前に拒否される。
+`initialize()` は同時呼び出しを single-flight 化し、`dispose()` は terminal なので、破棄後は
+新しい `QuickJSRuntime` instance を生成する。
 
 ## 4層隔離モデル
 

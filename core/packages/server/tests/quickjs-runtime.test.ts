@@ -37,6 +37,34 @@ describe('QuickJSRuntime', () => {
       await expect(newRuntime.initialize()).resolves.toBeUndefined();
       newRuntime.dispose();
     });
+
+    it('should initialize idempotently for concurrent callers', async () => {
+      const newRuntime = new QuickJSRuntime();
+      await expect(Promise.all([
+        newRuntime.initialize(),
+        newRuntime.initialize(),
+      ])).resolves.toEqual([undefined, undefined]);
+      await expect(newRuntime.execute('function run() { return 1; }', []))
+        .resolves.toBe(1);
+      newRuntime.dispose();
+    });
+
+    it('should not resurrect when disposed during initialization', async () => {
+      const newRuntime = new QuickJSRuntime();
+      const initialization = newRuntime.initialize();
+      newRuntime.dispose();
+
+      await expect(initialization).rejects.toThrow(UnzenRuntimeError);
+      await expect(newRuntime.execute('function run() { return 1; }', []))
+        .rejects.toThrow('disposed');
+    });
+
+    it('should reject initialization after disposal', async () => {
+      const newRuntime = new QuickJSRuntime();
+      newRuntime.dispose();
+
+      await expect(newRuntime.initialize()).rejects.toThrow('disposed');
+    });
   });
 
   describe('execute', () => {
