@@ -139,6 +139,18 @@ describe('bundler', () => {
     })).rejects.toThrow(/fs/);
   });
 
+  it.each([
+    'fs/promises',
+    'node:fs/promises',
+    'assert/strict',
+    'node:test',
+  ])('should reject built-in subpath %s before module resolution', async (moduleName) => {
+    await expect(bundle({
+      code: `import * as builtin from ${JSON.stringify(moduleName)}; export function run() { return builtin; }`,
+      allowedModules: [moduleName],
+    })).rejects.toThrow(/Node\.js built-in/);
+  });
+
   it('should reject code with non-whitelisted module imports', async () => {
     await expect(bundle({
       code: `import axios from 'axios'; export function run() { return axios.get('https://example.com'); }`,

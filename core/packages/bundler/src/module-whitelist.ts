@@ -12,22 +12,12 @@
  * - Wildcard patterns (e.g., 'lodash/*') allow subpath imports
  */
 
-/**
- * Complete list of Node.js built-in modules (as of Node.js 20+)
- *
- * These are ALWAYS blocked in sandbox functions because they provide
- * direct system access (filesystem, network, process control, etc.)
- * that fundamentally violates the sandbox isolation model.
- */
-const NODE_BUILTINS = new Set([
-  'assert', 'async_hooks', 'buffer', 'child_process', 'cluster',
-  'console', 'constants', 'crypto', 'dgram', 'diagnostics_channel',
-  'dns', 'domain', 'events', 'fs', 'http', 'http2', 'https',
-  'inspector', 'module', 'net', 'os', 'path', 'perf_hooks',
-  'process', 'punycode', 'querystring', 'readline', 'repl',
-  'stream', 'string_decoder', 'sys', 'timers', 'tls', 'trace_events',
-  'tty', 'url', 'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib',
-]);
+import { builtinModules } from 'node:module';
+
+/** Every runtime built-in and, where supported, its `node:` spelling. */
+const NODE_BUILTINS = new Set(builtinModules.flatMap((name) => (
+  name.startsWith('node:') ? [name] : [name, `node:${name}`]
+)));
 
 /**
  * Default list of allowed npm modules for sandbox functions.
@@ -56,9 +46,7 @@ export const DEFAULT_ALLOWED_MODULES: string[] = [
  * @returns true if the module is a Node.js built-in
  */
 export function isNodeBuiltin(name: string): boolean {
-  // Handle node: prefix (e.g., 'node:fs' -> 'fs')
-  const normalized = name.startsWith('node:') ? name.slice(5) : name;
-  return NODE_BUILTINS.has(normalized);
+  return NODE_BUILTINS.has(name);
 }
 
 /**

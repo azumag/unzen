@@ -278,7 +278,8 @@ server.defineRaw('sortUsers', result.code, { timeout: 500 });
 
 ### `isNodeBuiltin(name): boolean`
 
-Node.js 組み込みモジュールかどうかを判定する。`node:` プレフィックスにも対応している。
+実行中の Node.js が提供する組み込みモジュールかどうかを判定する。`fs/promises` などの
+公式 subpath と、それぞれの `node:` プレフィックス表記にも対応している。
 
 ### `checkForbiddenApis(code): string[]`
 

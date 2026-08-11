@@ -34,8 +34,16 @@ describe('module-whitelist', () => {
       expect(isNodeBuiltin('crypto')).toBe(true);
     });
 
-    it('should identify node:fs as Node.js built-in', () => {
-      expect(isNodeBuiltin('node:fs')).toBe(true);
+    it.each([
+      'node:fs',
+      'fs/promises',
+      'node:fs/promises',
+      'assert/strict',
+      'node:test',
+      'node:test/reporters',
+      '_http_agent',
+    ])('should identify %s as a Node.js built-in', (name) => {
+      expect(isNodeBuiltin(name)).toBe(true);
     });
 
     it('should NOT identify lodash as Node.js built-in', () => {
@@ -44,6 +52,10 @@ describe('module-whitelist', () => {
 
     it('should NOT identify date-fns as Node.js built-in', () => {
       expect(isNodeBuiltin('date-fns')).toBe(false);
+    });
+
+    it('should not invent a bare alias for a node:-only built-in', () => {
+      expect(isNodeBuiltin('test')).toBe(false);
     });
   });
 
@@ -67,6 +79,15 @@ describe('module-whitelist', () => {
 
     it('should always reject node: prefixed modules', () => {
       expect(checkModuleAllowed('node:fs', ['node:fs'])).toBe(false);
+    });
+
+    it.each([
+      'fs/promises',
+      'node:fs/promises',
+      'assert/strict',
+      'node:test',
+    ])('should reject built-in subpath %s even when explicitly allowed', (name) => {
+      expect(checkModuleAllowed(name, [name])).toBe(false);
     });
 
     it('should allow date-fns with exact match', () => {
