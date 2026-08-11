@@ -322,8 +322,9 @@ Browser Main Thread                  Web Worker Thread
 - **DOM アクセス不可**: QuickJS は Web Worker 内、MoonBit は `moonbitWorkerUrl`
   指定時に専用 Web Worker 内で実行する（未指定の MoonBit はメインスレッド実行）
 - **リソース制限**: QuickJS はメモリ16MB、実行時間はタイムアウト（協調 + 強制停止）。
-  MoonBit (Worker) はタイムアウト/キャンセルを `Worker.terminate()` で強制。
-  MoonBit に明示的な16MB制限はない（wasm-gc のメモリはブラウザが管理）
+  MoonBit (Worker) はタイムアウト/キャンセルを `Worker.terminate()` で強制し、module payload は
+  16 MiB、scalar string 引数の合計と scalar string 戻り値は UTF-8 で 4 MiB に制限する。
+  wasm-gc heap 自体の明示的なメモリ上限はなく、ブラウザが管理する
 - **純粋計算のみ**: 入力→計算→出力のみで、副作用はない
 - **プロトタイプ汚染防止**: Object/Array/String等の全ビルトインプロトタイプを凍結する
 - **コンストラクタチェーン切断**: Function/AsyncFunction/GeneratorFunction/AsyncGeneratorFunction全4種を切断する
@@ -355,7 +356,9 @@ wasm を実行できない）。ABI 省略時は number / boolean / bigint / str
 （`use-js-builtin-string`）。`abi.params` / `abi.result` で `i32[]` または
 `f64[]` を明示すると、モジュールが公開する標準 `unzen_array_*`
 bridge を使って JS 数値配列を wasm-gc 配列と相互コピーする。入力配列は
-1呼び出し合計10万要素、戻り値配列は10万要素、引数数は128まで。
+1呼び出し合計10万要素、戻り値配列は10万要素、引数数は128まで。scalar string は
+引数の合計と戻り値をそれぞれ UTF-8 で 4 MiB、inline module は 16 MiB までとし、
+inline module は caller-owned copy を作る前に byte length を検証する。
 オブジェクトは非対応。bridge の正確なシグネチャは
 [reference implementation](moonbit-poc/interop/main.mbt) を参照。
 main-thread / worker executor は非同期 module 準備より前に、引数、ABI、

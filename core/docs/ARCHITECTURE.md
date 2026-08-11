@@ -809,7 +809,9 @@ TypeScript source
 - Worker 内の MoonBit export は同期・中断不可のため、タイムアウト/キャンセルは
   `Worker.terminate()` で強制する。ABI 省略時は number / boolean / bigint /
   string のスカラーのみ、ABI 指定時は `i32[]` / `f64[]` も対応する。
-  オブジェクトは非対応。String は JS String Builtins 経由。
+  オブジェクトは非対応。String は JS String Builtins 経由。inline module は private copy 前に
+  16 MiB、scalar string 引数は1実行の合計、scalar string 戻り値はそれぞれ UTF-8 で
+  4 MiB を上限として検証する。
 - サーバーフォールバックは非対応 (`/exec/:name` は 501)。ブラウザ実行のみ。
 
 ### MoonBit の String / Array interop (2026-08-11 実測)
@@ -873,10 +875,12 @@ Chromium 145 と Firefox 146 で probe した結果:
   必要な bridge が欠ける場合は
   `UnzenRuntimeError` で fail closed する。`i32[]` は符号付き32 bit整数、
   `f64[]` は JS number のみ許容する。入力は1実行の全配列合計10万要素、
-  戻り値は10万要素、引数数は128を上限とし、コピー前に型とサイズを検証する。
+  戻り値は10万要素、引数数は128、scalar string 引数の合計と戻り値はそれぞれ
+  UTF-8 で 4 MiB を上限とし、コピー前に型とサイズを検証する。
   引数、ABI、`signal`、export 名、expected hash は待機/初期化前に一度だけ
   読み取ってスナップショットする。worker に直接渡す inline `ArrayBuffer` も
-  同時点でコピーし、呼び出し後の caller mutation を実行中に反映させない。
+  16 MiB 以下であることを先に検証してから同時点でコピーし、呼び出し後の caller mutation を
+  実行中に反映させない。
   空 module URL / 不正 option / 非 `ArrayBuffer` は fetch・worker 生成前に拒否する。
   direct `prepare()` の signal も副作用前に検証し、response body の読み取り失敗は
   stable な network error、内部 abort は runtime error に分類する。

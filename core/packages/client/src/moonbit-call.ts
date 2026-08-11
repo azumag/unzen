@@ -1,4 +1,4 @@
-import type { MoonBitAbi } from '@unzen/shared';
+import { MAX_FUNCTION_PAYLOAD_BYTES, type MoonBitAbi } from '@unzen/shared';
 import { snapshotAbortSignalInput } from './abort';
 
 export interface MoonBitExecutionOptionsSnapshot {
@@ -73,9 +73,19 @@ export function normalizeMoonBitModuleUrl(value: unknown): string {
 
 /** Take private ownership of inline wasm bytes before worker initialization. */
 export function snapshotMoonBitModuleBytes(value: unknown): ArrayBuffer {
+  let byteLength: number;
   try {
-    return Reflect.apply(ArrayBuffer.prototype.slice, value, [0]) as ArrayBuffer;
+    const byteLengthGetter = Object.getOwnPropertyDescriptor(
+      ArrayBuffer.prototype,
+      'byteLength',
+    )?.get;
+    if (byteLengthGetter === undefined) throw new Error('missing byteLength getter');
+    byteLength = Reflect.apply(byteLengthGetter, value, []) as number;
   } catch {
     throw new Error('MoonBit inline module must be an ArrayBuffer');
   }
+  if (byteLength > MAX_FUNCTION_PAYLOAD_BYTES) {
+    throw new Error(`MoonBit inline module exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+  }
+  return Reflect.apply(ArrayBuffer.prototype.slice, value, [0]) as ArrayBuffer;
 }

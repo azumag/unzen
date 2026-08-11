@@ -1,6 +1,8 @@
 import {
+  MAX_EXECUTION_REQUEST_BYTES,
   MAX_MOONBIT_ABI_PARAMS,
   normalizeMoonBitAbi,
+  utf8ByteLength,
   type MoonBitAbi,
   type MoonBitAbiType,
 } from '@unzen/shared';
@@ -9,6 +11,7 @@ import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
 /** Bound copy work and memory retained by one execution. */
 export const MAX_MOONBIT_ARRAY_ELEMENTS = 100_000;
 export const MAX_MOONBIT_ARGUMENTS = MAX_MOONBIT_ABI_PARAMS;
+export const MAX_MOONBIT_STRING_BYTES = MAX_EXECUTION_REQUEST_BYTES;
 
 export interface MoonBitCallSnapshot {
   args: unknown[];
@@ -77,15 +80,30 @@ export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): voi
     throw new Error(`MoonBit supports at most ${MAX_MOONBIT_ARGUMENTS} arguments`);
   }
 
+  let totalStringBytes = 0;
+  const validateScalar = (arg: unknown, errorPrefix: string): void => {
+    if (!isSupportedScalar(arg)) {
+      throw new Error(describeMoonbitArgError(errorPrefix, arg));
+    }
+    if (typeof arg === 'string') {
+      totalStringBytes += utf8ByteLength(
+        arg,
+        MAX_MOONBIT_STRING_BYTES - totalStringBytes,
+      );
+      if (totalStringBytes > MAX_MOONBIT_STRING_BYTES) {
+        throw new Error(
+          `MoonBit string arguments exceed ${MAX_MOONBIT_STRING_BYTES} total UTF-8 bytes`,
+        );
+      }
+    }
+  };
+
   if (abi === undefined) {
     for (let argIndex = 0; argIndex < argCount; argIndex++) {
-      const arg = args[argIndex];
-      if (!isSupportedScalar(arg)) {
-        throw new Error(describeMoonbitArgError(
-          'MoonBit supports number/boolean/bigint/string arguments only',
-          arg,
-        ));
-      }
+      validateScalar(
+        args[argIndex],
+        'MoonBit supports number/boolean/bigint/string arguments only',
+      );
     }
     return;
   }
@@ -103,12 +121,7 @@ export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): voi
     const type = normalizedAbi.params[argIndex];
     const arg = args[argIndex];
     if (type === 'scalar') {
-      if (!isSupportedScalar(arg)) {
-        throw new Error(describeMoonbitArgError(
-          `MoonBit ABI argument ${argIndex} expects a scalar`,
-          arg,
-        ));
-      }
+      validateScalar(arg, `MoonBit ABI argument ${argIndex} expects a scalar`);
       continue;
     }
     if (!Array.isArray(arg)) {
@@ -267,6 +280,12 @@ export function unmarshalMoonBitResult(
   if (type === 'scalar') {
     if (!isSupportedScalar(result)) {
       throw new Error('MoonBit export returned an unsupported (non-scalar) value');
+    }
+    if (
+      typeof result === 'string'
+      && utf8ByteLength(result, MAX_MOONBIT_STRING_BYTES) > MAX_MOONBIT_STRING_BYTES
+    ) {
+      throw new Error(`MoonBit string result exceeds ${MAX_MOONBIT_STRING_BYTES} UTF-8 bytes`);
     }
     return result;
   }

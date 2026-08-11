@@ -323,6 +323,10 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       [],
     )).rejects.toThrow('MoonBit inline module must be an ArrayBuffer');
     await expect(executor.execute(
+      new ArrayBuffer(MAX_FUNCTION_PAYLOAD_BYTES + 1),
+      [],
+    )).rejects.toThrow(`MoonBit inline module exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+    await expect(executor.execute(
       'https://example.com/fibonacci.wasm',
       [],
       { signal: { aborted: false } } as never,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_MOONBIT_ARRAY_ELEMENTS,
   MAX_MOONBIT_ARGUMENTS,
+  MAX_MOONBIT_STRING_BYTES,
   marshalMoonBitArguments,
   snapshotMoonBitCall,
   unmarshalMoonBitResult,
@@ -68,6 +69,17 @@ describe('MoonBit array bridge', () => {
       .toThrow('invalid array length');
   });
 
+  it('bounds aggregate scalar strings by their UTF-8 byte length', () => {
+    const halfLimit = 'é'.repeat(MAX_MOONBIT_STRING_BYTES / 4);
+
+    expect(snapshotMoonBitCall(
+      [halfLimit, halfLimit],
+      { params: ['scalar', 'scalar'] },
+    ).args).toEqual([halfLimit, halfLimit]);
+    expect(() => snapshotMoonBitCall([halfLimit, `${halfLimit}x`]))
+      .toThrow(`exceed ${MAX_MOONBIT_STRING_BYTES} total UTF-8 bytes`);
+  });
+
   it('snapshots ABI metadata and array arguments against caller mutation', () => {
     const values = [1, 2, 3];
     const abi = { params: ['i32[]'] as ('i32[]' | 'scalar')[], result: 'i32[]' as const };
@@ -99,5 +111,12 @@ describe('MoonBit array bridge', () => {
       {},
       { params: [], result: 'i32[]' },
     )).toThrow('invalid result length');
+  });
+
+  it('rejects oversized scalar string results', () => {
+    const oversized = `${'é'.repeat(MAX_MOONBIT_STRING_BYTES / 2)}x`;
+
+    expect(() => unmarshalMoonBitResult(fakeInstance({}), oversized))
+      .toThrow(`exceeds ${MAX_MOONBIT_STRING_BYTES} UTF-8 bytes`);
   });
 });
