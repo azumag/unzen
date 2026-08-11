@@ -595,6 +595,9 @@ interface UnzenExecutionRequest {
 - **manifest code URL**: untrusted manifestの`codeUrl`は単一`/`で始まるorigin-relative path、
   またはcredential / fragmentのないHTTP(S) absolute URLだけを受理する。schemeなし相対pathと
   protocol-relative URLはembedding page依存の解決を避けるため拒否する。
+- **response body**: stream chunkはbyte型を確認して逐次copyし、malformed / oversized bodyは
+  readerをcancelする。`arrayBuffer()` / `json()`だけのadapterもowned buffer / JSON round-trip
+  snapshotへ固定してから上位protocolへ渡す。
 - **イベント**: `accepted` / `manifest-fetch-started|completed`（developmentを含む全mode）/ `code-fetch-started|completed` / `sandbox-initializing`（サンドボックスの遅延初期化時のみ）/ `browser-execution-started|failed` / `fallback-started` / `server-execution-started` / `completed` / `cancel-requested` / `cancelled` / `failed`。各 event は `executionId`・monotonic `sequence`・`timestamp` を持ち、terminal event は1実行につき正確に1回。`cancel-requested` 以降は新しい phase event を emit しない。
 - **キャンセル**: 1つの AbortSignal が manifest/code fetch・sandbox・fallback へ一貫して伝播する。`UnzenCancelledError` (code `CANCELLED`) は **server fallback を開始しない**。dispose() は進行中 execution を cancel して settle させる。
 - **診断**: `ExecutionDiagnostics` は browser/server の attempt chain (`attempts`)、`fallbackUsed`、`finalRoute`、`totalDurationMs`、`manifestCache` を保持。browser 失敗→server 成功の経緯を確認できる。

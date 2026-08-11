@@ -63,4 +63,63 @@ describe('bounded response bodies', () => {
     await expect(readBoundedJsonResponse(response, 10, 'JSON response'))
       .rejects.toThrow('JSON response exceeds 10 bytes');
   });
+
+  it('returns an owned copy from arrayBuffer-only adapters', async () => {
+    const source = new Uint8Array([1, 2, 3]).buffer;
+    const response = {
+      headers: new Headers(),
+      body: null,
+      arrayBuffer: async () => source,
+    } as unknown as Response;
+
+    const result = await readBoundedResponseBytes(response, 10, 'Byte response');
+    new Uint8Array(source)[0] = 9;
+
+    expect(result).not.toBe(source);
+    expect([...new Uint8Array(result)]).toEqual([1, 2, 3]);
+  });
+
+  it('rejects a non-ArrayBuffer returned by an arrayBuffer adapter', async () => {
+    const response = {
+      headers: new Headers(),
+      body: null,
+      arrayBuffer: async () => ({ byteLength: 1 }),
+    } as unknown as Response;
+
+    await expect(readBoundedResponseBytes(response, 10, 'Byte response'))
+      .rejects.toThrow('body cannot be read');
+  });
+
+  it('cancels a stream that yields a non-byte chunk', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<unknown>({
+      start(controller) {
+        controller.enqueue({ byteLength: 1, slice: () => new Uint8Array([1]) });
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = { headers: new Headers(), body } as unknown as Response;
+
+    await expect(readBoundedResponseBytes(response, 10, 'Byte response'))
+      .rejects.toThrow('non-byte chunk');
+    expect(cancelled).toBe(true);
+  });
+
+  it('round-trips json-only adapter payloads into an owned wire snapshot', async () => {
+    const nested = { value: 1 };
+    const response = {
+      headers: new Headers(),
+      json: async () => ({ result: nested }),
+    } as unknown as Response;
+
+    const result = await readBoundedJsonResponse(response, 100, 'JSON response') as {
+      result: { value: number };
+    };
+    nested.value = 2;
+
+    expect(result).toEqual({ result: { value: 1 } });
+    expect(result.result).not.toBe(nested);
+  });
 });
