@@ -18,7 +18,7 @@ export { server };`);
       const buildResult = await build({
         configFile: false,
         logLevel: 'silent',
-        plugins: [unzenVitePlugin()],
+        plugins: [unzenVitePlugin({ declarationFile: 'unzen-functions.d.ts' })],
         build: {
           write: false,
           minify: false,
@@ -31,11 +31,17 @@ export { server };`);
         'output' in output ? output.output : []
       ));
       const chunk = generated.find((item) => item.type === 'chunk');
+      const declaration = generated.find((item) => (
+        item.type === 'asset' && item.fileName === 'unzen-functions.d.ts'
+      ));
 
       expect(chunk?.type).toBe('chunk');
       expect(chunk && chunk.type === 'chunk' ? chunk.code : '').toContain('server.defineRaw');
       expect(chunk && chunk.type === 'chunk' ? chunk.code : '').not.toContain('value: number');
       expect(chunk && chunk.type === 'chunk' ? chunk.code : '').toContain('(value) => value * 2');
+      expect(declaration?.type).toBe('asset');
+      expect(declaration && declaration.type === 'asset' ? declaration.source : '')
+        .toContain('readonly "double": (value: number) => number;');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

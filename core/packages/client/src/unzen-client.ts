@@ -303,6 +303,17 @@ export interface UnzenClientOptions {
   moonbitImportedStringConstants?: MoonBitImportedStringConstants;
 }
 
+/** Default untyped schema used when no generated function map is supplied. */
+export type UnzenFunctionMap = Record<string, (...args: unknown[]) => unknown>;
+
+type UnzenFunctionArgs<Definition> = Definition extends (
+  ...args: infer Args
+) => unknown ? Args : never;
+
+type UnzenFunctionResult<Definition> = Definition extends (
+  ...args: infer _Args
+) => infer Result ? Awaited<Result> : never;
+
 /** Counter for generating unique execution ids */
 let executionIdCounter = 0;
 
@@ -319,7 +330,7 @@ let executionIdCounter = 0;
  * client.dispose();
  * ```
  */
-export class UnzenClient {
+export class UnzenClient<Functions = UnzenFunctionMap> {
   private readonly endpoint: string;
   private readonly mode: 'production' | 'development' | 'browser-only';
 
@@ -379,6 +390,12 @@ export class UnzenClient {
   /**
    * Call a function (compatibility wrapper, no signal/events).
    *
+   * A finite generated schema selects the first overload and constrains the
+   * function name, arguments, and result. The conditional fallback overload is
+   * callable only when Functions has the default string index signature. This
+   * preserves legacy `call<Result>(name, ...args)` usage for untyped clients
+   * without letting a typed client bypass its generated contract.
+   *
    * @param name - Function name
    * @param args - Function arguments
    * @returns Function result
@@ -386,6 +403,14 @@ export class UnzenClient {
    * @throws {UnzenRuntimeError} When runtime error occurs (browser-only mode)
    * @throws {UnzenCancelledError} When the execution is cancelled
    */
+  async call<Name extends Extract<keyof Functions, string>>(
+    name: Name,
+    ...args: UnzenFunctionArgs<Functions[Name]>
+  ): Promise<UnzenFunctionResult<Functions[Name]>>;
+  async call<T = unknown>(
+    name: string extends keyof Functions ? string : never,
+    ...args: string extends keyof Functions ? unknown[] : never
+  ): Promise<T>;
   async call<T = unknown>(name: string, ...args: unknown[]): Promise<T> {
     return this.execute<T>({ name, args });
   }

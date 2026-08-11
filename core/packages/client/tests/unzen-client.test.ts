@@ -12,7 +12,7 @@
  * - Test error handling
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,6 +68,24 @@ describe('UnzenClient', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  it('infers names, arguments, and results from a generated function schema', () => {
+    type Functions = {
+      add: (a: number, b: number) => number;
+      greet: (name: string) => string;
+    };
+
+    function assertGeneratedTypes(client: UnzenClient<Functions>): void {
+      expectTypeOf(client.call('add', 1, 2)).toEqualTypeOf<Promise<number>>();
+      expectTypeOf(client.call('greet', 'Ada')).toEqualTypeOf<Promise<string>>();
+      // @ts-expect-error generated schemas reject incorrect argument types
+      void client.call('add', '1', 2);
+      // @ts-expect-error generated schemas reject unknown function names
+      void client.call('missing');
+    }
+
+    expectTypeOf(assertGeneratedTypes).toBeFunction();
   });
 
   describe('constructor', () => {

@@ -9,6 +9,7 @@
 // Main client class
 export {
   UnzenClient,
+  type UnzenFunctionMap,
   type UnzenClientOptions,
   type DiagnosticResult,
   type DiagnosticInfo,

@@ -25,10 +25,16 @@ export {
   transformUnzenDefinitions,
   UnzenTransformError,
   type ExtractedUnzenDefinition,
+  type ExtractedUnzenParameter,
   type UnzenSourceTransformResult,
 } from './source-transform';
 export {
+  generateUnzenTypeDeclarations,
+  UnzenTypeGenerationError,
+} from './type-declarations';
+export {
   unzenVitePlugin,
+  type UnzenViteEmitContext,
   type UnzenVitePlugin,
   type UnzenVitePluginOptions,
   type UnzenViteTransformResult,

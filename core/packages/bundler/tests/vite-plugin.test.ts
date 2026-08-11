@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { unzenVitePlugin } from '../src/vite-plugin';
 
 const SOURCE = `import { UnzenServer } from '@unzen/server';
@@ -39,5 +39,63 @@ describe('unzenVitePlugin', () => {
   it('returns null when an eligible module has no matching definition', () => {
     const plugin = unzenVitePlugin();
     expect(plugin.transform('export const value = 1;', '/src/value.ts')).toBeNull();
+  });
+
+  it('emits one generated declaration asset when configured', () => {
+    const plugin = unzenVitePlugin({ declarationFile: 'types/unzen-functions.d.ts' });
+    const emitted: Array<{ type: 'asset'; fileName: string; source: string }> = [];
+    plugin.buildStart();
+    plugin.transform(SOURCE, '/src/functions.ts');
+
+    plugin.generateBundle.call({
+      emitFile(asset) {
+        emitted.push(asset);
+        return 'declaration-asset';
+      },
+    });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.fileName).toBe('types/unzen-functions.d.ts');
+    expect(emitted[0]?.source).toContain('readonly "double": (value: number) => unknown;');
+  });
+
+  it('does not emit declarations unless a declaration file is configured', () => {
+    const plugin = unzenVitePlugin();
+    const emitFile = vi.fn(() => 'unused');
+    plugin.buildStart();
+    plugin.transform(SOURCE, '/src/functions.ts');
+
+    plugin.generateBundle.call({ emitFile });
+
+    expect(emitFile).not.toHaveBeenCalled();
+  });
+
+  it('replaces a module declaration snapshot when Vite transforms it again', () => {
+    const plugin = unzenVitePlugin({ declarationFile: 'unzen-functions.d.ts' });
+    let declaration = '';
+    plugin.buildStart();
+    plugin.transform(SOURCE, '/src/functions.ts');
+    plugin.transform(SOURCE.replaceAll('double', 'triple'), '/src/functions.ts');
+
+    plugin.generateBundle.call({
+      emitFile(asset) {
+        declaration = asset.source;
+        return 'declaration-asset';
+      },
+    });
+
+    expect(declaration).toContain('readonly "triple"');
+    expect(declaration).not.toContain('readonly "double"');
+  });
+
+  it.each([
+    '/absolute/unzen.d.ts',
+    '../unzen.d.ts',
+    'types/unzen.ts',
+    '',
+  ])('rejects unsafe or non-declaration asset path %j', (declarationFile) => {
+    expect(() => unzenVitePlugin({ declarationFile })).toThrow(
+      'declarationFile must be a relative .d.ts asset path',
+    );
   });
 });

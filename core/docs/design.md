@@ -423,6 +423,8 @@ unzen.define('check', (text: string) => {
 - `@unzen/bundler` のVite plugin / webpack loaderは、`UnzenServer` importと
   `const` instanceをASTで確認したトップレベルinline同期関数を、型注釈を除去して
   `defineRaw()`へコンパイル時変換する（source map付き）
+- Vite pluginの`declarationFile`を指定すると、抽出したsignatureから
+  `UnzenFunctions`とtyped `UnzenClient` aliasをbuild assetとして自動生成する
 - MVP段階では、関数定義を文字列リテラルとして渡す代替APIも提供する:
   ```typescript
   // 代替: 文字列リテラルで関数を定義 (トランスパイラに影響されない)
@@ -741,7 +743,7 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 
 ### Phase 3: DX向上
 - [x] ビルドツール統合 (Vite plugin / webpack loader + 共通AST変換)
-- [ ] TypeScript型定義の自動生成
+- [x] TypeScript型定義の自動生成 (Vite build asset + typed UnzenClient schema)
 - [x] 診断情報API (実行場所・時間の可視化)
 - [ ] 純粋関数チェッカー (定義時の静的解析)
 

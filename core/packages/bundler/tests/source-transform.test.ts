@@ -29,7 +29,18 @@ server.define('sum', (a: number, b: number): number => a + b, { timeout: 500 });
     const result = transformUnzenDefinitions(source, '/src/functions.ts');
 
     expect(result).not.toBeNull();
-    expect(result?.definitions).toEqual([{ name: 'sum', line: 3, column: 1 }]);
+    expect(result?.definitions).toEqual([{
+      name: 'sum',
+      fileName: '/src/functions.ts',
+      line: 3,
+      column: 1,
+      typeParameters: [],
+      parameters: [
+        { name: 'a', type: 'number', optional: false, rest: false },
+        { name: 'b', type: 'number', optional: false, rest: false },
+      ],
+      returnType: 'number',
+    }]);
     expect(result?.code).toContain('server.defineRaw(');
     expect(result?.code).not.toContain('a: number');
     const registrations = executeRegistration(result!.code);
@@ -76,6 +87,61 @@ server.define('privateField', () => {
     const fn = new Function(`return (${registration[1] as string})`)();
 
     expect(fn()).toBe(1);
+  });
+
+  it('captures generic, optional, default, rest, and inferred-unknown signature parts', () => {
+    const source = `import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('format', <T extends string>(
+  value: T,
+  count?: number,
+  uppercase = false,
+  ...suffixes: string[]
+): { value: T; count: number } => ({ value, count: count ?? 0 }));
+server.define('untyped', value => value);`;
+
+    const result = transformUnzenDefinitions(source, '/src/signatures.ts');
+
+    expect(result?.definitions).toEqual([
+      {
+        name: 'format',
+        fileName: '/src/signatures.ts',
+        line: 3,
+        column: 1,
+        typeParameters: ['T extends string'],
+        parameters: [
+          { name: 'value', type: 'T', optional: false, rest: false },
+          { name: 'count', type: 'number', optional: true, rest: false },
+          { name: 'uppercase', type: 'unknown', optional: true, rest: false },
+          { name: 'suffixes', type: 'string[]', optional: false, rest: true },
+        ],
+        returnType: '{ value: T; count: number }',
+      },
+      {
+        name: 'untyped',
+        fileName: '/src/signatures.ts',
+        line: 9,
+        column: 1,
+        typeParameters: [],
+        parameters: [
+          { name: 'value', type: 'unknown', optional: false, rest: false },
+        ],
+        returnType: 'unknown',
+      },
+    ]);
+  });
+
+  it('keeps a default parameter required when a required parameter follows it', () => {
+    const source = `import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('prefix', (prefix: string = 'id', value: number): string => prefix + value);`;
+
+    const result = transformUnzenDefinitions(source, '/src/default-before-required.ts');
+
+    expect(result?.definitions[0]?.parameters).toEqual([
+      { name: 'prefix', type: 'string | undefined', optional: false, rest: false },
+      { name: 'value', type: 'number', optional: false, rest: false },
+    ]);
   });
 
   it('does not rewrite unrelated define methods or files without Unzen definitions', () => {

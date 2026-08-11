@@ -640,15 +640,18 @@ defineRaw('add', '(a, b) => a + b')
 | MoonBit wasm-gc | 高性能計算用ランタイム統合 (**実装済み**: `MoonBitSandboxExecutor` + `defineMoonbit`) |
 | Service Worker | versioned code/Wasm の hash 検証付き CacheStorage (**実装済み**) |
 | ビルドツール統合 | Vite plugin / webpack loaderによるASTベースのコンパイル時関数抽出 (**実装済み**) |
+| TypeScript型生成 | 抽出signatureからVite build assetとtyped `UnzenClient` schemaを生成 (**実装済み**) |
 
 ### コンパイル時関数抽出 (Phase 3)
 
 ```
 TypeScript source
   → TypeScript ASTで @unzen/server import / const instance / define callを照合
+  → 型引数 / parameter / return annotationを抽出（未注釈はunknown）
   → inline関数だけをES2018 JavaScriptへtranspile
   → MagicStringで defineRaw(name, code, options) に局所置換 + source map
   → Vite pre-transform / webpack loaderへ同じ結果を返す
+  → Vite build時は名前順のunzen-functions.d.ts assetをemit
 ```
 
 - 対象をトップレベルのinline同期関数に限定し、動的名・外部関数・async/generatorは
@@ -658,6 +661,9 @@ TypeScript source
   最初（`use`配列の右端）に置く
 - AST変換はクロージャ値を埋め込まない。外部依存を含むコードは既存の
   `bundle()` + module whitelist + forbidden API scanを使用する
+- Viteの`declarationFile`指定時は、重複名を位置付きerrorにし、生成された
+  `UnzenFunctions`を`UnzenClient<UnzenFunctions>`へ渡してcall境界を型付けする。
+  webpack loaderはmodule単位の変換だけを行い、宣言集約は行わない
 
 ### MoonBit wasm-gc 統合 (Phase 3)
 

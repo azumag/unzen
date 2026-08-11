@@ -5,13 +5,29 @@ import ts from 'typescript';
 
 const UNZEN_SERVER_MODULE = '@unzen/server';
 const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
+const TYPE_PRINTER = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
 
 export interface ExtractedUnzenDefinition {
   name: string;
+  /** Source module used for duplicate diagnostics during declaration generation. */
+  fileName: string;
   /** One-based source line containing the transformed define call. */
   line: number;
   /** One-based source column containing the transformed define call. */
   column: number;
+  /** Generic parameters, without the surrounding angle brackets. */
+  typeParameters: string[];
+  /** Runtime parameters represented as portable declaration fragments. */
+  parameters: ExtractedUnzenParameter[];
+  /** Explicit return annotation, or unknown when the source relies on inference. */
+  returnType: string;
+}
+
+export interface ExtractedUnzenParameter {
+  name: string;
+  type: string;
+  optional: boolean;
+  rest: boolean;
 }
 
 export interface UnzenSourceTransformResult {
@@ -145,6 +161,59 @@ function unwrapFunctionExpression(expression: ts.Expression): ts.Expression {
 
 function isAsyncFunction(node: ts.ArrowFunction | ts.FunctionExpression): boolean {
   return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+}
+
+/**
+ * Capture only syntax that remains meaningful in a standalone declaration.
+ * Default initializers are runtime expressions, so they become optional
+ * parameters. Missing annotations deliberately become unknown instead of
+ * guessing a potentially unsound public contract from an isolated module.
+ */
+function extractSignature(
+  sourceFile: ts.SourceFile,
+  node: ts.ArrowFunction | ts.FunctionExpression,
+): Pick<ExtractedUnzenDefinition, 'typeParameters' | 'parameters' | 'returnType'> {
+  const typeParameters = node.typeParameters?.map((parameter) => (
+    parameter.getText(sourceFile)
+  )) ?? [];
+  const parameters = node.parameters.map((parameter, index): ExtractedUnzenParameter => {
+    const rest = parameter.dotDotDotToken !== undefined;
+    const defaultBeforeRequired = parameter.initializer !== undefined
+      && node.parameters.slice(index + 1).some((following) => (
+        following.questionToken === undefined
+        && following.initializer === undefined
+        && following.dotDotDotToken === undefined
+      ));
+    let type = parameter.type?.getText(sourceFile) ?? (rest ? 'unknown[]' : 'unknown');
+    if (defaultBeforeRequired && parameter.type) {
+      // `x = default, required` cannot become `x?` in a declaration because a
+      // required parameter may not follow an optional one. TypeScript models
+      // this call boundary as required-but-undefined-able instead.
+      type = TYPE_PRINTER.printNode(
+        ts.EmitHint.Unspecified,
+        ts.factory.createUnionTypeNode([
+          parameter.type,
+          ts.factory.createKeywordTypeNode(ts.SyntaxKind.UndefinedKeyword),
+        ]),
+        sourceFile,
+      );
+    }
+    return {
+      // Binding patterns are useful inside the implementation but not at the
+      // call boundary. A stable positional name keeps the generated signature
+      // valid without copying destructuring syntax or default expressions.
+      name: ts.isIdentifier(parameter.name) ? parameter.name.text : `arg${index + 1}`,
+      type,
+      optional: parameter.questionToken !== undefined
+        || (parameter.initializer !== undefined && !defaultBeforeRequired),
+      rest,
+    };
+  });
+  return {
+    typeParameters,
+    parameters,
+    returnType: node.type?.getText(sourceFile) ?? 'unknown',
+  };
 }
 
 /**
@@ -286,7 +355,13 @@ export function transformUnzenDefinitions(
     output.overwrite(call.getStart(sourceFile), call.end, replacement);
 
     const { line, column } = locationOf(sourceFile, call);
-    definitions.push({ name, line, column });
+    definitions.push({
+      name,
+      fileName: sourceFile.fileName,
+      line,
+      column,
+      ...extractSignature(sourceFile, functionNode),
+    });
   }
 
   if (definitions.length === 0) return null;
