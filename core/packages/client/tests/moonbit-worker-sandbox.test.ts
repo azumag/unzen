@@ -25,6 +25,7 @@ import {
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fibonacciBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
+const interopBytes = readFileSync(join(fixtureDir, 'interop.wasm'));
 const sortBytes = readFileSync(
   join(fixtureDir, '..', '..', '..', 'server', 'tests', 'fixtures', 'sort.wasm'),
 );
@@ -496,6 +497,183 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     await expect(
       executor.execute('https://example.com/fibonacci.wasm', [1], { exportName: 'fibonacci' }),
     ).rejects.toThrow(UnzenRuntimeError);
+    executor.dispose();
+  });
+
+  it('round-trips MoonBit String arguments/results via JS String Builtins', async () => {
+    // The interop.wasm fixture is compiled with use-js-builtin-string and
+    // imports `_` string-constant globals. The worker must compile with
+    // builtins:['js-string'] and supply those constants for String calls to
+    // work (verified on Chromium + Firefox in the browser E2E).
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+
+    const echo = await executor.execute(
+      interopBytes.buffer.slice(
+        interopBytes.byteOffset,
+        interopBytes.byteOffset + interopBytes.byteLength,
+      ) as ArrayBuffer,
+      ['hello'],
+      { exportName: 'echo' },
+    );
+    expect(echo).toBe('hello');
+
+    const joined = await executor.execute(
+      interopBytes.buffer.slice(
+        interopBytes.byteOffset,
+        interopBytes.byteOffset + interopBytes.byteLength,
+      ) as ArrayBuffer,
+      ['foo', 'bar'],
+      { exportName: 'join_words' },
+    );
+    expect(joined).toBe('foobar');
+
+    const len = await executor.execute(
+      interopBytes.buffer.slice(
+        interopBytes.byteOffset,
+        interopBytes.byteOffset + interopBytes.byteLength,
+      ) as ArrayBuffer,
+      ['hello'],
+      { exportName: 'string_len' },
+    );
+    expect(len).toBe(5);
+    executor.dispose();
+  });
+
+  it('round-trips special String literals (__proto__, empty, Unicode)', async () => {
+    // Compile-time importedStringConstants resolve `_` string-constant
+    // imports without touching JS object prototypes, so even "__proto__"
+    // round-trips losslessly (the manual import-map approach would have
+    // triggered the Object.prototype setter).
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+    const run = (exportName: string) => executor.execute(
+      interopBytes.buffer.slice(
+        interopBytes.byteOffset,
+        interopBytes.byteOffset + interopBytes.byteLength,
+      ) as ArrayBuffer,
+      [],
+      { exportName },
+    );
+
+    expect(await run('weird_string')).toBe('__proto__');
+    expect(await run('empty_string')).toBe('');
+    expect(await run('unicode_string')).toBe('こんにちは');
+    executor.dispose();
+  });
+
+  it('rejects plain JS array arguments (documented wasm-gc boundary limit)', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+
+    await expect(
+      executor.execute(
+        interopBytes.buffer.slice(
+          interopBytes.byteOffset,
+          interopBytes.byteOffset + interopBytes.byteLength,
+        ) as ArrayBuffer,
+        [[1, 2, 3]],
+        { exportName: 'sum_array' },
+      ),
+    ).rejects.toThrow('arrays and objects cannot cross');
+    executor.dispose();
+  });
+
+  it('classifies non-scalar arguments by type (null/undefined/object)', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+    const run = (args: unknown[]) => executor.execute(
+      fibonacciBytes.buffer.slice(
+        fibonacciBytes.byteOffset,
+        fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+      ) as ArrayBuffer,
+      args,
+      { exportName: 'fibonacci' },
+    );
+
+    await expect(run([null])).rejects.toThrow('(got null)');
+    await expect(run([undefined])).rejects.toThrow('(got undefined)');
+    await expect(run([{ n: 10 }])).rejects.toThrow(
+      'arrays and objects cannot cross the wasm-gc boundary (got object)',
+    );
+    executor.dispose();
+  });
+
+  it('classifies non-cloneable function/symbol arguments before postMessage', async () => {
+    // The main-thread executor must reject these with the same type-specific
+    // contract as the worker, BEFORE the DataCloneError path in postMessage.
+    mockFetchBytes();
+    const executor = createExecutor(createRealWorker());
+
+    await expect(
+      executor.execute('https://example.com/fibonacci.wasm', [() => 1], { exportName: 'fibonacci' }),
+    ).rejects.toThrow('(got function)');
+    await expect(
+      executor.execute('https://example.com/fibonacci.wasm', [Symbol('x')], { exportName: 'fibonacci' }),
+    ).rejects.toThrow('(got symbol)');
+    executor.dispose();
+  });
+
+  it('accepts a numeric string for numeric exports via wasm ToNumber (documented)', async () => {
+    // The executor validates scalars only; WebAssembly applies its own
+    // implicit ToNumber conversion for numeric parameters. This is documented
+    // behavior, not a bug: fibonacci("10") === 55.
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+
+    await expect(executor.execute(
+      fibonacciBytes.buffer.slice(
+        fibonacciBytes.byteOffset,
+        fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+      ) as ArrayBuffer,
+      ['10'],
+      { exportName: 'fibonacci' },
+    )).resolves.toBe(55);
+    executor.dispose();
+  });
+
+  it('rejects opaque wasm-gc (non-scalar) return values from the worker', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+
+    await expect(executor.execute(
+      interopBytes.buffer.slice(
+        interopBytes.byteOffset,
+        interopBytes.byteOffset + interopBytes.byteLength,
+      ) as ArrayBuffer,
+      [],
+      { exportName: 'make_array' },
+    )).rejects.toThrow('unsupported (non-scalar)');
     executor.dispose();
   });
 

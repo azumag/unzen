@@ -10,9 +10,11 @@
  * - `code` passed to execute() is the wasm URL (MoonBit has no JS source).
  * - The module is fetched and compiled once per URL and cached; instantiation
  *   happens per call (cheap, and keeps state isolated between requests).
- * - Scalar arguments/results are supported (number / boolean / bigint).
- *   Strings, arrays, and objects require JS-GC interop (WebAssembly.JSTag /
- *   JS String Builtins) and are rejected with UnzenRuntimeError.
+ * - Scalar arguments/results are supported (number / boolean / bigint /
+ *   string). String values cross via the MoonBit JS String Builtins
+ *   (`use-js-builtin-string` + `builtins: ['js-string']`). Arrays and objects
+ *   cannot cross: plain JS arrays are rejected at the wasm boundary, and
+ *   wasm-gc arrays return as unreadable opaque handles.
  * - wasm-gc execution is synchronous and uninterruptible once started, so
  *   cancellation is honored only before the call begins (same cooperative
  *   boundary as the QuickJS timeout model).
@@ -25,12 +27,14 @@
  */
 
 import {
+  UnzenCancelledError,
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenRuntimeError,
 } from '@unzen/shared';
 import { raceWithAbort, throwIfAborted } from './abort';
 import { isAbortError } from './abort';
+import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 
 /** A compiled MoonBit module ready for instantiation. */
@@ -71,13 +75,23 @@ const DEFAULT_IMPORTS: WebAssembly.Imports = {
   },
 };
 
-/** Scalar wasm ABI types that can cross the boundary losslessly. */
-function isSupportedScalar(value: unknown): boolean {
-  return (
-    typeof value === 'number'
-    || typeof value === 'boolean'
-    || typeof value === 'bigint'
-  );
+/**
+ * Compile options for MoonBit wasm-gc modules compiled with
+ * `use-js-builtin-string`. `builtins: ['js-string']` resolves
+ * `wasm:js-string` imports and `importedStringConstants: '_'` resolves
+ * MoonBit's `imported-string-constants: "_"` string literals at compile time.
+ * This avoids manual `_` import entries, which would break for literals such
+ * as "__proto__" (prototype-pollution) or arbitrary Unicode. The standard TS
+ * lib types omit these options, so the APIs are widened locally.
+ */
+const MOONBIT_COMPILE_OPTIONS = { builtins: ['js-string'], importedStringConstants: '_' } as const;
+
+async function compileMoonbitModule(bytes: BufferSource): Promise<WebAssembly.Module> {
+  const compile = WebAssembly.compile as unknown as (
+    bytes: BufferSource,
+    options: typeof MOONBIT_COMPILE_OPTIONS,
+  ) => Promise<WebAssembly.Module>;
+  return compile(bytes, MOONBIT_COMPILE_OPTIONS);
 }
 
 export interface MoonBitSandboxOptions {
@@ -200,26 +214,40 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     throwIfAborted(options?.signal);
 
     // Argument validation: only scalars can cross the wasm boundary in this
-    // integration (arrays/objects need JS-GC interop). null/undefined/strings
-    // are rejected too: wasm i32/f64/f64 parameters would silently coerce
-    // them (e.g. null → 0), masking ABI mismatches.
+    // integration. Strings work via the MoonBit JS String Builtins; null and
+    // undefined are rejected because wasm i32/f64/f64 parameters would
+    // silently coerce them (e.g. null → 0), masking ABI mismatches. Arrays
+    // and objects are rejected at the wasm boundary.
     for (const arg of args) {
       if (!isSupportedScalar(arg)) {
         throw new UnzenRuntimeError(
-          `MoonBit sandbox supports number/boolean/bigint arguments only (got ${arg === null ? 'null' : typeof arg})`,
+          describeMoonbitArgError(
+            'MoonBit sandbox supports number/boolean/bigint/string arguments only',
+            arg,
+          ),
         );
       }
     }
 
-    // Re-check again before the synchronous export call: instantiation below
-    // can be slow (wasm compile/instantiate), and a cancel that arrives during
-    // it must prevent the export from running at all.
+    // Re-check before instantiation: the call below can be slow, and a cancel
+    // that arrives during it must prevent the export from running at all.
     throwIfAborted(options?.signal);
 
     let instance: WebAssembly.Instance;
     try {
-      instance = await WebAssembly.instantiate(prepared.module, this.imports);
+      // Race instantiation against the caller's signal so a cancel settles
+      // the promise immediately instead of waiting for a slow instantiate.
+      const instantiate = WebAssembly.instantiate(
+        prepared.module,
+        buildMoonbitImports(this.imports),
+      );
+      instance = options?.signal
+        ? await raceWithAbort(instantiate, options.signal)
+        : await instantiate;
     } catch (error) {
+      if (error instanceof UnzenCancelledError) {
+        throw new UnzenCancelledError('Execution was cancelled');
+      }
       throw new UnzenRuntimeError(
         `Failed to instantiate MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -284,16 +312,59 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     // while the body was streaming. Stop publishing a result for work nobody
     // wants anymore.
     throwIfAborted(signal);
-    if (!WebAssembly.validate(bytes)) {
+    const validate = WebAssembly.validate as unknown as (
+      bytes: BufferSource,
+      options: typeof MOONBIT_COMPILE_OPTIONS,
+    ) => boolean;
+    if (!validate(bytes, MOONBIT_COMPILE_OPTIONS)) {
       throw new UnzenRuntimeError('MoonBit module failed WebAssembly validation');
     }
-    const compiled = await WebAssembly.compile(bytes);
+    // Compile with JS String Builtins enabled so MoonBit String parameters
+    // and results cross the boundary as real JS strings. The compile options
+    // resolve `wasm:js-string` builtins and the `_` string-constant imports
+    // (imported-string-constants), so no `_` import entries are needed at
+    // instantiation time.
+    let compiled: WebAssembly.Module;
+    try {
+      compiled = await compileMoonbitModule(bytes);
+    } catch (error) {
+      throw new UnzenRuntimeError(
+        `Failed to compile MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     throwIfAborted(signal);
     return {
       url,
       module: compiled,
     };
   }
+}
+
+/**
+ * Build the WebAssembly import object for a MoonBit wasm-gc module.
+ *
+ * - `spectest.print_char`: MoonBit println support.
+ * - `console.log`: MoonBit's JS-target console output.
+ * - `wasm:js-string` builtins are provided by the `builtins: ['js-string']`
+ *   compile option and `importedStringConstants: '_'` resolves MoonBit's
+ *   `_` string-constant imports, so neither needs explicit import entries.
+ *
+ * `base` imports (MoonBit runtime defaults plus caller extras) are preserved;
+ * the helper only fills in missing runtime entries. Caller imports under the
+ * `_` namespace are preserved in the import object but cannot be used: the
+ * compile options reserve `_` for MoonBit's imported string constants.
+ */
+function buildMoonbitImports(base: WebAssembly.Imports = {}): WebAssembly.Imports {
+  const imports: WebAssembly.Imports = mergeImports({}, base);
+  if (!imports.spectest) imports.spectest = {};
+  if (typeof imports.spectest.print_char !== 'function') {
+    imports.spectest.print_char = () => {};
+  }
+  if (!imports.console) imports.console = {};
+  if (typeof imports.console.log !== 'function') {
+    imports.console.log = () => {};
+  }
+  return imports;
 }
 
 /** Merge caller imports over the MoonBit runtime defaults (deep per module). */

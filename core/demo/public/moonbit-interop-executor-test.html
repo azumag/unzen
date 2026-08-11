@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MoonBit interop via production executors</title>
+</head>
+<body>
+  <h1>MoonBit interop via production executors</h1>
+  <pre id="result">running…</pre>
+  <script type="module">
+    import { MoonBitSandboxExecutor, MoonBitWorkerSandboxExecutor } from '/client.js';
+
+    const resultEl = document.getElementById('result');
+    const lines = [];
+    const log = (line) => {
+      lines.push(line);
+      resultEl.textContent = lines.join('\n');
+    };
+    const run = async (executor, label, args, exportName) => {
+      try {
+        const value = await executor.execute('/moonbit/interop.wasm', args, { exportName });
+        log(`${label} = ${JSON.stringify(value)}`);
+      } catch (error) {
+        log(`${label} ERR: ${error && error.message ? error.message : error}`);
+      }
+    };
+
+    // Exercise the SHIPPED executors (main-thread MoonBitSandboxExecutor and
+    // worker-based MoonBitWorkerSandboxExecutor), not a raw wasm probe, so a
+    // regression in compile options / imports is caught by the E2E.
+    try {
+      const main = new MoonBitSandboxExecutor();
+      await run(main, 'main echo', ['hello'], 'echo');
+      await run(main, 'main join_words', ['foo', 'bar'], 'join_words');
+      await run(main, 'main string_len', ['hello'], 'string_len');
+      await run(main, 'main make_string', [], 'make_string');
+      await run(main, 'main weird_string', [], 'weird_string');
+      await run(main, 'main empty_string', [], 'empty_string');
+      await run(main, 'main unicode_string', [], 'unicode_string');
+      await run(main, 'main sum_array(plain)', [[1, 2, 3]], 'sum_array');
+      await run(main, 'main make_array (opaque result)', [], 'make_array');
+      main.dispose();
+
+      const worker = new MoonBitWorkerSandboxExecutor({
+        workerUrl: '/moonbit-worker.js',
+        timeout: 5000,
+      });
+      await run(worker, 'worker echo', ['hello'], 'echo');
+      await run(worker, 'worker join_words', ['foo', 'bar'], 'join_words');
+      await run(worker, 'worker string_len', ['hello'], 'string_len');
+      await run(worker, 'worker make_string', [], 'make_string');
+      await run(worker, 'worker weird_string', [], 'weird_string');
+      await run(worker, 'worker empty_string', [], 'empty_string');
+      await run(worker, 'worker unicode_string', [], 'unicode_string');
+      await run(worker, 'worker sum_array(plain)', [[1, 2, 3]], 'sum_array');
+      await run(worker, 'worker make_array (opaque result)', [], 'make_array');
+      worker.dispose();
+    } catch (error) {
+      log(`ERROR: ${error && error.message ? error.message : error}`);
+    }
+  </script>
+</body>
+</html>

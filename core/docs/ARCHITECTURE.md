@@ -644,9 +644,48 @@ defineRaw('add', '(a, b) => a + b')
   generation 管理・キャンセル（終了）を備える。worker バンドルは
   `moonbit-worker.js`（tsup エントリ）として配信する。
 - Worker 内の MoonBit export は同期・中断不可のため、タイムアウト/キャンセルは
-  `Worker.terminate()` で強制する。スカラー入出力のみ対応（配列・オブジェクトは
-  JS-GC interop が未対応）。
+  `Worker.terminate()` で強制する。number / boolean / bigint / string の
+  スカラー入出力のみ対応（配列・オブジェクトは wasm-gc 境界で非対応、
+  String は JS String Builtins 経由）。
 - サーバーフォールバックは非対応 (`/exec/:name` は 501)。ブラウザ実行のみ。
+
+### MoonBit の String / Array interop (2026-08-11 実測)
+
+`moonbit-poc/interop` パッケージ（`echo` / `join_words` / `sum_array` /
+`string_len` / `make_string` / `make_array` / `reverse_array`）を
+Chromium 145 と Firefox 146 で probe した結果:
+
+- **String は対応**: MoonBit 側の `link.wasm-gc` に
+  `use-js-builtin-string: true` + `imported-string-constants: "_"` を指定し、
+  クライアント側は `await WebAssembly.compile(bytes, { builtins: ['js-string'],
+  importedStringConstants: '_' })` でコンパイルする。compile options が
+  `wasm:js-string` builtins と `_` の文字列定数を解決するため、import 側は
+  `spectest.print_char` と `console.log` だけでよい（手動で `_` import を
+  組み立てる方式は `"__proto__"` 等で Object.prototype を踏むため使わない）。
+  `string_len("hello") = 5` / `make_string() = "hello"` / `echo` 往復 /
+  `join_words("foo","bar") = "foobar"` に加え、`"__proto__"` / 空文字 /
+  Unicode リテラルの往復も両ブラウザで確認した。compile / instantiate は
+  非同期 API（`WebAssembly.compile` / `WebAssembly.instantiate`）を使い、
+  メインスレッドを長時間ブロックしない。数値 export へ string を渡すと
+  WebAssembly の暗黙変換で数値化される（`fibonacci("10") → 55`）ため、
+  引数検証はスカラー判定のみ（ABI シグネチャ単位の検証は未導入）。
+  **ブラウザ要件**: String interop は JS String Builtins が別途必要。
+  Chromium 145 / Firefox 146 で動作確認済み。Safari は wasm-gc が 18.2+、
+  JS String Builtins が 26.2+ で対応となるため、18.2–26.1 では String
+  引数・戻り値は使えない（本変更では Safari/WebKit 未検証。compile
+  options が効かない場合、`_` / `wasm:js-string` import が解決されず
+  低レベルな import エラーになる）。
+  `importedStringConstants: '_'` は `_` namespace を文字列定数用に予約
+  するため、MoonBit 以外の `_` imports（function 等）を含む wasm は
+  この executor ではコンパイルできない。
+- **Array は opaque handle のみ**: plain JS 配列は wasm 境界で
+  `type incompatibility when transforming from/to JS` となり渡せない。
+  `make_array()` の戻り値は opaque な wasm-gc 配列 handle で `.length` や
+  添字アクセスはできないが、`sum_array(opaque) = 6` / `reverse_array(opaque)`
+  のように別の MoonBit export への再入力（handle round-trip）は動く。
+  配列の glue 層（コピー/シリアライズ）は設計タスクであり toolchain の
+  ブロックではない。unzen の executor は配列・オブジェクト引数を
+  `UnzenRuntimeError` で拒否し、String 引数・戻り値を許容する。
 
 ### MoonBit Worker 強制終了の検証 (2026-08-11)
 

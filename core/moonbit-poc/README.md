@@ -22,7 +22,7 @@ MoonBit CLI v0.1.20260126 / 10 iterations + 1 warm-up、P50 (中央値) を採�
 - 配列操作主体の sort ではほぼ同等 (1.20x)。wasm-gc の配列アクセスは
   JS に対して大きな劣位がなく、QuickJS で 0.5-1.4s かかる想定の
   10K 要素ソートが実質数 ms で完了する。
-- ブラウザは wasm-gc 対応 (Chrome 119+/Firefox 120+/Safari 18+) が必要。
+- ブラウザは wasm-gc 対応 (Chrome 119+/Firefox 120+/Safari 18.2+) が必要。
   `benchmark/index.html` は非対応ブラウザでも Native JS のみ実行する。
 - sort の LCG は JS 側で `Math.imul` を使用し、MoonBit の i32 wrapping と
   同一系列になるようにしている (固定系列の先頭要素は両 runtime とも 9 で一致)。
@@ -191,7 +191,7 @@ wasm-gc is required to run MoonBit compiled modules:
 |---------|---------|-------------|--------|
 | Chrome | 119+ | Nov 2023 | Supported |
 | Firefox | 120+ | Nov 2023 | Supported |
-| Safari | 18+ | Sep 2024 | Supported |
+| Safari | 18.2+ (wasm-gc) / 26.2+ (JS String Builtins) | Dec 2024 / Dec 2025 | wasm-gc supported; String interop unverified in this repo |
 | Edge | 119+ | Nov 2023 | Supported |
 | Samsung Internet | 25+ | 2024 | Supported |
 
@@ -199,7 +199,51 @@ As of early 2026, wasm-gc is supported by ~85%+ of global browser traffic (all e
 
 ### JS String Builtins
 
-MoonBit's `use-js-string-builtin: true` option (used in this PoC) enables efficient string interop via the JS String Builtins proposal. This is currently supported in Chrome 129+ and Edge 129+. Other browsers fall back to standard string marshaling.
+MoonBit's `use-js-builtin-string: true` option (used in the `interop` package)
+enables efficient string interop via the JS String Builtins proposal. The
+`interop` package also sets `imported-string-constants: "_"`, so each string
+literal becomes an import in the `_` module whose name is the literal itself.
+The client compiles with `await WebAssembly.compile(bytes, { builtins:
+['js-string'], importedStringConstants: '_' })`, which resolves the
+`wasm:js-string` builtins and the `_` string-constant imports at compile time;
+instantiation needs only the `spectest.print_char` / `console.log` runtime
+imports. (A manual `_` import map is NOT used: building `{ name: name }`
+objects would trip the `Object.prototype` setter for literals like
+`"__proto__"`.) Verified on Chromium 145, Firefox 146, and Node 24
+(2026-08-11): `string_len("hello") = 5`, `make_string() = "hello"`, `echo`
+round-trip, `join_words("foo","bar") = "foobar"`, and `weird_string() =
+"__proto__"` / empty / Unicode literals.
+
+**Browser requirements**: String interop additionally requires the JS String
+Builtins (Chromium / Firefox / Node 24 verified 2026-08-11). Safari supports
+wasm-gc since 18.2 but JS String Builtins only since 26.2; String
+arguments/results on Safari 18.2–26.1 are unavailable and unverified in this
+repo (compile options do not apply there, leaving `_`/`wasm:js-string`
+imports unresolved at instantiation). `importedStringConstants: '_'` reserves
+the `_` namespace for string constants, so a module with other `_` imports
+(e.g. functions) cannot be compiled by these executors.
+
+### String / Array interop measurements (2026-08-11)
+
+`moonbit-poc/interop` (compiled with `moon 0.1.20260126` for `wasm-gc`):
+
+| Boundary | Result | Evidence |
+|----------|--------|----------|
+| `string` input | PASS | `string_len("hello") = 5` |
+| `string` output | PASS | `make_string() = "hello"` |
+| `string` round-trip | PASS | `echo("hello") = "hello"` |
+| `string` join | PASS | `join_words("foo","bar") = "foobar"` |
+| `string` special literals | PASS | `weird_string() = "__proto__"`, 空文字, Unicode (2026-08-11) |
+| `Array[Int]` input (plain JS array) | REJECTED | `type incompatibility when transforming from/to JS` |
+| `Array[Int]` output | OPAQUE | opaque wasm-gc handle; no `.length` / index access |
+| `Array[Int]` handle re-input | PASS | `sum_array(make_array()) = 6` (opaque handle round-trip) |
+
+Plain JS arrays cannot cross the export boundary; wasm-gc arrays only return
+as opaque handles that can be passed back into MoonBit exports. A copy/glue
+layer for arrays is a design task, not a toolchain block. Numeric exports
+accept strings via WebAssembly's implicit ToNumber conversion
+(`fibonacci("10") → 55`); the unzen executors validate scalars only, not
+per-export ABI signatures.
 
 ## Benchmark Methodology
 
@@ -258,8 +302,8 @@ MoonBit wasm-gc uses different memory representations than JavaScript:
 | `number` (int) | `Int` | Direct i32 (no marshaling needed) |
 | `number` (float) | `Double` | Direct f64 (no marshaling needed) |
 | `boolean` | `Bool` | i32 0/1 (trivial) |
-| `string` | `String` | JS String Builtins or externref |
-| `number[]` | `Array[Int]` | Requires glue code (copy) |
+| `string` | `String` | JS String Builtins (`use-js-builtin-string` + `builtins: ['js-string']`) — PASS (2026-08-11 実測) |
+| `number[]` | `Array[Int]` | plain JS 配列は境界で拒否。opaque handle の再入力のみ可 (2026-08-11 実測) |
 | `object` | - | JSON serialize/deserialize (slow) |
 
 Primitive types (Int, Double, Bool) have zero marshaling cost. Arrays and objects require copying, which may offset MoonBit's speed advantage for small payloads.
@@ -300,7 +344,8 @@ This PoC should inform the decision to proceed with MoonBit integration.
 ### Defer (revisit later) if:
 
 - [ ] Performance gains are marginal (< 1.5x) but binary sizes are excellent
-- [ ] JS String Builtins support is too limited (Chrome-only)
+- [x] ~~JS String Builtins support is too limited (Chrome-only)~~ — 解決:
+  Chromium 145 / Firefox 146 で String 引数・戻り値の往復を確認 (2026-08-11)
 - [ ] MoonBit language is pre-1.0 and API stability is a concern
 
 ## Directory Structure
@@ -374,12 +419,19 @@ Exports match `moon.pkg.json` configuration:
 | Correctness | PASS | Deterministic results verified |
 | Performance vs V8 | PASS (Chrome) | fib 3.17x / sort 1.20x (2026-08-11 実測) |
 | Browser loading | PASS (Chrome) | wasm-gc fetch + instantiate 成功 (2026-08-11 実測) |
-| Data marshaling | PARTIAL | Int works (direct i32); Array/String TBD |
+| Data marshaling | PARTIAL | Int/Double/Bool は直接 i32/f64。String は JS String Builtins で往復可。Array は opaque handle のみ (2026-08-11 実測) |
 
 ### Next Steps
 
 1. ~~Open benchmark in Chrome and record numbers~~ (完了: 2026-08-11, fib 3.17x / sort 1.20x)
 2. Firefox / Safari での計測（cross-browser 未確認）
-3. Data marshaling (Array / String) の検証 — JS-GC interop が必要
+3. ~~Data marshaling (Array / String) の検証~~ — 完了 (2026-08-11)
+   String は `use-js-builtin-string: true` + `imported-string-constants: "_"` +
+   `await WebAssembly.compile(bytes, { builtins: ['js-string'],
+   importedStringConstants: '_' })` で引数・戻り値とも JS 文字列として往復可
+   （Chromium 145 / Firefox 146 で確認。`"__proto__"` / Unicode も含む）。
+   Array[Int] は plain JS 配列の受け渡しが wasm 境界で
+   `type incompatibility` になり、戻り値は opaque handle（別 export への
+   再入力のみ可）。配列の glue 層実装は設計タスク。
 4. sort は Go/No-Go 基準 1.5x に未達 (1.20x) のため、配列中心ワークロードでは
    QuickJS との比較を含めた再評価が必要

@@ -1,0 +1,10 @@
+{
+  "is-main": true,
+  "link": {
+    "wasm-gc": {
+      "exports": ["echo", "join_words", "string_len", "make_string", "weird_string", "empty_string", "unicode_string", "sum_array", "make_array", "reverse_array"],
+      "use-js-builtin-string": true,
+      "imported-string-constants": "_"
+    }
+  }
+}

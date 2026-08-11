@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MoonBit JS-GC interop test</title>
+</head>
+<body>
+  <h1>MoonBit JS-GC interop probe</h1>
+  <pre id="result">running…</pre>
+  <script type="module">
+    const resultEl = document.getElementById('result');
+    const lines = [];
+    const log = (line) => {
+      lines.push(line);
+      resultEl.textContent = lines.join('\n');
+    };
+
+    // Probe the raw wasm-gc JS interop surface directly (no unzen executor),
+    // with INPUT vs OUTPUT boundaries separated per type so each rejection is
+    // attributed correctly.
+    try {
+      const response = await fetch('/moonbit/interop.wasm');
+      const bytes = await response.arrayBuffer();
+      // Compile with the JS String Builtins feature enabled; the wasm module
+      // imports `_` string-constant globals and `wasm:js-string` builtins.
+      // importedStringConstants resolves MoonBit's `_` literals at compile
+      // time (safe for "__proto__" / Unicode), so only the runtime imports
+      // need to be supplied below.
+      const module = await WebAssembly.compile(bytes, {
+        builtins: ['js-string'],
+        importedStringConstants: '_',
+      });
+      const importObj = {
+        spectest: { print_char: () => {} },
+        console: { log: () => {} },
+      };
+      const instance = await WebAssembly.instantiate(module, importObj);
+      const e = instance.exports;
+      log('exports: ' + Object.keys(e).join(', '));
+
+      const probe = (label, fn) => {
+        try {
+          const value = fn();
+          log(`${label} = ${JSON.stringify(value)} (${typeof value})`);
+        } catch (err) {
+          log(`${label} ERR: ${err && err.message ? err.message : err}`);
+        }
+      };
+
+      // --- String boundary (input / output / round-trip / join) ---
+      probe('string_len("hello") [String input]', () => e.string_len('hello'));
+      probe('make_string() [String output]', () => e.make_string());
+      probe('echo("hello") [String round-trip]', () => e.echo('hello'));
+      probe('join_words("foo","bar") [String join]', () => e.join_words('foo', 'bar'));
+      probe('weird_string() [__proto__ literal]', () => e.weird_string());
+      probe('empty_string() [empty literal]', () => e.empty_string());
+      probe('unicode_string() [Unicode literal]', () => e.unicode_string());
+
+      // --- Array boundary (input / output / round-trip / read-back) ---
+      probe('sum_array(plain [1,2,3]) [Array input]', () => e.sum_array([1, 2, 3]));
+      let opaqueArray = null;
+      probe('make_array() [Array output]', () => {
+        opaqueArray = e.make_array();
+        return `opaque handle, length=${opaqueArray && opaqueArray.length}`;
+      });
+      probe('sum_array(opaque handle) [Array handle re-input]', () => e.sum_array(opaqueArray));
+      probe('reverse_array(opaque handle) [Array handle round-trip]', () => {
+        const r = e.reverse_array(opaqueArray);
+        return `opaque handle, length=${r && r.length}`;
+      });
+      probe('read opaque array as plain JS', () => {
+        if (opaqueArray && typeof opaqueArray.length === 'number') {
+          const out = [];
+          for (let i = 0; i < opaqueArray.length; i++) out.push(opaqueArray[i]);
+          return out;
+        }
+        return 'not readable';
+      });
+    } catch (error) {
+      log(`ERROR: ${error && error.message ? error.message : error}`);
+    }
+  </script>
+</body>
+</html>

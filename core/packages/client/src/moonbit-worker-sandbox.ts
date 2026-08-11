@@ -44,6 +44,7 @@ import {
   UnzenRuntimeError,
 } from '@unzen/shared';
 import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import {
   createMoonbitExecuteMessage,
@@ -284,6 +285,20 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     throwIfAborted(options?.signal);
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
+    }
+
+    // Validate on the main thread BEFORE postMessage so non-cloneable values
+    // (function/symbol) and arrays/objects get the same type-specific error
+    // contract as the worker-side check, instead of a DataCloneError.
+    for (const arg of args) {
+      if (!isSupportedScalar(arg)) {
+        throw new UnzenRuntimeError(
+          describeMoonbitArgError(
+            'MoonBit supports number/boolean/bigint/string arguments only',
+            arg,
+          ),
+        );
+      }
     }
 
     const bytes = typeof code === 'string' ? await this.prepare(code, options?.signal) : code;

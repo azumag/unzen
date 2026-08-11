@@ -240,7 +240,7 @@ Browser Main Thread                  Web Worker Thread
 | 実行方式 | Wasm上でJSを解釈実行 | wasm-gc にネイティブコンパイル |
 | サイズ | ~150KB (gzip) + 関数コード | 関数ごとに数百B〜数十KB |
 | 性能 | 短時間関数に十分 (50ms以内) | Rustに近い高速実行 |
-| ブラウザ | ほぼ全ブラウザ | wasm-gc対応 (Chrome 119+, Firefox 120+, Safari 18+) |
+| ブラウザ | ほぼ全ブラウザ | wasm-gc対応 (Chrome 119+, Firefox 120+, Safari 18.2+; String は Safari 26.2+ 未検証) |
 | 用途 | 手軽にJS関数を委任 | 性能が重要な計算処理 |
 | 実装状況 | **Phase 2 完了** | **Phase 3 クライアント統合済み** (`MoonBitSandboxExecutor` / `MoonBitWorkerSandboxExecutor`) |
 
@@ -251,8 +251,11 @@ Web Worker、メインスレッド非ブロック・terminate で強制停止）
 `MoonBitSandboxExecutor`（メインスレッド、デモ用途）が wasm をフェッチ・
 インスタンス化し、指定の export（既定 `run`）をスカラー引数で呼び出す。
 実行はブラウザ限定で、サーバーフォールバックは行わない（QuickJS ランタイムでは
-wasm を実行できない）。スカラー入出力のみ対応（文字列・配列・オブジェクトは
-JS-GC interop が未対応）。
+wasm を実行できない）。number / boolean / bigint / string のスカラー入出力のみ
+対応。String は JS String Builtins 経由（`use-js-builtin-string`）、配列・
+オブジェクトは wasm-gc 境界で非対応。String は Chromium / Firefox で
+動作確認済み。Safari は wasm-gc が 18.2+、JS String Builtins が 26.2+ で
+対応となり、本プロジェクトでは Safari 未検証。
 
 ```typescript
 const client = new UnzenClient({

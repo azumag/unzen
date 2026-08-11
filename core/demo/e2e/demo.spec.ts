@@ -233,3 +233,66 @@ test.describe('MoonBit worker (real wasm-gc in the browser)', () => {
     await expect(page.locator('#result')).toContainText('main-thread responsive: yes');
   });
 });
+
+test.describe('MoonBit JS-GC interop boundary (String supported / Array opaque)', () => {
+  test('probes String success and Array boundary behavior', async ({ page }) => {
+    await page.goto('/moonbit-interop-test.html');
+
+    await expect(page.locator('#result')).toContainText(
+      'exports: reverse_array, make_array, sum_array, unicode_string, empty_string, weird_string, '
+      + 'make_string, string_len, join_words, echo',
+      { timeout: 30_000 },
+    );
+    // String boundary: input / output / round-trip / join all work via the
+    // MoonBit JS String Builtins (use-js-builtin-string + js-string builtins).
+    await expect(page.locator('#result')).toContainText('string_len("hello") [String input] = 5');
+    await expect(page.locator('#result')).toContainText('make_string() [String output] = "hello"');
+    await expect(page.locator('#result')).toContainText('echo("hello") [String round-trip] = "hello"');
+    await expect(page.locator('#result')).toContainText('join_words("foo","bar") [String join] = "foobar"');
+    await expect(page.locator('#result')).toContainText('weird_string() [__proto__ literal] = "__proto__"');
+    await expect(page.locator('#result')).toContainText('empty_string() [empty literal] = ""');
+    await expect(page.locator('#result')).toContainText('unicode_string() [Unicode literal] = "こんにちは"');
+    // Array boundary: plain JS arrays are rejected at the wasm-gc boundary;
+    // wasm-gc arrays return as opaque handles that only re-enter MoonBit
+    // exports (handle round-trip), and cannot be read as plain JS arrays.
+    await expect(page.locator('#result')).toContainText('sum_array(plain [1,2,3]) [Array input] ERR:');
+    await expect(page.locator('#result')).toContainText('sum_array(opaque handle) [Array handle re-input] = 6');
+    await expect(page.locator('#result')).toContainText(
+      'reverse_array(opaque handle) [Array handle round-trip] = "opaque handle',
+    );
+    await expect(page.locator('#result')).toContainText('read opaque array as plain JS = "not readable"');
+  });
+
+  test('round-trips String through the production executors (main + worker)', async ({ page }) => {
+    // The raw probe above exercises wasm directly; this test runs the SHIPPED
+    // MoonBitSandboxExecutor and MoonBitWorkerSandboxExecutor so a regression
+    // in compile options / import building is caught in real browsers.
+    await page.goto('/moonbit-interop-executor-test.html');
+
+    await expect(page.locator('#result')).toContainText('main echo = "hello"', { timeout: 30_000 });
+    await expect(page.locator('#result')).toContainText('main join_words = "foobar"');
+    await expect(page.locator('#result')).toContainText('main string_len = 5');
+    await expect(page.locator('#result')).toContainText('main make_string = "hello"');
+    await expect(page.locator('#result')).toContainText('main weird_string = "__proto__"');
+    await expect(page.locator('#result')).toContainText('main empty_string = ""');
+    await expect(page.locator('#result')).toContainText('main unicode_string = "こんにちは"');
+    await expect(page.locator('#result')).toContainText(
+      'main sum_array(plain) ERR: MoonBit sandbox supports number/boolean/bigint/string arguments only; '
+      + 'arrays and objects cannot cross the wasm-gc boundary',
+    );
+    await expect(page.locator('#result')).toContainText('main make_array (opaque result) ERR:');
+
+    await expect(page.locator('#result')).toContainText('worker echo = "hello"');
+    await expect(page.locator('#result')).toContainText('worker join_words = "foobar"');
+    await expect(page.locator('#result')).toContainText('worker string_len = 5');
+    await expect(page.locator('#result')).toContainText('worker make_string = "hello"');
+    await expect(page.locator('#result')).toContainText('worker weird_string = "__proto__"');
+    await expect(page.locator('#result')).toContainText('worker empty_string = ""');
+    await expect(page.locator('#result')).toContainText('worker unicode_string = "こんにちは"');
+    await expect(page.locator('#result')).toContainText(
+      'worker sum_array(plain) ERR: MoonBit supports number/boolean/bigint/string arguments only; '
+      + 'arrays and objects cannot cross the wasm-gc boundary',
+    );
+    await expect(page.locator('#result')).toContainText('worker make_array (opaque result) ERR:');
+  });
+});

@@ -16,6 +16,14 @@
  *   - Compile/instantiate failure → runtime_error (fallback-eligible)
  *   - Missing export / export throw → function_error (no fallback, user bug)
  *   - Non-scalar argument → runtime_error (ABI boundary, not user code)
+ *
+ * String interop:
+ * - Modules compiled with `use-js-builtin-string` are compiled here with
+ *   `WebAssembly.compile(bytes, { builtins: ['js-string'],
+ *   importedStringConstants: '_' })`. The compile options resolve the
+ *   `wasm:js-string` builtins and the `_` string-constant imports (MoonBit's
+ *   `imported-string-constants: "_"`), so instantiation needs only the
+ *   spectest/console runtime imports.
  */
 
 import {
@@ -26,6 +34,7 @@ import {
   type MoonbitWorkerMessage,
   type MoonbitWorkerResponse,
 } from './moonbit-worker-protocol';
+import { describeMoonbitArgError, isSupportedScalar } from '../moonbit-scalar';
 
 /** Worker state — holds the per-URL compiled module cache. */
 export interface MoonbitWorkerState {
@@ -33,13 +42,23 @@ export interface MoonbitWorkerState {
   compiledModules: Map<string, WebAssembly.Module>;
 }
 
-/** Scalar wasm ABI types that can cross the boundary losslessly. */
-function isSupportedScalar(value: unknown): boolean {
-  return (
-    typeof value === 'number'
-    || typeof value === 'boolean'
-    || typeof value === 'bigint'
-  );
+/**
+ * Compile options for MoonBit wasm-gc modules compiled with
+ * `use-js-builtin-string`. `builtins: ['js-string']` resolves
+ * `wasm:js-string` imports and `importedStringConstants: '_'` resolves
+ * MoonBit's `imported-string-constants: "_"` string literals at compile time.
+ * This avoids manual `_` import entries, which would break for literals such
+ * as "__proto__" (prototype-pollution) or arbitrary Unicode. The standard TS
+ * lib types omit these options, so the APIs are widened locally.
+ */
+const MOONBIT_COMPILE_OPTIONS = { builtins: ['js-string'], importedStringConstants: '_' } as const;
+
+async function compileMoonbitModule(bytes: BufferSource): Promise<WebAssembly.Module> {
+  const compile = WebAssembly.compile as unknown as (
+    bytes: BufferSource,
+    options: typeof MOONBIT_COMPILE_OPTIONS,
+  ) => Promise<WebAssembly.Module>;
+  return compile(bytes, MOONBIT_COMPILE_OPTIONS);
 }
 
 /**
@@ -86,7 +105,12 @@ async function handleMoonbitExecute(
     module = cached;
   } else {
     try {
-      module = await WebAssembly.compile(msg.wasm);
+      // Compile with JS String Builtins enabled so MoonBit String parameters
+      // and results cross the boundary as real JS strings. The compile
+      // options resolve `wasm:js-string` builtins and the `_` string-constant
+      // imports (imported-string-constants), so no `_` import entries are
+      // needed at instantiation time.
+      module = await compileMoonbitModule(msg.wasm);
       // Only URL-based (cacheable) executions are stored; inline ArrayBuffer
       // executions compile per call and never accumulate in the cache.
       if (msg.cacheable) {
@@ -113,7 +137,10 @@ async function handleMoonbitExecute(
         false,
         msg.generationId,
         undefined,
-        `MoonBit supports number/boolean/bigint arguments only (got ${arg === null ? 'null' : typeof arg})`,
+        describeMoonbitArgError(
+          'MoonBit supports number/boolean/bigint/string arguments only',
+          arg,
+        ),
         'runtime_error',
       ));
       return;
@@ -122,9 +149,7 @@ async function handleMoonbitExecute(
 
   let instance: WebAssembly.Instance;
   try {
-    instance = await WebAssembly.instantiate(module, {
-      spectest: { print_char: () => {} },
-    });
+    instance = await WebAssembly.instantiate(module, buildMoonbitImports());
   } catch (error) {
     postMessage(createMoonbitExecuteResultMessage(
       msg.requestId,
@@ -179,6 +204,22 @@ async function handleMoonbitExecute(
       'function_error',
     ));
   }
+}
+
+/**
+ * Build the WebAssembly import object for a MoonBit wasm-gc module.
+ *
+ * - `spectest.print_char`: MoonBit println support.
+ * - `console.log`: MoonBit's JS-target console output.
+ * - `wasm:js-string` builtins are provided by the `builtins: ['js-string']`
+ *   compile option and `importedStringConstants: '_'` resolves MoonBit's
+ *   `_` string-constant imports, so neither needs explicit import entries.
+ */
+function buildMoonbitImports(): WebAssembly.Imports {
+  return {
+    spectest: { print_char: () => {} },
+    console: { log: () => {} },
+  };
 }
 
 // ============================================================

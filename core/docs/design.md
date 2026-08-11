@@ -249,12 +249,32 @@ export const stdDev = unzen.defineMoonBit('stdDev', {
 1. Client SDK が /unzen/manifest を取得 → stats.wasm のURLを取得
 2. stats.wasm をダウンロード (数百B〜数十KB、Service Workerでキャッシュ)
 3. WebAssembly.instantiateStreaming で wasm-gc モジュールをロード
+   （※ 現行実装は fetch → compile → instantiate。instantiateStreaming は将来設計）
 4. unzen.call('stdDev', data) → Wasmエクスポート関数を直接呼び出し
 ```
 
 ### 2.6 データマーシャリング
 
 JavaScriptのデータとWasm関数間のデータ受け渡し方法。
+
+> **注 (2026-08-11)**: 本節のマーシャリング表・変換フロー・ABI 型情報は
+> **将来設計** であり、現行実装（Phase 3）は以下の契約に限定される。
+> 実測・実装の最新情報は `docs/ARCHITECTURE.md` の
+> 「MoonBit の String / Array interop」節を参照。
+>
+> - 対応型: `number` / `boolean` / `bigint` / `string` のみ
+>   （`string` は `WebAssembly.compile(bytes, { builtins: ['js-string'],
+>   importedStringConstants: '_' })` による JS String Builtins 経由。
+>   ブラウザ要件: Chromium / Firefox は動作確認済み。Safari は wasm-gc が
+>   18.2+、JS String Builtins が 26.2+（本プロジェクトでは Safari 未検証））
+> - `importedStringConstants: '_'` は `_` namespace を予約するため、
+>   MoonBit 以外の `_` imports を含む wasm は compile できない
+> - 非対応: `number[]` / `object`（plain JS 配列・オブジェクトは wasm-gc
+>   境界で拒否。配列戻り値は opaque handle のため executor が非スカラー
+>   として拒否）
+> - ロード: `fetch → validate → WebAssembly.compile →
+>   WebAssembly.instantiate`（`instantiateStreaming` は未使用）
+> - ABI シグネチャ単位の検証・glue コード生成は未導入（将来設計）
 
 #### QuickJS ランタイムの場合
 

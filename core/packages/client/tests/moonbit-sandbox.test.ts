@@ -20,6 +20,7 @@ import { MoonBitSandboxExecutor } from '../src/moonbit-sandbox';
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fibonacciBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
+const interopBytes = readFileSync(join(fixtureDir, 'interop.wasm'));
 
 function mockFetchBytes(bytes: Uint8Array = fibonacciBytes) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -89,6 +90,33 @@ describe('MoonBitSandboxExecutor', () => {
     await expect(
       executor.execute('https://example.com/bad.wasm', [], { exportName: 'run' }),
     ).rejects.toThrow(UnzenRuntimeError);
+    executor.dispose();
+  });
+
+  it('wraps compile failures (js-string builtins validation) as UnzenRuntimeError', async () => {
+    // A module that is valid without compile options but fails when the
+    // js-string builtins are applied must surface as UnzenRuntimeError, the
+    // same error contract as the worker path, not a raw CompileError.
+    mockFetchBytes(fibonacciBytes);
+    const originalCompile = WebAssembly.compile;
+    (WebAssembly as unknown as { compile: unknown }).compile = async (
+      _bytes: BufferSource,
+      _options?: unknown,
+    ) => {
+      throw new TypeError('WebAssembly.Module(): invalid module with builtins');
+    };
+    const executor = new MoonBitSandboxExecutor();
+
+    try {
+      await expect(
+        executor.execute('https://example.com/fibonacci.wasm', [10], { exportName: 'fibonacci' }),
+      ).rejects.toThrow(UnzenRuntimeError);
+      await expect(
+        executor.execute('https://example.com/fibonacci.wasm', [10], { exportName: 'fibonacci' }),
+      ).rejects.toThrow('Failed to compile MoonBit module');
+    } finally {
+      (WebAssembly as unknown as { compile: unknown }).compile = originalCompile;
+    }
     executor.dispose();
   });
 
@@ -285,12 +313,12 @@ describe('MoonBitSandboxExecutor', () => {
     executor.dispose();
   });
 
-  it('does not call the export when cancelled during instantiate', async () => {
+  it('settles with UnzenCancelledError immediately when cancelled during instantiate', async () => {
     mockFetchBytes();
     const executor = new MoonBitSandboxExecutor();
     const prepared = await executor.prepare('https://example.com/fibonacci.wasm');
 
-    let resolveInstance: (i: WebAssembly.Instance) => void = () => {};
+    let resolveInstance!: (i: WebAssembly.Instance) => void;
     const deferred = new Promise<WebAssembly.Instance>((res) => {
       resolveInstance = res;
     });
@@ -306,13 +334,15 @@ describe('MoonBitSandboxExecutor', () => {
         signal: controller.signal,
       });
 
-      // Abort while instantiate is still pending, then resolve it: the export
-      // must never run.
+      // Abort while instantiate is still pending: the promise settles with
+      // UnzenCancelledError immediately (not only after instantiate finishes).
       controller.abort();
-      resolveInstance({ exports: { fibonacci: exportSpy } } as unknown as WebAssembly.Instance);
-
       await expect(p).rejects.toThrow(UnzenCancelledError);
       expect(instantiateSpy).toHaveBeenCalledTimes(1);
+
+      // A late instantiate completion must still never run the export.
+      resolveInstance({ exports: { fibonacci: exportSpy } } as unknown as WebAssembly.Instance);
+      await new Promise((r) => setTimeout(r, 20));
       expect(exportSpy).not.toHaveBeenCalled();
     } finally {
       (WebAssembly as unknown as { instantiate: unknown }).instantiate = originalInstantiate;
@@ -320,22 +350,118 @@ describe('MoonBitSandboxExecutor', () => {
     executor.dispose();
   });
 
-  it('rejects non-scalar arguments', async () => {
+  it('round-trips MoonBit String arguments/results via JS String Builtins', async () => {
+    // The interop.wasm fixture is compiled with use-js-builtin-string and
+    // imports `_` string-constant globals. The main-thread executor must
+    // compile with builtins:['js-string'] and supply those constants for
+    // String calls to work (same behavior as the worker path).
+    mockFetchBytes(interopBytes);
+    const executor = new MoonBitSandboxExecutor();
+
+    expect(await executor.execute(
+      'https://example.com/interop.wasm',
+      ['hello'],
+      { exportName: 'echo' },
+    )).toBe('hello');
+
+    expect(await executor.execute(
+      'https://example.com/interop.wasm',
+      ['foo', 'bar'],
+      { exportName: 'join_words' },
+    )).toBe('foobar');
+
+    expect(await executor.execute(
+      'https://example.com/interop.wasm',
+      ['hello'],
+      { exportName: 'string_len' },
+    )).toBe(5);
+    executor.dispose();
+  });
+
+  it('round-trips special String literals (__proto__, empty, Unicode)', async () => {
+    // Compile-time importedStringConstants resolve `_` string-constant
+    // imports without touching JS object prototypes, so even "__proto__"
+    // round-trips losslessly (the manual import-map approach would have
+    // triggered the Object.prototype setter).
+    mockFetchBytes(interopBytes);
+    const executor = new MoonBitSandboxExecutor();
+
+    expect(await executor.execute(
+      'https://example.com/interop.wasm',
+      [],
+      { exportName: 'weird_string' },
+    )).toBe('__proto__');
+    expect(await executor.execute(
+      'https://example.com/interop.wasm',
+      [],
+      { exportName: 'empty_string' },
+    )).toBe('');
+    expect(await executor.execute(
+      'https://example.com/interop.wasm',
+      [],
+      { exportName: 'unicode_string' },
+    )).toBe('こんにちは');
+    executor.dispose();
+  });
+
+  it('rejects non-scalar (opaque wasm-gc) return values', async () => {
+    // make_array() returns an opaque wasm-gc array handle that cannot be
+    // read as a plain JS array; the executor rejects it instead of leaking
+    // the handle to the caller.
+    mockFetchBytes(interopBytes);
+    const executor = new MoonBitSandboxExecutor();
+
+    await expect(
+      executor.execute('https://example.com/interop.wasm', [], { exportName: 'make_array' }),
+    ).rejects.toThrow('unsupported (non-scalar)');
+    executor.dispose();
+  });
+
+  it('rejects plain JS array arguments (documented wasm-gc boundary limit)', async () => {
+    mockFetchBytes(interopBytes);
+    const executor = new MoonBitSandboxExecutor();
+
+    await expect(
+      executor.execute('https://example.com/interop.wasm', [[1, 2, 3]], { exportName: 'sum_array' }),
+    ).rejects.toThrow('arrays and objects cannot cross');
+    executor.dispose();
+  });
+
+  it('rejects non-scalar arguments (arrays, objects, null, undefined)', async () => {
     mockFetchBytes();
     const executor = new MoonBitSandboxExecutor();
 
     await expect(
       executor.execute('https://example.com/fibonacci.wasm', [[1, 2]], { exportName: 'fibonacci' }),
-    ).rejects.toThrow('number/boolean/bigint');
+    ).rejects.toThrow('arrays and objects cannot cross');
     await expect(
-      executor.execute('https://example.com/fibonacci.wasm', ['10'], { exportName: 'fibonacci' }),
-    ).rejects.toThrow('number/boolean/bigint');
+      executor.execute('https://example.com/fibonacci.wasm', [{ n: 10 }], { exportName: 'fibonacci' }),
+    ).rejects.toThrow('arrays and objects cannot cross');
     await expect(
       executor.execute('https://example.com/fibonacci.wasm', [null], { exportName: 'fibonacci' }),
-    ).rejects.toThrow('number/boolean/bigint');
+    ).rejects.toThrow('(got null)');
     await expect(
       executor.execute('https://example.com/fibonacci.wasm', [undefined], { exportName: 'fibonacci' }),
-    ).rejects.toThrow('number/boolean/bigint');
+    ).rejects.toThrow('(got undefined)');
+    await expect(
+      executor.execute('https://example.com/fibonacci.wasm', [() => 1], { exportName: 'fibonacci' }),
+    ).rejects.toThrow('(got function)');
+    await expect(
+      executor.execute('https://example.com/fibonacci.wasm', [Symbol('x')], { exportName: 'fibonacci' }),
+    ).rejects.toThrow('(got symbol)');
+    executor.dispose();
+  });
+
+  it('accepts a numeric string for numeric exports via wasm ToNumber (documented)', async () => {
+    // The executor validates scalars only; WebAssembly applies its own
+    // implicit ToNumber conversion for numeric parameters. This is documented
+    // behavior, not a bug: fibonacci("10") === 55.
+    mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor();
+
+    await expect(
+      executor.execute('https://example.com/fibonacci.wasm', ['10'], { exportName: 'fibonacci' }),
+    ).resolves.toBe(55);
     executor.dispose();
   });
 
