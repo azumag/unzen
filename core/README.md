@@ -150,7 +150,9 @@ request field を一度だけ読み、top-level の引数 slot を iterator を�
 
 fallback transport はその snapshot を JSON 化してから送信する。JSON 化できない入力は request 前に
 `UnzenFunctionError`、不正な response envelope、redirect、rate limit、5xx は
-`UnzenNetworkError` となる。body 読み取り中の cancel は遅延 response を採用しない。
+`UnzenNetworkError` となる。direct `FallbackHandler.execute()` は signal を serialization
+より前に検証し、不正値を副作用前に `UnzenFunctionError` で拒否する。body 読み取り中の
+cancel は遅延 response を採用しない。
 
 ## サンプル関数
 

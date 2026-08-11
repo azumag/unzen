@@ -45,6 +45,47 @@ describe('FallbackHandler', () => {
     );
   });
 
+  it('rejects an invalid signal before serializing or fetching', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let serialized = false;
+    const args = [{
+      toJSON() {
+        serialized = true;
+        return 'unexpected';
+      },
+    }];
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute(
+      'test',
+      args,
+      { aborted: false } as never,
+    )).rejects.toThrow(UnzenFunctionError);
+    expect(serialized).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a pre-aborted signal before serializing or fetching', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let serialized = false;
+    const args = [{
+      toJSON() {
+        serialized = true;
+        return 'unexpected';
+      },
+    }];
+    const controller = new AbortController();
+    controller.abort();
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute('test', args, controller.signal))
+      .rejects.toThrow(UnzenCancelledError);
+    expect(serialized).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('should execute function successfully', async () => {
     // Mock successful response
     globalThis.fetch = vi.fn().mockResolvedValue({

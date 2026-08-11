@@ -195,6 +195,7 @@ Error
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`
+  direct call の invalid signal → serialization / HTTP 前に `UnzenFunctionError`
 
 ### 4.3 通信プロトコル (protocol.ts)
 

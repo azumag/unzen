@@ -24,7 +24,7 @@ import {
   isValidFunctionName,
   normalizeExecutionResponse,
 } from '@unzen/shared';
-import { isAbortError, throwIfAborted } from './abort';
+import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
 
 export class FallbackHandler {
@@ -51,9 +51,20 @@ export class FallbackHandler {
    * @throws {UnzenNetworkError} When network or server error occurs
    */
   async execute(name: string, args: unknown[], signal?: AbortSignal): Promise<unknown> {
+    let signalSnapshot: ReturnType<typeof snapshotAbortSignalInput>;
+    try {
+      signalSnapshot = snapshotAbortSignalInput(signal);
+    } catch {
+      throw new UnzenFunctionError('Invalid fallback AbortSignal');
+    }
+    if (signalSnapshot.initiallyAborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
+    const requestSignal = signalSnapshot.signal;
+
     // Reject immediately if the caller already aborted before calling —
     // a cancelled request must never start (or continue on) the server.
-    throwIfAborted(signal);
+    throwIfAborted(requestSignal);
 
     if (!isValidFunctionName(name)) {
       throw new UnzenFunctionError('Invalid fallback function name');
@@ -90,7 +101,7 @@ export class FallbackHandler {
         `Fallback arguments must be JSON-serializable and contain at most ${MAX_EXECUTION_ARGUMENTS} items`,
       );
     }
-    throwIfAborted(signal);
+    throwIfAborted(requestSignal);
 
     const url = `${this.endpoint}/exec/${name}`;
 
@@ -100,9 +111,9 @@ export class FallbackHandler {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
-        signal,
+        signal: requestSignal,
       });
-      throwIfAborted(signal);
+      throwIfAborted(requestSignal);
 
       // Parse response JSON regardless of status code
       // Server returns structured error responses for both 4xx and 5xx:
@@ -118,7 +129,7 @@ export class FallbackHandler {
       try {
         payload = await response.json();
       } catch (error) {
-        if (isAbortError(error) || signal?.aborted) {
+        if (isAbortError(error) || requestSignal?.aborted) {
           throw new UnzenCancelledError('Execution cancelled by caller');
         }
         // Response body not parseable as JSON → network/infrastructure error
@@ -126,7 +137,7 @@ export class FallbackHandler {
           `Server returned ${response.status}: ${response.statusText}`
         );
       }
-      throwIfAborted(signal);
+      throwIfAborted(requestSignal);
 
       const data = normalizeExecutionResponse(payload);
       if (data === undefined) {
@@ -169,7 +180,7 @@ export class FallbackHandler {
 
       // Cancellation must surface as UnzenCancelledError, never as a network
       // error (which would look recoverable and mask a user cancellation).
-      if (isAbortError(error) || signal?.aborted) {
+      if (isAbortError(error) || requestSignal?.aborted) {
         throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
