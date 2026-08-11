@@ -445,6 +445,9 @@ fetch(entry) → entry.hash をキーにキャッシュ検索
 ```
 
 - **ハッシュベースキャッシュ**: URL ではなくコンテンツハッシュをキーに使用する
+- public `fetch()` は QuickJS manifest entry と `AbortSignal` を副作用前に検証し、entry を
+  一度だけ snapshot する。応答待機中の caller mutation は URL / hash / cache key を変えない
+- `ManifestFetcher.fetch()` も signal を cache hit / HTTP request より前に検証する
 - manifest hash は canonical な `sha256:<64 lowercase hex>` だけを受理する
 - SHA-256 不一致、invalid UTF-8、Web Crypto 不在時は decode / 実行 / cache 前に
   fail closed とし、不正な payload をキャッシュしない

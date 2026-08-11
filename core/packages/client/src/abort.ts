@@ -10,6 +10,39 @@
 
 import { UnzenCancelledError } from '@unzen/shared';
 
+export interface AbortSignalInputSnapshot {
+  readonly signal?: AbortSignal;
+  readonly initiallyAborted: boolean;
+}
+
+/** Validate and snapshot an optional AbortSignal reference before side effects. */
+export function snapshotAbortSignalInput(value: unknown): AbortSignalInputSnapshot {
+  if (value === undefined) return { initiallyAborted: false };
+  if (typeof value !== 'object' || value === null) {
+    throw new TypeError('signal must be an AbortSignal');
+  }
+
+  let aborted: unknown;
+  let addEventListener: unknown;
+  let removeEventListener: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    aborted = record.aborted;
+    addEventListener = record.addEventListener;
+    removeEventListener = record.removeEventListener;
+  } catch {
+    throw new TypeError('signal must be an AbortSignal');
+  }
+  if (
+    typeof aborted !== 'boolean'
+    || typeof addEventListener !== 'function'
+    || typeof removeEventListener !== 'function'
+  ) {
+    throw new TypeError('signal must be an AbortSignal');
+  }
+  return { signal: value as AbortSignal, initiallyAborted: aborted };
+}
+
 /**
  * Detect an AbortError regardless of environment.
  *

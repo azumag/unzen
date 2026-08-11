@@ -61,6 +61,19 @@ describe('ManifestFetcher', () => {
     );
   });
 
+  it('rejects an invalid signal before starting a manifest request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockManifest,
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new ManifestFetcher('https://example.com');
+
+    await expect(fetcher.fetch({ aborted: false } as never))
+      .rejects.toThrow(UnzenNetworkError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('should fetch manifest from server', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

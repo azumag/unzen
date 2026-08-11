@@ -36,7 +36,12 @@ import {
   type FunctionManifestEntry,
   type MoonBitAbi,
 } from '@unzen/shared';
-import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import {
+  isAbortError,
+  raceWithAbort,
+  snapshotAbortSignalInput,
+  throwIfAborted,
+} from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
 
 /** A shared in-flight manifest request with per-caller waiter tracking. */
@@ -133,10 +138,21 @@ export class ManifestFetcher {
    * @throws {UnzenNetworkError} When network or server error occurs
    */
   async fetch(signal?: AbortSignal): Promise<ManifestResponse> {
+    let signalSnapshot: ReturnType<typeof snapshotAbortSignalInput>;
+    try {
+      signalSnapshot = snapshotAbortSignalInput(signal);
+    } catch {
+      throw new UnzenNetworkError('Manifest fetch signal must be an AbortSignal');
+    }
+    if (signalSnapshot.initiallyAborted) {
+      throw new UnzenCancelledError('Manifest fetch cancelled');
+    }
+    const requestSignal = signalSnapshot.signal;
+
     // Reject immediately if the caller already aborted before calling — even
     // a cached manifest must not be handed out after cancellation. Cancellation
     // must never be wrapped into a network error.
-    throwIfAborted(signal);
+    throwIfAborted(requestSignal);
 
     // Return cached manifest if available
     // Rationale: Manifest changes are rare, so aggressive caching is acceptable
@@ -172,8 +188,8 @@ export class ManifestFetcher {
     entry.waiters++;
 
     try {
-      const manifest = signal
-        ? await raceWithAbort(entry.promise, signal)
+      const manifest = requestSignal
+        ? await raceWithAbort(entry.promise, requestSignal)
         : await entry.promise;
       return copyManifest(manifest);
     } finally {

@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
+  UnzenCancelledError,
   UnzenNetworkError,
   type FunctionManifestEntry,
 } from '@unzen/shared';
@@ -62,6 +63,75 @@ describe('CodeFetcher', () => {
       'https://example.com/code/add.js',
       expect.any(Object)
     );
+  });
+
+  it('snapshots a manifest entry before asynchronous response handling', async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const reads = { hash: 0, codeUrl: 0 };
+    let selectedHash = hashText(mockCode);
+    let selectedUrl = 'https://example.com/code/add.js';
+    const entry = {
+      runtime: 'quickjs' as const,
+      version: 1,
+      get hash() {
+        reads.hash += 1;
+        return selectedHash;
+      },
+      get codeUrl() {
+        reads.codeUrl += 1;
+        return selectedUrl;
+      },
+    };
+    const fetcher = new CodeFetcher('https://example.com');
+
+    const request = fetcher.fetch(entry);
+    selectedHash = hashText('replaced code');
+    selectedUrl = 'https://attacker.example/replaced.js';
+    resolveFetch?.(codeResponse(mockCode));
+
+    await expect(request).resolves.toBe(mockCode);
+    expect(reads).toEqual({ hash: 1, codeUrl: 1 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/code/add.js',
+      expect.any(Object),
+    );
+  });
+
+  it('rejects invalid entries and signals before fetching code', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(codeResponse(mockCode));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new CodeFetcher('https://example.com');
+
+    await expect(fetcher.fetch(null as never)).rejects.toThrow(UnzenNetworkError);
+    await expect(fetcher.fetch({
+      ...mockEntry,
+      codeUrl: 'javascript:alert(1)',
+    })).rejects.toThrow(UnzenNetworkError);
+    await expect(fetcher.fetch({
+      ...mockEntry,
+      runtime: 'moonbit',
+    })).rejects.toThrow(UnzenNetworkError);
+    await expect(fetcher.fetch(
+      mockEntry,
+      { aborted: false } as never,
+    )).rejects.toThrow(UnzenNetworkError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a pre-aborted signal before fetching code', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(codeResponse(mockCode));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new CodeFetcher('https://example.com');
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(fetcher.fetch(mockEntry, controller.signal))
+      .rejects.toThrow(UnzenCancelledError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('should cache code by hash', async () => {

@@ -1,4 +1,5 @@
 import type { MoonBitAbi } from '@unzen/shared';
+import { snapshotAbortSignalInput } from './abort';
 
 export interface MoonBitExecutionOptionsSnapshot {
   readonly signal?: AbortSignal;
@@ -8,37 +9,13 @@ export interface MoonBitExecutionOptionsSnapshot {
   readonly expectedHash?: string;
 }
 
-export interface MoonBitAbortSignalSnapshot {
-  readonly signal?: AbortSignal;
-  readonly initiallyAborted: boolean;
-}
-
 /** Validate an optional signal before a fetch, queue, or worker side effect. */
-export function snapshotMoonBitAbortSignal(value: unknown): MoonBitAbortSignalSnapshot {
-  if (value === undefined) return { initiallyAborted: false };
-  if (typeof value !== 'object' || value === null) {
-    throw new Error('MoonBit execution signal must be an AbortSignal');
-  }
-
-  let aborted: unknown;
-  let addEventListener: unknown;
-  let removeEventListener: unknown;
+export function snapshotMoonBitAbortSignal(value: unknown) {
   try {
-    const record = value as Record<string, unknown>;
-    aborted = record.aborted;
-    addEventListener = record.addEventListener;
-    removeEventListener = record.removeEventListener;
+    return snapshotAbortSignalInput(value);
   } catch {
     throw new Error('MoonBit execution signal must be an AbortSignal');
   }
-  if (
-    typeof aborted !== 'boolean'
-    || typeof addEventListener !== 'function'
-    || typeof removeEventListener !== 'function'
-  ) {
-    throw new Error('MoonBit execution signal must be an AbortSignal');
-  }
-  return { signal: value as AbortSignal, initiallyAborted: aborted };
 }
 
 /** Read per-execution options once before any asynchronous MoonBit work. */

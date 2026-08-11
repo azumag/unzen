@@ -25,13 +25,20 @@
 import {
   UnzenCancelledError,
   UnzenNetworkError,
+  normalizeManifestResponse,
   type FunctionManifestEntry,
 } from '@unzen/shared';
-import { isAbortError, throwIfAborted } from './abort';
-import {
-  assertUnzenContentIntegrity,
-  isValidUnzenContentHash,
-} from './content-integrity';
+import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort';
+import { assertUnzenContentIntegrity } from './content-integrity';
+
+/** Validate and own the manifest fields consumed by this fetcher. */
+function snapshotCodeManifestEntry(value: unknown): FunctionManifestEntry | undefined {
+  const functions = Object.create(null) as Record<string, unknown>;
+  functions.code = value;
+  const manifest = normalizeManifestResponse({ functions });
+  const entry = manifest?.functions.code;
+  return entry?.runtime === 'quickjs' ? entry : undefined;
+}
 
 export class CodeFetcher {
   /**
@@ -67,24 +74,36 @@ export class CodeFetcher {
    * @throws {UnzenNetworkError} When network or server error occurs
    *
    * Implementation note:
-   * - Uses entry.codeUrl to fetch code
-   * - Caches result using entry.hash as key
+   * - Validates and snapshots entry before any cache/network work
+   * - Uses the snapshotted codeUrl to fetch code
+   * - Caches result using the snapshotted hash as key
    * - Hash-based caching allows code reuse across functions
    */
   async fetch(entry: FunctionManifestEntry, signal?: AbortSignal): Promise<string> {
+    let signalSnapshot: ReturnType<typeof snapshotAbortSignalInput>;
+    try {
+      signalSnapshot = snapshotAbortSignalInput(signal);
+    } catch {
+      throw new UnzenNetworkError('Code fetch signal must be an AbortSignal');
+    }
+    if (signalSnapshot.initiallyAborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
+    const requestSignal = signalSnapshot.signal;
+
     // Reject immediately if the caller already aborted before calling — even
     // cached code must not be handed out after cancellation.
-    throwIfAborted(signal);
+    throwIfAborted(requestSignal);
 
-    // The hash is the trust anchor for both verification and cache identity.
-    // Reject malformed manifests before performing any network request.
-    if (!isValidUnzenContentHash(entry.hash)) {
-      throw new UnzenNetworkError('Invalid code hash in manifest');
+    const entrySnapshot = snapshotCodeManifestEntry(entry);
+    if (entrySnapshot === undefined) {
+      throw new UnzenNetworkError('Invalid QuickJS code manifest entry');
     }
+    const { codeUrl, hash } = entrySnapshot;
 
     // Check cache first
     // Rationale: Hash represents content identity, so cache hit is safe
-    const cached = this.cache.get(entry.hash);
+    const cached = this.cache.get(hash);
     if (cached !== undefined) {
       return cached;
     }
@@ -92,15 +111,15 @@ export class CodeFetcher {
     try {
       // Fetch code from URL (signal cancels the request on abort)
       // Note: codeUrl is absolute URL from manifest, not relative to endpoint
-      const response = await globalThis.fetch(entry.codeUrl, {
+      const response = await globalThis.fetch(codeUrl, {
         method: 'GET',
-        signal,
+        signal: requestSignal,
       });
 
       // Check HTTP status
       if (!response.ok) {
         throw new UnzenNetworkError(
-          `Failed to fetch code from ${entry.codeUrl}: ${response.status} ${response.statusText}`
+          `Failed to fetch code from ${codeUrl}: ${response.status} ${response.statusText}`
         );
       }
 
@@ -108,9 +127,9 @@ export class CodeFetcher {
       // Service Worker cache is an optimization, not a security dependency,
       // so every normal fetch path repeats this integrity check.
       const bytes = await response.arrayBuffer();
-      throwIfAborted(signal);
-      await assertUnzenContentIntegrity(bytes, entry.hash);
-      throwIfAborted(signal);
+      throwIfAborted(requestSignal);
+      await assertUnzenContentIntegrity(bytes, hash);
+      throwIfAborted(requestSignal);
 
       let code: string;
       try {
@@ -121,7 +140,7 @@ export class CodeFetcher {
 
       // Cache by hash
       // Rationale: Same hash = same content, so safe to cache indefinitely
-      this.cache.set(entry.hash, code);
+      this.cache.set(hash, code);
 
       return code;
     } catch (error) {
@@ -132,7 +151,7 @@ export class CodeFetcher {
 
       // Cancellation must surface as UnzenCancelledError, never as a network
       // error (which would look recoverable and trigger server fallback).
-      if (isAbortError(error) || signal?.aborted) {
+      if (isAbortError(error) || requestSignal?.aborted) {
         throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
