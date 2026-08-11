@@ -96,22 +96,33 @@ function normalizeDeclarationFile(value: string | false | undefined): string | u
 export function unzenVitePlugin(options: UnzenVitePluginOptions = {}): UnzenVitePlugin {
   const declarationFile = normalizeDeclarationFile(options.declarationFile);
   const definitionsByFile = new Map<string, ExtractedUnzenDefinition[]>();
+  const latestTransformByFile = new Map<string, object>();
+  let activeBuildToken: object = {};
   return {
     name: 'unzen-function-extraction',
     enforce: 'pre',
     buildStart() {
+      activeBuildToken = {};
+      latestTransformByFile.clear();
       definitionsByFile.clear();
     },
     transform(code, id) {
       if (!shouldTransform(id, options)) return null;
+      const transformBuildToken = activeBuildToken;
+      const transformToken = {};
+      latestTransformByFile.set(id, transformToken);
       const recordResult = (
         result: UnzenSourceTransformResult | null,
       ): UnzenViteTransformResult | null => {
-        // Replace the complete per-module snapshot. Watch rebuilds and plugins
-        // that request a module more than once must not retain definitions that
-        // were removed or moved by the latest transform.
-        if (result) definitionsByFile.set(id, result.definitions);
-        else definitionsByFile.delete(id);
+        // Async transforms may finish out of invocation order or after the next
+        // build starts. Only the newest invocation may replace this snapshot.
+        if (
+          activeBuildToken === transformBuildToken
+          && latestTransformByFile.get(id) === transformToken
+        ) {
+          if (result) definitionsByFile.set(id, result.definitions);
+          else definitionsByFile.delete(id);
+        }
         for (const watchFile of result?.watchFiles ?? []) {
           this.addWatchFile?.(watchFile);
         }
