@@ -80,6 +80,24 @@ describe('MockSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('rejects when cancellation races argument snapshotting', async () => {
+    const executor = new MockSandboxExecutor();
+    const controller = new AbortController();
+    const args = new Proxy([1], {
+      get(target, property, receiver) {
+        if (property === 'length') controller.abort();
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await expect(executor.execute(
+      'function run(value) { return value; }',
+      args,
+      { signal: controller.signal },
+    )).rejects.toThrow(UnzenCancelledError);
+    executor.dispose();
+  });
+
   it('should execute code with no arguments', async () => {
     const executor = new MockSandboxExecutor();
     const code = 'function run() { return 42; }';

@@ -28,6 +28,7 @@ import {
   snapshotQuickJsCall,
   snapshotQuickJsExecutionOptions,
 } from './quickjs-call';
+import { throwIfAborted } from './abort';
 import { createContext, Script } from 'vm';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 
@@ -99,6 +100,7 @@ export class MockSandboxExecutor implements SandboxExecutor {
     }
     try {
       const call = snapshotQuickJsCall(code, args);
+      throwIfAborted(executionOptions.signal);
       // Create fresh context for this execution
       // Rationale: Each execution should be isolated from others
       // Note: vm.createContext provides limited isolation, not security
@@ -136,7 +138,7 @@ export class MockSandboxExecutor implements SandboxExecutor {
     } catch (error) {
       // Wrap all errors as UnzenFunctionError
       // Rationale: Execution errors are user code errors, not runtime errors
-      if (error instanceof UnzenFunctionError) {
+      if (error instanceof UnzenFunctionError || error instanceof UnzenCancelledError) {
         throw error;
       }
 
