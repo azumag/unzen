@@ -20,7 +20,7 @@
     "dev": "tsup --watch"
   },
   "dependencies": {
-    "@unzen/shared": "file:../shared",
+    "@unzen/shared": "0.1.0",
     "hono": "^4.12.22",
     "quickjs-emscripten": "^0.23.0"
   },
