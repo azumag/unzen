@@ -294,6 +294,27 @@ describe('UnzenServer', () => {
       expect(server.getFunction('badOptions')).toBeUndefined();
     });
 
+    it.each([null, [], 42, 'options'])('rejects a non-object options bag %j', (options) => {
+      expect(() => server.defineRaw(
+        'invalidOptions',
+        '() => 1',
+        options as never,
+      )).toThrow('Unzen function options must be an object');
+      expect(server.getFunction('invalidOptions')).toBeUndefined();
+    });
+
+    it('normalizes an options property access failure', () => {
+      const options = new Proxy({}, {
+        get() {
+          throw new Error('getter detail must not escape');
+        },
+      });
+
+      expect(() => server.defineRaw('unreadableOptions', '() => 1', options))
+        .toThrow('Unzen function options could not be read');
+      expect(server.getFunction('unreadableOptions')).toBeUndefined();
+    });
+
     it('rejects oversized source without consuming a version', () => {
       server.defineRaw('beforeLarge', '() => 1');
       expect(server.getFunction('beforeLarge')?.version).toBe(1);
@@ -654,6 +675,30 @@ describe('UnzenServer', () => {
         .toThrow('MoonBit module path must be a non-empty string');
       expect(server.getFunction('badExport')).toBeUndefined();
       expect(server.getFunction('emptyPath')).toBeUndefined();
+    });
+
+    it.each([null, [], 42, 'options'])(
+      'rejects non-object MoonBit options before reading the module: %j',
+      (options) => {
+        expect(() => server.defineMoonbit(
+          'badOptions',
+          'missing.wasm',
+          options as never,
+        )).toThrow('MoonBit definition options must be an object');
+        expect(server.getFunction('badOptions')).toBeUndefined();
+      },
+    );
+
+    it('normalizes a MoonBit options property access failure before file I/O', () => {
+      const options = new Proxy({}, {
+        get() {
+          throw new Error('getter detail must not escape');
+        },
+      });
+
+      expect(() => server.defineMoonbit('unreadableOptions', 'missing.wasm', options))
+        .toThrow('MoonBit definition options could not be read');
+      expect(server.getFunction('unreadableOptions')).toBeUndefined();
     });
 
     it('should reject a missing module file', () => {

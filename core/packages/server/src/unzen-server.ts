@@ -166,6 +166,69 @@ function assertValidTimeout(timeout: unknown): asserts timeout is number | undef
   }
 }
 
+function snapshotFunctionOptions(value: unknown): UnzenFunctionOptions {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Unzen function options must be an object');
+  }
+  let timeout: unknown;
+  let noFallback: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    timeout = record.timeout;
+    noFallback = record.noFallback;
+  } catch {
+    throw new TypeError('Unzen function options could not be read');
+  }
+  assertValidTimeout(timeout);
+  if (noFallback !== undefined && typeof noFallback !== 'boolean') {
+    throw new Error('Invalid noFallback option: expected a boolean');
+  }
+  return {
+    ...(timeout !== undefined && { timeout }),
+    ...(noFallback !== undefined && { noFallback }),
+  };
+}
+
+interface MoonBitDefinitionOptionsSnapshot {
+  exportName?: string;
+  timeout?: number;
+  abi?: MoonBitAbi;
+}
+
+function snapshotMoonBitDefinitionOptions(value: unknown): MoonBitDefinitionOptionsSnapshot {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('MoonBit definition options must be an object');
+  }
+  let exportName: unknown;
+  let timeout: unknown;
+  let requestedAbi: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    exportName = record.exportName;
+    timeout = record.timeout;
+    requestedAbi = record.abi;
+  } catch {
+    throw new TypeError('MoonBit definition options could not be read');
+  }
+  assertValidTimeout(timeout);
+  if (exportName !== undefined && typeof exportName !== 'string') {
+    throw new Error('Invalid MoonBit exportName: expected a string');
+  }
+  const abi = requestedAbi === undefined
+    ? undefined
+    : normalizeMoonBitAbi(requestedAbi);
+  if (requestedAbi !== undefined && abi === undefined) {
+    throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
+  }
+  return {
+    ...(exportName !== undefined && { exportName }),
+    ...(timeout !== undefined && { timeout }),
+    ...(abi !== undefined && { abi }),
+  };
+}
+
 export class UnzenServer {
   private registry: FunctionRegistry;
   private manifestBuilder: ManifestBuilder;
@@ -278,12 +341,7 @@ export class UnzenServer {
     if (typeof code !== 'string' || code.trim().length === 0) {
       throw new Error('Function code must be a non-empty string');
     }
-    const timeout = options?.timeout;
-    const noFallback = options?.noFallback;
-    assertValidTimeout(timeout);
-    if (noFallback !== undefined && typeof noFallback !== 'boolean') {
-      throw new Error('Invalid noFallback option: expected a boolean');
-    }
+    const { timeout, noFallback } = snapshotFunctionOptions(options);
 
     if (Buffer.byteLength(code, 'utf8') > MAX_FUNCTION_PAYLOAD_BYTES) {
       throw new Error(`Function code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
@@ -359,20 +417,11 @@ export class UnzenServer {
     if (typeof wasmPath !== 'string' || wasmPath.trim().length === 0) {
       throw new Error('MoonBit module path must be a non-empty string');
     }
-    const timeout = options?.timeout;
-    const exportName = options?.exportName;
-    const requestedAbi = options?.abi;
-    assertValidTimeout(timeout);
-    if (exportName !== undefined && typeof exportName !== 'string') {
-      throw new Error('Invalid MoonBit exportName: expected a string');
-    }
-
-    const moonbitAbi = requestedAbi === undefined
-      ? undefined
-      : normalizeMoonBitAbi(requestedAbi);
-    if (requestedAbi !== undefined && moonbitAbi === undefined) {
-      throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
-    }
+    const {
+      timeout,
+      exportName,
+      abi: moonbitAbi,
+    } = snapshotMoonBitDefinitionOptions(options);
 
     // Read from one descriptor in bounded chunks. The descriptor-level stat
     // rejects non-files and catches ordinary oversized inputs before reading;
