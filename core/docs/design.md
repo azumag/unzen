@@ -735,7 +735,7 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 - [ ] MoonBit wasm-gc ランタイム統合
 - [ ] Service Worker による関数コード・Wasmキャッシュ
 - [ ] ハッシュベースのバージョニングと差分検出
-- [ ] wasm-gc 未対応ブラウザの検出とフォールバック
+- [x] wasm-gc / JS String Builtins 未対応ブラウザの検出（安定した runtime error。MoonBit は server fallback なし）
 
 ### Phase 3: DX向上
 - [ ] ビルドツール統合 (Vite/webpack プラグイン)

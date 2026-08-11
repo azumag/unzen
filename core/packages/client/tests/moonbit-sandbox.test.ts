@@ -121,6 +121,29 @@ describe('MoonBitSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('reports a stable runtime error when compile options are silently ignored', async () => {
+    mockFetchBytes(interopBytes);
+    const originalCompile = WebAssembly.compile;
+    (WebAssembly as unknown as { compile: typeof WebAssembly.compile }).compile = (
+      bytes: BufferSource,
+    ) => originalCompile(bytes);
+    const executor = new MoonBitSandboxExecutor();
+
+    try {
+      const error = await executor.execute(
+        'https://example.com/unsupported-string-builtins.wasm',
+        ['hello'],
+        { exportName: 'echo' },
+      ).catch((reason) => reason);
+      expect(error).toBeInstanceOf(UnzenRuntimeError);
+      if (!(error instanceof Error)) throw new Error('Expected an Error');
+      expect(error.message).toContain('MoonBit String interop is unsupported by this browser');
+    } finally {
+      (WebAssembly as unknown as { compile: typeof WebAssembly.compile }).compile = originalCompile;
+      executor.dispose();
+    }
+  });
+
   it('executes a module built with a custom string-constant namespace', async () => {
     mockFetchBytes(customInteropBytes);
     const executor = new MoonBitSandboxExecutor({

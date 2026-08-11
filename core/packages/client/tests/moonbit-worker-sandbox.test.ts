@@ -645,6 +645,37 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('reports a stable runtime error when worker compile options are silently ignored', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+    const originalCompile = WebAssembly.compile;
+    (WebAssembly as unknown as { compile: typeof WebAssembly.compile }).compile = (
+      bytes: BufferSource,
+    ) => originalCompile(bytes);
+
+    try {
+      const error = await executor.execute(
+        interopBytes.buffer.slice(
+          interopBytes.byteOffset,
+          interopBytes.byteOffset + interopBytes.byteLength,
+        ) as ArrayBuffer,
+        ['hello'],
+        { exportName: 'echo' },
+      ).catch((reason) => reason);
+      expect(error).toBeInstanceOf(UnzenRuntimeError);
+      if (!(error instanceof Error)) throw new Error('Expected an Error');
+      expect(error.message).toContain('MoonBit String interop is unsupported by this browser');
+    } finally {
+      (WebAssembly as unknown as { compile: typeof WebAssembly.compile }).compile = originalCompile;
+      executor.dispose();
+    }
+  });
+
   it('copies i32[] and f64[] through the real worker bridge', async () => {
     const worker = new MockMoonbitWorker();
     const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');

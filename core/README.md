@@ -263,6 +263,11 @@ bridge を使って JS 数値配列を wasm-gc 配列と相互コピーする。
 String は Chromium / Firefox で
 動作確認済み。Safari は wasm-gc が 18.2+、JS String Builtins が 26.2+ で
 対応となり、本プロジェクトでは Safari 未検証。
+実行環境が wasm-gc をコンパイルできない場合、または JS String Builtins の compile
+option を受理しても適用しない場合は、module load 時に検出して
+`UnzenRuntimeError` として返す。後者は compile 後の予約 import
+（`wasm:js-string` と文字列定数 namespace）の残存を検査するため、engine 固有の
+`LinkError` を呼び出し元へ直接露出しない。
 
 ```typescript
 server.defineMoonbit('scaleArray', './scale.wasm', {
