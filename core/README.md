@@ -407,6 +407,8 @@ await registerUnzenCacheWorker({
 version、canonical SHA-256、HTTP(S) / relative `codeUrl`、`noFallback`、MoonBit 固有の
 export / ABI metadata を実行時に検証する。検証後は prototype を持たない関数表へコピーし、
 不正な body は ETag とともにキャッシュせず `UnzenNetworkError` で fail closed にする。
+cache hit、同時 waiter、304 revalidation、`getEntry()` は entry と MoonBit ABI を含む
+caller-owned copy を返し、内部 cache / ETag snapshot を外部 mutation へ公開しない。
 
 Service Worker の有無にかかわらず、`UnzenClient` はダウンロードした JavaScript と
 MoonBit Wasm の生バイトを manifest の `sha256:<64hex>` と照合し、一致した payload

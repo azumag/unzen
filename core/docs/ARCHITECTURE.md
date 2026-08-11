@@ -428,6 +428,8 @@ invalidate() → 進行中 fetch を abort + キャッシュクリア (次回fet
   canonical SHA-256、HTTP(S) / relative `codeUrl`、optional metadata を実行時検証する
 - 検証済み関数表は null-prototype record へコピーし、`toString` 等の inherited key を
   未登録関数として扱う。MoonBit ABI も bounded indexed copy で snapshot 化する
+- cache hit / concurrent waiter / 304 revalidation / `getEntry()` は entry と nested ABI を
+  deep copy し、cache-owned manifest と ETag 用 `lastManifest` の参照を外部へ公開しない
 - JSON parse / schema 検証 / abort check がすべて成功した body と ETag だけを同時 commit する
 - malformed body、abort 後に遅延完了した body、invalidate 前の in-flight body は保存しない
 - TTL はなく、明示的な invalidate でのみクリアされる

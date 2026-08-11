@@ -34,6 +34,7 @@ import {
   normalizeManifestResponse,
   type ManifestResponse,
   type FunctionManifestEntry,
+  type MoonBitAbi,
 } from '@unzen/shared';
 import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
@@ -46,6 +47,41 @@ interface InflightManifestRequest {
   controller: AbortController;
   /** Number of callers currently waiting on this request */
   waiters: number;
+}
+
+function copyMoonBitAbi(abi: MoonBitAbi): MoonBitAbi {
+  const paramCount = abi.params.length;
+  const params = new Array<MoonBitAbi['params'][number]>(paramCount);
+  for (let index = 0; index < paramCount; index++) {
+    params[index] = abi.params[index];
+  }
+  return {
+    params,
+    ...(abi.result !== undefined && { result: abi.result }),
+  };
+}
+
+function copyManifestEntry(entry: FunctionManifestEntry): FunctionManifestEntry {
+  return {
+    runtime: entry.runtime,
+    hash: entry.hash,
+    version: entry.version,
+    codeUrl: entry.codeUrl,
+    ...(entry.exportName !== undefined && { exportName: entry.exportName }),
+    ...(entry.moonbitAbi !== undefined && {
+      moonbitAbi: copyMoonBitAbi(entry.moonbitAbi),
+    }),
+    ...(entry.noFallback !== undefined && { noFallback: entry.noFallback }),
+  };
+}
+
+/** Return a fully caller-owned view without exposing cache-owned references. */
+function copyManifest(manifest: ManifestResponse): ManifestResponse {
+  const functions = Object.create(null) as Record<string, FunctionManifestEntry>;
+  for (const name of Object.keys(manifest.functions)) {
+    functions[name] = copyManifestEntry(manifest.functions[name]);
+  }
+  return { functions };
 }
 
 export class ManifestFetcher {
@@ -105,7 +141,7 @@ export class ManifestFetcher {
     // Return cached manifest if available
     // Rationale: Manifest changes are rare, so aggressive caching is acceptable
     if (this.cache !== null) {
-      return this.cache;
+      return copyManifest(this.cache);
     }
 
     // Deduplicate concurrent fetch() calls: subsequent callers share the
@@ -136,10 +172,10 @@ export class ManifestFetcher {
     entry.waiters++;
 
     try {
-      if (signal) {
-        return await raceWithAbort(entry.promise, signal);
-      }
-      return await entry.promise;
+      const manifest = signal
+        ? await raceWithAbort(entry.promise, signal)
+        : await entry.promise;
+      return copyManifest(manifest);
     } finally {
       entry.waiters--;
       if (entry.waiters === 0) {
@@ -260,7 +296,7 @@ export class ManifestFetcher {
     }
 
     return Object.hasOwn(this.cache.functions, name)
-      ? this.cache.functions[name]
+      ? copyManifestEntry(this.cache.functions[name])
       : undefined;
   }
 

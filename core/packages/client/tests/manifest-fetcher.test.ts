@@ -95,6 +95,56 @@ describe('ManifestFetcher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // Still 1, not 2
   });
 
+  it('keeps cached and ETag-revalidated manifests isolated from caller mutation', async () => {
+    const moonbitManifest: ManifestResponse = {
+      functions: {
+        scale: {
+          version: 1,
+          runtime: 'moonbit',
+          codeUrl: 'https://example.com/code/scale.wasm',
+          hash: ADD_HASH,
+          exportName: 'scale_array',
+          moonbitAbi: { params: ['i32[]'], result: 'i32[]' },
+          noFallback: true,
+        },
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ ETag: 'W/"scale-1"' }),
+      json: async () => moonbitManifest,
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new ManifestFetcher('https://example.com');
+
+    const first = await fetcher.fetch();
+    first.functions.scale.hash = UPDATED_HASH;
+    first.functions.scale.codeUrl = 'https://attacker.example/replaced.wasm';
+    first.functions.scale.moonbitAbi!.params[0] = 'scalar';
+
+    const cached = await fetcher.fetch();
+    expect(cached).not.toBe(first);
+    expect(cached.functions).not.toBe(first.functions);
+    expect(Object.getPrototypeOf(cached.functions)).toBeNull();
+    expect(cached.functions.scale).not.toBe(first.functions.scale);
+    expect(cached.functions.scale.hash).toBe(ADD_HASH);
+    expect(cached.functions.scale.codeUrl).toBe(
+      'https://example.com/code/scale.wasm',
+    );
+    expect(cached.functions.scale.moonbitAbi).toEqual({
+      params: ['i32[]'],
+      result: 'i32[]',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetcher.invalidate();
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 304 });
+    const revalidated = await fetcher.fetch();
+    expect(revalidated.functions.scale.hash).toBe(ADD_HASH);
+    expect(revalidated.functions.scale.moonbitAbi?.params).toEqual(['i32[]']);
+  });
+
   it('should get entry by function name', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -111,6 +161,35 @@ describe('ManifestFetcher', () => {
       codeUrl: 'https://example.com/code/add.js',
       hash: ADD_HASH,
     });
+  });
+
+  it('returns caller-owned entries from getEntry', async () => {
+    const moonbitManifest: ManifestResponse = {
+      functions: {
+        scale: {
+          version: 1,
+          runtime: 'moonbit',
+          codeUrl: 'https://example.com/code/scale.wasm',
+          hash: ADD_HASH,
+          moonbitAbi: { params: ['f64[]'], result: 'scalar' },
+        },
+      },
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => moonbitManifest,
+    });
+    const fetcher = new ManifestFetcher('https://example.com');
+    await fetcher.fetch();
+
+    const first = fetcher.getEntry('scale')!;
+    first.hash = UPDATED_HASH;
+    first.moonbitAbi!.params[0] = 'scalar';
+
+    const second = fetcher.getEntry('scale')!;
+    expect(second).not.toBe(first);
+    expect(second.hash).toBe(ADD_HASH);
+    expect(second.moonbitAbi).toEqual({ params: ['f64[]'], result: 'scalar' });
   });
 
   it('should return undefined for non-existent function', async () => {
@@ -225,10 +304,13 @@ describe('ManifestFetcher', () => {
 
     // Only 1 HTTP request should have been made
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    // All callers should get the same result
+    // All callers get equivalent but independently mutable results.
     expect(result1).toEqual(mockManifest);
     expect(result2).toEqual(mockManifest);
     expect(result3).toEqual(mockManifest);
+    expect(result1).not.toBe(result2);
+    expect(result2).not.toBe(result3);
+    expect(result1.functions).not.toBe(result2.functions);
   });
 
   describe('cancellation (issue #105 signal propagation)', () => {
