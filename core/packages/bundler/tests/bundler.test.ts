@@ -5,7 +5,7 @@
  * self-contained code that can run in the QuickJS sandbox.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
@@ -306,6 +306,80 @@ describe('bundler', () => {
       allowedModules: ['unzen-safe-math'],
       resolveDir,
     })).rejects.toThrow(/escapes dependency package "unzen-safe-math"/);
+  });
+
+  it('should reject a package-internal symlink that resolves outside its root', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-safe-math': `
+        import { secret } from './linked-secret';
+        export { secret };
+      `,
+    });
+    const secretFile = join(resolveDir, 'secret.js');
+    writeFileSync(secretFile, `export const secret = 'not allowed';`);
+    symlinkSync(
+      secretFile,
+      join(resolveDir, 'node_modules', 'unzen-safe-math', 'linked-secret.js'),
+    );
+
+    await expect(bundle({
+      code: `
+        import { secret } from 'unzen-safe-math';
+        export function run() { return secret; }
+      `,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    })).rejects.toThrow(/escapes dependency package "unzen-safe-math"/);
+  });
+
+  it('should retain the package boundary when the package root is a symlink', async () => {
+    const resolveDir = createPackageProject({});
+    const packageDirectory = join(resolveDir, 'packages', 'unzen-safe-math');
+    mkdirSync(packageDirectory, { recursive: true });
+    writeFileSync(
+      join(packageDirectory, 'package.json'),
+      JSON.stringify({
+        name: 'unzen-safe-math',
+        version: '1.0.0',
+        type: 'module',
+        exports: './index.js',
+      }),
+    );
+    writeFileSync(
+      join(packageDirectory, 'index.js'),
+      `import { secret } from '../secret.js'; export { secret };`,
+    );
+    writeFileSync(join(resolveDir, 'packages', 'secret.js'), `export const secret = 'not allowed';`);
+    mkdirSync(join(resolveDir, 'node_modules'), { recursive: true });
+    symlinkSync(
+      packageDirectory,
+      join(resolveDir, 'node_modules', 'unzen-safe-math'),
+      'dir',
+    );
+
+    await expect(bundle({
+      code: `
+        import { secret } from 'unzen-safe-math';
+        export function run() { return secret; }
+      `,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    })).rejects.toThrow(/escapes dependency package "unzen-safe-math"/);
+  });
+
+  it('should reject application-relative access to node_modules', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-hidden-helper': `export const secret = 'not allowed';`,
+    });
+
+    await expect(bundle({
+      code: `
+        import { secret } from './node_modules/unzen-hidden-helper/index.js';
+        export function run() { return secret; }
+      `,
+      allowedModules: [],
+      resolveDir,
+    })).rejects.toThrow(/must be imported by name.*allowedModules/);
   });
 
   it('should reject asynchronous execution inside an allowed dependency', async () => {

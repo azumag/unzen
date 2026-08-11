@@ -28,7 +28,8 @@
  */
 
 import * as esbuild from 'esbuild';
-import { isAbsolute, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import ts from 'typescript';
 import { checkModuleAllowed, isNodeBuiltin } from './module-whitelist';
 import { checkForbiddenApis } from './forbidden-api-check';
@@ -79,6 +80,46 @@ const DYNAMIC_IMPORT_VIOLATION =
 
 function normalizedAbsolutePath(filePath: string): string {
   return resolve(filePath).replace(/\\/g, '/');
+}
+
+function canonicalExistingPath(filePath: string): string {
+  try {
+    return realpathSync(filePath).replace(/\\/g, '/');
+  } catch {
+    return normalizedAbsolutePath(filePath);
+  }
+}
+
+function tryCanonicalExistingPath(filePath: string): string | undefined {
+  try {
+    return realpathSync(filePath).replace(/\\/g, '/');
+  } catch {
+    return undefined;
+  }
+}
+
+function packageNameFromSpecifier(specifier: string): string | undefined {
+  const segments = specifier.split('/');
+  if (segments[0]?.startsWith('@')) {
+    return segments.length >= 2 ? `${segments[0]}/${segments[1]}` : undefined;
+  }
+  return segments[0] || undefined;
+}
+
+function installedDependencyBoundary(
+  resolveDir: string,
+  specifier: string,
+): DependencyPackageBoundary | undefined {
+  const name = packageNameFromSpecifier(specifier);
+  if (!name) return undefined;
+  let directory = resolve(resolveDir);
+  while (true) {
+    const root = tryCanonicalExistingPath(join(directory, 'node_modules', ...name.split('/')));
+    if (root) return { name, root };
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
 }
 
 function dependencyPackageBoundary(importer: string): DependencyPackageBoundary | undefined {
@@ -323,6 +364,24 @@ function createModuleWhitelistPlugin(allowedModules: string[]): esbuild.Plugin {
   return {
     name: 'unzen-module-whitelist',
     setup(build) {
+      const internalResolution = {};
+      const installedBoundaries = new Map<string, DependencyPackageBoundary>();
+
+      const boundaryForImporter = (importer: string): DependencyPackageBoundary | undefined => {
+        const lexicalBoundary = dependencyPackageBoundary(importer);
+        if (lexicalBoundary) return lexicalBoundary;
+        const canonicalImporter = canonicalExistingPath(importer);
+        let closest: DependencyPackageBoundary | undefined;
+        for (const boundary of installedBoundaries.values()) {
+          if (
+            isWithinDirectory(canonicalImporter, boundary.root)
+            && (!closest || boundary.root.length > closest.root.length)
+          ) {
+            closest = boundary;
+          }
+        }
+        return closest;
+      };
       // Dynamic imports must be rejected before esbuild lowers them into code
       // that no longer contains import(). This callback also covers relative
       // imports inside transitive dependencies.
@@ -334,12 +393,36 @@ function createModuleWhitelistPlugin(allowedModules: string[]): esbuild.Plugin {
       // App-local files remain supported, as do a package's own relative
       // modules. A dependency must not spell a sibling package or project file
       // as a relative/absolute path to bypass the bare-module allowlist.
-      build.onResolve({ filter: /.*/ }, (args) => {
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        if (args.pluginData === internalResolution) return undefined;
         if (!isLocalFileSpecifier(args.path)) return undefined;
-        const boundary = dependencyPackageBoundary(args.importer);
-        if (!boundary) return undefined;
-        const target = normalizedAbsolutePath(resolve(args.resolveDir, args.path));
-        if (isWithinDirectory(target, boundary.root)) return undefined;
+        const boundary = boundaryForImporter(args.importer);
+        const resolution = await build.resolve(args.path, {
+          importer: args.importer,
+          namespace: args.namespace,
+          resolveDir: args.resolveDir,
+          kind: args.kind,
+          pluginData: internalResolution,
+          with: args.with,
+        });
+        if (resolution.errors.length > 0) {
+          return { errors: resolution.errors, warnings: resolution.warnings };
+        }
+        const target = canonicalExistingPath(resolution.path);
+        if (!boundary) {
+          const lexicalTarget = normalizedAbsolutePath(resolve(args.resolveDir, args.path));
+          const targetPackage = dependencyPackageBoundary(lexicalTarget)
+            ?? dependencyPackageBoundary(resolution.path);
+          if (!targetPackage) return undefined;
+          return {
+            errors: [{
+              text: `Dependency package ${JSON.stringify(targetPackage.name)} must be `
+                + 'imported by name and explicitly included in allowedModules.',
+            }],
+          };
+        }
+        const packageRoot = canonicalExistingPath(boundary.root);
+        if (isWithinDirectory(target, packageRoot)) return undefined;
         return {
           errors: [{
             text: `Import ${JSON.stringify(args.path)} escapes dependency package `
@@ -354,6 +437,7 @@ function createModuleWhitelistPlugin(allowedModules: string[]): esbuild.Plugin {
       // local files, not npm modules, so they don't need whitelist checking.
       build.onResolve({ filter: /^[^./]/ }, (args) => {
         const moduleName = args.path;
+        if (isLocalFileSpecifier(moduleName)) return undefined;
 
         // Block Node.js built-in modules
         if (isNodeBuiltin(moduleName)) {
@@ -372,6 +456,9 @@ function createModuleWhitelistPlugin(allowedModules: string[]): esbuild.Plugin {
             }],
           };
         }
+
+        const boundary = installedDependencyBoundary(args.resolveDir, moduleName);
+        if (boundary) installedBoundaries.set(boundary.root, boundary);
 
         // Allow esbuild to resolve the module normally
         return undefined;
