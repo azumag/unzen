@@ -79,12 +79,12 @@ import {
 } from './worker/moonbit-worker-protocol';
 import {
   assertValidHardKillDelay,
-  assertWorkerOptions,
   normalizeHardKillMultiplier,
   normalizeQueueSize,
   normalizeTimerMs,
   normalizeWorkerFactory,
   normalizeWorkerUrl,
+  snapshotWorkerOptions,
 } from './worker-executor-options';
 
 // Execution timeout for a single MoonBit export (wasm is fast; generous
@@ -239,15 +239,24 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   };
 
   constructor(options: MoonBitWorkerSandboxOptions) {
-    assertWorkerOptions(options);
-    const workerUrl = options.workerUrl;
-    const timeout = options.timeout;
-    const initTimeoutMs = options.initTimeoutMs;
-    const maxQueueSize = options.maxQueueSize;
-    const hardKillMultiplier = options.hardKillMultiplier;
-    const createWorker = options.createWorker;
-    const importedStringConstants = options.importedStringConstants;
-    const maxCachedModules = options.maxCachedModules;
+    const snapshot = snapshotWorkerOptions(options, [
+      'workerUrl',
+      'timeout',
+      'initTimeoutMs',
+      'maxQueueSize',
+      'hardKillMultiplier',
+      'createWorker',
+      'importedStringConstants',
+      'maxCachedModules',
+    ]);
+    const workerUrl = snapshot.workerUrl;
+    const timeout = snapshot.timeout;
+    const initTimeoutMs = snapshot.initTimeoutMs;
+    const maxQueueSize = snapshot.maxQueueSize;
+    const hardKillMultiplier = snapshot.hardKillMultiplier;
+    const createWorker = snapshot.createWorker;
+    const importedStringConstants = snapshot.importedStringConstants;
+    const maxCachedModules = snapshot.maxCachedModules;
 
     const normalizedTimeout = normalizeTimerMs('timeout', timeout, DEFAULT_TIMEOUT_MS);
     const normalizedHardKillMultiplier = normalizeHardKillMultiplier(

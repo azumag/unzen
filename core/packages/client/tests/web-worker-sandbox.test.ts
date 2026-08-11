@@ -155,6 +155,17 @@ describe('WebWorkerSandboxExecutor', () => {
       executor.dispose();
     });
 
+    it('normalizes unreadable constructor options', () => {
+      const options = new Proxy({ workerUrl: '/worker.js' }, {
+        get(target, property, receiver) {
+          if (property === 'timeout') throw new Error('boom');
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      expect(() => new WebWorkerSandboxExecutor(options))
+        .toThrow('Worker executor options could not be read');
+    });
+
     it.each([
       ['empty workerUrl', { workerUrl: '   ' }, 'workerUrl'],
       ['zero timeout', { workerUrl: '/worker.js', timeout: 0 }, 'timeout'],

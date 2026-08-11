@@ -36,7 +36,7 @@ export class MoonBitCompatibilityError extends Error {
 }
 
 export function normalizeMoonBitImportedStringConstants(
-  value: MoonBitImportedStringConstants | undefined,
+  value: unknown,
 ): MoonBitImportedStringConstants {
   if (value !== undefined && value !== null && typeof value !== 'string') {
     throw new TypeError('importedStringConstants must be a string, null, or undefined');

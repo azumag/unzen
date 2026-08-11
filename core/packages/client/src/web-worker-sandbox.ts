@@ -65,12 +65,12 @@ import {
 } from './worker/worker-protocol';
 import {
   assertValidHardKillDelay,
-  assertWorkerOptions,
   normalizeHardKillMultiplier,
   normalizeQueueSize,
   normalizeTimerMs,
   normalizeWorkerFactory,
   normalizeWorkerUrl,
+  snapshotWorkerOptions,
 } from './worker-executor-options';
 import {
   snapshotQuickJsCall,
@@ -249,14 +249,22 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
   };
 
   constructor(options: WebWorkerSandboxOptions) {
-    assertWorkerOptions(options);
-    const workerUrl = options.workerUrl;
-    const timeout = options.timeout;
-    const initTimeoutMs = options.initTimeoutMs;
-    const maxQueueSize = options.maxQueueSize;
-    const cancelAckTimeoutMs = options.cancelAckTimeoutMs;
-    const hardKillMultiplier = options.hardKillMultiplier;
-    const createWorker = options.createWorker;
+    const snapshot = snapshotWorkerOptions(options, [
+      'workerUrl',
+      'timeout',
+      'initTimeoutMs',
+      'maxQueueSize',
+      'cancelAckTimeoutMs',
+      'hardKillMultiplier',
+      'createWorker',
+    ]);
+    const workerUrl = snapshot.workerUrl;
+    const timeout = snapshot.timeout;
+    const initTimeoutMs = snapshot.initTimeoutMs;
+    const maxQueueSize = snapshot.maxQueueSize;
+    const cancelAckTimeoutMs = snapshot.cancelAckTimeoutMs;
+    const hardKillMultiplier = snapshot.hardKillMultiplier;
+    const createWorker = snapshot.createWorker;
 
     const normalizedTimeout = normalizeTimerMs('timeout', timeout, DEFAULT_TIMEOUT_MS);
     const normalizedHardKillMultiplier = normalizeHardKillMultiplier(

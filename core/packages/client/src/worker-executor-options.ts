@@ -10,6 +10,21 @@ export function assertWorkerOptions(value: unknown): asserts value is Record<str
   }
 }
 
+/** Read a fixed worker option surface once before any executor state is initialized. */
+export function snapshotWorkerOptions(
+  value: unknown,
+  fields: readonly string[],
+): Record<string, unknown> {
+  assertWorkerOptions(value);
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  try {
+    for (const field of fields) snapshot[field] = value[field];
+  } catch {
+    throw new TypeError('Worker executor options could not be read');
+  }
+  return snapshot;
+}
+
 export function normalizeWorkerUrl(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new TypeError('workerUrl must be a non-empty string');

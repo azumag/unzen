@@ -229,6 +229,17 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     expect(() => new MoonBitWorkerSandboxExecutor(options as never)).toThrow(expected);
   });
 
+  it('normalizes unreadable constructor options', () => {
+    const options = new Proxy({ workerUrl: '/moonbit-worker.js' }, {
+      get(target, property, receiver) {
+        if (property === 'timeout') throw new Error('boom');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(() => new MoonBitWorkerSandboxExecutor(options))
+      .toThrow('Worker executor options could not be read');
+  });
+
   it('accepts a zero-length queue and a fractional hard-kill multiplier', () => {
     const executor = new MoonBitWorkerSandboxExecutor({
       workerUrl: '/moonbit-worker.js',
