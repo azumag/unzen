@@ -94,6 +94,41 @@ describe('UnzenServer', () => {
       expect(server.getFunction('tagSafe')).toBeDefined();
     });
 
+    it('rejects invalid options before inspecting the function', () => {
+      const inspect = vi.fn();
+      const fn = new Proxy(() => 1, {
+        getPrototypeOf() {
+          inspect();
+          throw new Error('function inspection must not run');
+        },
+      });
+
+      expect(() => server.define('invalidDefineOptions', fn, { timeout: 0 }))
+        .toThrow('Invalid timeout');
+      expect(inspect).not.toHaveBeenCalled();
+      expect(server.getFunction('invalidDefineOptions')).toBeUndefined();
+    });
+
+    it('reads caller-owned define options only once', () => {
+      let timeoutReads = 0;
+      let fallbackReads = 0;
+      const options = new Proxy({}, {
+        get(_target, property) {
+          if (property === 'timeout') return ++timeoutReads === 1 ? 500 : 0;
+          if (property === 'noFallback') return ++fallbackReads === 1 ? true : 'invalid';
+          return undefined;
+        },
+      });
+
+      server.define('stableDefineOptions', () => 1, options);
+      expect(server.getFunction('stableDefineOptions')).toMatchObject({
+        timeout: 500,
+        noFallback: true,
+      });
+      expect(timeoutReads).toBe(1);
+      expect(fallbackReads).toBe(1);
+    });
+
     it('should wrap function code with run() function', () => {
       const testFunc = function (x: number) {
         return x * 2;

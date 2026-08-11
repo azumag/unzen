@@ -306,13 +306,14 @@ export class UnzenServer {
     options?: UnzenFunctionOptions,
   ): void {
     assertValidRegistrationName(name);
+    const functionOptions = snapshotFunctionOptions(options);
     // Extract function source code
     // The captured intrinsic cannot be replaced by a function object's own
     // toString property, and does not consult Symbol.toStringTag.
     const code = snapshotSynchronousFunctionSource(fn);
 
     // Use defineRaw to register with the extracted code
-    this.defineRaw(name, code, options);
+    this.defineRaw(name, code, functionOptions);
   }
 
   // MAX_FUNCTION_TIMEOUT is imported from @unzen/shared for single source of truth
