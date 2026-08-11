@@ -41,11 +41,13 @@
  */
 
 import {
+  MAX_EXECUTION_ARGUMENTS,
   UnzenCancelledError,
   UnzenDeadlineExceededError,
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenRuntimeError,
+  isValidFunctionName,
   type FunctionManifestEntry,
 } from '@unzen/shared';
 import { FallbackHandler } from './fallback-handler';
@@ -121,6 +123,23 @@ export interface UnzenExecutionRequest {
   /** Optional lifecycle event listener */
   onEvent?: (event: UnzenExecutionEvent) => void;
 }
+
+interface AbortSignalSnapshot {
+  readonly aborted: boolean;
+  addAbortListener(listener: () => void): void;
+  removeAbortListener(listener: () => void): void;
+}
+
+interface NormalizedExecutionRequest {
+  readonly name: string;
+  readonly args: unknown[];
+  readonly signal?: AbortSignalSnapshot;
+  readonly onEvent?: (event: UnzenExecutionEvent) => void;
+}
+
+type ExecutionRequestNormalization =
+  | { ok: true; request: NormalizedExecutionRequest }
+  | { ok: false; error: UnzenFunctionError };
 
 /** Fields every execution event carries */
 export interface UnzenExecutionEventBase {
@@ -545,11 +564,27 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
    * the per-attempt diagnostic chain as it goes.
    */
   private async runExecution<T>(
-    request: UnzenExecutionRequest,
+    requestValue: UnzenExecutionRequest,
   ): Promise<RunExecutionOutcome<T>> {
     const executionId = `exec-${++executionIdCounter}`;
     const startedAt = performance.now();
     const wasManifestCached = this.manifestFetcher.isCached();
+    const normalized = normalizeExecutionRequest(requestValue);
+
+    if (!normalized.ok) {
+      return {
+        ok: false,
+        error: normalized.error,
+        errorCode: 'function_failed',
+        executionId,
+        fallbackUsed: false,
+        attempts: [],
+        totalDurationMs: performance.now() - startedAt,
+        manifestCache: wasManifestCached ? 'hit' : 'miss',
+      };
+    }
+
+    const request = normalized.request;
 
     let sequence = 0;
     let terminalEmitted = false;
@@ -652,6 +687,7 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
     // covers both dispose and caller abort.
     const internalController = new AbortController();
     this.inFlightControllers.add(internalController);
+    let abortListenerAttached = false;
 
     const forwardAbort = () => {
       emit({ type: 'cancel-requested' });
@@ -664,7 +700,14 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
         if (request.signal.aborted) {
           return cancelledOutcome();
         }
-        request.signal.addEventListener('abort', forwardAbort, { once: true });
+        abortListenerAttached = true;
+        try {
+          request.signal.addAbortListener(forwardAbort);
+        } catch {
+          const error = invalidExecutionRequest('signal could not be subscribed');
+          emit({ type: 'failed', errorCode: 'function_failed' });
+          return buildOutcome(false, undefined, error, 'function_failed');
+        }
       }
 
       // Reject new executions on a disposed client (terminal event included
@@ -944,8 +987,12 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
       }
     } finally {
       // Always deregister: no listener, no in-flight controller survives.
-      if (request.signal) {
-        request.signal.removeEventListener('abort', forwardAbort);
+      if (request.signal && abortListenerAttached) {
+        try {
+          request.signal.removeAbortListener(forwardAbort);
+        } catch {
+          // A caller-owned signal must not make executeWithDiagnostics reject.
+        }
       }
       this.inFlightControllers.delete(internalController);
     }
@@ -971,6 +1018,102 @@ interface RunExecutionOutcome<T> {
 /** Normalize an unknown thrown value into an Error */
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function invalidExecutionRequest(reason: string): UnzenFunctionError {
+  return new UnzenFunctionError(`Invalid execution request: ${reason}`);
+}
+
+/**
+ * Validate and shallow-copy a public execution request before any async work.
+ * Indexed copies avoid invoking caller-provided array iterators.
+ */
+function normalizeExecutionRequest(value: unknown): ExecutionRequestNormalization {
+  try {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { ok: false, error: invalidExecutionRequest('request must be an object') };
+    }
+
+    const record = value as Record<string, unknown>;
+    const name = record.name;
+    if (!isValidFunctionName(name)) {
+      return { ok: false, error: invalidExecutionRequest('function name is unsafe') };
+    }
+
+    const rawArgs = record.args;
+    if (!Array.isArray(rawArgs)) {
+      return { ok: false, error: invalidExecutionRequest('args must be an array') };
+    }
+    const argumentCount: unknown = rawArgs.length;
+    if (
+      typeof argumentCount !== 'number'
+      || !Number.isSafeInteger(argumentCount)
+      || argumentCount < 0
+      || argumentCount > MAX_EXECUTION_ARGUMENTS
+    ) {
+      return {
+        ok: false,
+        error: invalidExecutionRequest(
+          `args must contain at most ${MAX_EXECUTION_ARGUMENTS} items`,
+        ),
+      };
+    }
+
+    const args = new Array<unknown>(argumentCount);
+    for (let index = 0; index < argumentCount; index += 1) {
+      args[index] = rawArgs[index];
+    }
+
+    const rawSignal = record.signal;
+    let signal: AbortSignalSnapshot | undefined;
+    if (rawSignal !== undefined) {
+      if (typeof rawSignal !== 'object' || rawSignal === null) {
+        return { ok: false, error: invalidExecutionRequest('signal must be an AbortSignal') };
+      }
+      const signalRecord = rawSignal as unknown as Record<string, unknown>;
+      const aborted = signalRecord.aborted;
+      const addEventListener = signalRecord.addEventListener;
+      const removeEventListener = signalRecord.removeEventListener;
+      if (
+        typeof aborted !== 'boolean'
+        || typeof addEventListener !== 'function'
+        || typeof removeEventListener !== 'function'
+      ) {
+        return { ok: false, error: invalidExecutionRequest('signal must be an AbortSignal') };
+      }
+      signal = {
+        aborted,
+        addAbortListener(listener) {
+          Reflect.apply(addEventListener, rawSignal, ['abort', listener, { once: true }]);
+        },
+        removeAbortListener(listener) {
+          Reflect.apply(removeEventListener, rawSignal, ['abort', listener]);
+        },
+      };
+    }
+
+    const onEvent = record.onEvent;
+    if (onEvent !== undefined && typeof onEvent !== 'function') {
+      return { ok: false, error: invalidExecutionRequest('onEvent must be a function') };
+    }
+
+    return {
+      ok: true,
+      request: {
+        name,
+        args,
+        ...(signal !== undefined && { signal }),
+        ...(onEvent !== undefined && {
+          onEvent: onEvent as (event: UnzenExecutionEvent) => void,
+        }),
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      error: invalidExecutionRequest('request properties could not be read'),
+    };
+  }
 }
 
 /** Map a new stable error code to the legacy callWithDiagnostics error type */

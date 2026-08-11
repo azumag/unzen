@@ -23,9 +23,14 @@ import {
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenRuntimeError,
+  MAX_EXECUTION_ARGUMENTS,
   type ManifestResponse,
 } from '@unzen/shared';
-import { UnzenClient, type UnzenExecutionEvent } from '../src/unzen-client';
+import {
+  UnzenClient,
+  type UnzenExecutionEvent,
+  type UnzenExecutionRequest,
+} from '../src/unzen-client';
 import { MockSandboxExecutor } from '../src/quickjs-sandbox';
 
 const fibonacciWasmBytes = readFileSync(
@@ -757,6 +762,123 @@ describe('UnzenClient', () => {
   // === issue #105 execution lifecycle (signal / events / diagnostics) ===
   describe('issue #105 execution lifecycle', () => {
     const endpoint = 'https://example.com';
+
+    it('should reject invalid execution requests before fetch or sandbox work', async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const sandbox = new MockSandboxExecutor();
+      const executeSpy = vi.spyOn(sandbox, 'execute');
+      const client = new UnzenClient({ endpoint, sandbox });
+
+      await expect(client.execute(null as unknown as UnzenExecutionRequest))
+        .rejects.toThrow(UnzenFunctionError);
+
+      const invalidRequests: unknown[] = [
+        { name: '../escape', args: [] },
+        { name: 'add', args: {} },
+        { name: 'add', args: new Array(MAX_EXECUTION_ARGUMENTS + 1) },
+        { name: 'add', args: [], signal: {} },
+        { name: 'add', args: [], onEvent: 'not-a-listener' },
+      ];
+
+      for (const request of invalidRequests) {
+        const result = await client.executeWithDiagnostics(
+          request as UnzenExecutionRequest,
+        );
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.code).toBe('function_failed');
+          expect(result.error.message).toContain('Invalid execution request');
+          expect(result.diagnostics.attempts).toEqual([]);
+        }
+      }
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(executeSpy).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
+    it('should reject an oversized array before reading any argument slot', async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      let indexedReads = 0;
+      const args = new Proxy([], {
+        get(target, property, receiver) {
+          if (property === 'length') return MAX_EXECUTION_ARGUMENTS + 1;
+          if (typeof property === 'string' && /^\d+$/.test(property)) {
+            indexedReads += 1;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const client = new UnzenClient({ endpoint, sandbox: new MockSandboxExecutor() });
+
+      const result = await client.executeWithDiagnostics({ name: 'add', args });
+
+      expect(result.success).toBe(false);
+      expect(indexedReads).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
+    it('should snapshot request fields and argument slots exactly once', async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const sandbox = new MockSandboxExecutor();
+      let receivedArgs: unknown[] | undefined;
+      sandbox.execute = vi.fn(async (_code, args) => {
+        receivedArgs = args;
+        return (args as number[]).reduce((sum, value) => sum + value, 0);
+      });
+      const client = new UnzenClient({ endpoint, sandbox });
+
+      const args = [1, 2];
+      Object.defineProperty(args, Symbol.iterator, {
+        value: () => {
+          throw new Error('argument iterator must not run at the client boundary');
+        },
+      });
+      const reads = { name: 0, args: 0, signal: 0, onEvent: 0 };
+      const events: string[] = [];
+      const request = {
+        get name() {
+          reads.name += 1;
+          if (reads.name > 1) throw new Error('name read more than once');
+          return 'add';
+        },
+        get args() {
+          reads.args += 1;
+          if (reads.args > 1) throw new Error('args read more than once');
+          return args;
+        },
+        get signal() {
+          reads.signal += 1;
+          if (reads.signal > 1) throw new Error('signal read more than once');
+          return undefined;
+        },
+        get onEvent() {
+          reads.onEvent += 1;
+          if (reads.onEvent > 1) throw new Error('onEvent read more than once');
+          return (event: UnzenExecutionEvent) => events.push(event.type);
+        },
+      };
+
+      const execution = client.execute<number>(request);
+      args[0] = 100;
+      const result = await execution;
+
+      expect(result).toBe(3);
+      expect(reads).toEqual({ name: 1, args: 1, signal: 1, onEvent: 1 });
+      expect(receivedArgs).toEqual([1, 2]);
+      expect(receivedArgs).not.toBe(args);
+      expect(events.at(-1)).toBe('completed');
+      client.dispose();
+    });
 
     it('should reject immediately when signal is already aborted (no fetch, no fallback)', async () => {
       const fetchMock = vi.fn();

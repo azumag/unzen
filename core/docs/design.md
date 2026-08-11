@@ -390,6 +390,9 @@ try {
 fallback API は最大128引数の JSON transport とし、client/server の両側で request
 shape を検証する。client は response の `result` / `error` envelope も実行時検証し、
 malformed JSON、redirect、rate limit、5xx を `UnzenNetworkError` として fail closed にする。
+公開 `execute` API も同じ128引数上限を適用し、manifest fetch より前に request field と
+top-level 引数 slot を一度だけ読み取って浅く snapshot する。不正な request は browser / server
+のどちらも開始せず `UnzenFunctionError`（diagnostics は `function_failed`）で拒否する。
 
 #### MoonBit のエラー
 
