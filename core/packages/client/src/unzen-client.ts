@@ -58,6 +58,7 @@ import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 import { MoonBitSandboxExecutor } from './moonbit-sandbox';
 import { MoonBitWorkerSandboxExecutor } from './moonbit-worker-sandbox';
 import type { MoonBitImportedStringConstants } from './moonbit-compile-options';
+import { normalizeUnzenClientOptions } from './unzen-client-options';
 
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
@@ -368,25 +369,26 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
   private readonly inFlightControllers = new Set<AbortController>();
 
   constructor(options: UnzenClientOptions) {
-    this.endpoint = options.endpoint;
-    this.mode = options.mode ?? 'production';
+    const normalized = normalizeUnzenClientOptions(options);
+    this.endpoint = normalized.endpoint;
+    this.mode = normalized.mode;
 
     // Initialize components
     this.fallbackHandler = new FallbackHandler(this.endpoint);
     this.manifestFetcher = new ManifestFetcher(this.endpoint);
     this.codeFetcher = new CodeFetcher(this.endpoint);
-    if (options.moonbitSandbox) {
-      this.moonbitSandbox = options.moonbitSandbox;
-    } else if (options.moonbitWorkerUrl) {
+    if (normalized.moonbitSandbox.kind === 'custom') {
+      this.moonbitSandbox = normalized.moonbitSandbox.executor;
+    } else if (normalized.moonbitSandbox.kind === 'worker') {
       // Dedicated worker execution: MoonBit exports never block the main
       // thread, and timeouts/cancellation terminate the worker.
       this.moonbitSandbox = new MoonBitWorkerSandboxExecutor({
-        workerUrl: options.moonbitWorkerUrl,
-        importedStringConstants: options.moonbitImportedStringConstants,
+        workerUrl: normalized.moonbitSandbox.workerUrl,
+        importedStringConstants: normalized.moonbitSandbox.importedStringConstants,
       });
     } else {
       this.moonbitSandbox = new MoonBitSandboxExecutor({
-        importedStringConstants: options.moonbitImportedStringConstants,
+        importedStringConstants: normalized.moonbitSandbox.importedStringConstants,
       });
     }
 
@@ -394,15 +396,12 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
     // - options.sandbox: Custom executor (advanced usage / testing)
     // - options.workerUrl: WebWorkerSandboxExecutor with 4-layer isolation (production)
     // - error: No fallback — workerUrl or sandbox must be provided
-    if (options.sandbox) {
-      this.sandboxExecutor = options.sandbox;
-    } else if (options.workerUrl) {
-      this.sandboxExecutor = new WebWorkerSandboxExecutor({ workerUrl: options.workerUrl });
+    if (normalized.sandbox.kind === 'custom') {
+      this.sandboxExecutor = normalized.sandbox.executor;
     } else {
-      throw new Error(
-        'UnzenClient requires either workerUrl or sandbox option. '
-        + 'Use workerUrl for browser execution or provide a custom SandboxExecutor.'
-      );
+      this.sandboxExecutor = new WebWorkerSandboxExecutor({
+        workerUrl: normalized.sandbox.workerUrl,
+      });
     }
   }
 

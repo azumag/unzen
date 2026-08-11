@@ -521,6 +521,10 @@ interface UnzenExecutionRequest {
 }
 ```
 
+- **constructor 境界**: option bag、非空 `endpoint`、3種類の `mode`、選択した worker URL / MoonBit
+  compile option、custom executor の callable surface を component 生成前に検証する。選択肢は
+  一度だけ読み、custom executor の method reference は元 instance に bind した snapshot として
+  保持する。endpoint は trim し末尾 slash を除去して `//manifest` / `//exec` を作らない。
 - **request 境界**: `name` は safe identifier、`args` は最大128件の配列とし、manifest
   fetch より前に request field を一度だけ読む。top-level の引数 slot は iterator を
   呼ばない bounded indexed copy で浅く snapshot する。`signal` / `onEvent` も型検証して

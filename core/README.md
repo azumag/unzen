@@ -354,6 +354,12 @@ const client = new UnzenClient({
 });
 ```
 
+constructor は component を作る前に option を検証・snapshot する。`endpoint` は非空文字列、
+`mode` は `production` / `development` / `browser-only` に限定され、endpoint の前後空白と
+末尾 slash は route 結合前に正規化される。custom `sandbox` / `moonbitSandbox` は
+`execute()` と `dispose()`（および指定した optional method）が callable でなければならない。
+custom executor が選ばれた場合、shadow された worker option は評価しない。
+
 `/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは
 `/moonbit-worker.js` で配信済み）。Worker protocol v3 は配列 ABI を含むため、

@@ -724,6 +724,10 @@ const unzen = new UnzenClient({
 | `production` | ブラウザ優先 + フォールバック | 本番運用 |
 | `browser-only` | ブラウザのみ (フォールバックなし) | テスト、ベンチマーク |
 
+`UnzenClient` は constructor option を component 生成前に検証し、選択した custom executor の
+method と設定値を一度だけ snapshot する。endpoint の前後空白・末尾 slash は route 結合前に
+正規化し、不正な mode / worker URL / executor shape は同期的に拒否する。
+
 ### 6.3 診断情報
 
 ```typescript

@@ -28,6 +28,7 @@ import {
 } from '@unzen/shared';
 import {
   UnzenClient,
+  type UnzenClientOptions,
   type UnzenExecutionEvent,
   type UnzenExecutionRequest,
 } from '../src/unzen-client';
@@ -142,6 +143,101 @@ describe('UnzenClient', () => {
       expect(() => new UnzenClient({ endpoint: 'https://example.com' })).toThrow(
         'UnzenClient requires either workerUrl or sandbox option'
       );
+    });
+
+    it('should reject malformed runtime options synchronously', () => {
+      const validSandbox = new MockSandboxExecutor();
+      const invalidOptions: Array<{ options: unknown; message: string }> = [
+        { options: null, message: 'options must be an object' },
+        {
+          options: { endpoint: '   ', sandbox: validSandbox },
+          message: 'endpoint must be a non-empty string',
+        },
+        {
+          options: { endpoint: 'https://example.com', mode: 'fast', sandbox: validSandbox },
+          message: 'mode must be production, development, or browser-only',
+        },
+        {
+          options: { endpoint: 'https://example.com', sandbox: {} },
+          message: 'sandbox must implement execute() and dispose()',
+        },
+        {
+          options: {
+            endpoint: 'https://example.com',
+            sandbox: validSandbox,
+            moonbitSandbox: { execute: async () => undefined, dispose: true },
+          },
+          message: 'moonbitSandbox must implement execute() and dispose()',
+        },
+        {
+          options: { endpoint: 'https://example.com', workerUrl: '   ' },
+          message: 'workerUrl must be a non-empty string',
+        },
+        {
+          options: {
+            endpoint: 'https://example.com',
+            sandbox: validSandbox,
+            moonbitWorkerUrl: '',
+          },
+          message: 'workerUrl must be a non-empty string',
+        },
+      ];
+
+      for (const { options, message } of invalidOptions) {
+        expect(() => new UnzenClient(options as UnzenClientOptions)).toThrow(message);
+      }
+    });
+
+    it('should read selected executor options once and ignore shadowed alternatives', () => {
+      const sandbox = new MockSandboxExecutor();
+      const moonbitSandbox = new MockSandboxExecutor();
+      const reads = { sandbox: 0, moonbitSandbox: 0 };
+      const options = {
+        endpoint: 'https://example.com',
+        get sandbox() {
+          reads.sandbox += 1;
+          if (reads.sandbox > 1) throw new Error('sandbox read more than once');
+          return sandbox;
+        },
+        get workerUrl(): string {
+          throw new Error('shadowed workerUrl must not be read');
+        },
+        get moonbitSandbox() {
+          reads.moonbitSandbox += 1;
+          if (reads.moonbitSandbox > 1) {
+            throw new Error('moonbitSandbox read more than once');
+          }
+          return moonbitSandbox;
+        },
+        get moonbitWorkerUrl(): string {
+          throw new Error('shadowed moonbitWorkerUrl must not be read');
+        },
+        get moonbitImportedStringConstants(): string {
+          throw new Error('shadowed MoonBit compile option must not be read');
+        },
+      };
+
+      const client = new UnzenClient(options);
+
+      expect(reads).toEqual({ sandbox: 1, moonbitSandbox: 1 });
+      client.dispose();
+    });
+
+    it('should normalize endpoint trailing slashes before building route URLs', async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url === 'https://example.com/manifest') return jsonResponse(mockManifest);
+        if (url === 'https://example.com/code/add.js') return textResponse(mockAddCode);
+        throw new Error(`unexpected URL: ${url}`);
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const client = new UnzenClient({
+        endpoint: '  https://example.com///  ',
+        sandbox: new MockSandboxExecutor(),
+      });
+
+      await expect(client.call('add', 1, 2)).resolves.toBe(3);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/manifest');
+      client.dispose();
     });
   });
 
