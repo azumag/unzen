@@ -639,7 +639,25 @@ defineRaw('add', '(a, b) => a + b')
 | ETag/Conditional GET | マニフェストの効率的キャッシュ更新 |
 | MoonBit wasm-gc | 高性能計算用ランタイム統合 (**実装済み**: `MoonBitSandboxExecutor` + `defineMoonbit`) |
 | Service Worker | versioned code/Wasm の hash 検証付き CacheStorage (**実装済み**) |
-| ビルドツール統合 | Vite/webpack プラグインでコンパイル時関数抽出 |
+| ビルドツール統合 | Vite plugin / webpack loaderによるASTベースのコンパイル時関数抽出 (**実装済み**) |
+
+### コンパイル時関数抽出 (Phase 3)
+
+```
+TypeScript source
+  → TypeScript ASTで @unzen/server import / const instance / define callを照合
+  → inline関数だけをES2018 JavaScriptへtranspile
+  → MagicStringで defineRaw(name, code, options) に局所置換 + source map
+  → Vite pre-transform / webpack loaderへ同じ結果を返す
+```
+
+- 対象をトップレベルのinline同期関数に限定し、動的名・外部関数・async/generatorは
+  build時にfile/line/column付きで拒否する
+- unrelated `.define()`、nested call、`node_modules`は変換しない
+- webpack loaderはESM/CJS両方で配布し、raw TypeScriptを読むためloader chainの
+  最初（`use`配列の右端）に置く
+- AST変換はクロージャ値を埋め込まない。外部依存を含むコードは既存の
+  `bundle()` + module whitelist + forbidden API scanを使用する
 
 ### MoonBit wasm-gc 統合 (Phase 3)
 

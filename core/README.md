@@ -3,7 +3,8 @@
 サーバーサイドの計算関数をブラウザ側に委任するフレームワーク。
 QuickJS (Wasm) または MoonBit (Wasm) サンドボックスで安全に実行する。
 
-> **ステータス**: Phase 3 進行中。モジュールバンドラー(@unzen/bundler)が稼働中。
+> **ステータス**: Phase 3 進行中。モジュールバンドラーとVite/webpackの
+> コンパイル時関数抽出 (`@unzen/bundler`) が稼働中。
 > ユニット・統合テストは `npm test`、ブラウザE2Eは `npm run e2e -w @unzen/demo` で通過状態を確認できる。
 
 ## コンセプト
@@ -43,6 +44,29 @@ unzen.defineRaw('jsonSchemaValidate', `function run(schema, data) {
 await unzen.initialize();
 app.route('/unzen', unzen.middleware());
 ```
+
+### Vite / webpack でのコンパイル時抽出
+
+`Function.prototype.toString()` を本番bundle後に呼ぶ代わりに、ビルド時にinline関数を
+JavaScript文字列へ変換できる。TypeScriptの引数・戻り値型は抽出時に除去される。
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite';
+import { unzenVitePlugin } from '@unzen/bundler';
+
+export default defineConfig({ plugins: [unzenVitePlugin()] });
+```
+
+```typescript
+import { UnzenServer } from '@unzen/server';
+
+const unzen = new UnzenServer({ baseUrl: '/unzen' });
+unzen.define('sum', (a: number, b: number): number => a + b);
+// build output: unzen.defineRaw("sum", "(a, b) => a + b")
+```
+
+webpack loader設定と対象構文の制約は[モジュールバンドラーガイド](docs/bundler.md)を参照。
 
 ```typescript
 // client.ts - ブラウザ側

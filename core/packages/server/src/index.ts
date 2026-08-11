@@ -38,7 +38,7 @@
 
 // Main server class
 export { UnzenServer } from './unzen-server';
-export type { UnzenServerConfig } from './unzen-server';
+export type { UnzenFunctionOptions, UnzenServerConfig } from './unzen-server';
 
 // Internal components (exported for advanced use cases)
 export { FunctionRegistry } from './function-registry';

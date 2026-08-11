@@ -105,6 +105,17 @@ describe('UnzenServer', () => {
 
       expect(v2).toBeGreaterThan(v1!);
     });
+
+    it('should preserve execution options for compile-time-compatible definitions', () => {
+      server.define('privateDouble', (value: number) => value * 2, {
+        timeout: 500,
+        noFallback: true,
+      });
+
+      const fn = server.getFunction('privateDouble');
+      expect(fn?.timeout).toBe(500);
+      expect(fn?.noFallback).toBe(true);
+    });
   });
 
   describe('defineRaw', () => {

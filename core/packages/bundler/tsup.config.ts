@@ -3,15 +3,32 @@ import { defineConfig } from 'tsup';
 /**
  * tsup configuration for @unzen/bundler
  *
- * Builds module bundler that wraps esbuild for sandbox-safe function bundling.
- * ESM-only for consistency with other @unzen packages.
+ * Builds the ESM bundler/plugin API plus an additional CommonJS webpack
+ * loader entry for require.resolve()-based configurations.
  */
-export default defineConfig({
-  entry: ['src/index.ts'],
-  format: ['esm'],
-  dts: true,
-  clean: true,
-  sourcemap: true,
-  splitting: false,
-  external: ['esbuild'],
-});
+export default defineConfig([
+  {
+    entry: {
+      index: 'src/index.ts',
+      'webpack-loader': 'src/webpack-loader.ts',
+    },
+    format: ['esm'],
+    dts: true,
+    clean: true,
+    sourcemap: true,
+    splitting: false,
+    external: ['esbuild', 'magic-string', 'typescript'],
+  },
+  // CommonJS loader output keeps require.resolve() usable from the webpack
+  // configuration format most projects still use.
+  {
+    entry: { 'webpack-loader': 'src/webpack-loader.ts' },
+    format: ['cjs'],
+    dts: false,
+    clean: false,
+    sourcemap: true,
+    splitting: false,
+    external: ['esbuild', 'magic-string', 'typescript'],
+    outExtension: () => ({ js: '.cjs' }),
+  },
+]);

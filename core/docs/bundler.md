@@ -42,6 +42,82 @@ Layer 3: 禁止API検出（バンドル後スキャン）
 
 ## 使い方
 
+### `define()` のコンパイル時抽出
+
+Vite pluginとwebpack loaderは同じTypeScript AST変換を使用する。`@unzen/server`
+からimportした`UnzenServer`の`const`インスタンスに対する、トップレベルのinline同期
+関数だけを`defineRaw()`へ変換する。対象call以外のソースはMagicStringで保持し、source
+mapも返す。
+
+```typescript
+// functions.ts
+import { UnzenServer } from '@unzen/server';
+
+const server = new UnzenServer({ baseUrl: '/unzen' });
+server.define('sum', (a: number, b: number): number => a + b, {
+  timeout: 500,
+});
+```
+
+build後の意味上の出力:
+
+```javascript
+server.defineRaw("sum", "(a, b) => a + b", { timeout: 500 });
+```
+
+#### Vite
+
+Vite標準の`transform` hookを`enforce: 'pre'`で使用する。
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite';
+import { unzenVitePlugin } from '@unzen/bundler';
+
+export default defineConfig({
+  plugins: [
+    unzenVitePlugin({
+      include: /\/server\//,
+      exclude: /\.generated\.ts$/,
+    }),
+  ],
+});
+```
+
+#### webpack
+
+webpack loaderはraw TypeScriptを読む必要がある。loaderは右から左へ実行されるため、
+Unzen loaderを`use`の右端（最初に実行される位置）へ置く。
+
+```javascript
+// webpack.config.cjs
+module.exports = {
+  module: {
+    rules: [{
+      test: /\.[cm]?[jt]sx?$/,
+      exclude: /node_modules/,
+      use: [
+        { loader: 'ts-loader' },
+        { loader: require.resolve('@unzen/bundler/webpack-loader') },
+      ],
+    }],
+  },
+};
+```
+
+#### 抽出契約
+
+- `import { UnzenServer } from '@unzen/server'`（alias可）またはnamespace importが必要
+- `const server = new UnzenServer(...)` の直接初期化が必要
+- `server.define(name, fn, options?)` はトップレベルのexpression statementに置く
+- `name` は静的文字列、`fn` はinline arrow/function expressionかつ同期関数に限る
+- 動的な名前、外部変数に入れた関数、async/generatorは位置付きbuild errorになる
+- nestedな`.define()`と無関係なライブラリの`.define()`は誤変換を避けるため触らない
+- クロージャの外部参照は抽出文字列には含まれない。関数は引数とsandbox組み込みだけで完結させる
+- npm依存を関数へ含める場合は下記`bundle()`を使い、module whitelistを適用する
+
+### npm依存のバンドル
+
 ```typescript
 import { bundle } from '@unzen/bundler';
 
@@ -92,6 +168,22 @@ Node.js 組み込みモジュールかどうかを判定する。`node:` プレ�
 
 デフォルトの許可モジュールリスト: `lodash`, `date-fns`, `validator`, `marked`, `json-schema`
 
+### `transformUnzenDefinitions(source, fileName)`
+
+adapter共通のAST変換。変更がなければ`null`、変更時は`code`、`map`、抽出した
+`definitions`（name/line/column）を返す。
+
+### `unzenVitePlugin(options?)`
+
+Vite/Rollup互換のpre-transform pluginを返す。標準ではJS/TS系拡張子だけを処理し、
+`node_modules`、virtual module、query付きrequestを除外する。`include` / `exclude`には
+単一または複数の正規表現を指定できる。
+
+### `@unzen/bundler/webpack-loader`
+
+ESMとCommonJSの両方で公開するwebpack loader。変換結果とsource mapをwebpackの
+loader callbackへ渡す。
+
 ## バンドルパイプライン
 
 1. ソースコードから import 文を抽出する（静的プリチェック）
@@ -104,10 +196,10 @@ Node.js 組み込みモジュールかどうかを判定する。`node:` プレ�
 ## テスト
 
 ```bash
-# バンドラーテストのみ (45テスト)
+# バンドラーテストのみ
 npx vitest run packages/bundler/tests/
 
-# 全テスト (379テスト)
+# 全テスト
 npx vitest run
 ```
 
@@ -116,7 +208,8 @@ npx vitest run
 - 禁止API検出は正規表現ベースのヒューリスティック。動的に構築された API 呼び出し（例: `window['fe'+'tch']`）は検出できない
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
+- compile-time抽出はinline関数を文字列化するが、クロージャ値やimportを自動bundleしない
 
 ---
 
-**最終更新**: 2026年2月
+**最終更新**: 2026年8月

@@ -70,13 +70,13 @@ const unzen = new UnzenServer();
 
 // JavaScript関数をブラウザ委任として登録
 // 第1引数: 関数名、第2引数: ブラウザで実行される関数コード (文字列化される)
-export const spamCheck = unzen.define('spamCheck', (text: string) => {
+unzen.define('spamCheck', (text: string) => {
   const patterns = [/viagra/i, /casino/i, /lottery/i];
   return patterns.some(p => p.test(text));
 });
 
 // MoonBit関数の登録 (事前コンパイル済みWasmバイナリを指定)
-export const heavyCalc = unzen.defineMoonBit('heavyCalc', {
+unzen.defineMoonBit('heavyCalc', {
   wasmPath: './heavy_calc.wasm',  // MoonBitからコンパイル済み
   entryPoint: 'calculate',
 });
@@ -397,18 +397,18 @@ unzen で委任できる関数は**純粋関数**に限定される:
 
 ```typescript
 // OK: 純粋関数 - 入力のみに依存し、同じ入力には同じ出力を返す
-const validate = unzen.define('validate', (email: string) => {
+unzen.define('validate', (email: string) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 });
 
 // NG: 外部状態を参照する関数 - ブラウザにはDBがないため動作しない
-const checkUser = unzen.define('checkUser', (id: string) => {
+unzen.define('checkUser', (id: string) => {
   return db.query('SELECT * FROM users WHERE id = ?', [id]);  // ERROR
 });
 
 // NG: クロージャで外部スコープを参照 - 文字列化時にスコープが失われる
 const config = { maxLen: 100 };
-const check = unzen.define('check', (text: string) => {
+unzen.define('check', (text: string) => {
   return text.length <= config.maxLen;  // ERROR: config is undefined
 });
 ```
@@ -418,13 +418,15 @@ const check = unzen.define('check', (text: string) => {
 - ブラウザ側ではクロージャのスコープ、外部モジュール、DB接続等にアクセスできない
 - この制約はMoonBitでは自然に満たされる (Wasm関数は本質的に純粋)
 
-**注意: `Function.prototype.toString()` の制約**:
+**注意: `Function.prototype.toString()` とビルド時抽出**:
 - JS関数の文字列化は `Function.prototype.toString()` に依存しており、トランスパイラ出力やminifyで壊れる可能性がある
-- Phase 3のビルドツール統合 (Vite/webpackプラグイン) で、コンパイル時に安全な抽出を行う予定
+- `@unzen/bundler` のVite plugin / webpack loaderは、`UnzenServer` importと
+  `const` instanceをASTで確認したトップレベルinline同期関数を、型注釈を除去して
+  `defineRaw()`へコンパイル時変換する（source map付き）
 - MVP段階では、関数定義を文字列リテラルとして渡す代替APIも提供する:
   ```typescript
   // 代替: 文字列リテラルで関数を定義 (トランスパイラに影響されない)
-  const spamCheck = unzen.defineRaw('spamCheck', `
+  unzen.defineRaw('spamCheck', `
     function(text) {
       const patterns = [/viagra/i, /casino/i, /lottery/i];
       return patterns.some(p => p.test(text));
@@ -725,11 +727,11 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 ## 7. 開発ロードマップ
 
 ### Phase 1: 基本動作 (MVP)
-- [ ] QuickJS Wasm ビルドと Web Worker での実行
-- [ ] サーバーSDK: 関数定義・マニフェスト配信エンドポイント
-- [ ] クライアントSDK: 関数取得・実行
-- [ ] フォールバック: サーバー側実行
-- [ ] 開発モード (常時サーバー実行)
+- [x] QuickJS Wasm ビルドと Web Worker での実行
+- [x] サーバーSDK: 関数定義・マニフェスト配信エンドポイント
+- [x] クライアントSDK: 関数取得・実行
+- [x] フォールバック: サーバー側実行
+- [x] 開発モード (常時サーバー実行)
 
 ### Phase 2: MoonBit対応・キャッシュ
 - [x] MoonBit wasm-gc ランタイム統合
@@ -738,9 +740,9 @@ const result = await unzen.call('spamCheck', text, { diagnostics: true });
 - [x] wasm-gc / JS String Builtins 未対応ブラウザの検出（安定した runtime error。MoonBit は server fallback なし）
 
 ### Phase 3: DX向上
-- [ ] ビルドツール統合 (Vite/webpack プラグイン)
+- [x] ビルドツール統合 (Vite plugin / webpack loader + 共通AST変換)
 - [ ] TypeScript型定義の自動生成
-- [ ] 診断情報API (実行場所・時間の可視化)
+- [x] 診断情報API (実行場所・時間の可視化)
 - [ ] 純粋関数チェッカー (定義時の静的解析)
 
 ---

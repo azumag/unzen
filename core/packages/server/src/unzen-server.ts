@@ -41,6 +41,14 @@ export interface UnzenServerConfig {
   baseUrl?: string;
 }
 
+/** Execution policy attached to a registered QuickJS function. */
+export interface UnzenFunctionOptions {
+  /** Server fallback timeout in milliseconds (1-2000). */
+  timeout?: number;
+  /** Disable server fallback when browser execution cannot complete. */
+  noFallback?: boolean;
+}
+
 export class UnzenServer {
   private registry: FunctionRegistry;
   private manifestBuilder: ManifestBuilder;
@@ -97,17 +105,19 @@ export class UnzenServer {
    *
    * @param name - Function name (used as identifier)
    * @param fn - JavaScript function to register
+   * @param options - Optional timeout and fallback policy
    */
   define<TArgs extends unknown[], TReturn>(
     name: string,
-    fn: (...args: TArgs) => TReturn
+    fn: (...args: TArgs) => TReturn,
+    options?: UnzenFunctionOptions,
   ): void {
     // Extract function source code
     // Function.toString() returns the complete function definition as a string
     const code = fn.toString();
 
     // Use defineRaw to register with the extracted code
-    this.defineRaw(name, code);
+    this.defineRaw(name, code, options);
   }
 
   // MAX_FUNCTION_TIMEOUT is imported from @unzen/shared for single source of truth
@@ -130,7 +140,7 @@ export class UnzenServer {
   defineRaw(
     name: string,
     code: string,
-    options?: { timeout?: number; noFallback?: boolean },
+    options?: UnzenFunctionOptions,
   ): void {
     // Validate per-function timeout if provided
     // Must be an integer in [1, 2000] to prevent abuse and match timeout tiers:

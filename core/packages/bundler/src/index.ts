@@ -21,3 +21,19 @@ export {
   DEFAULT_ALLOWED_MODULES,
 } from './module-whitelist';
 export { checkForbiddenApis } from './forbidden-api-check';
+export {
+  transformUnzenDefinitions,
+  UnzenTransformError,
+  type ExtractedUnzenDefinition,
+  type UnzenSourceTransformResult,
+} from './source-transform';
+export {
+  unzenVitePlugin,
+  type UnzenVitePlugin,
+  type UnzenVitePluginOptions,
+  type UnzenViteTransformResult,
+} from './vite-plugin';
+export {
+  unzenWebpackLoader,
+  type UnzenWebpackLoaderContext,
+} from './webpack-loader';
