@@ -224,14 +224,21 @@ export class ManifestFetcher {
       'Content-Type': 'application/json',
     };
 
+    const revalidationEtag = this.etag && this.lastManifest
+      ? this.etag
+      : null;
+    const revalidationManifest = revalidationEtag === null
+      ? null
+      : this.lastManifest;
+
     // Send If-None-Match header for conditional request (ETag revalidation)
     // This tells the server: "only send the full response if the manifest
     // has changed since I last saw it (identified by this ETag)"
     // Only send if we also have lastManifest to use on 304 response.
     // Without lastManifest, a 304 would have no manifest to return,
     // and 304 responses have no body per HTTP spec (can't call .json()).
-    if (this.etag && this.lastManifest) {
-      headers['If-None-Match'] = this.etag;
+    if (revalidationEtag !== null) {
+      headers['If-None-Match'] = revalidationEtag;
     }
 
     try {
@@ -245,13 +252,18 @@ export class ManifestFetcher {
       // 304 Not Modified: server confirms our cached version is still current
       // Reuse the last known manifest instead of parsing a new response body
       // (304 responses have no body per HTTP spec)
-      if (response.status === 304 && this.lastManifest) {
+      if (response.status === 304) {
+        if (revalidationManifest === null) {
+          throw new UnzenNetworkError(
+            'Received 304 without a conditional manifest request',
+          );
+        }
         // A fetch adapter may resolve after invalidate() or after the final
         // caller cancelled even though its signal was aborted. Do not let a
         // stale 304 resurrect the in-memory cache in that case.
         throwIfAborted(signal);
-        this.cache = this.lastManifest;
-        return this.lastManifest;
+        this.cache = revalidationManifest;
+        return revalidationManifest;
       }
 
       // Check HTTP status for other non-OK responses

@@ -450,6 +450,7 @@ export / ABI metadata を実行時に検証する。検証後は prototype を�
 不正な body は ETag とともにキャッシュせず `UnzenNetworkError` で fail closed にする。
 cache hit、同時 waiter、304 revalidation、`getEntry()` は entry と MoonBit ABI を含む
 caller-owned copy を返し、内部 cache / ETag snapshot を外部 mutation へ公開しない。
+304 は対応する `If-None-Match` を実際に送った request でのみ受理する。
 direct `ManifestFetcher.fetch(signal)` は signal を HTTP 前に検証する。`CodeFetcher.fetch()` は
 QuickJS manifest entry と signal を cache/network 前に検証・snapshot し、非同期応答中の
 caller mutation で URL、integrity hash、cache key が変わらないようにする。同じ hash の

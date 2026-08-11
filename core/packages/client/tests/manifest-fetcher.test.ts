@@ -598,6 +598,30 @@ describe('ManifestFetcher', () => {
       expect(manifest).toEqual(mockManifest);
     });
 
+    it('rejects 304 when no conditional validator was sent', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => mockManifest,
+      });
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+      fetcher.invalidate();
+
+      let ifNoneMatch: string | null = 'unset';
+      globalThis.fetch = vi.fn((_url: string, init?: { headers?: Record<string, string> }) => {
+        ifNoneMatch = init?.headers?.['If-None-Match'] ?? null;
+        return Promise.resolve({ ok: false, status: 304, statusText: 'Not Modified' });
+      }) as unknown as typeof fetch;
+
+      await expect(fetcher.fetch()).rejects.toThrow(
+        'Received 304 without a conditional manifest request',
+      );
+      expect(ifNoneMatch).toBeNull();
+      expect(fetcher.isCached()).toBe(false);
+    });
+
     it('must not let a late 304 resurrect an invalidated cache', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,

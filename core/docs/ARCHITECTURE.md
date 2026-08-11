@@ -462,6 +462,7 @@ invalidate() → 進行中 fetch を abort + キャッシュクリア (次回fet
   未登録関数として扱う。MoonBit ABI も bounded indexed copy で snapshot 化する
 - cache hit / concurrent waiter / 304 revalidation / `getEntry()` は entry と nested ABI を
   deep copy し、cache-owned manifest と ETag 用 `lastManifest` の参照を外部へ公開しない
+- 304 は対応する `If-None-Match` を送信した request でのみ受理し、validator のない 304 は拒否する
 - JSON parse / schema 検証 / abort check がすべて成功した body と ETag だけを同時 commit する
 - malformed body、abort 後に遅延完了した body、invalidate 前の in-flight body は保存しない
 - TTL はなく、明示的な invalidate でのみクリアされる
