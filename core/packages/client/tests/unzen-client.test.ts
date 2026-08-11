@@ -272,6 +272,38 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('should cancel a development request when fetch ignores its signal', async () => {
+      let markExecStarted: (() => void) | undefined;
+      const execStarted = new Promise<void>((resolve) => {
+        markExecStarted = resolve;
+      });
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/exec/add')) {
+          markExecStarted?.();
+          return new Promise(() => {});
+        }
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'development',
+        sandbox: new MockSandboxExecutor(),
+      });
+      const controller = new AbortController();
+      const execution = client.execute({
+        name: 'add',
+        args: [1, 2],
+        signal: controller.signal,
+      });
+      await execStarted;
+      controller.abort();
+
+      await expect(execution).rejects.toThrow(UnzenCancelledError);
+      client.dispose();
+    });
+
     it('should propagate function errors in development mode', async () => {
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) return jsonResponse(mockManifest);
@@ -1130,15 +1162,10 @@ describe('UnzenClient', () => {
     });
 
     it('should cancel during browser execution without fallback', async () => {
-      // Sandbox that only settles when its signal aborts → cancelled
+      // A custom sandbox may ignore the signal entirely. The client still
+      // owns its public cancellation contract and must settle the caller.
       const hangingSandbox = new MockSandboxExecutor();
-      hangingSandbox.execute = (_code, _args, options) => new Promise((_resolve, reject) => {
-        if (options?.signal?.aborted) {
-          reject(new UnzenCancelledError('cancelled'));
-          return;
-        }
-        options?.signal?.addEventListener('abort', () => reject(new UnzenCancelledError('cancelled')), { once: true });
-      });
+      hangingSandbox.execute = () => new Promise(() => {});
 
       const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) return jsonResponse(mockManifest);
@@ -1188,13 +1215,7 @@ describe('UnzenClient', () => {
 
     it('should cancel in-flight executions on dispose (no unsettled promises)', async () => {
       const hangingSandbox = new MockSandboxExecutor();
-      hangingSandbox.execute = (_code, _args, options) => new Promise((_resolve, reject) => {
-        if (options?.signal?.aborted) {
-          reject(new UnzenCancelledError('cancelled'));
-          return;
-        }
-        options?.signal?.addEventListener('abort', () => reject(new UnzenCancelledError('cancelled')), { once: true });
-      });
+      hangingSandbox.execute = () => new Promise(() => {});
 
       const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) return jsonResponse(mockManifest);
@@ -1210,6 +1231,62 @@ describe('UnzenClient', () => {
       client.dispose();
 
       await expect(p).rejects.toThrow(); // settles (cancelled), never hangs
+      client.dispose();
+    });
+
+    it('should cancel while a custom MoonBit prepare ignores its signal', async () => {
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          fibonacci: {
+            runtime: 'moonbit',
+            hash: MOCK_CONTENT_HASH,
+            version: 1,
+            codeUrl: 'https://example.com/code/fibonacci.wasm',
+            exportName: 'fibonacci',
+          },
+        },
+      };
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        throw new Error('unexpected URL');
+      });
+      const moonbitSandbox = {
+        prepare: () => new Promise(() => {}),
+        execute: vi.fn(async () => 55),
+        dispose: vi.fn(),
+      };
+      const client = new UnzenClient({
+        endpoint,
+        sandbox: new MockSandboxExecutor(),
+        moonbitSandbox,
+      });
+      const controller = new AbortController();
+      const execution = client.execute({
+        name: 'fibonacci',
+        args: [10],
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 10);
+
+      await expect(execution).rejects.toThrow(UnzenCancelledError);
+      expect(moonbitSandbox.execute).not.toHaveBeenCalled();
+      client.dispose();
+    });
+
+    it('should ignore a custom readiness probe failure', async () => {
+      const sandbox = new MockSandboxExecutor();
+      sandbox.isReady = () => {
+        throw new Error('readiness unavailable');
+      };
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('unexpected URL');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const client = new UnzenClient({ endpoint, sandbox });
+
+      await expect(client.call('add', 1, 2)).resolves.toBe(3);
       client.dispose();
     });
 
@@ -1439,17 +1516,11 @@ describe('UnzenClient', () => {
         throw new UnzenRuntimeError('browser down');
       };
 
-      const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const fetchMock = vi.fn((url: string) => {
         if (url.includes('/manifest')) return jsonResponse(mockManifest);
         if (url.includes('/code/add.js')) return textResponse(mockAddCode);
         if (url.includes('/exec/add')) {
-          return new Promise((_resolve, reject) => {
-            if (init?.signal?.aborted) {
-              reject(abortError());
-              return;
-            }
-            init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
-          });
+          return new Promise(() => {});
         }
         throw new Error('unexpected URL');
       });

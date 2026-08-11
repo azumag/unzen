@@ -64,4 +64,15 @@ describe('abort helpers', () => {
       .rejects.toThrow(UnzenCancelledError);
     expect(listeners.size).toBe(0);
   });
+
+  it('observes the source rejection when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const source = Promise.reject(new Error('operation failed after abort'));
+    const catchSpy = vi.spyOn(source, 'catch');
+
+    await expect(raceWithAbort(source, controller.signal))
+      .rejects.toThrow(UnzenCancelledError);
+    expect(catchSpy).toHaveBeenCalledOnce();
+  });
 });

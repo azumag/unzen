@@ -150,6 +150,9 @@ export function throwIfAborted(signal?: AbortSignal): void {
  * others. The listener is always removed, so no leak survives.
  */
 export function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  // The operation may synchronously abort the signal and return a rejected
+  // promise. Observe it before the early-abort branch so no rejection escapes.
+  void promise.catch(() => {});
   if (readAbortSignalAborted(signal)) {
     return Promise.reject(new UnzenCancelledError('Execution cancelled by caller'));
   }

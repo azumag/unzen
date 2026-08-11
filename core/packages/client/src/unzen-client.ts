@@ -59,7 +59,7 @@ import { MoonBitSandboxExecutor } from './moonbit-sandbox';
 import { MoonBitWorkerSandboxExecutor } from './moonbit-worker-sandbox';
 import type { MoonBitImportedStringConstants } from './moonbit-compile-options';
 import { normalizeUnzenClientOptions } from './unzen-client-options';
-import { readAbortSignalAborted, subscribeToAbortSignal } from './abort';
+import { raceWithAbort, readAbortSignalAborted, subscribeToAbortSignal } from './abort';
 
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
@@ -791,7 +791,14 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
         }
         const attemptStart = performance.now();
         try {
-          const result = await this.fallbackHandler.execute(request.name, request.args, internalController.signal);
+          const result = await raceWithAbort(
+            this.fallbackHandler.execute(
+              request.name,
+              request.args,
+              internalController.signal,
+            ),
+            internalController.signal,
+          );
           // Guard against a late result committing after cancellation.
           if (internalController.signal.aborted) {
             pushAttempt('server', attemptStart, 'cancelled', 'cancelled');
@@ -862,11 +869,14 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
           // module (fetch + compile the .wasm from the manifest codeUrl). The
           // executor instance is ready after preparation; the execution itself
           // happens in step 4.
-          await this.moonbitSandbox.prepare?.(
+          const preparation = this.moonbitSandbox.prepare?.(
             entry.codeUrl,
             internalController.signal,
             entry.hash,
           );
+          if (preparation !== undefined) {
+            await raceWithAbort(Promise.resolve(preparation), internalController.signal);
+          }
         } else {
           code = await this.codeFetcher.fetch(entry, internalController.signal);
         }
@@ -891,22 +901,32 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
       // that state so the UI can show "sandbox initializing" without parsing
       // messages; warm sandboxes (already ready) emit nothing.
       const executor = entry.runtime === 'moonbit' ? this.moonbitSandbox : this.sandboxExecutor;
-      if (!(executor.isReady?.() ?? true)) {
+      let executorReady = true;
+      try {
+        executorReady = executor.isReady?.() ?? true;
+      } catch {
+        // Readiness is diagnostic-only; a custom probe must not block execution.
+      }
+      if (!executorReady) {
         emit({ type: 'sandbox-initializing' });
       }
       emit({ type: 'browser-execution-started' });
       const browserAttemptStart = performance.now();
       try {
-        const result = entry.runtime === 'moonbit'
-          ? await executor.execute(entry.codeUrl, request.args, {
+        const execution = entry.runtime === 'moonbit'
+          ? executor.execute(entry.codeUrl, request.args, {
               signal: internalController.signal,
               exportName: entry.exportName,
               moonbitAbi: entry.moonbitAbi,
               expectedHash: entry.hash,
             })
-          : await executor.execute(code!, request.args, {
+          : executor.execute(code!, request.args, {
               signal: internalController.signal,
             });
+        const result = await raceWithAbort(
+          Promise.resolve(execution),
+          internalController.signal,
+        );
         // A late result after cancellation must never be committed as success.
         if (internalController.signal.aborted) {
           pushAttempt('browser', browserAttemptStart, 'cancelled', 'cancelled');
@@ -975,7 +995,14 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
         }
         const serverAttemptStart = performance.now();
         try {
-          const result = await this.fallbackHandler.execute(request.name, request.args, internalController.signal);
+          const result = await raceWithAbort(
+            this.fallbackHandler.execute(
+              request.name,
+              request.args,
+              internalController.signal,
+            ),
+            internalController.signal,
+          );
           // A late fallback result after cancellation must not commit either.
           if (internalController.signal.aborted) {
             pushAttempt('server', serverAttemptStart, 'cancelled', 'cancelled');
