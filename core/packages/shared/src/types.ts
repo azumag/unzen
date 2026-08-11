@@ -257,7 +257,7 @@ export function isValidFunctionDefinition(def: unknown): def is FunctionDefiniti
  * Controls execution behavior including timeout, diagnostics, and execution mode.
  */
 export interface ExecutionOptions {
-  /** Maximum execution time in milliseconds (default: 50ms for QuickJS) */
+  /** Maximum execution time in milliseconds (1-2000; default: 50 for QuickJS) */
   timeout?: number;
   /** Enable diagnostic information in result (execution time, cache status, etc.) */
   diagnostics?: boolean;

@@ -12,7 +12,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { QuickJSRuntime } from '../src/quickjs-runtime';
-import { UnzenRuntimeError, UnzenFunctionError } from '@unzen/shared';
+import {
+  MAX_EXECUTION_ARGUMENTS,
+  MAX_FUNCTION_TIMEOUT,
+  UnzenRuntimeError,
+  UnzenFunctionError,
+} from '@unzen/shared';
 
 describe('QuickJSRuntime', () => {
   let runtime: QuickJSRuntime;
@@ -99,6 +104,62 @@ describe('QuickJSRuntime', () => {
       const code = 'function run() { let sum = 0; for(let i = 0; i < 10000; i++) { sum += i; } return sum; }';
       const result = await runtime.execute(code, [], { timeout: 100 });
       expect(typeof result).toBe('number');
+    });
+
+    it.each([
+      0,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      MAX_FUNCTION_TIMEOUT + 1,
+      null as unknown as number,
+    ])(
+      'should reject invalid timeout %s before execution',
+      async (timeout) => {
+        await expect(runtime.execute(
+          'function run() { return 1; }',
+          [],
+          { timeout },
+        )).rejects.toThrow(`between 1 and ${MAX_FUNCTION_TIMEOUT}ms`);
+      },
+    );
+
+    it('should validate direct-call code, arguments, and options', async () => {
+      await expect(runtime.execute('  ', []))
+        .rejects.toThrow('non-empty string');
+      await expect(runtime.execute(
+        'function run() { return 1; }',
+        {} as unknown as unknown[],
+      )).rejects.toThrow('arguments must be an array');
+      await expect(runtime.execute(
+        'function run(...args) { return args.length; }',
+        new Array(MAX_EXECUTION_ARGUMENTS + 1).fill(null),
+      )).rejects.toThrow(`at most ${MAX_EXECUTION_ARGUMENTS} arguments`);
+      await expect(runtime.execute(
+        'function run() { return 1; }',
+        [],
+        null as unknown as { timeout?: number },
+      )).rejects.toThrow('options must be an object');
+    });
+
+    it('should snapshot direct-call options and reject non-serializable arguments', async () => {
+      let timeoutReads = 0;
+      const options = {
+        get timeout() {
+          timeoutReads += 1;
+          return timeoutReads === 1 ? 100 : Number.NaN;
+        },
+      };
+      await expect(runtime.execute('function run() { return 1; }', [], options))
+        .resolves.toBe(1);
+      expect(timeoutReads).toBe(1);
+
+      const cyclic: unknown[] = [];
+      cyclic.push(cyclic);
+      await expect(runtime.execute('function run() { return 1; }', cyclic))
+        .rejects.toThrow('JSON-serializable');
+      await expect(runtime.execute('function run() { return 1; }', [1n]))
+        .rejects.toThrow('JSON-serializable');
     });
 
     it('should block eval() function', async () => {

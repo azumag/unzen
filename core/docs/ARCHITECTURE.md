@@ -192,6 +192,9 @@ Error
 
 **エラー分類の重要な詳細**:
 - QuickJSRuntime: 未知のエラーは `UnzenFunctionError` としてラップする (ユーザーコードが原因と推定するため)
+- QuickJSRuntime の公開 `execute()` 境界は timeout 1〜2,000ms、非空 code、最大128引数を
+  context 作成前に検証する。引数は iterator を使わない indexed copy 後に JSON 化し、
+  循環値・BigInt・caller mutation を QuickJS の外側で遮断する
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`

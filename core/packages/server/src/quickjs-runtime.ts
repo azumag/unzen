@@ -20,12 +20,91 @@
 
 import { getQuickJS, type QuickJSWASMModule } from 'quickjs-emscripten';
 import {
+  MAX_EXECUTION_ARGUMENTS,
+  MAX_FUNCTION_TIMEOUT,
   SANDBOX_SECURITY_INIT,
   SANDBOX_SYNCHRONOUS_EXECUTION,
   UnzenFunctionError,
   UnzenRuntimeError,
   type ExecutionOptions,
 } from '@unzen/shared';
+
+interface QuickJSExecutionSnapshot {
+  code: string;
+  argsJson: string;
+  timeout: number;
+}
+
+/** Validate and own direct-call inputs before allocating a QuickJS context. */
+function snapshotExecution(
+  code: unknown,
+  args: unknown,
+  options: unknown,
+): QuickJSExecutionSnapshot {
+  let requestedTimeout: unknown;
+  if (options !== undefined) {
+    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+      throw new UnzenFunctionError('QuickJS execution options must be an object');
+    }
+    try {
+      requestedTimeout = (options as Record<string, unknown>).timeout;
+    } catch {
+      throw new UnzenFunctionError('QuickJS execution options could not be read');
+    }
+  }
+  const timeout = requestedTimeout === undefined ? 50 : requestedTimeout;
+  if (
+    typeof timeout !== 'number'
+    || !Number.isInteger(timeout)
+    || timeout < 1
+    || timeout > MAX_FUNCTION_TIMEOUT
+  ) {
+    throw new UnzenFunctionError(
+      `QuickJS timeout must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`,
+    );
+  }
+
+  if (typeof code !== 'string' || code.trim().length === 0) {
+    throw new UnzenFunctionError('QuickJS code must be a non-empty string');
+  }
+  if (!Array.isArray(args)) {
+    throw new UnzenFunctionError('QuickJS arguments must be an array');
+  }
+
+  let argumentCount: unknown;
+  try {
+    argumentCount = args.length;
+  } catch {
+    throw new UnzenFunctionError('QuickJS arguments could not be read');
+  }
+  if (
+    typeof argumentCount !== 'number'
+    || !Number.isSafeInteger(argumentCount)
+    || argumentCount < 0
+    || argumentCount > MAX_EXECUTION_ARGUMENTS
+  ) {
+    throw new UnzenFunctionError(
+      `QuickJS supports at most ${MAX_EXECUTION_ARGUMENTS} arguments`,
+    );
+  }
+
+  try {
+    const snapshotArgs = new Array<unknown>(argumentCount);
+    for (let index = 0; index < argumentCount; index += 1) {
+      snapshotArgs[index] = args[index];
+    }
+    const argsJson = JSON.stringify(snapshotArgs);
+    if (typeof argsJson !== 'string') {
+      throw new Error('serialization returned no payload');
+    }
+    return { code, argsJson, timeout };
+  } catch {
+    throw new UnzenFunctionError(
+      `QuickJS arguments must be JSON-serializable and contain at most `
+      + `${MAX_EXECUTION_ARGUMENTS} items`,
+    );
+  }
+}
 
 export class QuickJSRuntime {
   private quickJS: QuickJSWASMModule | null = null;
@@ -60,7 +139,7 @@ export class QuickJSRuntime {
       throw new UnzenRuntimeError('QuickJS runtime not initialized. Call initialize() first.');
     }
 
-    const timeout = options?.timeout ?? 50; // Default 50ms timeout
+    const execution = snapshotExecution(code, args, options);
 
     // Create a fresh context for this execution
     // This ensures complete isolation between executions
@@ -83,7 +162,7 @@ export class QuickJSRuntime {
 
       // Load the user's code (which defines a `run` function)
       // The code is expected to define: function run(...args) { ... }
-      const loadCodeResult = context.evalCode(code);
+      const loadCodeResult = context.evalCode(execution.code);
       if (loadCodeResult.error) {
         const error = context.dump(loadCodeResult.error);
         loadCodeResult.error.dispose();
@@ -94,8 +173,7 @@ export class QuickJSRuntime {
       // Inject arguments into QuickJS context using JSON encoding
       // Note: This encoding doesn't preserve undefined in arrays, but that's acceptable
       // for the function execution use case (undefined becomes null in JSON)
-      const argsJson = JSON.stringify(args);
-      const argsResult = context.evalCode(`globalThis.__args__ = ${argsJson}`);
+      const argsResult = context.evalCode(`globalThis.__args__ = ${execution.argsJson}`);
       if (argsResult.error) {
         argsResult.error.dispose();
         throw new UnzenRuntimeError('Failed to inject arguments into context');
@@ -107,7 +185,7 @@ export class QuickJSRuntime {
       const startTime = Date.now();
       let timeoutTriggered = false;
       context.runtime.setInterruptHandler(() => {
-        const exceeded = Date.now() - startTime > timeout;
+        const exceeded = Date.now() - startTime > execution.timeout;
         if (exceeded) timeoutTriggered = true;
         return exceeded;
       });
@@ -122,7 +200,7 @@ export class QuickJSRuntime {
 
         // Check if this was a timeout
         if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
-          throw new UnzenRuntimeError(`Execution timeout exceeded (${timeout}ms)`);
+          throw new UnzenRuntimeError(`Execution timeout exceeded (${execution.timeout}ms)`);
         }
 
         throw new UnzenFunctionError(`Function execution failed: ${JSON.stringify(error)}`);
