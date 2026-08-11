@@ -22,6 +22,7 @@ import { MoonBitWorkerSandboxExecutor } from '../src/moonbit-worker-sandbox';
 import {
   MOONBIT_WORKER_PROTOCOL_VERSION,
   createMoonbitInitMessage,
+  createMoonbitExecuteMessage,
   type MoonbitWorkerMessage,
   type MoonbitWorkerResponse,
 } from '../src/worker/moonbit-worker-protocol';
@@ -323,6 +324,86 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       type: 'init-result',
       success: false,
       error: 'Invalid importedStringConstants setting',
+    });
+  });
+
+  it('rejects mismatched worker protocol messages before mutating or executing', async () => {
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const compiled = await WebAssembly.compile(fibonacciBytes);
+    const state = {
+      compiledModules: new Map<string, WebAssembly.Module>([['fib.wasm', compiled]]),
+      importedStringConstants: '_' as string | null,
+    };
+    const responses: MoonbitWorkerResponse[] = [];
+    const init = {
+      ...createMoonbitInitMessage(1, 'unzen:strings'),
+      protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION + 1,
+    };
+
+    await handleMoonbitWorkerMessage(
+      { data: init as never },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(state.importedStringConstants).toBe('_');
+    expect(state.compiledModules.size).toBe(1);
+    expect(responses.at(-1)).toMatchObject({
+      type: 'init-result',
+      success: false,
+      error: expect.stringContaining('protocol version mismatch'),
+    });
+
+    const execute = {
+      ...createMoonbitExecuteMessage(
+        'req-version',
+        'fib.wasm',
+        fibonacciBytes.buffer.slice(
+          fibonacciBytes.byteOffset,
+          fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+        ) as ArrayBuffer,
+        true,
+        'fibonacci',
+        [10],
+        1,
+      ),
+      protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION + 1,
+    };
+    await handleMoonbitWorkerMessage(
+      { data: execute as never },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(responses.at(-1)).toMatchObject({
+      type: 'execute-result',
+      requestId: 'req-version',
+      success: false,
+      errorType: 'runtime_error',
+      error: expect.stringContaining('protocol version mismatch'),
+    });
+
+    const invalidGeneration = {
+      ...createMoonbitExecuteMessage(
+        'req-generation',
+        'fib.wasm',
+        new ArrayBuffer(0),
+        true,
+        'fibonacci',
+        [10],
+        1,
+      ),
+      generationId: -1,
+    };
+    await handleMoonbitWorkerMessage(
+      { data: invalidGeneration as never },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(responses.at(-1)).toMatchObject({
+      type: 'execute-result',
+      requestId: 'req-generation',
+      success: false,
+      errorType: 'runtime_error',
+      error: expect.stringContaining('generationId'),
     });
   });
 

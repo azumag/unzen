@@ -236,6 +236,24 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('preserves a successful null result from the browser executor', async () => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/code/add.js')) return textResponse(mockAddCode);
+        throw new Error('Unexpected URL');
+      }) as unknown as typeof fetch;
+      const sandbox = new MockSandboxExecutor();
+      sandbox.execute = vi.fn().mockResolvedValue(null);
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'production',
+        sandbox,
+      });
+
+      await expect(client.call<null>('add', 1, 2)).resolves.toBeNull();
+      client.dispose();
+    });
+
     it('should NOT fallback on code syntax error (UnzenFunctionError)', async () => {
       // Syntax error in code should throw UnzenFunctionError
       // This is a function/code error, not a runtime environment error

@@ -35,6 +35,7 @@ import {
   createExecuteResultMessage,
   createExecuteErrorMessage,
   createCancelResultMessage,
+  WORKER_PROTOCOL_VERSION,
 } from './worker-protocol';
 
 // Default timeout: 50ms (same as server-side QuickJSRuntime)
@@ -90,6 +91,25 @@ interface EvalResult {
   error?: { consume<T>(fn: (handle: unknown) => T): T };
 }
 
+function postRejectedMessage(
+  msg: WorkerMessage,
+  error: string,
+  postMessage: (msg: WorkerResponse) => void,
+): void {
+  if (msg.type === 'init') {
+    postMessage(createInitResultMessage(false, msg.generationId, error));
+  } else if (msg.type === 'execute') {
+    postMessage(createExecuteErrorMessage(
+      msg.requestId,
+      'runtime_error',
+      error,
+      msg.generationId,
+    ));
+  } else {
+    postMessage(createCancelResultMessage(msg.requestId, false, msg.generationId, error));
+  }
+}
+
 /**
  * Handle a worker message — core logic extracted for testability.
  *
@@ -105,6 +125,20 @@ export async function handleWorkerMessage(
   loader?: () => Promise<QuickJSModule>,
 ): Promise<void> {
   const msg = event.data;
+
+  if (!Number.isSafeInteger(msg.generationId) || msg.generationId < 1) {
+    postRejectedMessage(
+      msg,
+      `malformed generationId: ${String(msg.generationId)}`,
+      postMessage,
+    );
+    return;
+  }
+  if (msg.protocolVersion !== WORKER_PROTOCOL_VERSION) {
+    const error = `protocol version mismatch (got ${String(msg.protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`;
+    postRejectedMessage(msg, error, postMessage);
+    return;
+  }
 
   if (msg.type === 'init') {
     await handleInit(state, postMessage, msg.generationId, loader);

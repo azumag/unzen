@@ -249,6 +249,52 @@ describe('WorkerProtocol', () => {
       if (!result.ok) expect(result.reason).toContain('generationId');
     });
 
+    it.each([-1, Number.MAX_SAFE_INTEGER + 1])(
+      'should reject an out-of-range generation id (%s)',
+      (generationId) => {
+        const result = validateWorkerResponse({
+          type: 'init-result',
+          success: true,
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          generationId,
+        });
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.reason).toContain('generationId');
+      },
+    );
+
+    it('should reject array responses and malformed error metadata', () => {
+      const array = Object.assign([], {
+        type: 'init-result',
+        success: true,
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: 1,
+      });
+      expect(validateWorkerResponse(array).ok).toBe(false);
+      expect(validateWorkerResponse({
+        type: 'execute-result',
+        requestId: 'req-1',
+        success: false,
+        error: 42,
+        errorType: 'runtime_error',
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: 1,
+      }).ok).toBe(false);
+    });
+
+    it('should reject a failed execute-result without an error classification', () => {
+      const result = validateWorkerResponse({
+        type: 'execute-result',
+        requestId: 'req-1',
+        success: false,
+        error: 'failed',
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: 1,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('errorType');
+    });
+
     it('should reject unknown message types', () => {
       const result = validateWorkerResponse({
         type: 'bogus',

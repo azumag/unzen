@@ -104,7 +104,8 @@ export interface MoonbitExecuteResultMessage {
   readonly error?: string;
   readonly protocolVersion: number;
   readonly generationId: number;
-  /** 'function_error' → no fallback; 'runtime_error' → fallback-eligible */
+  /** Required when success is false; omitted from successful responses.
+   * 'function_error' → no fallback; 'runtime_error' → fallback-eligible */
   readonly errorType?: 'function_error' | 'runtime_error';
 }
 
@@ -233,14 +234,14 @@ export function createMoonbitCancelResultMessage(
 /**
  * Validate an unknown value as a MoonbitWorkerResponse.
  *
- * Every response must carry the protocol version and a non-negative integer
+ * Every response must carry the protocol version and a positive safe integer
  * generation id; a missing/malformed value is a protocol violation rather
  * than a trusted response (mirrors validateWorkerResponse).
  */
 export function validateMoonbitWorkerResponse(
   data: unknown,
 ): { ok: true; msg: MoonbitWorkerResponse } | { ok: false; reason: string } {
-  if (typeof data !== 'object' || data === null) {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return { ok: false, reason: 'response is not an object' };
   }
   const m = data as Record<string, unknown>;
@@ -250,7 +251,11 @@ export function validateMoonbitWorkerResponse(
       reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`,
     };
   }
-  if (typeof m.generationId !== 'number' || !Number.isInteger(m.generationId)) {
+  if (
+    typeof m.generationId !== 'number'
+    || !Number.isSafeInteger(m.generationId)
+    || m.generationId < 1
+  ) {
     return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
   }
 
@@ -258,24 +263,55 @@ export function validateMoonbitWorkerResponse(
     if (typeof m.success !== 'boolean') {
       return { ok: false, reason: 'init-result missing boolean success' };
     }
+    if (m.error !== undefined && typeof m.error !== 'string') {
+      return { ok: false, reason: 'init-result error must be a string' };
+    }
+    if (m.success && m.error !== undefined) {
+      return { ok: false, reason: 'successful init-result must not include an error' };
+    }
     return { ok: true, msg: m as unknown as MoonbitInitResultMessage };
   }
   if (m.type === 'execute-result') {
-    if (typeof m.requestId !== 'string' || typeof m.success !== 'boolean') {
+    if (
+      typeof m.requestId !== 'string'
+      || m.requestId.length === 0
+      || typeof m.success !== 'boolean'
+    ) {
       return { ok: false, reason: 'execute-result missing requestId/success' };
     }
+    if (m.error !== undefined && typeof m.error !== 'string') {
+      return { ok: false, reason: 'execute-result error must be a string' };
+    }
+    if (m.success) {
+      if (m.error !== undefined || m.errorType !== undefined) {
+        return { ok: false, reason: 'successful execute-result has error metadata' };
+      }
+      return { ok: true, msg: m as unknown as MoonbitExecuteResultMessage };
+    }
     if (
-      m.errorType !== undefined
-      && m.errorType !== 'function_error'
+      m.errorType !== 'function_error'
       && m.errorType !== 'runtime_error'
     ) {
-      return { ok: false, reason: `unknown errorType: ${String(m.errorType)}` };
+      return { ok: false, reason: `missing or unknown errorType: ${String(m.errorType)}` };
+    }
+    if (m.value !== undefined) {
+      return { ok: false, reason: 'failed execute-result must not include a value' };
     }
     return { ok: true, msg: m as unknown as MoonbitExecuteResultMessage };
   }
   if (m.type === 'cancel-result') {
-    if (typeof m.requestId !== 'string' || typeof m.success !== 'boolean') {
+    if (
+      typeof m.requestId !== 'string'
+      || m.requestId.length === 0
+      || typeof m.success !== 'boolean'
+    ) {
       return { ok: false, reason: 'cancel-result missing requestId/success' };
+    }
+    if (m.error !== undefined && typeof m.error !== 'string') {
+      return { ok: false, reason: 'cancel-result error must be a string' };
+    }
+    if (m.success && m.error !== undefined) {
+      return { ok: false, reason: 'successful cancel-result must not include an error' };
     }
     return { ok: true, msg: m as unknown as MoonbitCancelResultMessage };
   }

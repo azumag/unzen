@@ -28,6 +28,7 @@ import {
   createMoonbitCancelResultMessage,
   createMoonbitExecuteResultMessage,
   createMoonbitInitResultMessage,
+  MOONBIT_WORKER_PROTOCOL_VERSION,
   type MoonbitExecuteMessage,
   type MoonbitWorkerMessage,
   type MoonbitWorkerResponse,
@@ -51,6 +52,32 @@ export interface MoonbitWorkerState {
   importedStringConstants?: MoonBitImportedStringConstants;
 }
 
+function postRejectedMessage(
+  msg: MoonbitWorkerMessage,
+  error: string,
+  postMessage: (msg: MoonbitWorkerResponse) => void,
+): void {
+  if (msg.type === 'init') {
+    postMessage(createMoonbitInitResultMessage(false, msg.generationId, error));
+  } else if (msg.type === 'execute') {
+    postMessage(createMoonbitExecuteResultMessage(
+      msg.requestId,
+      false,
+      msg.generationId,
+      undefined,
+      error,
+      'runtime_error',
+    ));
+  } else {
+    postMessage(createMoonbitCancelResultMessage(
+      msg.requestId,
+      false,
+      msg.generationId,
+      error,
+    ));
+  }
+}
+
 /**
  * Handle a MoonBit worker message — core logic extracted for testability.
  *
@@ -64,6 +91,20 @@ export async function handleMoonbitWorkerMessage(
   postMessage: (msg: MoonbitWorkerResponse) => void,
 ): Promise<void> {
   const msg = event.data;
+
+  if (!Number.isSafeInteger(msg.generationId) || msg.generationId < 1) {
+    postRejectedMessage(
+      msg,
+      `malformed generationId: ${String(msg.generationId)}`,
+      postMessage,
+    );
+    return;
+  }
+  if (msg.protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
+    const error = `protocol version mismatch (got ${String(msg.protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`;
+    postRejectedMessage(msg, error, postMessage);
+    return;
+  }
 
   if (msg.type === 'init') {
     if (

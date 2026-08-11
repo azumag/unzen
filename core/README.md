@@ -354,7 +354,9 @@ const client = new UnzenClient({
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは
 `/moonbit-worker.js` で配信済み）。Worker protocol v3 は配列 ABI を含むため、
 client bundle と worker bundle は必ず同じ build/version から同時配信する。
-異なる protocol version の Worker response は fail closed で拒否される。
+worker は request の protocol version / 正のsafe generationを処理前に検証し、client は
+response の同じenvelopeに加えてsuccess/error metadataの整合性も検証する。不一致は
+fail closed で拒否される。成功した`null`はerrorと区別され、そのまま呼び出し元へ返る。
 advanced API から worker executor を直接構築する場合、`workerUrl`は空文字不可、
 timer値は1〜2,147,483,647msの整数、`maxQueueSize`は0以上のsafe integer、
 `hardKillMultiplier`は正の有限値で、`timeout`との積もtimer範囲内である必要がある。

@@ -245,6 +245,30 @@ describe('WebWorkerSandboxExecutor', () => {
       executor.dispose();
     });
 
+    it('preserves a successful null result from the worker', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          worker.respond({
+            type: 'execute-result',
+            requestId: msg.requestId,
+            success: true,
+            value: null,
+          });
+        }
+      });
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      await expect(executor.execute('function run() { return null; }', []))
+        .resolves.toBeNull();
+      executor.dispose();
+    });
+
     it('should return object results', async () => {
       const worker = new MockWorker();
       worker.onPostMessage((msg) => {

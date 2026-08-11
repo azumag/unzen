@@ -17,6 +17,7 @@ import {
   createInitMessage,
   createExecuteMessage,
   createCancelMessage,
+  WORKER_PROTOCOL_VERSION,
   type WorkerResponse,
 } from '../src/worker/worker-protocol';
 import { handleWorkerMessage, type WorkerState } from '../src/worker/quickjs-worker';
@@ -109,6 +110,25 @@ describe('quickjs-worker handleWorkerMessage', () => {
       expect((responses[0] as { success: boolean }).success).toBe(false);
       expect((responses[0] as { error: string }).error).toBe('Wasm init failed');
     });
+
+    it('rejects a mismatched protocol version without initializing QuickJS', async () => {
+      const state: WorkerState = { quickJS: null };
+      const mockLoader = vi.fn().mockResolvedValue(createMockQuickJS());
+      const message = {
+        ...createInitMessage(1),
+        protocolVersion: WORKER_PROTOCOL_VERSION + 1,
+      };
+
+      await handleWorkerMessage({ data: message as never }, state, postMessage, mockLoader);
+
+      expect(mockLoader).not.toHaveBeenCalled();
+      expect(state.quickJS).toBeNull();
+      expect(responses[0]).toMatchObject({
+        type: 'init-result',
+        success: false,
+        error: expect.stringContaining('protocol version mismatch'),
+      });
+    });
   });
 
   describe('execute message', () => {
@@ -140,6 +160,69 @@ describe('quickjs-worker handleWorkerMessage', () => {
       expect(context.evalCode.mock.calls[3][0]).toContain('materialized value');
       // Context should be disposed after execution
       expect(context.dispose).toHaveBeenCalled();
+    });
+
+    it('preserves a successful null result', async () => {
+      const context = createMockContext([
+        { value: undefined },
+        { value: undefined },
+        { value: undefined },
+        { value: null },
+      ]);
+      const state: WorkerState = { quickJS: createMockQuickJS(context) as never };
+
+      await handleWorkerMessage(
+        { data: createExecuteMessage('req-null', 'function run(){return null;}', [], 1) },
+        state,
+        postMessage,
+      );
+
+      expect(responses[0]).toMatchObject({
+        type: 'execute-result',
+        requestId: 'req-null',
+        success: true,
+        value: null,
+      });
+    });
+
+    it('rejects a mismatched protocol version without creating a context', async () => {
+      const mockQJS = createMockQuickJS();
+      const state: WorkerState = { quickJS: mockQJS as never };
+      const message = {
+        ...createExecuteMessage('req-version', 'function run(){return 1;}', [], 1),
+        protocolVersion: WORKER_PROTOCOL_VERSION + 1,
+      };
+
+      await handleWorkerMessage({ data: message as never }, state, postMessage);
+
+      expect(mockQJS.newContext).not.toHaveBeenCalled();
+      expect(responses[0]).toMatchObject({
+        type: 'execute-result',
+        requestId: 'req-version',
+        success: false,
+        errorType: 'runtime_error',
+        error: expect.stringContaining('protocol version mismatch'),
+      });
+    });
+
+    it('rejects an invalid generation without creating a context', async () => {
+      const mockQJS = createMockQuickJS();
+      const state: WorkerState = { quickJS: mockQJS as never };
+      const message = {
+        ...createExecuteMessage('req-generation', 'function run(){return 1;}', [], 1),
+        generationId: -1,
+      };
+
+      await handleWorkerMessage({ data: message as never }, state, postMessage);
+
+      expect(mockQJS.newContext).not.toHaveBeenCalled();
+      expect(responses[0]).toMatchObject({
+        type: 'execute-result',
+        requestId: 'req-generation',
+        success: false,
+        errorType: 'runtime_error',
+        error: expect.stringContaining('generationId'),
+      });
     });
 
     it('should return function_error when user code fails', async () => {

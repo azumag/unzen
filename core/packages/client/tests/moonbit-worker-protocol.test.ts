@@ -77,6 +77,10 @@ describe('MoonBit worker protocol', () => {
       success: true,
       generationId: 3,
     });
+    expect(createMoonbitExecuteResultMessage('req-null', true, 3, null)).toMatchObject({
+      success: true,
+      value: null,
+    });
   });
 
   it('validates well-formed responses', () => {
@@ -115,5 +119,48 @@ describe('MoonBit worker protocol', () => {
     });
     expect(badType.ok).toBe(false);
     if (!badType.ok) expect(badType.reason).toContain('unknown message type');
+  });
+
+  it.each([-1, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects an out-of-range generation id (%s)',
+    (generationId) => {
+      const result = validateMoonbitWorkerResponse({
+        type: 'init-result',
+        success: true,
+        protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
+        generationId,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain('generationId');
+    },
+  );
+
+  it('rejects array responses and malformed failure envelopes', () => {
+    const array = Object.assign([], {
+      type: 'init-result',
+      success: true,
+      protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
+      generationId: 1,
+    });
+    expect(validateMoonbitWorkerResponse(array).ok).toBe(false);
+    expect(validateMoonbitWorkerResponse({
+      type: 'execute-result',
+      requestId: 'req-1',
+      success: false,
+      error: 42,
+      errorType: 'runtime_error',
+      protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
+      generationId: 1,
+    }).ok).toBe(false);
+    const missingType = validateMoonbitWorkerResponse({
+      type: 'execute-result',
+      requestId: 'req-1',
+      success: false,
+      error: 'failed',
+      protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
+      generationId: 1,
+    });
+    expect(missingType.ok).toBe(false);
+    if (!missingType.ok) expect(missingType.reason).toContain('errorType');
   });
 });

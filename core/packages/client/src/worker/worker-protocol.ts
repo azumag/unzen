@@ -84,7 +84,8 @@ export interface ExecuteResultMessage {
   readonly error?: string;
   readonly protocolVersion: number;
   readonly generationId: number;
-  /** Distinguishes user code errors from runtime/environment errors.
+  /** Required when success is false; omitted from successful responses.
+   * Distinguishes user code errors from runtime/environment errors.
    * 'function_error' → UnzenFunctionError (no server fallback)
    * 'runtime_error' → UnzenRuntimeError (triggers server fallback)
    * 'deadline_exceeded' → UnzenDeadlineExceededError (triggers server fallback,
@@ -221,7 +222,7 @@ export function createCancelResultMessage(
 export function validateWorkerResponse(
   data: unknown,
 ): { ok: true; msg: WorkerResponse } | { ok: false; reason: string } {
-  if (typeof data !== 'object' || data === null) {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return { ok: false, reason: 'response is not an object' };
   }
   const m = data as Record<string, unknown>;
@@ -234,34 +235,67 @@ export function validateWorkerResponse(
   // generationId is REQUIRED: every response must echo its generation so the
   // executor can reject stale-worker responses (a missing or non-number value
   // is a protocol violation, not a trusted response).
-  if (typeof m.generationId !== 'number' || !Number.isInteger(m.generationId)) {
+  if (
+    typeof m.generationId !== 'number'
+    || !Number.isSafeInteger(m.generationId)
+    || m.generationId < 1
+  ) {
     return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
   }
   if (m.type === 'init-result') {
     if (typeof m.success !== 'boolean') {
       return { ok: false, reason: 'init-result missing boolean success' };
     }
+    if (m.error !== undefined && typeof m.error !== 'string') {
+      return { ok: false, reason: 'init-result error must be a string' };
+    }
+    if (m.success && m.error !== undefined) {
+      return { ok: false, reason: 'successful init-result must not include an error' };
+    }
     return { ok: true, msg: m as unknown as InitResultMessage };
   }
   if (m.type === 'execute-result') {
-    if (typeof m.requestId !== 'string' || typeof m.success !== 'boolean') {
+    if (
+      typeof m.requestId !== 'string'
+      || m.requestId.length === 0
+      || typeof m.success !== 'boolean'
+    ) {
       return { ok: false, reason: 'execute-result missing requestId/success' };
     }
-    // errorType, when present, must be one of the known values. An arbitrary
-    // value would otherwise be mapped to function_error in the executor.
+    if (m.error !== undefined && typeof m.error !== 'string') {
+      return { ok: false, reason: 'execute-result error must be a string' };
+    }
+    if (m.success) {
+      if (m.error !== undefined || m.errorType !== undefined) {
+        return { ok: false, reason: 'successful execute-result has error metadata' };
+      }
+      return { ok: true, msg: m as unknown as ExecuteResultMessage };
+    }
     if (
-      m.errorType !== undefined
-      && m.errorType !== 'function_error'
+      m.errorType !== 'function_error'
       && m.errorType !== 'runtime_error'
       && m.errorType !== 'deadline_exceeded'
     ) {
-      return { ok: false, reason: `unknown errorType: ${String(m.errorType)}` };
+      return { ok: false, reason: `missing or unknown errorType: ${String(m.errorType)}` };
+    }
+    if (m.value !== undefined) {
+      return { ok: false, reason: 'failed execute-result must not include a value' };
     }
     return { ok: true, msg: m as unknown as ExecuteResultMessage };
   }
   if (m.type === 'cancel-result') {
-    if (typeof m.requestId !== 'string' || typeof m.success !== 'boolean') {
+    if (
+      typeof m.requestId !== 'string'
+      || m.requestId.length === 0
+      || typeof m.success !== 'boolean'
+    ) {
       return { ok: false, reason: 'cancel-result missing requestId/success' };
+    }
+    if (m.error !== undefined && typeof m.error !== 'string') {
+      return { ok: false, reason: 'cancel-result error must be a string' };
+    }
+    if (m.success && m.error !== undefined) {
+      return { ok: false, reason: 'successful cancel-result must not include an error' };
     }
     return { ok: true, msg: m as unknown as CancelResultMessage };
   }
