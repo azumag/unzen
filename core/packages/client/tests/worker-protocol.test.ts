@@ -253,6 +253,36 @@ describe('WorkerProtocol', () => {
       if (!result.ok) expect(result.reason).toContain('could not be read');
     });
 
+    it('snapshots response fields instead of returning caller-owned accessors', () => {
+      const reads = new Map<string, number>();
+      const once = <T>(name: string, value: T): T => {
+        const count = (reads.get(name) ?? 0) + 1;
+        reads.set(name, count);
+        if (count > 1) throw new Error(`${name} read more than once`);
+        return value;
+      };
+      const response = {
+        get type() { return once('type', 'execute-result' as const); },
+        get requestId() { return once('requestId', 'req-1'); },
+        get success() { return once('success', true); },
+        get value() { return once('value', 42); },
+        get error() { return once('error', undefined); },
+        get errorType() { return once('errorType', undefined); },
+        get protocolVersion() { return once('protocolVersion', WORKER_PROTOCOL_VERSION); },
+        get generationId() { return once('generationId', 1); },
+      };
+
+      const result = validateWorkerResponse(response);
+
+      expect(result).toEqual({
+        ok: true,
+        msg: createExecuteResultMessage('req-1', 42, 1),
+      });
+      expect(result.ok && Object.getOwnPropertyDescriptor(result.msg, 'type')?.get)
+        .toBeUndefined();
+      expect([...reads.values()]).toEqual(new Array(8).fill(1));
+    });
+
     it('should reject a protocol version mismatch', () => {
       const result = validateWorkerResponse({
         type: 'init-result',

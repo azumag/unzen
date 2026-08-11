@@ -358,75 +358,128 @@ function validateMoonbitWorkerResponseFields(
     return { ok: false, reason: 'response is not an object' };
   }
   const m = data as Record<string, unknown>;
-  if (m.protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
+  const protocolVersion = m.protocolVersion;
+  const generationId = m.generationId;
+  const type = m.type;
+  if (protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
     return {
       ok: false,
-      reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`,
+      reason: `protocol version mismatch (got ${String(protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`,
     };
   }
   if (
-    typeof m.generationId !== 'number'
-    || !Number.isSafeInteger(m.generationId)
-    || m.generationId < 1
+    typeof generationId !== 'number'
+    || !Number.isSafeInteger(generationId)
+    || generationId < 1
   ) {
-    return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
+    return { ok: false, reason: `malformed generationId: ${String(generationId)}` };
   }
 
-  if (m.type === 'init-result') {
-    if (typeof m.success !== 'boolean') {
+  if (type === 'init-result') {
+    const success = m.success;
+    const error = m.error;
+    if (typeof success !== 'boolean') {
       return { ok: false, reason: 'init-result missing boolean success' };
     }
-    if (m.error !== undefined && typeof m.error !== 'string') {
+    if (error !== undefined && typeof error !== 'string') {
       return { ok: false, reason: 'init-result error must be a string' };
     }
-    if (m.success && m.error !== undefined) {
+    if (success && error !== undefined) {
       return { ok: false, reason: 'successful init-result must not include an error' };
     }
-    return { ok: true, msg: m as unknown as MoonbitInitResultMessage };
+    return {
+      ok: true,
+      msg: {
+        type,
+        success,
+        ...(error !== undefined && { error }),
+        protocolVersion,
+        generationId,
+      },
+    };
   }
-  if (m.type === 'execute-result') {
+  if (type === 'execute-result') {
+    const requestId = m.requestId;
+    const success = m.success;
+    const value = m.value;
+    const error = m.error;
+    const errorType = m.errorType;
     if (
-      typeof m.requestId !== 'string'
-      || m.requestId.length === 0
-      || typeof m.success !== 'boolean'
+      typeof requestId !== 'string'
+      || requestId.length === 0
+      || typeof success !== 'boolean'
     ) {
       return { ok: false, reason: 'execute-result missing requestId/success' };
     }
-    if (m.error !== undefined && typeof m.error !== 'string') {
+    if (error !== undefined && typeof error !== 'string') {
       return { ok: false, reason: 'execute-result error must be a string' };
     }
-    if (m.success) {
-      if (m.error !== undefined || m.errorType !== undefined) {
+    if (success) {
+      if (error !== undefined || errorType !== undefined) {
         return { ok: false, reason: 'successful execute-result has error metadata' };
       }
-      return { ok: true, msg: m as unknown as MoonbitExecuteResultMessage };
+      return {
+        ok: true,
+        msg: {
+          type,
+          requestId,
+          success,
+          value,
+          protocolVersion,
+          generationId,
+        },
+      };
     }
     if (
-      m.errorType !== 'function_error'
-      && m.errorType !== 'runtime_error'
+      errorType !== 'function_error'
+      && errorType !== 'runtime_error'
     ) {
-      return { ok: false, reason: `missing or unknown errorType: ${String(m.errorType)}` };
+      return { ok: false, reason: `missing or unknown errorType: ${String(errorType)}` };
     }
-    if (m.value !== undefined) {
+    if (value !== undefined) {
       return { ok: false, reason: 'failed execute-result must not include a value' };
     }
-    return { ok: true, msg: m as unknown as MoonbitExecuteResultMessage };
+    return {
+      ok: true,
+      msg: {
+        type,
+        requestId,
+        success,
+        ...(error !== undefined && { error }),
+        errorType,
+        protocolVersion,
+        generationId,
+      },
+    };
   }
-  if (m.type === 'cancel-result') {
+  if (type === 'cancel-result') {
+    const requestId = m.requestId;
+    const success = m.success;
+    const error = m.error;
     if (
-      typeof m.requestId !== 'string'
-      || m.requestId.length === 0
-      || typeof m.success !== 'boolean'
+      typeof requestId !== 'string'
+      || requestId.length === 0
+      || typeof success !== 'boolean'
     ) {
       return { ok: false, reason: 'cancel-result missing requestId/success' };
     }
-    if (m.error !== undefined && typeof m.error !== 'string') {
+    if (error !== undefined && typeof error !== 'string') {
       return { ok: false, reason: 'cancel-result error must be a string' };
     }
-    if (m.success && m.error !== undefined) {
+    if (success && error !== undefined) {
       return { ok: false, reason: 'successful cancel-result must not include an error' };
     }
-    return { ok: true, msg: m as unknown as MoonbitCancelResultMessage };
+    return {
+      ok: true,
+      msg: {
+        type,
+        requestId,
+        success,
+        ...(error !== undefined && { error }),
+        protocolVersion,
+        generationId,
+      },
+    };
   }
-  return { ok: false, reason: `unknown message type: ${String(m.type)}` };
+  return { ok: false, reason: `unknown message type: ${String(type)}` };
 }
