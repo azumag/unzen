@@ -405,6 +405,8 @@ await registerUnzenCacheWorker({
 `packages/client/dist/unzen-cache-worker.js` は JavaScript MIME type、
 `Cache-Control: no-cache` で配信する。root 以外に配置して `/` scope を指定する場合は
 `Service-Worker-Allowed: /` も必要になる。
+registration option bag と `navigator.serviceWorker.register` は登録前に一度だけ
+snapshot・検証し、空値や unreadable getter を副作用前に `TypeError` で拒否する。
 
 `ManifestFetcher` は HTTP JSON をそのまま信用せず、関数名、runtime、正の safe integer
 version、canonical SHA-256、HTTP(S) / relative `codeUrl`、`noFallback`、MoonBit 固有の
@@ -422,7 +424,7 @@ MoonBit Wasm の生バイトを manifest の `sha256:<64hex>` と照合し、一
 Web Crypto が利用できない環境では fail closed で実行しない。
 
 worker が intercept するのは同一 origin の
-`/code/<name>?v=<positive>&h=sha256:<64hex>` のみ。server が 200・
+`/code/<name>?v=<positive-safe-integer>&h=sha256:<64hex>` のみ。server が 200・
 JavaScript/Wasm・`immutable` と認めた応答を URL の SHA-256 と再照合してから
 `unzen-code-v1` に保存する。manifest、fallback API、version/hash が欠けた URL、
 別 origin の asset は保存しない。`clearUnzenCodeCache()` で Unzen の cache

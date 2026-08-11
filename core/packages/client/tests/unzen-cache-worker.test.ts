@@ -78,6 +78,7 @@ describe('Unzen cache worker policy', () => {
       new Request(`${ORIGIN}/unzen/code/run?v=1`),
       new Request(`${ORIGIN}/unzen/code/run?h=${encodeURIComponent(validHash)}`),
       new Request(`${ORIGIN}/unzen/code/run?v=0&h=${encodeURIComponent(validHash)}`),
+      new Request(`${ORIGIN}/unzen/code/run?v=9007199254740992&h=${encodeURIComponent(validHash)}`),
       new Request(`${ORIGIN}/unzen/code/run?v=1&h=sha256%3Ashort`),
       new Request(`${ORIGIN}/unzen/code/run?v=1&v=2&h=${encodeURIComponent(validHash)}`),
       new Request(`${ORIGIN}/unzen/code/run?v=1&h=${encodeURIComponent(validHash)}&x=1`),
@@ -90,6 +91,13 @@ describe('Unzen cache worker policy', () => {
     for (const request of invalid) {
       expect(isVersionedUnzenCodeRequest(request, ORIGIN)).toBe(false);
     }
+
+    expect(isVersionedUnzenCodeRequest(
+      new Request(
+        `${ORIGIN}/unzen/code/run?v=${Number.MAX_SAFE_INTEGER}&h=${encodeURIComponent(validHash)}`,
+      ),
+      ORIGIN,
+    )).toBe(true);
   });
 
   it('accepts only immutable JavaScript/Wasm success responses', () => {

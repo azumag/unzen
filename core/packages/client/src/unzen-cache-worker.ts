@@ -14,6 +14,12 @@ const CACHEABLE_CONTENT_TYPES = new Set([
   'text/javascript',
 ]);
 
+function isPositiveSafeVersion(value: string): boolean {
+  if (!POSITIVE_VERSION.test(value)) return false;
+  const version = Number(value);
+  return Number.isSafeInteger(version) && version > 0;
+}
+
 export interface UnzenCodeCache {
   match(request: Request): Promise<Response | undefined>;
   put(request: Request, response: Response): Promise<void>;
@@ -62,7 +68,7 @@ export function isVersionedUnzenCodeRequest(request: Request, origin: string): b
     if (key !== 'v' && key !== 'h') return false;
   }
 
-  return POSITIVE_VERSION.test(versions[0]!) && isValidUnzenContentHash(hashes[0]);
+  return isPositiveSafeVersion(versions[0]!) && isValidUnzenContentHash(hashes[0]);
 }
 
 /** Return the hash identity from a request already accepted by the matcher. */

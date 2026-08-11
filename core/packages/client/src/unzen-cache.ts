@@ -20,26 +20,79 @@ interface UnzenServiceWorkerContainer {
   ): Promise<ServiceWorkerRegistration>;
 }
 
+interface UnzenCacheWorkerRegistrationSnapshot {
+  readonly workerUrl: string;
+  readonly scope?: string;
+}
+
+function snapshotRegistrationOptions(value: unknown): UnzenCacheWorkerRegistrationSnapshot {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Unzen cache worker options must be an object');
+  }
+
+  let rawWorkerUrl: unknown;
+  let scope: unknown;
+  try {
+    const record = value as Record<string, unknown>;
+    rawWorkerUrl = record.workerUrl;
+    scope = record.scope;
+  } catch {
+    throw new TypeError('Unzen cache worker options could not be read');
+  }
+
+  const workerUrl = rawWorkerUrl ?? '/unzen-cache-worker.js';
+  if (typeof workerUrl !== 'string' || workerUrl.trim().length === 0) {
+    throw new TypeError('workerUrl must be a non-empty string');
+  }
+  if (scope !== undefined && (
+    typeof scope !== 'string' || scope.trim().length === 0
+  )) {
+    throw new TypeError('scope must be a non-empty string when provided');
+  }
+  return {
+    workerUrl,
+    ...(scope !== undefined && { scope: scope as string }),
+  };
+}
+
+function snapshotRegisterMethod(value: unknown): {
+  readonly target: object;
+  readonly register: UnzenServiceWorkerContainer['register'];
+} {
+  if (typeof value !== 'object' || value === null) {
+    throw new TypeError('Service Worker container must provide register()');
+  }
+  let register: unknown;
+  try {
+    register = (value as Record<string, unknown>).register;
+  } catch {
+    throw new TypeError('Service Worker container register() could not be read');
+  }
+  if (typeof register !== 'function') {
+    throw new TypeError('Service Worker container must provide register()');
+  }
+  return {
+    target: value,
+    register: register as UnzenServiceWorkerContainer['register'],
+  };
+}
+
 /** Injectable implementation used by the public browser guard and tests. */
 export async function registerUnzenCacheWorkerWith(
   container: UnzenServiceWorkerContainer,
   options: UnzenCacheWorkerOptions = {},
 ): Promise<ServiceWorkerRegistration> {
-  const workerUrl = options.workerUrl ?? '/unzen-cache-worker.js';
-  if (typeof workerUrl !== 'string' || workerUrl.trim().length === 0) {
-    throw new TypeError('workerUrl must be a non-empty string');
-  }
-  if (options.scope !== undefined && (
-    typeof options.scope !== 'string' || options.scope.trim().length === 0
-  )) {
-    throw new TypeError('scope must be a non-empty string when provided');
-  }
+  const snapshot = snapshotRegistrationOptions(options);
+  const method = snapshotRegisterMethod(container);
 
   const registrationOptions: { scope?: string; updateViaCache: 'none' } = {
     updateViaCache: 'none',
   };
-  if (options.scope !== undefined) registrationOptions.scope = options.scope;
-  return container.register(workerUrl, registrationOptions);
+  if (snapshot.scope !== undefined) registrationOptions.scope = snapshot.scope;
+  return Reflect.apply(method.register, method.target, [
+    snapshot.workerUrl,
+    registrationOptions,
+  ]) as Promise<ServiceWorkerRegistration>;
 }
 
 /**
@@ -57,7 +110,8 @@ export function registerUnzenCacheWorker(
   ) {
     return Promise.resolve(null);
   }
-  return registerUnzenCacheWorkerWith(navigator.serviceWorker, options);
+  const container = navigator.serviceWorker;
+  return registerUnzenCacheWorkerWith(container, options);
 }
 
 /** Delete every Unzen code cache generation. Returns the number removed. */
