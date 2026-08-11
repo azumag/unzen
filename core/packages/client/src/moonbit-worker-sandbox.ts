@@ -62,6 +62,7 @@ import {
   normalizeMoonBitImportedStringConstants,
   type MoonBitImportedStringConstants,
 } from './moonbit-compile-options';
+import { normalizeMoonBitCacheLimit } from './moonbit-cache';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import { readBoundedResponseBytes } from './response-body';
 import {
@@ -128,6 +129,8 @@ export interface MoonBitWorkerSandboxOptions {
    * Defaults to `_`. Use `null` for modules without imported constants.
    */
   importedStringConstants?: MoonBitImportedStringConstants;
+  /** Maximum settled byte/module identities retained in LRU order (default 4; 0 disables). */
+  maxCachedModules?: number;
 }
 
 type ExecutorState =
@@ -201,6 +204,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   private readonly hardKillMultiplier: number;
   private readonly createWorkerFn: (url: string | URL) => Worker;
   private readonly importedStringConstants: MoonBitImportedStringConstants;
+  private readonly maxCachedModules: number;
 
   private state: ExecutorState = { status: 'empty' };
   private generationId = 0;
@@ -237,6 +241,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     const hardKillMultiplier = options.hardKillMultiplier;
     const createWorker = options.createWorker;
     const importedStringConstants = options.importedStringConstants;
+    const maxCachedModules = options.maxCachedModules;
 
     const normalizedTimeout = normalizeTimerMs('timeout', timeout, DEFAULT_TIMEOUT_MS);
     const normalizedHardKillMultiplier = normalizeHardKillMultiplier(
@@ -261,6 +266,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     this.importedStringConstants = normalizeMoonBitImportedStringConstants(
       importedStringConstants,
     );
+    this.maxCachedModules = normalizeMoonBitCacheLimit(maxCachedModules);
   }
 
   get diagnostics(): MoonBitExecutorDiagnostics {
@@ -313,6 +319,8 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     if (cached && !isInflight(cached)) {
       // Do not expose the cache-owned buffer: ArrayBuffer is mutable, and a
       // caller could otherwise alter already-verified bytes for later calls.
+      this.bytesCache.delete(cacheKey);
+      this.bytesCache.set(cacheKey, cached);
       return cached.slice(0);
     }
 
@@ -329,7 +337,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       pending.promise.then(
         (bytes) => {
           if (!this.isDisposed() && this.bytesCache.get(cacheKey) === pending) {
-            this.bytesCache.set(cacheKey, bytes);
+            this.publishBytes(cacheKey, bytes);
           }
         },
         () => {
@@ -479,6 +487,26 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       if (isInflight(entry)) entry.controller.abort();
     }
     this.bytesCache.clear();
+  }
+
+  /** Promote verified bytes and evict least-recent settled identities. */
+  private publishBytes(cacheKey: string, bytes: ArrayBuffer): void {
+    this.bytesCache.delete(cacheKey);
+    if (this.maxCachedModules === 0) return;
+    this.bytesCache.set(cacheKey, bytes);
+
+    let settledCount = 0;
+    for (const entry of this.bytesCache.values()) {
+      if (!isInflight(entry)) settledCount++;
+    }
+    while (settledCount > this.maxCachedModules) {
+      for (const [key, entry] of this.bytesCache) {
+        if (isInflight(entry)) continue;
+        this.bytesCache.delete(key);
+        settledCount--;
+        break;
+      }
+    }
   }
 
   // ============================================================
@@ -739,6 +767,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         worker.postMessage(createMoonbitInitMessage(
           generationId,
           this.importedStringConstants,
+          this.maxCachedModules,
         ));
       } catch (error) {
         if (settled) return;

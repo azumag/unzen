@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { DEFAULT_MAX_MOONBIT_CACHED_MODULES } from '../src/moonbit-cache';
 import {
   MOONBIT_WORKER_PROTOCOL_VERSION,
   createMoonbitCancelMessage,
@@ -23,11 +24,13 @@ describe('MoonBit worker protocol', () => {
       protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
       generationId: 3,
       importedStringConstants: '_',
+      maxCachedModules: DEFAULT_MAX_MOONBIT_CACHED_MODULES,
     });
 
-    expect(createMoonbitInitMessage(4, 'unzen:strings')).toMatchObject({
+    expect(createMoonbitInitMessage(4, 'unzen:strings', 2)).toMatchObject({
       generationId: 4,
       importedStringConstants: 'unzen:strings',
+      maxCachedModules: 2,
     });
 
     const bytes = new Uint8Array([0, 1, 2]).buffer;
@@ -99,6 +102,12 @@ describe('MoonBit worker protocol', () => {
     expect(validateMoonbitWorkerRequest(createMoonbitCancelMessage('req-1', 1)).ok).toBe(true);
 
     expect(validateMoonbitWorkerRequest(null).ok).toBe(false);
+    const { maxCachedModules: _omitted, ...missingCacheLimit } = createMoonbitInitMessage(1);
+    expect(validateMoonbitWorkerRequest(missingCacheLimit).ok).toBe(false);
+    expect(validateMoonbitWorkerRequest({
+      ...createMoonbitInitMessage(1),
+      maxCachedModules: -1,
+    }).ok).toBe(false);
     expect(validateMoonbitWorkerRequest({
       ...createMoonbitExecuteMessage('req-1', 'module@hash', bytes, true, 'run', [], 1),
       wasm: new Uint8Array([0, 1, 2]),

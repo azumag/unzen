@@ -351,8 +351,11 @@ MoonBit 関数は `UnzenServer.defineMoonbit(name, wasmPath, { exportName, abi }
 Web Worker、メインスレッド非ブロック・terminate で強制停止）、未指定時は
 `MoonBitSandboxExecutor`（メインスレッド、デモ用途）が wasm をフェッチ・
 インスタンス化し、指定の export（既定 `run`）を呼び出す。
-main-thread の `prepare()` は immutable な compiled module を再利用する一方、
+main-thread の `prepare()` は immutable な compiled module を LRU 再利用する一方、
 呼び出し元には毎回新しい `{ url, module }` wrapper を返し、cache-owned object を公開しない。
+main-thread / worker executor と worker 内 compile cache は、settled module identity を
+既定4件まで保持する。direct constructor の `maxCachedModules` で変更でき、`0` で
+retention を無効にしても同時 request の in-flight dedupe は維持される。
 実行はブラウザ限定で、サーバーフォールバックは行わない（QuickJS ランタイムでは
 wasm を実行できない）。ABI 省略時は number / boolean / bigint / string の
 スカラー入出力のみ対応。String は JS String Builtins 経由
@@ -414,8 +417,8 @@ protocol-relative URL、scheme なし相対 path、不正 endpoint を同期的�
 
 `/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは
-`/moonbit-worker.js` で配信済み）。Worker protocol v4 は配列 ABI と hash-bound な
-compiled module cache key を含むため、
+`/moonbit-worker.js` で配信済み）。Worker protocol v5 は配列 ABI、hash-bound な
+compiled module cache key、compile cache 上限を含むため、
 client bundle と worker bundle は必ず同じ build/version から同時配信する。
 worker は request の protocol version / 正のsafe generationを処理前に検証し、client は
 response の同じenvelopeに加えてsuccess/error metadataの整合性も検証する。不一致は

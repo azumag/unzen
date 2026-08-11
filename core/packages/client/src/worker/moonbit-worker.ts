@@ -37,6 +37,7 @@ import {
   DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
   type MoonBitImportedStringConstants,
 } from '../moonbit-compile-options';
+import { DEFAULT_MAX_MOONBIT_CACHED_MODULES } from '../moonbit-cache';
 import {
   marshalMoonBitArguments,
   snapshotMoonBitCall,
@@ -49,6 +50,8 @@ export interface MoonbitWorkerState {
   compiledModules: Map<string, WebAssembly.Module>;
   /** Set by init; optional only for direct handler tests/backward compatibility. */
   importedStringConstants?: MoonBitImportedStringConstants;
+  /** Settled compile-cache capacity received in the generation init message. */
+  maxCachedModules?: number;
 }
 
 function postRejectedMessage(
@@ -112,10 +115,14 @@ export async function handleMoonbitWorkerMessage(
   const msg = validated.msg;
 
   if (msg.type === 'init') {
-    if (state.importedStringConstants !== msg.importedStringConstants) {
+    if (
+      state.importedStringConstants !== msg.importedStringConstants
+      || state.maxCachedModules !== msg.maxCachedModules
+    ) {
       state.compiledModules.clear();
     }
     state.importedStringConstants = msg.importedStringConstants;
+    state.maxCachedModules = msg.maxCachedModules;
     postMessage(createMoonbitInitResultMessage(true, msg.generationId));
     return;
   }
@@ -157,6 +164,8 @@ async function handleMoonbitExecute(
   let module: WebAssembly.Module;
   const cached = msg.cacheable ? state.compiledModules.get(msg.cacheKey) : undefined;
   if (cached) {
+    state.compiledModules.delete(msg.cacheKey);
+    state.compiledModules.set(msg.cacheKey, cached);
     module = cached;
   } else {
     try {
@@ -174,7 +183,15 @@ async function handleMoonbitExecute(
       // Only URL-based (cacheable) executions are stored; inline ArrayBuffer
       // executions compile per call and never accumulate in the cache.
       if (msg.cacheable) {
-        state.compiledModules.set(msg.cacheKey, module);
+        const limit = state.maxCachedModules ?? DEFAULT_MAX_MOONBIT_CACHED_MODULES;
+        if (limit > 0) {
+          state.compiledModules.delete(msg.cacheKey);
+          state.compiledModules.set(msg.cacheKey, module);
+          while (state.compiledModules.size > limit) {
+            const oldestKey = state.compiledModules.keys().next().value as string;
+            state.compiledModules.delete(oldestKey);
+          }
+        }
       }
     } catch (error) {
       postMessage(createMoonbitExecuteResultMessage(
@@ -290,6 +307,7 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
   const workerState: MoonbitWorkerState = {
     compiledModules: new Map(),
     importedStringConstants: DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
+    maxCachedModules: DEFAULT_MAX_MOONBIT_CACHED_MODULES,
   };
 
   self.onmessage = (event: MessageEvent<unknown>) => {

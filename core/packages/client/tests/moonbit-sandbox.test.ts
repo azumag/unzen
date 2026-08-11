@@ -46,6 +46,15 @@ describe('MoonBitSandboxExecutor', () => {
     globalThis.fetch = originalFetch;
   });
 
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN])(
+    'rejects an invalid module-cache limit (%s)',
+    (maxCachedModules) => {
+      expect(() => new MoonBitSandboxExecutor({ maxCachedModules })).toThrow(
+        'maxCachedModules',
+      );
+    },
+  );
+
   it('fetches, instantiates, and calls the configured export', async () => {
     const fetchMock = mockFetchBytes();
     const executor = new MoonBitSandboxExecutor();
@@ -173,6 +182,41 @@ describe('MoonBitSandboxExecutor', () => {
 
     expect(await executor.execute(prepared, [15], { exportName: 'fibonacci' })).toBe(610);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    executor.dispose();
+  });
+
+  it('evicts settled compiled modules in least-recently-used order', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor({ maxCachedModules: 2 });
+    const a = 'https://example.com/a.wasm';
+    const b = 'https://example.com/b.wasm';
+    const c = 'https://example.com/c.wasm';
+
+    await executor.prepare(a);
+    await executor.prepare(b);
+    await executor.prepare(a); // Touch A, so B becomes least recently used.
+    await executor.prepare(c); // Evicts B.
+    await executor.prepare(a);
+    await executor.prepare(b); // Fetches B again after eviction.
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([a, b, c, b]);
+    executor.dispose();
+  });
+
+  it('disables settled compiled-module retention without disabling in-flight dedupe', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor({ maxCachedModules: 0 });
+    const url = 'https://example.com/no-retention.wasm';
+
+    const [first, shared] = await Promise.all([
+      executor.prepare(url),
+      executor.prepare(url),
+    ]);
+    const later = await executor.prepare(url);
+
+    expect(first.module).toBe(shared.module);
+    expect(later.module).not.toBe(first.module);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     executor.dispose();
   });
 

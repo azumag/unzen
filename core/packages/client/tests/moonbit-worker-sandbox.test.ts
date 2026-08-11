@@ -216,6 +216,8 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     ['negative timeout', { workerUrl: '/moonbit-worker.js', timeout: -1 }, 'timeout'],
     ['non-finite init timeout', { workerUrl: '/moonbit-worker.js', initTimeoutMs: NaN }, 'initTimeoutMs'],
     ['fractional queue size', { workerUrl: '/moonbit-worker.js', maxQueueSize: 1.5 }, 'maxQueueSize'],
+    ['negative module cache limit', { workerUrl: '/moonbit-worker.js', maxCachedModules: -1 }, 'maxCachedModules'],
+    ['fractional module cache limit', { workerUrl: '/moonbit-worker.js', maxCachedModules: 1.5 }, 'maxCachedModules'],
     ['non-positive hard-kill multiplier', { workerUrl: '/moonbit-worker.js', hardKillMultiplier: 0 }, 'hardKillMultiplier'],
     [
       'overflowing hard-kill delay',
@@ -351,14 +353,17 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       importedStringConstants?: string | null;
     } = { compiledModules: new Map() };
     let receivedNamespace: string | null | undefined;
+    let receivedCacheLimit: number | undefined;
     worker.onPostMessage((msg) => {
       if (msg.type === 'init') {
         receivedNamespace = msg.importedStringConstants;
+        receivedCacheLimit = msg.maxCachedModules;
       }
       void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
     });
     const executor = createExecutor(worker, {
       importedStringConstants: 'unzen:strings',
+      maxCachedModules: 2,
     });
 
     await expect(executor.execute(
@@ -370,6 +375,7 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       { exportName: 'weird_string' },
     )).resolves.toBe('__proto__');
     expect(receivedNamespace).toBe('unzen:strings');
+    expect(receivedCacheLimit).toBe(2);
     executor.dispose();
   });
 
@@ -403,6 +409,7 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     const state = {
       compiledModules: new Map<string, WebAssembly.Module>([['fib.wasm', compiled]]),
       importedStringConstants: '_' as string | null,
+      maxCachedModules: 4 as number | undefined,
     };
     const responses: MoonbitWorkerResponse[] = [];
 
@@ -412,6 +419,7 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       (response) => responses.push(response),
     );
     expect(state.importedStringConstants).toBe('unzen:strings');
+    expect(state.maxCachedModules).toBe(4);
     expect(state.compiledModules.size).toBe(0);
     expect(responses.at(-1)).toMatchObject({ type: 'init-result', success: true });
 
@@ -423,9 +431,19 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     );
     expect(state.compiledModules.size).toBe(1);
 
+    await handleMoonbitWorkerMessage(
+      { data: createMoonbitInitMessage(3, 'unzen:strings', 2) },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(state.maxCachedModules).toBe(2);
+    expect(state.compiledModules.size).toBe(0);
+
+    state.compiledModules.set('fib.wasm', compiled);
+
     const invalid = {
-      ...createMoonbitInitMessage(3),
-      importedStringConstants: 42,
+      ...createMoonbitInitMessage(4, 'unzen:strings', 2),
+      maxCachedModules: -1,
     } as unknown as MoonbitWorkerMessage;
     await handleMoonbitWorkerMessage(
       { data: invalid },
@@ -433,11 +451,12 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       (response) => responses.push(response),
     );
     expect(state.importedStringConstants).toBe('unzen:strings');
+    expect(state.maxCachedModules).toBe(2);
     expect(state.compiledModules.size).toBe(1);
     expect(responses.at(-1)).toMatchObject({
       type: 'init-result',
       success: false,
-      error: 'Invalid importedStringConstants setting',
+      error: 'Invalid maxCachedModules setting',
     });
   });
 
@@ -606,6 +625,40 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       { exportName: 'fibonacci', expectedHash },
     )).toBe(610);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    executor.dispose();
+  });
+
+  it('evicts verified byte identities in least-recently-used order', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = createExecutor(new MockMoonbitWorker(), { maxCachedModules: 2 });
+    const a = 'https://example.com/a.wasm';
+    const b = 'https://example.com/b.wasm';
+    const c = 'https://example.com/c.wasm';
+
+    await executor.prepare(a);
+    await executor.prepare(b);
+    await executor.prepare(a);
+    await executor.prepare(c);
+    await executor.prepare(a);
+    await executor.prepare(b);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([a, b, c, b]);
+    executor.dispose();
+  });
+
+  it('disables settled byte retention without disabling in-flight dedupe', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = createExecutor(new MockMoonbitWorker(), { maxCachedModules: 0 });
+    const url = 'https://example.com/no-byte-retention.wasm';
+
+    const [first, shared] = await Promise.all([
+      executor.prepare(url),
+      executor.prepare(url),
+    ]);
+    await executor.prepare(url);
+
+    expect(new Uint8Array(first)).toEqual(new Uint8Array(shared));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     executor.dispose();
   });
 
@@ -1234,6 +1287,58 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     await executor.execute(inline, [12], { exportName: 'fibonacci' });
     expect(state.compiledModules.size).toBe(1);
     executor.dispose();
+  });
+
+  it('bounds the worker compile cache in least-recently-used order', async () => {
+    const { handleMoonbitWorkerMessage } = await import(
+      '../src/worker/moonbit-worker'
+    );
+    const state = {
+      compiledModules: new Map<string, WebAssembly.Module>(),
+      importedStringConstants: '_' as string | null,
+      maxCachedModules: 2,
+    };
+    const responses: MoonbitWorkerResponse[] = [];
+    const wasm = () => fibonacciBytes.buffer.slice(
+      fibonacciBytes.byteOffset,
+      fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+    ) as ArrayBuffer;
+    let requestId = 0;
+    const execute = (cacheKey: string) => handleMoonbitWorkerMessage({
+      data: createMoonbitExecuteMessage(
+        `req-lru-${++requestId}`,
+        cacheKey,
+        wasm(),
+        true,
+        'fibonacci',
+        [10],
+        1,
+      ),
+    }, state, (response) => responses.push(response));
+
+    await handleMoonbitWorkerMessage(
+      { data: createMoonbitInitMessage(1, '_', 2) },
+      state,
+      (response) => responses.push(response),
+    );
+    await execute('a');
+    await execute('b');
+    await execute('a');
+    await execute('c');
+    expect([...state.compiledModules.keys()]).toEqual(['a', 'c']);
+
+    await execute('b');
+    expect([...state.compiledModules.keys()]).toEqual(['c', 'b']);
+    expect(responses.filter((response) => response.type === 'execute-result'))
+      .toHaveLength(5);
+
+    await handleMoonbitWorkerMessage(
+      { data: createMoonbitInitMessage(2, '_', 0) },
+      state,
+      (response) => responses.push(response),
+    );
+    await execute('no-retention');
+    expect(state.compiledModules.size).toBe(0);
   });
 
   it('separates compiled modules when one URL is verified under different hashes', async () => {

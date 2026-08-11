@@ -72,6 +72,7 @@ export {
   type MoonBitExecutorDiagnostics,
 } from './moonbit-worker-sandbox';
 export type { MoonBitImportedStringConstants } from './moonbit-compile-options';
+export { DEFAULT_MAX_MOONBIT_CACHED_MODULES } from './moonbit-cache';
 export {
   clearUnzenCodeCache,
   registerUnzenCacheWorker,

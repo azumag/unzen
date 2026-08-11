@@ -804,16 +804,18 @@ TypeScript source
   ランタイム import のみでインスタンス化して指定 export を呼ぶ。`UnzenClient` は
   マニフェストの `runtime` で QuickJS パスと MoonBit パスを振り分ける。compiled module
   自体は再利用するが、`prepare()` が返す wrapper は毎回 caller-owned copy とし、
-  cache-owned `{ url, module }` を外部 mutation へ公開しない。
+  cache-owned `{ url, module }` を外部 mutation へ公開しない。settled module は LRU で
+  既定4 identityまで保持し、`maxCachedModules: 0` ならretentionだけを無効化する。
 - `MoonBitWorkerSandboxExecutor` (client) は `moonbitWorkerUrl` 指定時に使われ、
   main thread で同じ生バイト検証を終えてから専用 Web Worker へ渡して wasm を
   実行する（QuickJS パスと同じ Layer 1 の分離）。
   単一実行のみ・有界キュー・init timeout・hard-kill timeout（Worker terminate）・
   generation 管理・キャンセル（終了）を備える。worker バンドルは
   `moonbit-worker.js`（tsup エントリ）として配信する。client/worker bundle は同じ
-  build/version から同時配信し、protocol v4 mismatch は fail closed で拒否する。
+  build/version から同時配信し、protocol v5 mismatch は fail closed で拒否する。
   URL execution の compiled module cache key は URL と expected SHA-256 の組で作り、同じ
-  URL から更新された検証済み bytes が旧 module を再利用しないようにする。
+  URL から更新された検証済み bytes が旧 module を再利用しないようにする。main thread の
+  verified byte cache と worker 内 compile cache も同じ `maxCachedModules` の LRU 上限に従う。
 - Worker 内の MoonBit export は同期・中断不可のため、タイムアウト/キャンセルは
   `Worker.terminate()` で強制する。ABI 省略時は number / boolean / bigint /
   string のスカラーのみ、ABI 指定時は `i32[]` / `f64[]` も対応する。
@@ -855,8 +857,8 @@ Chromium 145 と Firefox 146 で probe した結果:
   側の `imported-string-constants` と一致させる。`null` はこの compile option
   を省略する（文字列定数を import しない module 用）。選択した namespace は
   文字列定数用に予約されるため、同 namespace の function import 等とは
-  併用できない。Worker は namespace を init protocol v4 で受け取り、generation
-  内の全 compile に同じ値を使う。
+  併用できない。Worker は namespace と compile cache 上限を init protocol v5 で受け取り、
+  generation 内の全 compile に同じ値を使う。
 - **raw wasm の Array は opaque handle**: plain JS 配列は wasm 境界で
   `type incompatibility when transforming from/to JS` となり渡せない。
   `make_array()` の戻り値は opaque な wasm-gc 配列 handle で `.length` や

@@ -56,6 +56,7 @@ import {
   snapshotMoonBitAbortSignal,
   snapshotMoonBitExecutionOptions,
 } from './moonbit-call';
+import { normalizeMoonBitCacheLimit } from './moonbit-cache';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import { readBoundedResponseBytes } from './response-body';
 
@@ -111,11 +112,14 @@ export interface MoonBitSandboxOptions {
    * constants; String Builtins remain enabled.
    */
   importedStringConstants?: MoonBitImportedStringConstants;
+  /** Maximum settled compiled modules retained in LRU order (default 4; 0 disables). */
+  maxCachedModules?: number;
 }
 
 export class MoonBitSandboxExecutor implements SandboxExecutor {
   private readonly imports: WebAssembly.Imports;
   private readonly importedStringConstants: MoonBitImportedStringConstants;
+  private readonly maxCachedModules: number;
   /** Compiled modules per URL + expected hash. A settled module is cached
    * directly; while fetch/compile is in flight the entry carries waiter
    * tracking so the last caller's cancel (or dispose) aborts the work. */
@@ -123,10 +127,24 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
   private disposed = false;
 
   constructor(options: MoonBitSandboxOptions = {}) {
-    this.imports = mergeImports(DEFAULT_IMPORTS, options.imports);
+    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+      throw new TypeError('MoonBit sandbox options must be an object');
+    }
+    let imports: WebAssembly.Imports | undefined;
+    let importedStringConstants: MoonBitImportedStringConstants | undefined;
+    let maxCachedModules: unknown;
+    try {
+      imports = options.imports;
+      importedStringConstants = options.importedStringConstants;
+      maxCachedModules = options.maxCachedModules;
+    } catch {
+      throw new TypeError('MoonBit sandbox options could not be read');
+    }
+    this.imports = mergeImports(DEFAULT_IMPORTS, imports);
     this.importedStringConstants = normalizeMoonBitImportedStringConstants(
-      options.importedStringConstants,
+      importedStringConstants,
     );
+    this.maxCachedModules = normalizeMoonBitCacheLimit(maxCachedModules);
   }
 
   /** The sandbox is stateless — ready immediately. */
@@ -175,6 +193,8 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     if (cached && !isInflight(cached)) {
       // Already fetched and compiled: return the settled module.
       throwIfAborted(requestSignal);
+      this.moduleCache.delete(cacheKey);
+      this.moduleCache.set(cacheKey, cached);
       return copyPreparedMoonBitModule(cached);
     }
 
@@ -196,7 +216,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
           // must not overwrite a newer retry's cache slot or resurrect the
           // cache after dispose.
           if (!this.disposed && this.moduleCache.get(cacheKey) === pending) {
-            this.moduleCache.set(cacheKey, module);
+            this.publishModule(cacheKey, module);
           }
         },
         () => {
@@ -353,6 +373,26 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       }
     }
     this.moduleCache.clear();
+  }
+
+  /** Promote one settled module and evict least-recent settled entries. */
+  private publishModule(cacheKey: string, module: PreparedMoonBitModule): void {
+    this.moduleCache.delete(cacheKey);
+    if (this.maxCachedModules === 0) return;
+    this.moduleCache.set(cacheKey, module);
+
+    let settledCount = 0;
+    for (const entry of this.moduleCache.values()) {
+      if (!isInflight(entry)) settledCount++;
+    }
+    while (settledCount > this.maxCachedModules) {
+      for (const [key, entry] of this.moduleCache) {
+        if (isInflight(entry)) continue;
+        this.moduleCache.delete(key);
+        settledCount--;
+        break;
+      }
+    }
   }
 
   private async fetchAndCompile(

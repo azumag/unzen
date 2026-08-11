@@ -29,13 +29,17 @@ import {
   type MoonBitImportedStringConstants,
 } from '../moonbit-compile-options';
 import {
+  DEFAULT_MAX_MOONBIT_CACHED_MODULES,
+  normalizeMoonBitCacheLimit,
+} from '../moonbit-cache';
+import {
   MAX_FUNCTION_PAYLOAD_BYTES,
   normalizeMoonBitAbi,
   type MoonBitAbi,
 } from '@unzen/shared';
 
 // Version of the MoonBit worker wire protocol. Bump on incompatible changes.
-export const MOONBIT_WORKER_PROTOCOL_VERSION = 4;
+export const MOONBIT_WORKER_PROTOCOL_VERSION = 5;
 
 // ============================================================
 // Main Thread → Worker Messages
@@ -48,6 +52,8 @@ export interface MoonbitInitMessage {
   readonly generationId: number;
   /** Namespace used by MoonBit's imported-string-constants compile option. */
   readonly importedStringConstants: MoonBitImportedStringConstants;
+  /** Maximum settled compiled modules retained by this worker generation. */
+  readonly maxCachedModules: number;
 }
 
 /** Execute an export of a wasm-gc module. */
@@ -136,12 +142,14 @@ export type MoonbitWorkerResponse =
 export function createMoonbitInitMessage(
   generationId: number,
   importedStringConstants: MoonBitImportedStringConstants = DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
+  maxCachedModules: number = DEFAULT_MAX_MOONBIT_CACHED_MODULES,
 ): MoonbitInitMessage {
   return {
     type: 'init',
     protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
     generationId,
     importedStringConstants,
+    maxCachedModules,
   };
 }
 
@@ -275,6 +283,14 @@ export function validateMoonbitWorkerRequest(
     if (m.type === 'init') {
       if (m.importedStringConstants !== null && typeof m.importedStringConstants !== 'string') {
         return { ok: false, reason: 'Invalid importedStringConstants setting' };
+      }
+      if (typeof m.maxCachedModules !== 'number') {
+        return { ok: false, reason: 'Invalid maxCachedModules setting' };
+      }
+      try {
+        normalizeMoonBitCacheLimit(m.maxCachedModules);
+      } catch {
+        return { ok: false, reason: 'Invalid maxCachedModules setting' };
       }
       return { ok: true, msg: m as unknown as MoonbitInitMessage };
     }
