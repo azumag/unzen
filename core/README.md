@@ -78,7 +78,9 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 ```
 
 direct `define()` は組み込みの `Function.prototype.toString` で source を1回取得し、関数自身の
-`toString` / `Symbol.toStringTag` に依存せず async・generator を登録前に拒否する。
+`toString` / `Symbol.toStringTag` に依存せず async・generator を登録前に拒否する。object / class の
+concise method は standalone function へ正規化し、class・bound/native function など
+standalone source にできない callable は登録時に拒否する。
 
 `declarationFile`はViteの`outDir`へ`UnzenFunctions`と`TypedUnzenClient`を生成する。
 生成型を使うと`client.call('sum', 1, 2)`の関数名・引数・戻り値を検査できる。

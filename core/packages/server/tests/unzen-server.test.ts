@@ -94,6 +94,36 @@ describe('UnzenServer', () => {
       expect(server.getFunction('tagSafe')).toBeDefined();
     });
 
+    it('normalizes concise methods into executable standalone functions', async () => {
+      const operations = {
+        double(value: number) {
+          return value * 2;
+        },
+      };
+
+      server.define('methodDouble', operations.double);
+      const stored = server.getFunction('methodDouble');
+      expect(stored?.code).toContain('return (function (value');
+
+      const response = await server.middleware().request('/exec/methodDouble', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args: [21] }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ result: 42 });
+    });
+
+    it.each([
+      ['class', class Unsupported {}],
+      ['bound', (() => 1).bind(null)],
+      ['native', Math.max],
+    ])('rejects a %s callable that cannot be serialized standalone', (_label, fn) => {
+      expect(() => server.define('unsupportedSource', fn as () => unknown))
+        .toThrow('can be serialized standalone');
+      expect(server.getFunction('unsupportedSource')).toBeUndefined();
+    });
+
     it('rejects invalid options before inspecting the function', () => {
       const inspect = vi.fn();
       const fn = new Proxy(() => 1, {

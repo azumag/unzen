@@ -62,6 +62,7 @@ export interface UnzenFunctionOptions {
 }
 
 const FUNCTION_TO_STRING = Function.prototype.toString;
+const FUNCTION_CONSTRUCTOR = Function;
 const UNSUPPORTED_FUNCTION_PROTOTYPES = new Set<object>([
   Object.getPrototypeOf(async function () {}),
   Object.getPrototypeOf(function* () {}),
@@ -72,6 +73,33 @@ const RUN_FUNCTION_DECLARATION = /^function\s+run\s*\(/;
 const FILE_READ_CHUNK_BYTES = 64 * 1024;
 
 class BoundedFileLimitError extends Error {}
+
+/** Compile only, without invoking caller code, to verify standalone syntax. */
+function isStandaloneFunctionExpression(source: string): boolean {
+  try {
+    Reflect.construct(FUNCTION_CONSTRUCTOR, [`return (${source});`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Convert concise method syntax to an anonymous function expression. */
+function normalizeStandaloneFunctionSource(source: string): string | undefined {
+  if (/^class(?:\s|\{)/.test(source.trimStart())) return undefined;
+  if (isStandaloneFunctionExpression(source)) return source;
+
+  const trimmed = source.trimStart();
+  const openParen = trimmed.indexOf('(');
+  if (openParen <= 0) return undefined;
+  const methodName = trimmed.slice(0, openParen).trim();
+  if (!/^[$_\p{ID_Start}][$_\u200C\u200D\p{ID_Continue}]*$/u.test(methodName)) {
+    return undefined;
+  }
+
+  const candidate = `function ${trimmed.slice(openParen)}`;
+  return isStandaloneFunctionExpression(candidate) ? candidate : undefined;
+}
 
 /** Read one stable regular file without buffering more than maximumBytes + one byte. */
 function readBoundedRegularFileSync(
@@ -139,7 +167,11 @@ function snapshotSynchronousFunctionSource(fn: unknown): string {
   ) {
     throw new Error('Unzen define() supports synchronous non-generator functions only');
   }
-  return source;
+  const standaloneSource = normalizeStandaloneFunctionSource(source);
+  if (standaloneSource === undefined) {
+    throw new Error('Unzen define() requires a function that can be serialized standalone');
+  }
+  return standaloneSource;
 }
 
 function assertValidRegistrationName(name: unknown): asserts name is string {

@@ -319,7 +319,9 @@ server.defineRaw('add', `(a, b) => a + b`);
 timeout / fallback metadata、MoonBit の空path・不正なexport / ABI は、ファイル読込や
 version 更新より前に拒否する。
 `define()` は captured `Function.prototype.toString` で source を取得し、caller-owned
-`toString` / `Symbol.toStringTag` を実行せず async・generator を登録前に拒否する。
+`toString` / `Symbol.toStringTag` を実行せず async・generator を登録前に拒否する。concise method
+source は匿名 function expression へ正規化し、class・bound/native function など standalone
+source として構文検証できない callable は registry を変更する前に拒否する。
 
 `FunctionRegistry`は登録時に`FunctionDefinition`をruntime検証し、unknown fieldを落とした
 所有スナップショットとして保存する。`get()` / `getAll()`でも定義とネストしたMoonBit ABIを
