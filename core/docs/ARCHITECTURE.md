@@ -651,7 +651,7 @@ TypeScript source
   → 型引数 / parameter / return annotationを抽出（未注釈はunknown）
   → inline関数だけをES2018 JavaScriptへtranspile
   → [dependencyBundling指定時] 参照runtime importだけをesbuildで自己完結化
-     → entry / 推移依存をallowlist検証 → bundle後の禁止API検査
+     → entry / 推移依存をallowlist検証 → 100KiB既定上限 → bundle後の禁止API検査
   → MagicStringで defineRaw(name, code, options) に局所置換 + source map
   → Vite pre-transform / webpack loaderへ同じ結果を返す（依存bundle時だけ非同期）
   → Vite build時は名前順のunzen-functions.d.ts assetをemit
@@ -674,6 +674,8 @@ TypeScript source
   entryの静的import / re-exportはASTで収集し、dynamic importはesbuild変換前に拒否する。
   bare packageの推移依存も`onResolve`で個別にallowlist検証し、依存内のdynamic importも
   lower前に拒否する。出力は`defineRaw()`へ直接登録できる自己完結した`function run`
+- `bundle()`は最終`function run`をUTF-8 byte数で計測し、既定100KiBを超えるpayloadを
+  禁止APIのAST scanとsandbox投入より前に拒否する。`maxBundleSize`で明示的に調整できる
 - Viteの`declarationFile`指定時は、重複名を位置付きerrorにし、生成された
   `UnzenFunctions`を`UnzenClient<UnzenFunctions>`へ渡してcall境界を型付けする。
   webpack loaderはmodule単位の変換だけを行い、宣言集約は行わない

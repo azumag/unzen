@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
-import { bundle } from '../src/bundler';
+import { bundle, DEFAULT_MAX_BUNDLE_SIZE_BYTES } from '../src/bundler';
 
 const fixtureDirectories: string[] = [];
 
@@ -74,7 +74,62 @@ describe('bundler', () => {
 
     expect(typeof result.size).toBe('number');
     expect(result.size).toBeGreaterThan(0);
+    expect(result.size).toBe(Buffer.byteLength(result.code, 'utf8'));
   });
+
+  it('should enforce a 100 KiB default bundle size limit', async () => {
+    const payload = 'x'.repeat(DEFAULT_MAX_BUNDLE_SIZE_BYTES);
+
+    await expect(bundle({
+      code: `export function run() { return ${JSON.stringify(payload)}; }`,
+      allowedModules: [],
+    })).rejects.toThrow(/exceeds maxBundleSize of 102400 bytes/);
+  });
+
+  it('should allow an explicit larger bundle size limit', async () => {
+    const payload = 'x'.repeat(DEFAULT_MAX_BUNDLE_SIZE_BYTES);
+    const result = await bundle({
+      code: `export function run() { return ${JSON.stringify(payload)}; }`,
+      allowedModules: [],
+      maxBundleSize: DEFAULT_MAX_BUNDLE_SIZE_BYTES * 2,
+    });
+
+    expect(result.size).toBeGreaterThan(DEFAULT_MAX_BUNDLE_SIZE_BYTES);
+    expect(new Function(`${result.code}\nreturn run();`)()).toBe(payload);
+  });
+
+  it('should accept an exact final-payload boundary and reject one byte less', async () => {
+    const options = {
+      code: `export function run() { return 'boundary'; }`,
+      allowedModules: [],
+    };
+    const baseline = await bundle({ ...options, maxBundleSize: 10 * 1024 });
+    const atBoundary = await bundle({ ...options, maxBundleSize: baseline.size });
+
+    expect(atBoundary.size).toBe(baseline.size);
+    await expect(bundle({
+      ...options,
+      maxBundleSize: baseline.size - 1,
+    })).rejects.toThrow(`exceeds maxBundleSize of ${baseline.size - 1} bytes`);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])(
+    'should reject invalid maxBundleSize %s',
+    async (maxBundleSize) => {
+      await expect(bundle({
+        code: 'export function run() { return 1; }',
+        allowedModules: [],
+        maxBundleSize,
+      })).rejects.toThrow(/maxBundleSize must be a positive integer/);
+    },
+  );
 
   it('should reject code with forbidden Node.js built-in imports', async () => {
     await expect(bundle({

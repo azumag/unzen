@@ -186,7 +186,7 @@ import { define, useModule } from '@unzen/server';
 const validator = useModule('validator', {
   // ホワイトリスト必須（security-perf提言）
   allowedExports: ['isEmail', 'isURL', 'isCreditCard'],
-  maxBundleSize: '100KB',
+  maxBundleSize: 100 * 1024,
 });
 
 const validateInput = define('validateInput', (input: string, type: string) => {
@@ -207,7 +207,7 @@ const validateInput = define('validateInput', (input: string, type: string) => {
 |------|------|------|
 | モジュールホワイトリスト | 必須（P0） | サプライチェーン攻撃防止 |
 | コンテキスト分離 | モジュールセット単位 | 100回呼出で6.3x遅延 → ハイブリッド方式 |
-| バンドルサイズ上限 | 100KB/モジュール | 16MBメモリ制限との整合 |
+| バンドルサイズ上限 | 100KiB/関数（既定、明示調整可） | 16MBメモリ制限との整合 |
 | モジュール数上限 | 小規模55個/中規模5個/大規模2個 | 16MB制限内 |
 | キャッシュ戦略 | IndexedDB (5-20ms) + Service Worker (1-5ms) | コールドスタート最小化 |
 
@@ -344,6 +344,7 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 - [x] esbuild/rollupベースのビルドパイプライン
 - [ ] useModule() API
 - [x] モジュールホワイトリスト（security-perf P0要件）
+- [x] 最終bundleのUTF-8サイズ上限（既定100KiB、関数単位）
 - [x] 禁止API静的解析ツール（AST + symbol/scopeベース）
 - [ ] IndexedDB + Service Workerキャッシュ（Service Worker CacheStorageは実装済み、IndexedDBは未実装）
 - [ ] サンプル実装:

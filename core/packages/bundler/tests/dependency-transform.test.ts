@@ -199,4 +199,26 @@ server.define('unsafe', () => requestPrivateData());`;
       expect((error as Error).message).toMatch(/forbidden APIs[\s\S]*fetch/);
     }
   });
+
+  it('reports the definition location when the dependency bundle exceeds its limit', async () => {
+    const resolveDir = createPackageProject();
+    const fileName = join(resolveDir, 'functions.ts');
+    const source = `import { triple } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('triple', (value: number) => triple(value));`;
+
+    try {
+      await transformUnzenDefinitionsWithDependencies(
+        source,
+        fileName,
+        { allowedModules: ['unzen-safe-math'], maxBundleSize: 1 },
+      );
+      throw new Error('expected transform to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnzenTransformError);
+      expect(error).toMatchObject({ fileName, line: 4, column: 1 });
+      expect((error as Error).message).toContain('exceeds maxBundleSize of 1 byte');
+    }
+  });
 });

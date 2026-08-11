@@ -8,7 +8,7 @@ npm 依存関係を含むサンドボックス関数をバンドルし、QuickJS
 
 ## セキュリティモデル
 
-### 3層防御 (Defense-in-Depth)
+### 4層防御 (Defense-in-Depth)
 
 ```
 Layer 1: モジュールホワイトリスト（静的プリチェック）
@@ -18,7 +18,10 @@ Layer 2: esbuild onResolve プラグイン（解決時チェック）
   └── esbuild がモジュールを解決する際にALL解決パスを検証
   └── エイリアス・推移的依存を含む全てのモジュールをブロック可能
 
-Layer 3: 禁止API検出（バンドル後スキャン）
+Layer 3: payloadサイズ上限
+  └── 最終function runコードをUTF-8で計測（既定100KiB）
+
+Layer 4: 禁止API検出（バンドル後スキャン）
   └── バンドル出力をAST + symbol/scopeで解析し、禁止global参照を検出
   └── fetch, WebSocket, eval, new Function, require, import() 等を検出
 ```
@@ -104,6 +107,7 @@ export default defineConfig({
   plugins: [unzenVitePlugin({
     dependencyBundling: {
       allowedModules: ['lodash', 'lodash/*'],
+      maxBundleSize: 100 * 1024,
     },
   })],
 });
@@ -168,6 +172,7 @@ module.exports = {
           options: {
             dependencyBundling: {
               allowedModules: ['lodash', 'lodash/*'],
+              maxBundleSize: 100 * 1024,
             },
           },
         },
@@ -221,6 +226,7 @@ const result = await bundle({
   `,
   allowedModules: ['lodash', 'lodash/*'],
   resolveDir: process.cwd(),
+  maxBundleSize: 100 * 1024,
 });
 
 console.log(result.code);    // defineRawへ直接渡せるfunction runコード
@@ -239,12 +245,17 @@ server.defineRaw('sortUsers', result.code, { timeout: 500 });
 | `code` | `string` | import文を含む関数コード |
 | `allowedModules` | `string[]` | 許可モジュールパターン（例: `['lodash/*']`） |
 | `resolveDir` | `string?` | import解決の基準directory。省略時は`process.cwd()` |
+| `maxBundleSize` | `number?` | 最終コードの最大UTF-8 byte数。省略時は102400 (100KiB) |
 
 | 結果 | 型 | 説明 |
 |---|---|---|
 | `code` | `string` | `function run(...args)`形式の自己完結型コード（`defineRaw()`へ直接登録可能） |
 | `size` | `number` | バイトサイズ |
 | `modules` | `string[]` | entryの静的import / re-exportから検出したspecifier（重複除去） |
+
+### `DEFAULT_MAX_BUNDLE_SIZE_BYTES`
+
+既定の関数bundle上限を表す`102400`。`BundleOptions.maxBundleSize`を省略した場合に使われる。
 
 ### `checkModuleAllowed(moduleName, patterns): boolean`
 
@@ -273,8 +284,9 @@ adapter共通のAST変換。変更がなければ`null`、変更時は`code`、`
 ### `transformUnzenDefinitionsWithDependencies(source, fileName, options)`
 
 runtime importを関数単位でbundleする非同期AST変換。`options.allowedModules`は必須で、
-`options.resolveDir`は省略時にsource fileのdirectoryとなる。関数が参照したimport binding
-だけを含め、module allowlist、推移依存の解決時検査、bundle後の禁止API検査を適用する。
+`options.resolveDir`は省略時にsource fileのdirectoryとなる。`options.maxBundleSize`は
+関数ごとの最大UTF-8 byte数（既定100KiB）。関数が参照したimport bindingだけを含め、
+module allowlist、推移依存の解決時検査、サイズ上限、bundle後の禁止API検査を適用する。
 
 ### `generateUnzenTypeDeclarations(definitions)`
 
@@ -302,8 +314,9 @@ esbuildが読む依存graphに対する古いloader cacheを再利用しない�
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
 3. `stdin.resolveDir`を基準にesbuildでバンドルする（内部IIFE、ES2018、browser platform）
    - `onResolve`で全bare moduleをallowlist検証し、推移依存内のdynamic importも拒否する
-4. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
-5. IIFEとexportされたentryを自己完結した`function run(...args)`で包む
+4. IIFEとexportされたentryを自己完結した`function run(...args)`で包む
+5. 最終コードのUTF-8 byte数を計測し、`maxBundleSize`（既定100KiB）超過を拒否する
+6. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
 
 ## テスト
 
@@ -330,6 +343,8 @@ npx vitest run
   明示する。relative / absolute local importは既存契約どおりmodule allowlistの対象外
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
+- 100KiBを超える依存コードは既定で拒否する。上限を増やす場合はQuickJSの16MB memory
+  limitとparse時の追加memoryを考慮し、`maxBundleSize`を明示する
 - compile-time抽出はクロージャ値を埋め込まない。runtime importのbundleは
   `dependencyBundling`を明示した場合だけ行う
 - 元moduleのimport宣言はbuild toolのmodule graphとwatch対象を保つため残る。bindingが

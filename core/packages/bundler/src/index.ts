@@ -14,7 +14,12 @@
  * @module @unzen/bundler
  */
 
-export { bundle, type BundleOptions, type BundleResult } from './bundler';
+export {
+  bundle,
+  DEFAULT_MAX_BUNDLE_SIZE_BYTES,
+  type BundleOptions,
+  type BundleResult,
+} from './bundler';
 export {
   checkModuleAllowed,
   isNodeBuiltin,

@@ -61,7 +61,10 @@ export default defineConfig({
   plugins: [unzenVitePlugin({
     declarationFile: 'unzen-functions.d.ts',
     // npm importをinline関数で使う場合だけ明示する
-    // dependencyBundling: { allowedModules: ['lodash', 'lodash/*'] },
+    // dependencyBundling: {
+    //   allowedModules: ['lodash', 'lodash/*'],
+    //   maxBundleSize: 100 * 1024,
+    // },
   })],
 });
 ```
@@ -80,6 +83,7 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 入力/globalへの代入・`Math.random()`や現在時刻への依存をsource位置付きbuild errorで
 拒否する。runtime importは標準では拒否し、`dependencyBundling`を明示した場合だけ
 allowlist検証とbundle後の禁止API検査を経て自己完結コードへ変換する。
+依存bundleは最終コードをUTF-8で計測し、既定100KiBを超える場合はbuild errorになる。
 webpack loader設定、生成型の利用例、対象構文の制約は
 [モジュールバンドラーガイド](docs/bundler.md)を参照。
 

@@ -52,6 +52,8 @@ export interface UnzenDependencyBundlingOptions {
   allowedModules: string[];
   /** Project directory used to resolve packages; defaults to the source file directory. */
   resolveDir?: string;
+  /** Maximum UTF-8 byte size per bundled function; defaults to 100 KiB. */
+  maxBundleSize?: number;
 }
 
 interface UnzenDefinitionPlan {
@@ -606,6 +608,7 @@ export async function transformUnzenDefinitionsWithDependencies(
         code: `${imports.join('\n')}\nexport const run = ${functionCode};`,
         allowedModules,
         resolveDir,
+        maxBundleSize: options.maxBundleSize,
       });
       functionCodes.push(result.code);
     } catch (error) {

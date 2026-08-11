@@ -7,7 +7,7 @@
  * Design decisions:
  * - esbuild resolves and bundles all imports at build time
  *   (no runtime module resolution needed in the sandbox)
- * - Output is IIFE format because QuickJS sandbox has no module system
+ * - esbuild emits an internal IIFE, wrapped in the sandbox's function run contract
  * - Target is ES2018 for QuickJS compatibility (QuickJS supports ES2020
  *   but ES2018 is safer for maximum compatibility)
  * - Forbidden APIs are detected in the final bundle as defense-in-depth
@@ -21,8 +21,8 @@
  *    (IIFE, ES2018, browser platform)
  *    - esbuild onResolve plugin validates ALL modules at resolution time
  *      (catches aliased/transitive imports the pre-check might miss)
- * 4. Scan output for forbidden APIs (defense-in-depth)
- * 5. Transform IIFE output to expose run() function
+ * 4. Wrap IIFE output as function run and enforce the payload size limit
+ * 5. Scan output for forbidden APIs (defense-in-depth)
  * 6. Return bundled code with metadata
  */
 
@@ -31,6 +31,9 @@ import { resolve } from 'node:path';
 import ts from 'typescript';
 import { checkModuleAllowed, isNodeBuiltin } from './module-whitelist';
 import { checkForbiddenApis } from './forbidden-api-check';
+
+/** Default maximum size of one self-contained sandbox function (100 KiB). */
+export const DEFAULT_MAX_BUNDLE_SIZE_BYTES = 100 * 1024;
 
 /**
  * Bundle options for configuring the bundling process
@@ -42,6 +45,8 @@ export interface BundleOptions {
   allowedModules: string[];
   /** Directory used to resolve imports; defaults to the caller's working directory. */
   resolveDir?: string;
+  /** Maximum UTF-8 byte size of the final function; defaults to 100 KiB. */
+  maxBundleSize?: number;
 }
 
 /**
@@ -64,22 +69,36 @@ interface EntryImportAnalysis {
 const DYNAMIC_IMPORT_VIOLATION =
   'dynamic import() - dynamic module loading is blocked in sandbox';
 
+function normalizeMaxBundleSize(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_BUNDLE_SIZE_BYTES;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(
+      `Invalid maxBundleSize ${String(value)}: `
+      + "maxBundleSize must be a positive integer within JavaScript's safe range",
+    );
+  }
+  return value;
+}
+
 /**
  * Bundle function code with npm dependencies into self-contained sandbox code.
  *
  * Process:
  * 1. Analyze module syntax, reject dynamic imports, and validate static modules
  * 2. Bundle the in-memory entry relative to resolveDir
- * 3. Scan output for forbidden APIs
- * 4. Return bundled code
+ * 3. Wrap the output and enforce the configured UTF-8 byte limit
+ * 4. Scan output for forbidden APIs
+ * 5. Return bundled code
  *
  * @param options - Bundle configuration
  * @returns Bundled code, size, and module list
- * @throws Error if module not allowed, Node built-in used, or forbidden API detected
+ * @throws Error if configuration or size is invalid, a module is blocked,
+ * or an API is forbidden
  */
 export async function bundle(options: BundleOptions): Promise<BundleResult> {
   const { code, allowedModules } = options;
   const resolveDir = resolve(options.resolveDir ?? process.cwd());
+  const maxBundleSize = normalizeMaxBundleSize(options.maxBundleSize);
 
   // Step 1: Analyze and validate module syntax.
   // We validate BEFORE invoking esbuild to fail fast with clear error messages
@@ -130,7 +149,21 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
 
   const output = result.outputFiles?.[0]?.text ?? '';
 
-  // Step 3: Whitelisted transitive dependencies can still introduce APIs that
+  // Step 3: Measure the exact payload registered through defineRaw. Reject oversized
+  // output before the more expensive AST security scan and before it can reach
+  // a memory-constrained QuickJS runtime.
+  const bundledCode = extractRunFunction(output);
+  const size = Buffer.byteLength(bundledCode, 'utf8');
+  if (size > maxBundleSize) {
+    const unit = maxBundleSize === 1 ? 'byte' : 'bytes';
+    throw new Error(
+      `Bundled code is ${size} bytes and exceeds maxBundleSize `
+      + `of ${maxBundleSize} ${unit}. Reduce imported code or configure `
+      + 'a larger limit explicitly.',
+    );
+  }
+
+  // Step 4: Whitelisted transitive dependencies can still introduce APIs that
   // the sandbox intentionally does not expose.
   const violations = checkForbiddenApis(output);
   if (violations.length > 0) {
@@ -140,12 +173,9 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
     );
   }
 
-  // Step 4: esbuild generates `var __unzen_module = (() => { ... })();`.
-  const bundledCode = extractRunFunction(output);
-
   return {
     code: bundledCode,
-    size: Buffer.byteLength(bundledCode, 'utf-8'),
+    size,
     modules: importedModules,
   };
 }
