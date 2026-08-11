@@ -11,6 +11,16 @@ function bodyLimitError(label: string, maximumBytes: number): RequestBodyLimitEr
   return new RequestBodyLimitError(label, maximumBytes);
 }
 
+/** Release an inbound body when a route rejects it before parsing. */
+export function cancelUnreadRequestBody(request: Request): void {
+  try {
+    const cancellation = request.body?.cancel();
+    void cancellation?.catch(() => {});
+  } catch {
+    // Body release is best-effort and must not replace the intended response.
+  }
+}
+
 function assertDeclaredRequestSize(
   request: Request,
   maximumBytes: number,
@@ -35,12 +45,7 @@ function assertDeclaredRequestSizeOrCancel(
   try {
     assertDeclaredRequestSize(request, maximumBytes, label);
   } catch (error) {
-    try {
-      const cancellation = request.body?.cancel(error);
-      void cancellation?.catch(() => {});
-    } catch {
-      // Releasing a rejected request is best-effort; preserve the limit error.
-    }
+    cancelUnreadRequestBody(request);
     throw error;
   }
 }

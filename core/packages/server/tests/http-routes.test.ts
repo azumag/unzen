@@ -170,6 +170,45 @@ describe('HTTP Routes', () => {
       expect(data.error).toBeDefined();
     });
 
+    it('should cancel an unread body when the function does not exist', async () => {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const request = new Request('http://localhost/unzen/exec/nonExistent', {
+        method: 'POST',
+        body,
+        duplex: 'half',
+      } as RequestInit & { duplex: 'half' });
+
+      const res = await app.fetch(request);
+
+      expect(res.status).toBe(404);
+      expect(cancelled).toBe(true);
+    });
+
+    it('should cancel an unread body when server fallback is disabled', async () => {
+      server.defineRaw('privateFunction', '() => 1', { noFallback: true });
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const request = new Request('http://localhost/unzen/exec/privateFunction', {
+        method: 'POST',
+        body,
+        duplex: 'half',
+      } as RequestInit & { duplex: 'half' });
+
+      const res = await app.fetch(request);
+
+      expect(res.status).toBe(501);
+      expect(cancelled).toBe(true);
+    });
+
     it('should return 400 for function execution errors (user code bugs)', async () => {
       server.defineRaw('errorFunc', '() => { throw new Error("test error"); }');
 

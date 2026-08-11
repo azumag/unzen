@@ -40,7 +40,11 @@ import {
 import { FunctionRegistry } from './function-registry';
 import { ManifestBuilder } from './manifest-builder';
 import { QuickJSRuntime } from './quickjs-runtime';
-import { readBoundedJsonRequest, RequestBodyLimitError } from './request-body';
+import {
+  cancelUnreadRequestBody,
+  readBoundedJsonRequest,
+  RequestBodyLimitError,
+} from './request-body';
 import { normalizeUnzenBaseUrl } from './base-url';
 import { matchesIfNoneMatch } from './etag';
 import { createExecutionHttpResponse } from './execution-response';
@@ -695,6 +699,7 @@ export class UnzenServer {
       const fn = this.registry.get(name);
 
       if (!fn) {
+        cancelUnreadRequestBody(c.req.raw);
         return createExecutionHttpResponse(
           {
             success: false,
@@ -708,6 +713,7 @@ export class UnzenServer {
       // functions like password hashing) execute in the browser only — the
       // server never receives their inputs or provides fallback execution.
       if (fn.noFallback || fn.runtime === 'moonbit') {
+        cancelUnreadRequestBody(c.req.raw);
         return createExecutionHttpResponse(
           {
             success: false,
