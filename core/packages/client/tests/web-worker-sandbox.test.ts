@@ -959,6 +959,34 @@ describe('WebWorkerSandboxExecutor', () => {
   });
 
   describe('cancellation via AbortSignal', () => {
+    it('rejects an unsolicited cancel acknowledgement as a protocol violation', async () => {
+      const worker = new MockWorker();
+      worker.onPostMessage((msg) => {
+        if (msg.type === 'init') {
+          worker.respond({ type: 'init-result', success: true });
+        } else if (msg.type === 'execute') {
+          worker.respond({
+            type: 'cancel-result',
+            requestId: msg.requestId,
+            success: true,
+          });
+        }
+      });
+
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        timeout: 5000,
+        createWorker: createMockWorkerFactory(worker),
+      });
+
+      await expect(executor.execute('function run() { return 1; }', []))
+        .rejects.toThrow('Unexpected cancel acknowledgement');
+      expect(executor.diagnostics.cancelCount).toBe(0);
+      expect(executor.diagnostics.forcedTerminationCount).toBe(1);
+      expect(executor.diagnostics.cancelLatencyMs).toBeNull();
+      executor.dispose();
+    });
+
     it('should cancel a queued request without touching the running request', async () => {
       const worker = new MockWorker();
       worker.onPostMessage((msg) => {

@@ -920,6 +920,15 @@ export class WebWorkerSandboxExecutor implements SandboxExecutor {
       this.diagnosticsState.lateResponseCount++;
       return;
     }
+    if (!running.cancelRequested) {
+      // A worker may acknowledge only a cancel that this executor actually
+      // sent. Otherwise a forged or out-of-order response could turn an active
+      // execution into a caller cancellation and suppress server fallback.
+      this.failGeneration(new UnzenRuntimeError(
+        `Unexpected cancel acknowledgement for request ${msg.requestId}`,
+      ));
+      return;
+    }
     if (!msg.success) {
       // Worker reports it could not cancel (e.g. unknown request). The cancel
       // ack timer would otherwise fire later and count the same cancel twice.
