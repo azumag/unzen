@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path';
 import {
   readFileSync,
   copyFileSync,
+  existsSync,
   writeFileSync,
   mkdtempSync,
   rmSync,
@@ -559,6 +560,22 @@ describe('UnzenServer', () => {
         expect(() => server.defineMoonbit('tooLargeWasm', wasmPath))
           .toThrow(`exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
         expect(server.getFunction('tooLargeWasm')).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects non-regular module paths before attempting a body read', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'unzen-non-file-mb-'));
+      try {
+        const paths = [dir];
+        if (existsSync('/dev/zero')) paths.push('/dev/zero');
+        for (let index = 0; index < paths.length; index++) {
+          const name = `nonFileWasm${index}`;
+          expect(() => server.defineMoonbit(name, paths[index]))
+            .toThrow('must be a regular file');
+          expect(server.getFunction(name)).toBeUndefined();
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

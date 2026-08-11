@@ -210,8 +210,10 @@ Error
   serialized request と受信時の宣言 `Content-Length` を検証し、stream 実 byte 数も読みながら
   検証して、上限超過時は body を cancel する。server は request 超過を構造化 413 で返す。
   fallback result も一度だけ JSON 化し、過大または JSON 化不能なら構造化 422 を返す
-- server 登録境界は raw source の UTF-8 byte 数と MoonBit file の stat/captured byte 数を
-  16 MiB に制限し、超過時は version 採番・hash・registry 変更前に拒否する。code response は
+- server 登録境界は raw source の UTF-8 byte 数を16 MiBに制限する。MoonBit file は
+  descriptor上でregular fileか確認し、宣言サイズを64 KiB chunkで読み取って末尾を1 byteだけ
+  probeするため、読み取り中の肥大化や特殊ファイルでも上限を越えてbufferしない。超過時は
+  version 採番・hash・registry 変更前に拒否する。code response は
   captured payload と一致する `Content-Length` を返す。shared definition validator と公開
   `FunctionRegistry.register()` も `FunctionDefinition.code` の UTF-8 byte 数へ同じ上限を適用する
 - candidate definition を含む aggregate manifest を登録前に生成し、UTF-8 1 MiB 超なら

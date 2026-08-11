@@ -14,7 +14,12 @@
  */
 
 import { createHash } from 'crypto';
-import { readFileSync, statSync } from 'fs';
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readSync,
+} from 'fs';
 import { Hono } from 'hono';
 import type {
   FunctionDefinition,
@@ -64,6 +69,55 @@ const UNSUPPORTED_FUNCTION_PROTOTYPES = new Set<object>([
 ]);
 
 const RUN_FUNCTION_DECLARATION = /^function\s+run\s*\(/;
+const FILE_READ_CHUNK_BYTES = 64 * 1024;
+
+class BoundedFileLimitError extends Error {}
+
+/** Read one stable regular file without buffering more than maximumBytes + one byte. */
+function readBoundedRegularFileSync(
+  path: string,
+  maximumBytes: number,
+  label: string,
+): Buffer {
+  const fd = openSync(path, 'r');
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new Error(`${label} must be a regular file`);
+    }
+    if (stats.size > maximumBytes) {
+      throw new BoundedFileLimitError(`${label} exceeds ${maximumBytes} bytes`);
+    }
+
+    const bytes = Buffer.allocUnsafe(stats.size);
+    let totalBytes = 0;
+    while (totalBytes < bytes.byteLength) {
+      const bytesRead = readSync(
+        fd,
+        bytes,
+        totalBytes,
+        Math.min(FILE_READ_CHUNK_BYTES, bytes.byteLength - totalBytes),
+        null,
+      );
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+    }
+
+    // A descriptor can grow after fstat(). Probe only one more byte: any
+    // growth invalidates this registration without reading the new body.
+    const probe = Buffer.allocUnsafe(1);
+    if (readSync(fd, probe, 0, 1, null) !== 0) {
+      if (stats.size === maximumBytes) {
+        throw new BoundedFileLimitError(`${label} exceeds ${maximumBytes} bytes`);
+      }
+      throw new Error(`${label} changed size while being read`);
+    }
+
+    return totalBytes === bytes.byteLength ? bytes : bytes.subarray(0, totalBytes);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function snapshotSynchronousFunctionSource(fn: unknown): string {
   if (typeof fn !== 'function') {
@@ -320,31 +374,23 @@ export class UnzenServer {
       throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
     }
 
-    // Fail fast on declared size before reading the file into process memory.
-    let declaredSize: number;
-    try {
-      declaredSize = statSync(wasmPath).size;
-    } catch (error) {
-      throw new Error(
-        `Cannot read MoonBit module for "${name}": ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (declaredSize > MAX_FUNCTION_PAYLOAD_BYTES) {
-      throw new Error(`MoonBit module exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
-    }
-
-    // The .wasm must exist and be a valid module at registration.
+    // Read from one descriptor in bounded chunks. The descriptor-level stat
+    // rejects non-files and catches ordinary oversized inputs before reading;
+    // the chunk limit remains authoritative if the file grows concurrently.
     let bytes: Buffer;
     try {
-      bytes = readFileSync(wasmPath);
+      bytes = readBoundedRegularFileSync(
+        wasmPath,
+        MAX_FUNCTION_PAYLOAD_BYTES,
+        'MoonBit module',
+      );
     } catch (error) {
+      if (error instanceof BoundedFileLimitError) {
+        throw new Error(error.message);
+      }
       throw new Error(
         `Cannot read MoonBit module for "${name}": ${error instanceof Error ? error.message : String(error)}`,
       );
-    }
-    // Re-check the captured bytes in case the file changed after stat().
-    if (bytes.byteLength > MAX_FUNCTION_PAYLOAD_BYTES) {
-      throw new Error(`MoonBit module exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
     }
     // Node's @types/node does not declare the WebAssembly global on the
     // server tsconfig (no DOM lib), so access it through the global object.
