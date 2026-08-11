@@ -58,6 +58,8 @@ const UNSUPPORTED_FUNCTION_TAGS = new Set([
   '[object AsyncGeneratorFunction]',
 ]);
 
+const RUN_FUNCTION_DECLARATION = /^function\s+run\s*\(/;
+
 function assertSynchronousFunction(fn: Function): void {
   if (UNSUPPORTED_FUNCTION_TAGS.has(Object.prototype.toString.call(fn))) {
     throw new Error('Unzen define() supports synchronous non-generator functions only');
@@ -208,7 +210,7 @@ export class UnzenServer {
     // which creates an unnecessary nested call. Use trimStart() to handle
     // leading whitespace that might be present in template literals.
     // Otherwise, wrap in standard run() wrapper for client-side sandbox compatibility.
-    const wrappedCode = code.trimStart().startsWith('function run')
+    const wrappedCode = RUN_FUNCTION_DECLARATION.test(code.trimStart())
       ? code
       : `function run(...args) { return (${code})(...args); }`;
 

@@ -94,7 +94,9 @@ JavaScript関数の実行契約は同期かつmaterializedな戻り値に限定�
 async/generator関数を登録時に拒否し、QuickJS（browser/server）とMock executorは
 Promise/thenableまたはiterator/generator結果を同じ契約エラーとして拒否する。
 登録名は英字で始まる1〜100文字の英数字・`_`・`-`に限定され、`defineRaw()`は空の
-コードを拒否する。公開されている`FunctionRegistry`を直接使う場合も、定義全体を
+コードを拒否する。先頭が正確な `function run(...)` 宣言の場合だけそのまま保持し、
+`function runner(...)` を含む他の関数式は outer `run` で包む。公開されている
+`FunctionRegistry`を直接使う場合も、定義全体を
 検証してABI配列を含むスナップショットを保持し、`get()` / `getAll()`は独立したコピーを返す。
 
 ```typescript

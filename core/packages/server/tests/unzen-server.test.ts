@@ -180,7 +180,7 @@ describe('UnzenServer', () => {
       server.defineRaw('triple', code);
 
       const fn = server.getFunction('triple');
-      // After trimming, starts with 'function run' → use as-is
+      // After trimming, this is the exact `function run(...)` declaration.
       expect(fn?.code).toBe(code);
     });
 
@@ -199,6 +199,20 @@ describe('UnzenServer', () => {
 
       const fn = server.getFunction('double');
       expect(fn?.code).toContain('function run(...args)');
+    });
+
+    it('wraps named functions whose names only begin with run', async () => {
+      const code = 'function runner(value) { return value * 2; }';
+      server.defineRaw('runner', code);
+
+      expect(server.getFunction('runner')?.code).toContain('function run(...args)');
+      const response = await server.middleware().request('/exec/runner', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args: [21] }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ result: 42 });
     });
 
     it('rejects unsafe names and empty code before registration', () => {
