@@ -366,6 +366,11 @@ await registerUnzenCacheWorker({
 `Cache-Control: no-cache` で配信する。root 以外に配置して `/` scope を指定する場合は
 `Service-Worker-Allowed: /` も必要になる。
 
+`ManifestFetcher` は HTTP JSON をそのまま信用せず、関数名、runtime、正の safe integer
+version、canonical SHA-256、HTTP(S) / relative `codeUrl`、`noFallback`、MoonBit 固有の
+export / ABI metadata を実行時に検証する。検証後は prototype を持たない関数表へコピーし、
+不正な body は ETag とともにキャッシュせず `UnzenNetworkError` で fail closed にする。
+
 Service Worker の有無にかかわらず、`UnzenClient` はダウンロードした JavaScript と
 MoonBit Wasm の生バイトを manifest の `sha256:<64hex>` と照合し、一致した payload
 だけを decode / compile / インメモリキャッシュする。不正形式、ハッシュ不一致、

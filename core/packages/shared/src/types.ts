@@ -138,6 +138,17 @@ export const MAX_FUNCTION_TIMEOUT = 2000;
  * when function names are used in URL paths or file system paths.
  */
 const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
+const SHA256_CONTENT_HASH = /^sha256:[a-f0-9]{64}$/;
+
+/** Whether a function name is safe to use as a manifest key and URL segment. */
+export function isValidFunctionName(value: unknown): value is string {
+  return typeof value === 'string' && SAFE_FUNCTION_NAME.test(value);
+}
+
+/** Whether a value is Unzen's canonical lowercase SHA-256 content identity. */
+export function isValidContentHash(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_CONTENT_HASH.test(value);
+}
 
 export function isValidFunctionDefinition(def: unknown): def is FunctionDefinition {
   if (typeof def !== 'object' || def === null) {
@@ -166,16 +177,14 @@ export function isValidFunctionDefinition(def: unknown): def is FunctionDefiniti
   }
 
   return (
-    typeof d.name === 'string' &&
-    SAFE_FUNCTION_NAME.test(d.name) &&
+    isValidFunctionName(d.name) &&
     isRuntimeType(d.runtime) &&
     typeof d.code === 'string' &&
     d.code.length > 0 &&
     typeof d.version === 'number' &&
-    Number.isInteger(d.version) &&
+    Number.isSafeInteger(d.version) &&
     d.version > 0 &&
-    typeof d.hash === 'string' &&
-    /^sha256:[a-f0-9]{64}$/.test(d.hash)
+    isValidContentHash(d.hash)
   );
 }
 

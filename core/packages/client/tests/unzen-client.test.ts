@@ -356,6 +356,25 @@ describe('UnzenClient', () => {
 
       client.dispose();
     });
+
+    it('does not treat inherited Object properties as manifest functions', async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) {
+          return jsonResponse({ functions: {} });
+        }
+        throw new Error('Only the manifest should be requested');
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const client = new UnzenClient({
+        endpoint: 'https://example.com',
+        mode: 'production',
+        sandbox: new MockSandboxExecutor(),
+      });
+
+      await expect(client.call('toString')).rejects.toThrow(UnzenFunctionError);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      client.dispose();
+    });
   });
 
   describe('browser-only mode', () => {

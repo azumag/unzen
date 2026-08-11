@@ -25,6 +25,8 @@ export {
   type ExecutionOptions,
   type ExecutionResult,
   isRuntimeType,
+  isValidFunctionName,
+  isValidContentHash,
   isMoonBitAbiType,
   normalizeMoonBitAbi,
   isValidMoonBitAbi,
@@ -63,5 +65,7 @@ export {
   type ExecutionRequest,
   type ExecutionResponse,
   createManifestResponse,
+  normalizeManifestResponse,
+  isValidManifestResponse,
   createExecutionResponse,
 } from './protocol';

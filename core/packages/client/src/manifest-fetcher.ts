@@ -29,11 +29,13 @@
  */
 
 import {
+  UnzenCancelledError,
   UnzenNetworkError,
+  normalizeManifestResponse,
   type ManifestResponse,
   type FunctionManifestEntry,
 } from '@unzen/shared';
-import { raceWithAbort, throwIfAborted } from './abort';
+import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
 
 /** A shared in-flight manifest request with per-caller waiter tracking. */
 interface InflightManifestRequest {
@@ -206,7 +208,15 @@ export class ManifestFetcher {
       // must not be stored for a manifest we never committed — otherwise a
       // later 304 would pair the new ETag with the old manifest.
       const etag = response.headers?.get('ETag') ?? null;
-      const manifest: ManifestResponse = await response.json();
+      const payload: unknown = await response.json();
+      // A response body implementation may ignore AbortSignal. Do not commit
+      // a late body after the last waiter has cancelled or invalidate() has
+      // explicitly aborted this request.
+      throwIfAborted(signal);
+      const manifest = normalizeManifestResponse(payload);
+      if (manifest === undefined) {
+        throw new UnzenNetworkError('Invalid manifest response');
+      }
       // Commit both together. A 200 without an ETag header invalidates the old
       // ETag: pairing a stale ETag with the new manifest would make the next
       // 304 serve the wrong body.
@@ -217,8 +227,12 @@ export class ManifestFetcher {
       return manifest;
     } catch (error) {
       // Re-throw UnzenNetworkError as-is
-      if (error instanceof UnzenNetworkError) {
+      if (error instanceof UnzenNetworkError || error instanceof UnzenCancelledError) {
         throw error;
+      }
+
+      if (isAbortError(error) || signal.aborted) {
+        throw new UnzenCancelledError('Manifest fetch cancelled');
       }
 
       // Wrap other errors as network error
@@ -244,7 +258,9 @@ export class ManifestFetcher {
       return undefined;
     }
 
-    return this.cache.functions[name];
+    return Object.hasOwn(this.cache.functions, name)
+      ? this.cache.functions[name]
+      : undefined;
   }
 
   /**
@@ -270,7 +286,11 @@ export class ManifestFetcher {
    */
   invalidate(): void {
     this.cache = null;
+    const inflight = this.inflight;
     this.inflight = null;
+    // Stop a stale request before it can commit a body after invalidation.
+    // Existing callers settle as cancelled; the next fetch starts fresh.
+    inflight?.controller.abort();
     // etag and lastManifest are preserved to enable conditional requests
     // after invalidation. This is the key optimization: even after invalidation,
     // if the server manifest hasn't changed, the client gets a lightweight 304

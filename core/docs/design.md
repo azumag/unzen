@@ -130,7 +130,7 @@ async call(name: string, ...args: any[]) {
 
 ```
 1. 訪問者がサイトにアクセス
-2. Client SDK が /unzen/manifest を取得 (関数一覧 + メタデータ)
+2. Client SDK が /unzen/manifest を取得し schema 検証 (関数一覧 + メタデータ)
 3. 必要に応じて QuickJS Wasm ランタイムをダウンロード (初回のみ、キャッシュ)
 4. 関数コードを取得 (Service Worker でキャッシュ可能)
 5. Web Worker 内で QuickJS を初期化
@@ -463,7 +463,7 @@ unzen.define('check', (text: string) => {
 ```
 
 キャッシュ戦略:
-1. **マニフェスト**: ETag/Last-Modified ヘッダで条件付きリクエストを行う
+1. **マニフェスト**: runtime schema を検証して prototype-safe な snapshot にコピーし、ETag で条件付きリクエストを行う
 2. **SDK 検証**: JavaScript / Wasm の生バイトを manifest の SHA-256 と照合し、一致後だけ decode / compile / cache する
 3. **関数コード/Wasm**: version + SHA-256 の URL でイミュータブルキャッシュを使用する (`Cache-Control: immutable`)
 4. **Service Worker**: SHA-256 を再検証した同一 origin の versioned code/Wasm のみ CacheStorage に永続化する

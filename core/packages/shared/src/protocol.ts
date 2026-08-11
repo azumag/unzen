@@ -5,7 +5,12 @@
  * All messages are JSON-serializable for transmission over HTTP.
  */
 
-import { normalizeMoonBitAbi } from './types';
+import {
+  isRuntimeType,
+  isValidContentHash,
+  isValidFunctionName,
+  normalizeMoonBitAbi,
+} from './types';
 import type { FunctionDefinition, MoonBitAbi, RuntimeType } from './types';
 
 /**
@@ -46,6 +51,129 @@ export interface FunctionManifestEntry {
   moonbitAbi?: MoonBitAbi;
   /** When true, a browser failure never falls back to the server. */
   noFallback?: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isFetchableCodeUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.trim() !== value) {
+    return false;
+  }
+  try {
+    // The server may emit either an absolute URL or an origin-relative URL.
+    // A fixed HTTPS base lets the URL parser validate both without depending
+    // on a browser location.
+    const parsed = new URL(value, 'https://unzen.invalid/');
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+      && parsed.username === ''
+      && parsed.password === ''
+      && parsed.hash === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validate and copy an untrusted manifest response.
+ *
+ * The returned function table has a null prototype, so names such as
+ * `toString` cannot be mistaken for entries inherited from Object.prototype.
+ * Unknown fields are ignored to preserve forward compatibility.
+ */
+export function normalizeManifestResponse(value: unknown): ManifestResponse | undefined {
+  try {
+    if (!isRecord(value) || !Object.hasOwn(value, 'functions')) return undefined;
+    const sourceFunctions = value.functions;
+    if (!isRecord(sourceFunctions)) return undefined;
+
+    const functions = Object.create(null) as Record<string, FunctionManifestEntry>;
+    for (const name of Object.keys(sourceFunctions)) {
+      if (!isValidFunctionName(name)) return undefined;
+
+      const sourceEntry = sourceFunctions[name];
+      if (!isRecord(sourceEntry)) return undefined;
+      if (
+        !Object.hasOwn(sourceEntry, 'runtime')
+        || !Object.hasOwn(sourceEntry, 'hash')
+        || !Object.hasOwn(sourceEntry, 'version')
+        || !Object.hasOwn(sourceEntry, 'codeUrl')
+      ) {
+        return undefined;
+      }
+
+      const runtime = sourceEntry.runtime;
+      const hash = sourceEntry.hash;
+      const version = sourceEntry.version;
+      const codeUrl = sourceEntry.codeUrl;
+      if (
+        !isRuntimeType(runtime)
+        || !isValidContentHash(hash)
+        || typeof version !== 'number'
+        || !Number.isSafeInteger(version)
+        || version <= 0
+        || !isFetchableCodeUrl(codeUrl)
+      ) {
+        return undefined;
+      }
+
+      const exportName = Object.hasOwn(sourceEntry, 'exportName')
+        ? sourceEntry.exportName
+        : undefined;
+      if (
+        exportName !== undefined
+        && (runtime !== 'moonbit' || typeof exportName !== 'string')
+      ) {
+        return undefined;
+      }
+
+      const sourceMoonbitAbi = Object.hasOwn(sourceEntry, 'moonbitAbi')
+        ? sourceEntry.moonbitAbi
+        : undefined;
+      const moonbitAbi = sourceMoonbitAbi === undefined
+        ? undefined
+        : normalizeMoonBitAbi(sourceMoonbitAbi);
+      if (
+        sourceMoonbitAbi !== undefined
+        && (runtime !== 'moonbit' || moonbitAbi === undefined)
+      ) {
+        return undefined;
+      }
+
+      const noFallback = Object.hasOwn(sourceEntry, 'noFallback')
+        ? sourceEntry.noFallback
+        : undefined;
+      if (noFallback !== undefined && typeof noFallback !== 'boolean') {
+        return undefined;
+      }
+
+      functions[name] = {
+        runtime,
+        hash,
+        version,
+        codeUrl,
+        ...(exportName !== undefined && { exportName }),
+        ...(moonbitAbi !== undefined && { moonbitAbi }),
+        ...(noFallback !== undefined && { noFallback }),
+      };
+    }
+
+    return { functions };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runtime type guard for data received from a manifest endpoint. */
+export function isValidManifestResponse(value: unknown): value is ManifestResponse {
+  return normalizeManifestResponse(value) !== undefined;
 }
 
 /**

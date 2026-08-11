@@ -77,7 +77,7 @@ core/
 │  訪問者のブラウザ                                                │
 │                                                                 │
 │  UnzenClient({ endpoint, mode })                                │
-│  ├── ManifestFetcher → GET /manifest (インメモリキャッシュ)        │
+│  ├── ManifestFetcher → GET /manifest (schema 検証 + キャッシュ)     │
 │  ├── CodeFetcher → GET /code/:name (ハッシュベースキャッシュ)      │
 │  ├── SandboxExecutor → ブラウザ内実行                             │
 │  │   └── MVP: MockSandboxExecutor (Node.js vm)                  │
@@ -137,6 +137,9 @@ interface FunctionDefinition {
 // FunctionDefinition バリデーション関数
 // 全フィールドの存在・型・値の妥当性を検証
 function isValidFunctionDefinition(def: unknown): def is FunctionDefinition;
+
+// HTTP 由来の manifest を検証し、prototype-safe な snapshot にコピー
+function normalizeManifestResponse(value: unknown): ManifestResponse | undefined;
 
 // マニフェストで公開される関数エントリ (コード本体を含まない)
 // FunctionDefinition との違い: code フィールドの代わりに codeUrl を持つ
@@ -338,7 +341,7 @@ Hono ミドルウェアとして3つのエンドポイントを提供:
 
 ```
 UnzenClient
- ├── ManifestFetcher     GET /manifest (インメモリキャッシュ)
+ ├── ManifestFetcher     GET /manifest (schema 検証 + インメモリキャッシュ)
  ├── CodeFetcher         GET /code/:name (SHA-256 検証 + ハッシュキャッシュ)
  ├── SandboxExecutor     ブラウザ内サンドボックス実行
  │    └── MockSandboxExecutor (MVP: Node.js vm)
@@ -358,7 +361,7 @@ call(name, ...args)
 │
 ├── [production モード]
 │   ├── executeBrowser(name, args)
-│   │   ├── ManifestFetcher.fetch() → マニフェスト取得 (キャッシュ)
+│   │   ├── ManifestFetcher.fetch() → schema 検証済み manifest (キャッシュ)
 │   │   ├── manifest.functions[name] → エントリ検索
 │   │   │   └── 無い場合: throw UnzenFunctionError (フォールバックしない)
 │   │   ├── CodeFetcher.fetch(entry) → 生バイト取得・SHA-256 検証・キャッシュ
@@ -396,11 +399,17 @@ async callWithDiagnostics<T>(name: string, ...args: unknown[]): Promise<Diagnost
 #### マニフェストキャッシュ (ManifestFetcher)
 
 ```
-初回 fetch() → GET /manifest → インメモリに保存
+初回 fetch() → GET /manifest → schema 検証 + snapshot → インメモリに保存
 以降 fetch() → キャッシュから即座に返却
-invalidate() → キャッシュクリア (次回fetchでサーバーアクセス)
+invalidate() → 進行中 fetch を abort + キャッシュクリア (次回fetchで再取得)
 ```
 
+- `functions`、安全な関数名、`quickjs | moonbit`、正の safe integer version、
+  canonical SHA-256、HTTP(S) / relative `codeUrl`、optional metadata を実行時検証する
+- 検証済み関数表は null-prototype record へコピーし、`toString` 等の inherited key を
+  未登録関数として扱う。MoonBit ABI も bounded indexed copy で snapshot 化する
+- JSON parse / schema 検証 / abort check がすべて成功した body と ETag だけを同時 commit する
+- malformed body、abort 後に遅延完了した body、invalidate 前の in-flight body は保存しない
 - TTL はなく、明示的な invalidate でのみクリアされる
 - スコープはインスタンス単位である
 
@@ -582,7 +591,7 @@ defineRaw('add', '(a, b) => a + b')
    → [キャッシュミス] GET /unzen/manifest
    → { functions: { add: { runtime:'quickjs', hash:'sha256:...', version:1,
                            codeUrl:'http://localhost:3000/unzen/code/add?v=1&h=sha256%3A...' } } }
-   → キャッシュに保存
+   → schema 検証 + prototype-safe snapshot 後に ETag と同時保存
 
 3. manifest.functions['add'] → entry 取得
 

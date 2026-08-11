@@ -13,6 +13,8 @@ import {
   FunctionDefinition,
   ExecutionOptions,
   ExecutionResult,
+  isValidContentHash,
+  isValidFunctionName,
   isRuntimeType,
   MAX_MOONBIT_ABI_PARAMS,
   normalizeMoonBitAbi,
@@ -33,6 +35,21 @@ describe('RuntimeType', () => {
       expect(isRuntimeType('javascript')).toBe(false);
       expect(isRuntimeType(undefined as unknown as string)).toBe(false);
     });
+  });
+});
+
+describe('shared identifier validation', () => {
+  it('accepts only safe manifest function names', () => {
+    expect(isValidFunctionName('calculate-total_2')).toBe(true);
+    expect(isValidFunctionName('2calculate')).toBe(false);
+    expect(isValidFunctionName('../calculate')).toBe(false);
+  });
+
+  it('accepts only canonical lowercase SHA-256 identities', () => {
+    const hash = `sha256:${'a'.repeat(64)}`;
+    expect(isValidContentHash(hash)).toBe(true);
+    expect(isValidContentHash(hash.toUpperCase())).toBe(false);
+    expect(isValidContentHash('sha256:abc')).toBe(false);
   });
 });
 
@@ -116,6 +133,10 @@ describe('FunctionDefinition', () => {
       expect(isValidFunctionDefinition({ ...validDefinition, version: -1 })).toBe(false);
       // Non-integer versions must be rejected (cache invalidation relies on integer comparison)
       expect(isValidFunctionDefinition({ ...validDefinition, version: 1.5 })).toBe(false);
+      expect(isValidFunctionDefinition({
+        ...validDefinition,
+        version: Number.MAX_SAFE_INTEGER + 1,
+      })).toBe(false);
     });
 
     it('should reject definitions with invalid hash format', () => {

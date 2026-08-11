@@ -1,10 +1,10 @@
 /** Byte-level SHA-256 helpers shared by every downloaded Unzen payload. */
 
-const SHA256_CONTENT_HASH = /^sha256:[a-f0-9]{64}$/;
+import { isValidContentHash } from '@unzen/shared';
 
 /** Whether a value is the canonical content identity emitted by UnzenServer. */
 export function isValidUnzenContentHash(value: unknown): value is string {
-  return typeof value === 'string' && SHA256_CONTENT_HASH.test(value);
+  return isValidContentHash(value);
 }
 
 /** Digest raw response bytes without a text decode/re-encode round trip. */

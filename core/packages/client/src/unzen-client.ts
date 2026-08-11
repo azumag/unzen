@@ -693,8 +693,10 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
         // metadata first and refuse server execution for noFallback/MoonBit.
         let devEntry: FunctionManifestEntry | undefined;
         try {
-          devEntry = (await this.manifestFetcher.fetch(internalController.signal))
-            ?.functions?.[request.name];
+          const manifest = await this.manifestFetcher.fetch(internalController.signal);
+          devEntry = Object.hasOwn(manifest.functions, request.name)
+            ? manifest.functions[request.name]
+            : undefined;
         } catch (error) {
           // Fail CLOSED: unless the manifest proves this is an ordinary
           // server-executable function, inputs must not leave the client. A
@@ -780,9 +782,12 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
         return buildOutcome(false, undefined, err, 'manifest_fetch_failed');
       }
 
-      // 2. Function existence check (tolerate a malformed manifest so the
-      //    "never throws" contract of executeWithDiagnostics holds)
-      const entry = manifest?.functions?.[request.name];
+      // 2. Function existence check. ManifestFetcher has already validated
+      // and snapshotted the response; own-property lookup keeps the boundary
+      // explicit even if the cached representation changes later.
+      const entry = Object.hasOwn(manifest.functions, request.name)
+        ? manifest.functions[request.name]
+        : undefined;
       if (!entry) {
         // Function not in manifest is a user error (calling non-existent function)
         const err = new UnzenFunctionError(`Function "${request.name}" not found in manifest`);

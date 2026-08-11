@@ -17,6 +17,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { UnzenCancelledError, UnzenNetworkError, type ManifestResponse } from '@unzen/shared';
 import { ManifestFetcher } from '../src/manifest-fetcher';
 
+const ADD_HASH = `sha256:${'a'.repeat(64)}`;
+const MULTIPLY_HASH = `sha256:${'b'.repeat(64)}`;
+const UPDATED_HASH = `sha256:${'c'.repeat(64)}`;
+
 describe('ManifestFetcher', () => {
   let originalFetch: typeof globalThis.fetch;
 
@@ -24,15 +28,15 @@ describe('ManifestFetcher', () => {
     functions: {
       add: {
         version: 1,
-runtime: 'quickjs',
+        runtime: 'quickjs',
         codeUrl: 'https://example.com/code/add.js',
-        hash: 'abc123',
+        hash: ADD_HASH,
       },
       multiply: {
         version: 1,
-runtime: 'quickjs',
+        runtime: 'quickjs',
         codeUrl: 'https://example.com/code/multiply.js',
-        hash: 'def456',
+        hash: MULTIPLY_HASH,
       },
     },
   };
@@ -96,9 +100,9 @@ runtime: 'quickjs',
     const entry = fetcher.getEntry('add');
     expect(entry).toEqual({
       version: 1,
-runtime: 'quickjs',
+      runtime: 'quickjs',
       codeUrl: 'https://example.com/code/add.js',
-      hash: 'abc123',
+      hash: ADD_HASH,
     });
   });
 
@@ -160,6 +164,38 @@ runtime: 'quickjs',
     const fetcher = new ManifestFetcher('https://example.com');
 
     await expect(fetcher.fetch()).rejects.toThrow(UnzenNetworkError);
+  });
+
+  it('rejects an invalid manifest without caching its body or ETag', async () => {
+    const invalidManifest = {
+      functions: {
+        add: { ...mockManifest.functions.add, runtime: 'v8' },
+      },
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ ETag: 'W/"invalid"' }),
+        json: async () => invalidManifest,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => mockManifest,
+      });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new ManifestFetcher('https://example.com');
+
+    await expect(fetcher.fetch()).rejects.toThrow(UnzenNetworkError);
+    expect(fetcher.isCached()).toBe(false);
+    expect(fetcher.getEntry('add')).toBeUndefined();
+
+    await expect(fetcher.fetch()).resolves.toEqual(mockManifest);
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      headers: expect.not.objectContaining({ 'If-None-Match': expect.anything() }),
+    }));
   });
 
   it('should deduplicate concurrent fetch calls', async () => {
@@ -297,6 +333,38 @@ runtime: 'quickjs',
       expect(fresh).toEqual(mockManifest);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
+
+    it('must not commit a JSON body that resolves after the last waiter aborts', async () => {
+      let resolveBody!: (manifest: ManifestResponse) => void;
+      let bodyStartedResolve!: () => void;
+      const bodyStarted = new Promise<void>((resolve) => {
+        bodyStartedResolve = resolve;
+      });
+      const body = new Promise<ManifestResponse>((resolve) => {
+        resolveBody = resolve;
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ ETag: 'W/"late"' }),
+        json: () => {
+          bodyStartedResolve();
+          return body;
+        },
+      });
+
+      const fetcher = new ManifestFetcher('https://example.com');
+      const controller = new AbortController();
+      const request = fetcher.fetch(controller.signal);
+      await bodyStarted;
+      controller.abort();
+      await expect(request).rejects.toThrow(UnzenCancelledError);
+
+      resolveBody(mockManifest);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fetcher.isCached()).toBe(false);
+      expect((fetcher as unknown as { etag: string | null }).etag).toBeNull();
+    });
   });
 
   it('should handle empty manifest', async () => {
@@ -314,6 +382,34 @@ runtime: 'quickjs',
 
     expect(manifest).toEqual(emptyManifest);
     expect(fetcher.getEntry('anything')).toBeUndefined();
+    expect(fetcher.getEntry('toString')).toBeUndefined();
+  });
+
+  it('aborts an in-flight request when invalidated', async () => {
+    let requestSignal: AbortSignal | undefined;
+    let startedResolve!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      startedResolve();
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        }, { once: true });
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const fetcher = new ManifestFetcher('https://example.com');
+    const request = fetcher.fetch();
+    await started;
+    fetcher.invalidate();
+
+    expect(requestSignal?.aborted).toBe(true);
+    await expect(request).rejects.toThrow(UnzenCancelledError);
+    expect(fetcher.isCached()).toBe(false);
   });
 
   // === ETag caching tests (Phase 3) ===
@@ -405,7 +501,7 @@ runtime: 'quickjs',
           ...mockManifest.functions,
           newFunc: {
             runtime: 'quickjs',
-            hash: 'xyz',
+            hash: UPDATED_HASH,
             version: 3,
             codeUrl: 'https://example.com/code/newFunc',
           },
@@ -428,9 +524,9 @@ runtime: 'quickjs',
         functions: {
           add: {
             version: 1,
-runtime: 'quickjs',
+            runtime: 'quickjs',
             codeUrl: 'u1',
-            hash: 'h1',
+            hash: ADD_HASH,
           },
         },
       };
@@ -449,9 +545,9 @@ runtime: 'quickjs',
         functions: {
           add: {
             version: 1,
-runtime: 'quickjs',
+            runtime: 'quickjs',
             codeUrl: 'u2',
-            hash: 'h2',
+            hash: UPDATED_HASH,
           },
         },
       };
@@ -491,13 +587,13 @@ runtime: 'quickjs',
       }) as unknown as typeof fetch;
       const result = await fetcher.fetch();
       expect(ifNoneMatch).toBe('W/"e1"');
-      expect(result.functions.add.hash).toBe('h1');
+      expect(result.functions.add.hash).toBe(ADD_HASH);
     });
 
     it('must discard the old ETag when a 200 arrives without an ETag header', async () => {
       const oldManifest: ManifestResponse = {
         functions: {
-          add: { version: 1, runtime: 'quickjs', codeUrl: 'u1', hash: 'h1' },
+          add: { version: 1, runtime: 'quickjs', codeUrl: 'u1', hash: ADD_HASH },
         },
       };
       globalThis.fetch = vi.fn().mockResolvedValue({
@@ -513,7 +609,7 @@ runtime: 'quickjs',
       // Second 200 has a new body but NO ETag header.
       const newManifest: ManifestResponse = {
         functions: {
-          add: { version: 1, runtime: 'quickjs', codeUrl: 'u2', hash: 'h2' },
+          add: { version: 1, runtime: 'quickjs', codeUrl: 'u2', hash: UPDATED_HASH },
         },
       };
       globalThis.fetch = vi.fn().mockResolvedValue({
@@ -523,7 +619,7 @@ runtime: 'quickjs',
         json: async () => newManifest,
       });
       const manifest = await fetcher.fetch();
-      expect(manifest.functions.add.hash).toBe('h2');
+      expect(manifest.functions.add.hash).toBe(UPDATED_HASH);
       expect((fetcher as unknown as { etag: string | null }).etag).toBeNull();
 
       // After invalidation, the next request must NOT send the stale E1.

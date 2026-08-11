@@ -16,8 +16,12 @@ import {
   ExecutionResponse,
   createManifestResponse,
   createExecutionResponse,
+  isValidManifestResponse,
+  normalizeManifestResponse,
 } from '../src/protocol';
 import { RuntimeType } from '../src/types';
+
+const VALID_HASH = `sha256:${'a'.repeat(64)}`;
 
 describe('ManifestRequest', () => {
   it('should be an empty object (no parameters needed)', () => {
@@ -76,6 +80,117 @@ describe('ManifestResponse', () => {
     expect(Object.keys(response.functions)).toHaveLength(2);
     expect(response.functions.spamCheck.runtime).toBe('quickjs');
     expect(response.functions.calculateMean.runtime).toBe('moonbit');
+  });
+
+  it('normalizes a valid manifest into an isolated prototype-safe snapshot', () => {
+    const sourceParams = ['i32[]', 'scalar'];
+    const source = {
+      functions: {
+        add: {
+          runtime: 'quickjs',
+          hash: VALID_HASH,
+          version: 1,
+          codeUrl: '/unzen/code/add',
+          noFallback: true,
+          ignoredFutureField: 'ignored',
+        },
+        sumArray: {
+          runtime: 'moonbit',
+          hash: `sha256:${'b'.repeat(64)}`,
+          version: 2,
+          codeUrl: 'https://cdn.example.com/sum.wasm',
+          exportName: 'sum_array',
+          moonbitAbi: { params: sourceParams, result: 'scalar' },
+        },
+      },
+    };
+
+    const normalized = normalizeManifestResponse(source);
+
+    expect(normalized).toEqual({
+      functions: {
+        add: {
+          runtime: 'quickjs',
+          hash: VALID_HASH,
+          version: 1,
+          codeUrl: '/unzen/code/add',
+          noFallback: true,
+        },
+        sumArray: {
+          runtime: 'moonbit',
+          hash: `sha256:${'b'.repeat(64)}`,
+          version: 2,
+          codeUrl: 'https://cdn.example.com/sum.wasm',
+          exportName: 'sum_array',
+          moonbitAbi: { params: ['i32[]', 'scalar'], result: 'scalar' },
+        },
+      },
+    });
+    expect(Object.getPrototypeOf(normalized!.functions)).toBeNull();
+    expect(normalized!.functions.toString).toBeUndefined();
+    expect(normalized!.functions.sumArray.moonbitAbi?.params).not.toBe(sourceParams);
+    expect(isValidManifestResponse(source)).toBe(true);
+  });
+
+  it.each([
+    ['missing root object', null],
+    ['missing functions record', {}],
+    ['array functions record', { functions: [] }],
+    ['Map functions record', { functions: new Map() }],
+    ['unsafe function name', { functions: { '../escape': {} } }],
+  ])('rejects %s', (_label, value) => {
+    expect(normalizeManifestResponse(value)).toBeUndefined();
+    expect(isValidManifestResponse(value)).toBe(false);
+  });
+
+  it.each([
+    ['invalid runtime', { runtime: 'v8' }],
+    ['invalid hash', { hash: 'sha256:abc' }],
+    ['invalid version', { version: Number.MAX_SAFE_INTEGER + 1 }],
+    ['unsafe code URL', { codeUrl: 'data:text/javascript,alert(1)' }],
+    ['quickjs export metadata', { exportName: 'run' }],
+    ['quickjs MoonBit ABI', { moonbitAbi: { params: [] } }],
+    ['invalid noFallback', { noFallback: 'yes' }],
+  ])('rejects an entry with %s', (_label, invalid) => {
+    const entry = {
+      runtime: 'quickjs',
+      hash: VALID_HASH,
+      version: 1,
+      codeUrl: '/unzen/code/add',
+      ...invalid,
+    };
+    const value = { functions: { add: entry } };
+    expect(normalizeManifestResponse(value)).toBeUndefined();
+    expect(isValidManifestResponse(value)).toBe(false);
+  });
+
+  it('rejects malformed MoonBit metadata', () => {
+    const base = {
+      runtime: 'moonbit',
+      hash: VALID_HASH,
+      version: 1,
+      codeUrl: '/unzen/code/sum.wasm',
+    };
+
+    expect(normalizeManifestResponse({
+      functions: { sum: { ...base, moonbitAbi: { params: ['object'] } } },
+    })).toBeUndefined();
+    expect(normalizeManifestResponse({
+      functions: { sum: { ...base, exportName: 42 } },
+    })).toBeUndefined();
+  });
+
+  it('rejects non-record entries and hostile accessors without throwing', () => {
+    expect(normalizeManifestResponse({
+      functions: { add: new Date() },
+    })).toBeUndefined();
+
+    const hostile = {};
+    Object.defineProperty(hostile, 'functions', {
+      get: () => { throw new Error('getter must be contained'); },
+    });
+    expect(() => normalizeManifestResponse(hostile)).not.toThrow();
+    expect(normalizeManifestResponse(hostile)).toBeUndefined();
   });
 });
 
