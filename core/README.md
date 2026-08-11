@@ -453,10 +453,13 @@ Web Crypto が利用できない環境では fail closed で実行しない。
 worker が intercept するのは同一 origin の
 `/code/<name>?v=<positive-safe-integer>&h=sha256:<64hex>` のみ。server が 200・
 JavaScript/Wasm・`immutable` と認めた応答を URL の SHA-256 と再照合してから
-`unzen-code-v1` に保存する。manifest、fallback API、version/hash が欠けた URL、
+`unzen-code-v2` に保存する。manifest、fallback API、version/hash が欠けた URL、
 別 origin の asset は保存しない。`clearUnzenCodeCache()` で Unzen の cache
 generation だけを削除できる。この機能は code/Wasm payload の offline 再利用であり、
 新規 navigation を完全 offline にするにはアプリ shell と manifest の別戦略が必要。
+integrity 用の response clone も宣言値と stream 実 byte 数を 16 MiB に制限し、超過時は
+両 response branch を cancel して `502` / `no-store` を返す。`v2` はこの bounded policy 導入前の
+cache generation を activation 時に破棄するための世代である。
 
 ## プロジェクト構成
 

@@ -1,11 +1,16 @@
 /** Shared cache policy used by the Unzen Service Worker and its tests. */
 
+import { MAX_FUNCTION_PAYLOAD_BYTES } from '@unzen/shared';
 import { isValidUnzenContentHash } from './content-integrity';
+import {
+  readBoundedResponseBytes,
+  ResponseBodyLimitError,
+} from './response-body';
 
 export { digestUnzenContent as digestUnzenCode } from './content-integrity';
 
 export const UNZEN_CODE_CACHE_PREFIX = 'unzen-code-';
-export const UNZEN_CODE_CACHE_NAME = `${UNZEN_CODE_CACHE_PREFIX}v1`;
+export const UNZEN_CODE_CACHE_NAME = `${UNZEN_CODE_CACHE_PREFIX}v2`;
 
 const POSITIVE_VERSION = /^[1-9][0-9]*$/;
 const CACHEABLE_CONTENT_TYPES = new Set([
@@ -100,14 +105,28 @@ export function isCacheableUnzenCodeResponse(response: Response): boolean {
   return CACHEABLE_CONTENT_TYPES.has(contentType);
 }
 
-function integrityFailure(): Response {
-  return new Response('Unzen code integrity check failed', {
+function codeResponseFailure(message: string): Response {
+  return new Response(message, {
     status: 502,
     headers: {
       'Cache-Control': 'no-store',
       'Content-Type': 'text/plain; charset=utf-8',
     },
   });
+}
+
+function integrityFailure(): Response {
+  return codeResponseFailure('Unzen code integrity check failed');
+}
+
+function sizeFailure(): Response {
+  return codeResponseFailure(
+    `Unzen code response exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`,
+  );
+}
+
+function cancelResponse(response: Response, reason: Error): void {
+  void response.body?.cancel(reason).catch(() => {});
 }
 
 /**
@@ -136,10 +155,24 @@ export async function respondWithUnzenCodeCache(
   const expectedHash = getUnzenCodeRequestHash(request);
   if (expectedHash === null) return response;
   if (runtime.digest) {
+    let verificationResponse: Response | undefined;
     try {
-      const actualHash = await runtime.digest(await response.clone().arrayBuffer());
+      verificationResponse = response.clone();
+      const bytes = await readBoundedResponseBytes(
+        verificationResponse,
+        MAX_FUNCTION_PAYLOAD_BYTES,
+        'Unzen code response',
+      );
+      const actualHash = await runtime.digest(bytes);
       if (actualHash !== expectedHash) return integrityFailure();
-    } catch {
+    } catch (error) {
+      if (error instanceof ResponseBodyLimitError) {
+        if (verificationResponse !== undefined) {
+          cancelResponse(verificationResponse, error);
+        }
+        cancelResponse(response, error);
+        return sizeFailure();
+      }
       // Web Crypto failure disables persistence for this response, but does
       // not turn an otherwise usable network request into an outage.
       return response;

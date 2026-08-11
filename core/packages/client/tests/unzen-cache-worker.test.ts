@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_FUNCTION_PAYLOAD_BYTES } from '@unzen/shared';
 import {
   deleteUnzenCodeCaches,
   digestUnzenCode,
@@ -160,6 +161,29 @@ describe('Unzen cache worker policy', () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(storage.cache.putCount).toBe(0);
+  });
+
+  it('fails closed before digesting a response over the code payload limit', async () => {
+    const storage = new MemoryCacheStorage();
+    const digest = vi.fn(async (bytes: ArrayBuffer) => hashBytes(bytes));
+    const oversized = immutableCodeResponse();
+    oversized.headers.set(
+      'Content-Length',
+      String(MAX_FUNCTION_PAYLOAD_BYTES + 1),
+    );
+
+    const response = await respondWithUnzenCodeCache(codeRequest(), {
+      cacheStorage: storage,
+      fetch: async () => oversized,
+      digest,
+    });
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.text())
+      .toBe(`Unzen code response exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+    expect(digest).not.toHaveBeenCalled();
     expect(storage.cache.putCount).toBe(0);
   });
 

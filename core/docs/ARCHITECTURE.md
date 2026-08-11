@@ -482,7 +482,7 @@ fetch(entry) → entry.hash をキーにキャッシュ検索
 #### 永続コードキャッシュ (Unzen Cache Service Worker)
 
 ```
-GET /code/name?v=N&h=sha256:... → CacheStorage (`unzen-code-v1`)
+GET /code/name?v=N&h=sha256:... → CacheStorage (`unzen-code-v2`)
   cache hit  → version/hashが同一の検証済みResponseを返す
   cache miss → network 200 + immutable + JS/Wasm + SHA-256一致時だけ保存
 ```
@@ -494,9 +494,12 @@ GET /code/name?v=N&h=sha256:... → CacheStorage (`unzen-code-v1`)
 - Service Worker は同一 origin の versioned `/code/` GET だけを intercept し、
   `v` が正の safe integer で canonical SHA-256 を持つ場合だけ扱う。
   manifest・fallback・一般 asset・cross-origin request には介入しない
+- integrity 検証用 clone は `Content-Length` と stream 実 byte 数の両方を 16 MiB に制限する。
+  超過時は network / verification の両 response branch を cancel し、`502 no-store` で fail closed
 - registration options と container の `register` method は一度だけ読み取ってから検証し、
   不正 shape / unreadable getter では Service Worker 登録を開始しない
-- activation 時は `unzen-code-` prefix の旧 generation のみ削除する
+- activation 時は `unzen-code-` prefix の旧 generation のみ削除する。bounded policy 導入時に
+  cache name を `v2` へ更新し、旧 `v1` entry を再利用しない
 
 ### 6.4 SandboxExecutor インターフェース
 

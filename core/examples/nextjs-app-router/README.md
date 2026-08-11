@@ -48,7 +48,7 @@ The script builds the example, starts `next start`, checks
 `/api/unzen/manifest`, fetches the `jsonSchemaValidate` code URL, posts to
 `/api/unzen/exec/jsonSchemaValidate`, verifies both worker assets, and then
 uses Playwright Chromium to click **Run validation** in the browser. It also
-checks that the hash-addressed function code is in `unzen-code-v1` and remains
+checks that the hash-addressed function code is in `unzen-code-v2` and remains
 readable after the browser context goes offline. The test fails if the browser
 result is not `success: true`, if `result.valid` is not `true`, or if
 `diagnostics.executedOn` is not `"browser"`.

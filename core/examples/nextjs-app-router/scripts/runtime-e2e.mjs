@@ -159,7 +159,7 @@ async function verifyBrowserFlow() {
           manifest.functions.jsonSchemaValidate.codeUrl,
           location.href
         ).href;
-        const cached = await (await caches.open('unzen-code-v1')).match(codeUrl);
+        const cached = await (await caches.open('unzen-code-v2')).match(codeUrl);
         return { codeUrl, stored: cached !== undefined };
       });
       assert(cachedCode.stored, 'versioned function code should be stored in CacheStorage');
