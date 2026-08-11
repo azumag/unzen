@@ -459,7 +459,9 @@ direct `ManifestFetcher.fetch(signal)` は signal を HTTP 前に検証する。
 QuickJS manifest entry と signal を cache/network 前に検証・snapshot し、非同期応答中の
 caller mutation で URL、integrity hash、cache key が変わらないようにする。同じ hash の
 同時取得は single-flight 化し、各 caller の cancel はその waiter だけを外し、最後の waiter が
-離れた時だけ共有 HTTP request を中止する。
+離れた時だけ共有 HTTP request を中止する。settled code は encoded byte weight の LRU で
+既定32MiBまで保持し、advanced usage では `new CodeFetcher(endpoint, { maxCacheBytes })` で
+上限変更または `0` による無効化ができる。
 
 Service Worker の有無にかかわらず、`UnzenClient` はダウンロードした JavaScript と
 MoonBit Wasm の生バイトを manifest の `sha256:<64hex>` と照合し、一致した payload

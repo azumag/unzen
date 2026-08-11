@@ -8,7 +8,7 @@
  * - Cache by content hash, not by function name or URL
  * - Hash-based caching allows code reuse across functions
  * - If two functions have identical code (same hash), fetch only once
- * - No TTL expiration (code is immutable per hash)
+ * - Byte-bounded LRU retention (code remains immutable per hash after eviction)
  *
  * Caching strategy:
  * - Key: content hash from manifest entry
@@ -44,6 +44,32 @@ interface InflightCodeRequest {
   waiters: number;
 }
 
+interface CachedCode {
+  readonly code: string;
+  /** Encoded size used for the browser-memory cache budget. */
+  readonly byteLength: number;
+}
+
+/** Default aggregate UTF-8 weight retained by one CodeFetcher instance. */
+export const DEFAULT_MAX_CODE_CACHE_BYTES = 32 * 1024 * 1024;
+
+export interface CodeFetcherOptions {
+  /** Aggregate encoded cache weight. Set to 0 to disable settled-code caching. */
+  maxCacheBytes?: number;
+}
+
+function normalizeCodeCacheByteLimit(value: unknown): number {
+  const normalized = value === undefined ? DEFAULT_MAX_CODE_CACHE_BYTES : value;
+  if (
+    typeof normalized !== 'number'
+    || !Number.isSafeInteger(normalized)
+    || normalized < 0
+  ) {
+    throw new TypeError('maxCacheBytes must be a non-negative safe integer');
+  }
+  return normalized;
+}
+
 /** Validate and own the manifest fields consumed by this fetcher. */
 function snapshotCodeManifestEntry(value: unknown): FunctionManifestEntry | undefined {
   const functions = Object.create(null) as Record<string, unknown>;
@@ -59,7 +85,9 @@ export class CodeFetcher {
    * Key: hash string from manifest entry
    * Value: JavaScript source code
    */
-  private readonly cache: Map<string, string> = new Map();
+  private readonly cache: Map<string, CachedCode> = new Map();
+  private readonly maxCacheBytes: number;
+  private cacheBytes = 0;
 
   /** Shared downloads keyed by content identity, with per-caller cancellation. */
   private readonly inflight: Map<string, InflightCodeRequest> = new Map();
@@ -68,14 +96,24 @@ export class CodeFetcher {
    * Constructor
    *
    * @param endpoint - Server endpoint URL (currently unused)
+   * @param options - Optional settled-cache byte budget
    *
    * Note: endpoint parameter is kept for API consistency with other fetchers
    * but not stored as codeUrl from manifest is already absolute.
    * May be used in Phase 2+ for relative URL resolution.
    */
-  constructor(endpoint: string) {
-    // Intentionally empty - endpoint parameter is for API consistency only
-    // Suppress unused parameter warning by not storing it
+  constructor(endpoint: string, options: CodeFetcherOptions = {}) {
+    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+      throw new TypeError('CodeFetcher options must be an object');
+    }
+    let maxCacheBytes: unknown;
+    try {
+      maxCacheBytes = options.maxCacheBytes;
+    } catch {
+      throw new TypeError('CodeFetcher options could not be read');
+    }
+    this.maxCacheBytes = normalizeCodeCacheByteLimit(maxCacheBytes);
+    // endpoint is kept for API consistency; manifest codeUrl is authoritative.
     void endpoint;
   }
 
@@ -121,7 +159,10 @@ export class CodeFetcher {
     // Rationale: Hash represents content identity, so cache hit is safe
     const cached = this.cache.get(hash);
     if (cached !== undefined) {
-      return cached;
+      // Map insertion order is the LRU order. Reinsert a hit as most-recent.
+      this.cache.delete(hash);
+      this.cache.set(hash, cached);
+      return cached.code;
     }
 
     let pending = this.inflight.get(hash);
@@ -195,9 +236,7 @@ export class CodeFetcher {
         throw new UnzenNetworkError('Fetched function code is not valid UTF-8');
       }
 
-      // Cache by hash
-      // Rationale: Same hash = same content, so safe to cache indefinitely
-      this.cache.set(hash, code);
+      this.cacheCode(hash, code, bytes.byteLength);
 
       return code;
     } catch (error) {
@@ -217,5 +256,29 @@ export class CodeFetcher {
         `Failed to fetch code: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  /** Publish one settled entry and evict least-recent hashes to stay bounded. */
+  private cacheCode(hash: string, code: string, byteLength: number): void {
+    if (this.maxCacheBytes === 0 || byteLength > this.maxCacheBytes) return;
+
+    const existing = this.cache.get(hash);
+    if (existing !== undefined) {
+      this.cache.delete(hash);
+      this.cacheBytes -= existing.byteLength;
+    }
+
+    while (
+      this.cache.size > 0
+      && this.cacheBytes > this.maxCacheBytes - byteLength
+    ) {
+      const oldestHash = this.cache.keys().next().value as string;
+      const oldest = this.cache.get(oldestHash)!;
+      this.cache.delete(oldestHash);
+      this.cacheBytes -= oldest.byteLength;
+    }
+
+    this.cache.set(hash, { code, byteLength });
+    this.cacheBytes += byteLength;
   }
 }

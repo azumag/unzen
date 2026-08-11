@@ -164,6 +164,55 @@ describe('CodeFetcher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // Still 1, not 2
   });
 
+  it('evicts least-recent code by aggregate UTF-8 weight', async () => {
+    const bodies = new Map([
+      ['https://example.com/a.js', 'a'],
+      ['https://example.com/b.js', 'b'],
+      ['https://example.com/c.js', 'c'],
+    ]);
+    const fetchMock = vi.fn((url: string) => Promise.resolve(codeResponse(bodies.get(url)!)));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const entry = (name: string): FunctionManifestEntry => {
+      const code = bodies.get(`https://example.com/${name}.js`)!;
+      return {
+        runtime: 'quickjs',
+        version: 1,
+        codeUrl: `https://example.com/${name}.js`,
+        hash: hashText(code),
+      };
+    };
+    const fetcher = new CodeFetcher('https://example.com', { maxCacheBytes: 2 });
+
+    await fetcher.fetch(entry('a'));
+    await fetcher.fetch(entry('b'));
+    await fetcher.fetch(entry('a')); // touch a; b is now least-recent
+    await fetcher.fetch(entry('c')); // evicts b
+    await fetcher.fetch(entry('a')); // still cached
+    await fetcher.fetch(entry('b')); // evicted, so fetch again
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://example.com/a.js',
+      'https://example.com/b.js',
+      'https://example.com/c.js',
+      'https://example.com/b.js',
+    ]);
+  });
+
+  it('supports disabling the settled cache and validates its byte limit', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(codeResponse(mockCode)));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const fetcher = new CodeFetcher('https://example.com', { maxCacheBytes: 0 });
+
+    await fetcher.fetch(mockEntry);
+    await fetcher.fetch(mockEntry);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    expect(() => new CodeFetcher('https://example.com', null as never)).toThrow(TypeError);
+    expect(() => new CodeFetcher('https://example.com', { maxCacheBytes: -1 })).toThrow(
+      'non-negative safe integer',
+    );
+  });
+
   it('deduplicates concurrent downloads with the same hash', async () => {
     let resolveFetch!: (response: Response) => void;
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {

@@ -491,7 +491,8 @@ fetch(entry) → entry.hash をキーにキャッシュ検索
 - 検証は Service Worker に依存せず通常 fetch path で必ず行う。Service Worker は
   CacheStorage への永続化前に同じ生バイト検証を重ねる
 - 同一コードの関数が複数あっても1回だけダウンロードする
-- ハッシュが変わらない限りキャッシュは永続する
+- settled code は UTF-8 byte weight の LRU でインスタンスごとに既定32MiBまで保持する。
+  `CodeFetcher` の `maxCacheBytes` で変更でき、0はsettled cacheを無効にする
 
 #### 永続コードキャッシュ (Unzen Cache Service Worker)
 

@@ -25,7 +25,11 @@ export {
 // Component classes (advanced usage)
 export { FallbackHandler } from './fallback-handler';
 export { ManifestFetcher } from './manifest-fetcher';
-export { CodeFetcher } from './code-fetcher';
+export {
+  CodeFetcher,
+  DEFAULT_MAX_CODE_CACHE_BYTES,
+  type CodeFetcherOptions,
+} from './code-fetcher';
 
 // Sandbox interface (no Node.js dependency)
 export type { SandboxExecutor, ExecuteOptions } from './sandbox-executor';
