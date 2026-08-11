@@ -188,11 +188,11 @@ export class QuickJSRuntime {
     // This ensures complete isolation between executions
     const context = this.quickJS.newContext();
 
-    // Set memory limit to 16MB (design.md §3.3)
-    // This prevents DoS attacks via excessive memory consumption
-    context.runtime.setMemoryLimit(16 * 1024 * 1024);
-
     try {
+      // Set memory limit to 16MB (design.md §3.3)
+      // This prevents DoS attacks via excessive memory consumption.
+      context.runtime.setMemoryLimit(16 * 1024 * 1024);
+
       // Apply security hardening from shared module.
       // This cuts Function constructor chains, removes dangerous globals,
       // and freezes built-in prototypes. See sandbox-security.ts for details.
@@ -203,28 +203,23 @@ export class QuickJSRuntime {
       }
       removeResult.value.dispose();
 
-      // Load the user's code (which defines a `run` function)
-      // The code is expected to define: function run(...args) { ... }
-      const loadCodeResult = context.evalCode(execution.code);
-      if (loadCodeResult.error) {
-        const error = context.dump(loadCodeResult.error);
-        loadCodeResult.error.dispose();
-        throw new UnzenFunctionError(`Failed to load function code: ${JSON.stringify(error)}`);
-      }
-      loadCodeResult.value.dispose();
-
       // Inject arguments into QuickJS context using JSON encoding
       // Note: This encoding doesn't preserve undefined in arrays, but that's acceptable
       // for the function execution use case (undefined becomes null in JSON)
-      const argsResult = context.evalCode(`globalThis.__args__ = ${execution.argsJson}`);
+      // Parse the JSON text instead of evaluating it as an object literal:
+      // `{"__proto__": ...}` must remain an own data property.
+      const encodedArgsJson = JSON.stringify(execution.argsJson);
+      const argsResult = context.evalCode(
+        `globalThis.__args__ = JSON.parse(${encodedArgsJson})`,
+      );
       if (argsResult.error) {
         argsResult.error.dispose();
         throw new UnzenRuntimeError('Failed to inject arguments into context');
       }
       argsResult.value.dispose();
 
-      // Set timeout by configuring interrupt handler
-      // QuickJS will check this periodically during execution
+      // Start the deadline before any untrusted source is evaluated. A raw
+      // definition may contain top-level statements as well as `run()`.
       const startTime = Date.now();
       let timeoutTriggered = false;
       context.runtime.setInterruptHandler(() => {
@@ -232,6 +227,19 @@ export class QuickJSRuntime {
         if (exceeded) timeoutTriggered = true;
         return exceeded;
       });
+
+      // Load the user's code (which defines a `run` function)
+      // The code is expected to define: function run(...args) { ... }
+      const loadCodeResult = context.evalCode(execution.code);
+      if (loadCodeResult.error) {
+        const error = context.dump(loadCodeResult.error);
+        loadCodeResult.error.dispose();
+        if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
+          throw new UnzenRuntimeError(`Execution timeout exceeded (${execution.timeout}ms)`);
+        }
+        throw new UnzenFunctionError(`Failed to load function code: ${JSON.stringify(error)}`);
+      }
+      loadCodeResult.value.dispose();
 
       // Execute and reject deferred or iterator results at the sandbox boundary
       const result = context.evalCode(SANDBOX_SYNCHRONOUS_EXECUTION);

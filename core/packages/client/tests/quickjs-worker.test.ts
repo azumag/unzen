@@ -297,9 +297,10 @@ describe('quickjs-worker handleWorkerMessage', () => {
     });
 
     it('should return function_error when code syntax is invalid', async () => {
-      // Mock: security init succeeds, user code load fails (syntax error)
+      // Mock: security init + argument injection succeed, user code load fails
       const context = createMockContext([
         { value: undefined }, // security init
+        { value: undefined }, // argument injection
         { error: 'SyntaxError: unexpected token' }, // code load fails
       ]);
       const mockQJS = createMockQuickJS(context);
@@ -318,6 +319,28 @@ describe('quickjs-worker handleWorkerMessage', () => {
         success: false,
         errorType: 'function_error',
       });
+    });
+
+    it('classifies an interruption while loading user code as a deadline error', async () => {
+      const context = createMockContext([
+        { value: undefined },
+        { value: undefined },
+        { error: 'InternalError: interrupted' },
+      ]);
+      const state: WorkerState = { quickJS: createMockQuickJS(context) as never };
+
+      await handleWorkerMessage(
+        { data: createExecuteMessage('req-load-timeout', 'while (true) {}', [], 1, 20) },
+        state,
+        postMessage,
+      );
+
+      expect(responses[0]).toMatchObject({
+        requestId: 'req-load-timeout',
+        success: false,
+        errorType: 'deadline_exceeded',
+      });
+      expect(context.dispose).toHaveBeenCalled();
     });
 
     it('should return runtime_error when QuickJS not initialized', async () => {
@@ -403,8 +426,10 @@ describe('quickjs-worker handleWorkerMessage', () => {
       );
 
       // Verify args were injected via evalCode
-      const argsCall = context.evalCode.mock.calls[2];
-      expect(argsCall[0]).toBe('globalThis.__args__ = [1,2]');
+      const argsCall = context.evalCode.mock.calls[1];
+      expect(argsCall[0]).toBe('globalThis.__args__ = JSON.parse("[1,2]")');
+      expect(context.runtime.setInterruptHandler.mock.invocationCallOrder[0])
+        .toBeLessThan(context.evalCode.mock.invocationCallOrder[2]);
     });
 
     it('should set memory limit on context runtime', async () => {
@@ -448,6 +473,7 @@ describe('quickjs-worker handleWorkerMessage', () => {
 
     it('should dispose context even when execution fails', async () => {
       const context = createMockContext([
+        { value: undefined },
         { value: undefined },
         { error: 'parse error' },
       ]);

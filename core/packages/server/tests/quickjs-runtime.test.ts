@@ -107,6 +107,23 @@ describe('QuickJSRuntime', () => {
       expect(result).toEqual({ result: 10 });
     });
 
+    it('preserves an own __proto__ argument key across the JSON boundary', async () => {
+      const value = JSON.parse('{"__proto__":{"polluted":true},"safe":1}');
+      const result = await runtime.execute(`function run(input) {
+        return {
+          keys: Object.keys(input),
+          inherited: input.polluted,
+          ownsProto: Object.prototype.hasOwnProperty.call(input, "__proto__")
+        };
+      }`, [value]);
+
+      expect(result).toEqual({
+        keys: ['__proto__', 'safe'],
+        inherited: undefined,
+        ownsProto: true,
+      });
+    });
+
     it('should handle empty arguments', async () => {
       const code = 'function run() { return 42; }';
       const result = await runtime.execute(code, []);
@@ -127,6 +144,15 @@ describe('QuickJSRuntime', () => {
       // Infinite loop should trigger timeout
       const code = 'function run() { while(true) {} }';
       await expect(runtime.execute(code, [], { timeout: 50 })).rejects.toThrow(UnzenRuntimeError);
+    });
+
+    it('should enforce the timeout while loading top-level user code', async () => {
+      const code = 'function run() { return 1; } while (true) {}';
+
+      await expect(runtime.execute(code, [], { timeout: 20 }))
+        .rejects.toThrow(UnzenRuntimeError);
+      await expect(runtime.execute('function run() { return 1; }', []))
+        .resolves.toBe(1);
     });
 
     it('should respect custom timeout option', async () => {

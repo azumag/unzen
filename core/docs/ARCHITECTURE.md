@@ -340,11 +340,12 @@ source として構文検証できない callable は registry を変更する�
    b. setMemoryLimit(16MB) → メモリ上限設定
    c. evalCode → Object.defineProperty で eval/Function/Proxy/Reflect を
       undefined化 (configurable:false) + 主要プロトタイプ凍結
-   d. evalCode(code) → ユーザーコード (run関数) をロード
-   e. evalCode('globalThis.__args__ = [...]')
-      → 引数をJSON経由で注入
+   d. evalCode('globalThis.__args__ = JSON.parse(...)')
+      → 引数をJSON textとして復元し、`"__proto__"` をown data keyのまま注入
       → 制約: undefined は null に変換される (JSON.stringify の仕様)
-   f. setInterruptHandler → 50msタイムアウト設定
+   e. setInterruptHandler → 50msタイムアウト設定
+      → user source のロード前から計測し、top-level statement も停止する
+   f. evalCode(code) → ユーザーコード (run関数) をロード
       → タイムアウト検出: interruptHandler + 'interrupted'文字列チェックの二重判定
    g. `SANDBOX_SYNCHRONOUS_EXECUTION`で`run(...globalThis.__args__)`を実行
       → Promise/thenableまたはiterator/generator結果を拒否

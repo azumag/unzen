@@ -270,6 +270,9 @@ advanced API の `QuickJSRuntime.execute()` と browser QuickJS executor も cod
 serialized args を 4 MiB、引数を最大128件に制限する。server runtime の timeout は
 1〜2,000ms とし、非空 code と引数は worker / QuickJS context 作成前に indexed copy と
 JSON serialization を完了するため、循環値・BigInt・過大 payload は実行前に拒否される。
+JSON text は QuickJS 内の `JSON.parse()` で復元し、`"__proto__"` も prototype 指定ではなく
+own data key のまま渡す。interrupt deadline は user source の load 前から計測するため、
+top-level statement も `run()` 本体と同じ上限で停止する。
 `initialize()` は同時呼び出しを single-flight 化し、`dispose()` は terminal なので、破棄後は
 新しい `QuickJSRuntime` instance を生成する。
 

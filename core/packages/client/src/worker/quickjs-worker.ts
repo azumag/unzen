@@ -267,24 +267,14 @@ async function handleExecute(
     }
     securityResult.value!.consume(() => {});
 
-    // Step 2: Load user code (defines `run` function)
-    const loadResult = context.evalCode(code);
-    if (loadResult.error) {
-      const error = loadResult.error.consume((handle) => context.dump(handle));
-      postMessage(createExecuteErrorMessage(
-        requestId,
-        'function_error',
-        `Failed to load function code: ${JSON.stringify(error)}`,
-        generationId,
-      ));
-      return;
-    }
-    loadResult.value!.consume(() => {});
-
-    // Step 3: Inject arguments via JSON serialization
-    // Note: undefined becomes null in JSON (acceptable trade-off)
+    // Step 2: Inject arguments via JSON parsing. Evaluating JSON as a JavaScript
+    // object literal would turn an own "__proto__" key into the object prototype.
+    // Note: undefined becomes null in JSON (acceptable trade-off).
     const argsJson = JSON.stringify(args);
-    const argsResult = context.evalCode(`globalThis.__args__ = ${argsJson}`);
+    const encodedArgsJson = JSON.stringify(argsJson);
+    const argsResult = context.evalCode(
+      `globalThis.__args__ = JSON.parse(${encodedArgsJson})`,
+    );
     if (argsResult.error) {
       const error = argsResult.error.consume((handle) => context.dump(handle));
       postMessage(createExecuteErrorMessage(
@@ -297,11 +287,9 @@ async function handleExecute(
     }
     argsResult.value!.consume(() => {});
 
-    // Step 4: Set timeout via interrupt handler
-    // QuickJS checks this periodically during execution. The handler also
-    // returns true when the request has been cooperatively cancelled, so a
-    // cancelled execution unwinds at the next interrupt point instead of
-    // running to completion.
+    // Step 3: Start the deadline before evaluating any untrusted source. The
+    // handler also returns true for cooperative cancellation, so a cancelled
+    // execution unwinds at the next interrupt point instead of running to completion.
     //
     // NOTE: while `evalCode` runs synchronously the worker's event loop is
     // blocked, so a CancelMessage cannot be dispatched mid-loop. This check
@@ -320,7 +308,37 @@ async function handleExecute(
       return isCancelled || exceeded;
     });
 
-    // Step 6: Execute run() and reject deferred or iterator results
+    // Step 4: Load user code (defines `run` function).
+    const loadResult = context.evalCode(code);
+    if (loadResult.error) {
+      const error = loadResult.error.consume((handle) => context.dump(handle));
+      if (cancelledTriggered) {
+        postMessage(createExecuteErrorMessage(
+          requestId,
+          'runtime_error',
+          'Execution cancelled',
+          generationId,
+        ));
+      } else if (timeoutTriggered || JSON.stringify(error).includes('interrupted')) {
+        postMessage(createExecuteErrorMessage(
+          requestId,
+          'deadline_exceeded',
+          `Execution timeout exceeded (${effectiveTimeout}ms)`,
+          generationId,
+        ));
+      } else {
+        postMessage(createExecuteErrorMessage(
+          requestId,
+          'function_error',
+          `Failed to load function code: ${JSON.stringify(error)}`,
+          generationId,
+        ));
+      }
+      return;
+    }
+    loadResult.value!.consume(() => {});
+
+    // Step 5: Execute run() and reject deferred or iterator results
     const execResult = context.evalCode(SANDBOX_SYNCHRONOUS_EXECUTION);
     if (execResult.error) {
       const error = execResult.error.consume((handle) => context.dump(handle));
