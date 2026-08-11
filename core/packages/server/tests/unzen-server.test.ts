@@ -686,6 +686,11 @@ describe('UnzenServer', () => {
       expect((await app.request('/code/verCheck?v=1.5')).status).toBe(400);
       expect((await app.request('/code/verCheck?v=-1')).status).toBe(400);
       expect((await app.request('/code/verCheck?v=0')).status).toBe(400);
+      expect((await app.request('/code/verCheck?v=9007199254740992')).status).toBe(400);
+      expect((await app.request('/code/verCheck?v=999999999999999999999999')).status).toBe(400);
+
+      // The largest safe integer is valid syntax, but remains an unknown version.
+      expect((await app.request('/code/verCheck?v=9007199254740991')).status).toBe(404);
 
       // Missing ?v resolves to the current version with the right content type.
       const quickjsCurrent = await app.request('/code/verCheck');

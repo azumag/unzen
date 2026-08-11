@@ -416,12 +416,16 @@ export class UnzenServer {
       }
       let version = fn.version;
       if (rawVersion !== undefined) {
-        if (!/^[1-9][0-9]*$/.test(rawVersion)) {
+        const parsedVersion = Number(rawVersion);
+        if (
+          !/^[1-9][0-9]*$/.test(rawVersion)
+          || !Number.isSafeInteger(parsedVersion)
+        ) {
           return c.json({ error: 'Invalid version' }, 400, {
             'Cache-Control': 'no-store',
           });
         }
-        version = Number(rawVersion);
+        version = parsedVersion;
       }
       const byVersion = this.versionedCode.get(name);
       const entry = byVersion?.get(version);
