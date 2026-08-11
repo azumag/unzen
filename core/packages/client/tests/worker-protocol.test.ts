@@ -16,6 +16,7 @@ import {
   createExecuteErrorMessage,
   createCancelMessage,
   createCancelResultMessage,
+  validateWorkerRequest,
   validateWorkerResponse,
   WORKER_PROTOCOL_VERSION,
   isInitResultMessage,
@@ -165,6 +166,40 @@ describe('WorkerProtocol', () => {
       expect(msg.requestId).toBe('req-1');
       expect(msg.success).toBe(true);
       expect(msg.generationId).toBe(5);
+    });
+  });
+
+  describe('validateWorkerRequest', () => {
+    it('accepts valid init, execute, and cancel requests', () => {
+      expect(validateWorkerRequest(createInitMessage(1)).ok).toBe(true);
+      expect(validateWorkerRequest(createExecuteMessage(
+        'req-1',
+        'function run() { return 1; }',
+        [],
+        1,
+        50,
+      )).ok).toBe(true);
+      expect(validateWorkerRequest(createCancelMessage('req-1', 1)).ok).toBe(true);
+    });
+
+    it.each([null, [], 'init', 42])('rejects non-object request data (%p)', (data) => {
+      expect(validateWorkerRequest(data).ok).toBe(false);
+    });
+
+    it('rejects unknown types and malformed execute fields', () => {
+      expect(validateWorkerRequest({
+        type: 'bogus',
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: 1,
+      }).ok).toBe(false);
+      expect(validateWorkerRequest({
+        ...createExecuteMessage('req-1', 'code', [], 1),
+        args: {},
+      }).ok).toBe(false);
+      expect(validateWorkerRequest({
+        ...createExecuteMessage('req-1', 'code', [], 1),
+        timeout: 0,
+      }).ok).toBe(false);
     });
   });
 

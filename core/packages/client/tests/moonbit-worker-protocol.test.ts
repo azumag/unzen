@@ -11,6 +11,7 @@ import {
   createMoonbitExecuteResultMessage,
   createMoonbitInitMessage,
   createMoonbitInitResultMessage,
+  validateMoonbitWorkerRequest,
   validateMoonbitWorkerResponse,
 } from '../src/worker/moonbit-worker-protocol';
 
@@ -81,6 +82,31 @@ describe('MoonBit worker protocol', () => {
       success: true,
       value: null,
     });
+  });
+
+  it('validates request envelopes before worker state is touched', () => {
+    const bytes = new Uint8Array([0, 1, 2]).buffer;
+    expect(validateMoonbitWorkerRequest(createMoonbitInitMessage(1)).ok).toBe(true);
+    expect(validateMoonbitWorkerRequest(createMoonbitExecuteMessage(
+      'req-1',
+      'module@hash',
+      bytes,
+      true,
+      'run',
+      [],
+      1,
+    )).ok).toBe(true);
+    expect(validateMoonbitWorkerRequest(createMoonbitCancelMessage('req-1', 1)).ok).toBe(true);
+
+    expect(validateMoonbitWorkerRequest(null).ok).toBe(false);
+    expect(validateMoonbitWorkerRequest({
+      ...createMoonbitExecuteMessage('req-1', 'module@hash', bytes, true, 'run', [], 1),
+      wasm: new Uint8Array([0, 1, 2]),
+    }).ok).toBe(false);
+    expect(validateMoonbitWorkerRequest({
+      ...createMoonbitExecuteMessage('req-1', 'module@hash', bytes, true, 'run', [], 1),
+      moonbitAbi: { params: ['unsupported'] },
+    }).ok).toBe(false);
   });
 
   it('validates well-formed responses', () => {

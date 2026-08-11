@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MAX_EXECUTION_ARGUMENTS } from '@unzen/shared';
 import {
   createInitMessage,
   createExecuteMessage,
@@ -69,6 +70,50 @@ describe('quickjs-worker handleWorkerMessage', () => {
   beforeEach(() => {
     responses = [];
     postMessage = (msg: WorkerResponse) => responses.push(msg);
+  });
+
+  it('ignores unaddressable data and rejects malformed execute requests safely', async () => {
+    const mockQJS = createMockQuickJS();
+    const state: WorkerState = { quickJS: mockQJS as never };
+
+    await expect(handleWorkerMessage(
+      { data: null },
+      state,
+      postMessage,
+    )).resolves.toBeUndefined();
+    expect(responses).toHaveLength(0);
+
+    await handleWorkerMessage({
+      data: {
+        ...createExecuteMessage('req-invalid', 'function run() { return 1; }', [], 1),
+        args: {},
+      },
+    }, state, postMessage);
+
+    expect(mockQJS.newContext).not.toHaveBeenCalled();
+    expect(responses[0]).toMatchObject({
+      type: 'execute-result',
+      requestId: 'req-invalid',
+      success: false,
+      errorType: 'runtime_error',
+      error: expect.stringContaining('code/args'),
+    });
+
+    await handleWorkerMessage({
+      data: createExecuteMessage(
+        'req-oversized',
+        'function run() { return 1; }',
+        new Array(MAX_EXECUTION_ARGUMENTS + 1).fill(0),
+        1,
+      ),
+    }, state, postMessage);
+
+    expect(mockQJS.newContext).not.toHaveBeenCalled();
+    expect(responses.at(-1)).toMatchObject({
+      requestId: 'req-oversized',
+      success: false,
+      error: expect.stringContaining(`at most ${MAX_EXECUTION_ARGUMENTS}`),
+    });
   });
 
   describe('init message', () => {

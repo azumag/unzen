@@ -28,7 +28,11 @@ import {
   DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
   type MoonBitImportedStringConstants,
 } from '../moonbit-compile-options';
-import type { MoonBitAbi } from '@unzen/shared';
+import {
+  MAX_FUNCTION_PAYLOAD_BYTES,
+  normalizeMoonBitAbi,
+  type MoonBitAbi,
+} from '@unzen/shared';
 
 // Version of the MoonBit worker wire protocol. Bump on incompatible changes.
 export const MOONBIT_WORKER_PROTOCOL_VERSION = 4;
@@ -230,6 +234,89 @@ export function createMoonbitCancelResultMessage(
 // ============================================================
 // Runtime Validation
 // ============================================================
+
+const ARRAY_BUFFER_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)?.get;
+
+function getArrayBufferByteLength(value: unknown): number | undefined {
+  if (ARRAY_BUFFER_BYTE_LENGTH === undefined) return undefined;
+  try {
+    return Reflect.apply(ARRAY_BUFFER_BYTE_LENGTH, value, []) as number;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Validate an unknown main-thread request before worker state is touched. */
+export function validateMoonbitWorkerRequest(
+  data: unknown,
+): { ok: true; msg: MoonbitWorkerMessage } | { ok: false; reason: string } {
+  try {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      return { ok: false, reason: 'request is not an object' };
+    }
+    const m = data as Record<string, unknown>;
+    if (m.protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
+      return {
+        ok: false,
+        reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`,
+      };
+    }
+    if (
+      typeof m.generationId !== 'number'
+      || !Number.isSafeInteger(m.generationId)
+      || m.generationId < 1
+    ) {
+      return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
+    }
+
+    if (m.type === 'init') {
+      if (m.importedStringConstants !== null && typeof m.importedStringConstants !== 'string') {
+        return { ok: false, reason: 'Invalid importedStringConstants setting' };
+      }
+      return { ok: true, msg: m as unknown as MoonbitInitMessage };
+    }
+    if (m.type === 'execute') {
+      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+        return { ok: false, reason: 'execute request missing requestId' };
+      }
+      const wasmByteLength = getArrayBufferByteLength(m.wasm);
+      if (wasmByteLength === undefined) {
+        return { ok: false, reason: 'execute request wasm must be an ArrayBuffer' };
+      }
+      if (wasmByteLength > MAX_FUNCTION_PAYLOAD_BYTES) {
+        return {
+          ok: false,
+          reason: `execute request wasm exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`,
+        };
+      }
+      if (
+        typeof m.cacheKey !== 'string'
+        || m.cacheKey.length === 0
+        || typeof m.cacheable !== 'boolean'
+        || typeof m.exportName !== 'string'
+        || !Array.isArray(m.args)
+      ) {
+        return { ok: false, reason: 'execute request has invalid cache/export/args metadata' };
+      }
+      if (m.moonbitAbi !== undefined && normalizeMoonBitAbi(m.moonbitAbi) === undefined) {
+        return { ok: false, reason: 'Invalid MoonBit ABI metadata' };
+      }
+      return { ok: true, msg: m as unknown as MoonbitExecuteMessage };
+    }
+    if (m.type === 'cancel') {
+      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+        return { ok: false, reason: 'cancel request missing requestId' };
+      }
+      return { ok: true, msg: m as unknown as MoonbitCancelMessage };
+    }
+    return { ok: false, reason: `unknown message type: ${String(m.type)}` };
+  } catch {
+    return { ok: false, reason: 'request could not be read' };
+  }
+}
 
 /**
  * Validate an unknown value as a MoonbitWorkerResponse.

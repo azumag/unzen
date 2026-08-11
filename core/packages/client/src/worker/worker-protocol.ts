@@ -27,6 +27,7 @@
 // The executor validates every response against this; mismatches are
 // classified as malformed/protocol-violation instead of being trusted.
 export const WORKER_PROTOCOL_VERSION = 1;
+const MAX_WORKER_TIMEOUT_MS = 2_147_483_647;
 
 // ============================================================
 // Main Thread → Worker Messages
@@ -209,6 +210,64 @@ export function createCancelResultMessage(
 // ============================================================
 // Runtime Validation
 // ============================================================
+
+/** Validate an unknown main-thread request before worker state is touched. */
+export function validateWorkerRequest(
+  data: unknown,
+): { ok: true; msg: WorkerMessage } | { ok: false; reason: string } {
+  try {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      return { ok: false, reason: 'request is not an object' };
+    }
+    const m = data as Record<string, unknown>;
+    if (m.protocolVersion !== WORKER_PROTOCOL_VERSION) {
+      return {
+        ok: false,
+        reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`,
+      };
+    }
+    if (
+      typeof m.generationId !== 'number'
+      || !Number.isSafeInteger(m.generationId)
+      || m.generationId < 1
+    ) {
+      return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
+    }
+
+    if (m.type === 'init') {
+      return { ok: true, msg: m as unknown as InitMessage };
+    }
+    if (m.type === 'execute') {
+      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+        return { ok: false, reason: 'execute request missing requestId' };
+      }
+      if (typeof m.code !== 'string' || !Array.isArray(m.args)) {
+        return { ok: false, reason: 'execute request missing code/args' };
+      }
+      if (
+        m.timeout !== undefined
+        && (
+          typeof m.timeout !== 'number'
+          || !Number.isInteger(m.timeout)
+          || m.timeout < 1
+          || m.timeout > MAX_WORKER_TIMEOUT_MS
+        )
+      ) {
+        return { ok: false, reason: 'execute request has invalid timeout' };
+      }
+      return { ok: true, msg: m as unknown as ExecuteMessage };
+    }
+    if (m.type === 'cancel') {
+      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+        return { ok: false, reason: 'cancel request missing requestId' };
+      }
+      return { ok: true, msg: m as unknown as CancelMessage };
+    }
+    return { ok: false, reason: `unknown message type: ${String(m.type)}` };
+  } catch {
+    return { ok: false, reason: 'request could not be read' };
+  }
+}
 
 /**
  * Validate an unknown value as a WorkerResponse.

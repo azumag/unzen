@@ -28,9 +28,8 @@ import {
   createMoonbitCancelResultMessage,
   createMoonbitExecuteResultMessage,
   createMoonbitInitResultMessage,
-  MOONBIT_WORKER_PROTOCOL_VERSION,
+  validateMoonbitWorkerRequest,
   type MoonbitExecuteMessage,
-  type MoonbitWorkerMessage,
   type MoonbitWorkerResponse,
 } from './moonbit-worker-protocol';
 import {
@@ -40,8 +39,8 @@ import {
 } from '../moonbit-compile-options';
 import {
   marshalMoonBitArguments,
+  snapshotMoonBitCall,
   unmarshalMoonBitResult,
-  validateMoonBitArguments,
 } from '../moonbit-array-bridge';
 
 /** Worker state — holds the content-identity compiled module cache. */
@@ -53,71 +52,66 @@ export interface MoonbitWorkerState {
 }
 
 function postRejectedMessage(
-  msg: MoonbitWorkerMessage,
+  data: unknown,
   error: string,
   postMessage: (msg: MoonbitWorkerResponse) => void,
 ): void {
-  if (msg.type === 'init') {
-    postMessage(createMoonbitInitResultMessage(false, msg.generationId, error));
-  } else if (msg.type === 'execute') {
-    postMessage(createMoonbitExecuteResultMessage(
-      msg.requestId,
-      false,
-      msg.generationId,
-      undefined,
-      error,
-      'runtime_error',
-    ));
-  } else {
-    postMessage(createMoonbitCancelResultMessage(
-      msg.requestId,
-      false,
-      msg.generationId,
-      error,
-    ));
+  try {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+    const msg = data as Record<string, unknown>;
+    if (typeof msg.generationId !== 'number') return;
+    if (msg.type === 'init') {
+      postMessage(createMoonbitInitResultMessage(false, msg.generationId, error));
+    } else if (
+      msg.type === 'execute'
+      && typeof msg.requestId === 'string'
+      && msg.requestId.length > 0
+    ) {
+      postMessage(createMoonbitExecuteResultMessage(
+        msg.requestId,
+        false,
+        msg.generationId,
+        undefined,
+        error,
+        'runtime_error',
+      ));
+    } else if (
+      msg.type === 'cancel'
+      && typeof msg.requestId === 'string'
+      && msg.requestId.length > 0
+    ) {
+      postMessage(createMoonbitCancelResultMessage(
+        msg.requestId,
+        false,
+        msg.generationId,
+        error,
+      ));
+    }
+  } catch {
+    // An unaddressable malformed request cannot receive a correlated response.
   }
 }
 
 /**
  * Handle a MoonBit worker message — core logic extracted for testability.
  *
- * @param event - MessageEvent with MoonbitWorkerMessage data
+ * @param event - MessageEvent with untrusted MoonBit worker request data
  * @param state - Mutable worker state (holds compiled module cache)
  * @param postMessage - Function to send responses to the main thread
  */
 export async function handleMoonbitWorkerMessage(
-  event: { data: MoonbitWorkerMessage },
+  event: { data: unknown },
   state: MoonbitWorkerState,
   postMessage: (msg: MoonbitWorkerResponse) => void,
 ): Promise<void> {
-  const msg = event.data;
-
-  if (!Number.isSafeInteger(msg.generationId) || msg.generationId < 1) {
-    postRejectedMessage(
-      msg,
-      `malformed generationId: ${String(msg.generationId)}`,
-      postMessage,
-    );
+  const validated = validateMoonbitWorkerRequest(event.data);
+  if (!validated.ok) {
+    postRejectedMessage(event.data, validated.reason, postMessage);
     return;
   }
-  if (msg.protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
-    const error = `protocol version mismatch (got ${String(msg.protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`;
-    postRejectedMessage(msg, error, postMessage);
-    return;
-  }
+  const msg = validated.msg;
 
   if (msg.type === 'init') {
-    if (
-      msg.importedStringConstants !== null
-      && typeof msg.importedStringConstants !== 'string'
-    ) {
-      postMessage(createMoonbitInitResultMessage(
-        false,
-        msg.generationId,
-        'Invalid importedStringConstants setting',
-      ));
-      return;
-    }
     if (state.importedStringConstants !== msg.importedStringConstants) {
       state.compiledModules.clear();
     }
@@ -135,7 +129,22 @@ export async function handleMoonbitWorkerMessage(
   }
 
   if (msg.type === 'execute') {
-    await handleMoonbitExecute(msg, state, postMessage);
+    let call;
+    try {
+      call = snapshotMoonBitCall(msg.args, msg.moonbitAbi);
+    } catch (error) {
+      postRejectedMessage(
+        msg,
+        error instanceof Error ? error.message : String(error),
+        postMessage,
+      );
+      return;
+    }
+    await handleMoonbitExecute({
+      ...msg,
+      args: call.args,
+      moonbitAbi: call.abi,
+    }, state, postMessage);
   }
 }
 
@@ -178,20 +187,6 @@ async function handleMoonbitExecute(
       ));
       return;
     }
-  }
-
-  try {
-    validateMoonBitArguments(msg.args, msg.moonbitAbi);
-  } catch (error) {
-    postMessage(createMoonbitExecuteResultMessage(
-      msg.requestId,
-      false,
-      msg.generationId,
-      undefined,
-      error instanceof Error ? error.message : String(error),
-      'runtime_error',
-    ));
-    return;
   }
 
   let instance: WebAssembly.Instance;
@@ -297,30 +292,14 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
     importedStringConstants: DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
   };
 
-  self.onmessage = (event: MessageEvent<MoonbitWorkerMessage>) => {
+  self.onmessage = (event: MessageEvent<unknown>) => {
     // Top-level try/catch so an unexpected error is reported (and the main
     // thread's hard-kill timer settles the request) instead of crashing the
     // worker silently.
     handleMoonbitWorkerMessage(event, workerState, self.postMessage.bind(self))
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        try {
-          const msg = event.data;
-          if (msg.type === 'execute') {
-            self.postMessage(createMoonbitExecuteResultMessage(
-              msg.requestId,
-              false,
-              msg.generationId,
-              undefined,
-              message,
-              'runtime_error',
-            ));
-          } else {
-            self.postMessage(createMoonbitInitResultMessage(false, msg.generationId, message));
-          }
-        } catch {
-          console.error('[unzen-moonbit-worker] Unrecoverable error:', message);
-        }
+        postRejectedMessage(event.data, message, self.postMessage.bind(self));
       });
   };
 }

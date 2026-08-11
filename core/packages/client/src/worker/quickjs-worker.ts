@@ -29,14 +29,14 @@ import {
   SANDBOX_SYNCHRONOUS_EXECUTION,
 } from '@unzen/shared';
 import {
-  type WorkerMessage,
   type WorkerResponse,
   createInitResultMessage,
   createExecuteResultMessage,
   createExecuteErrorMessage,
   createCancelResultMessage,
-  WORKER_PROTOCOL_VERSION,
+  validateWorkerRequest,
 } from './worker-protocol';
+import { snapshotQuickJsCall } from '../quickjs-call';
 
 // Default timeout: 50ms (same as server-side QuickJSRuntime)
 const DEFAULT_TIMEOUT_MS = 50;
@@ -92,61 +92,78 @@ interface EvalResult {
 }
 
 function postRejectedMessage(
-  msg: WorkerMessage,
+  data: unknown,
   error: string,
   postMessage: (msg: WorkerResponse) => void,
 ): void {
-  if (msg.type === 'init') {
-    postMessage(createInitResultMessage(false, msg.generationId, error));
-  } else if (msg.type === 'execute') {
-    postMessage(createExecuteErrorMessage(
-      msg.requestId,
-      'runtime_error',
-      error,
-      msg.generationId,
-    ));
-  } else {
-    postMessage(createCancelResultMessage(msg.requestId, false, msg.generationId, error));
+  try {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+    const msg = data as Record<string, unknown>;
+    if (typeof msg.generationId !== 'number') return;
+    if (msg.type === 'init') {
+      postMessage(createInitResultMessage(false, msg.generationId, error));
+    } else if (
+      msg.type === 'execute'
+      && typeof msg.requestId === 'string'
+      && msg.requestId.length > 0
+    ) {
+      postMessage(createExecuteErrorMessage(
+        msg.requestId,
+        'runtime_error',
+        error,
+        msg.generationId,
+      ));
+    } else if (
+      msg.type === 'cancel'
+      && typeof msg.requestId === 'string'
+      && msg.requestId.length > 0
+    ) {
+      postMessage(createCancelResultMessage(msg.requestId, false, msg.generationId, error));
+    }
+  } catch {
+    // An unaddressable malformed request cannot receive a correlated response.
   }
 }
 
 /**
  * Handle a worker message — core logic extracted for testability.
  *
- * @param event - MessageEvent with WorkerMessage data
+ * @param event - MessageEvent with untrusted worker request data
  * @param state - Mutable worker state (holds QuickJS module reference)
  * @param postMessage - Function to send response back to main thread
  * @param loader - Optional QuickJS Wasm loader (injected in tests)
  */
 export async function handleWorkerMessage(
-  event: { data: WorkerMessage },
+  event: { data: unknown },
   state: WorkerState,
   postMessage: (msg: WorkerResponse) => void,
   loader?: () => Promise<QuickJSModule>,
 ): Promise<void> {
-  const msg = event.data;
-
-  if (!Number.isSafeInteger(msg.generationId) || msg.generationId < 1) {
-    postRejectedMessage(
-      msg,
-      `malformed generationId: ${String(msg.generationId)}`,
-      postMessage,
-    );
+  const validated = validateWorkerRequest(event.data);
+  if (!validated.ok) {
+    postRejectedMessage(event.data, validated.reason, postMessage);
     return;
   }
-  if (msg.protocolVersion !== WORKER_PROTOCOL_VERSION) {
-    const error = `protocol version mismatch (got ${String(msg.protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`;
-    postRejectedMessage(msg, error, postMessage);
-    return;
-  }
+  const msg = validated.msg;
 
   if (msg.type === 'init') {
     await handleInit(state, postMessage, msg.generationId, loader);
   } else if (msg.type === 'execute') {
+    let call;
+    try {
+      call = snapshotQuickJsCall(msg.code, msg.args);
+    } catch (error) {
+      postRejectedMessage(
+        msg,
+        error instanceof Error ? error.message : String(error),
+        postMessage,
+      );
+      return;
+    }
     await handleExecute(
       msg.requestId,
-      msg.code,
-      msg.args,
+      call.code,
+      call.args,
       msg.timeout,
       msg.generationId,
       state,
@@ -381,31 +398,14 @@ async function loadQuickJS(): Promise<QuickJSModule> {
 if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
   const workerState: WorkerState = { quickJS: null };
 
-  self.onmessage = (event: MessageEvent<WorkerMessage>) => {
+  self.onmessage = (event: MessageEvent<unknown>) => {
     // Top-level try/catch to prevent unhandled exceptions from crashing the worker.
     // Any unexpected error is reported back as a runtime_error so the main thread
     // can handle it gracefully (e.g., fallback to server).
     handleWorkerMessage(event, workerState, self.postMessage.bind(self))
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        // Attempt to send error back; if this also fails, there's nothing we can do
-        try {
-          const msg = event.data;
-          const requestId = msg.type === 'execute' ? msg.requestId : undefined;
-          if (requestId) {
-            self.postMessage(createExecuteErrorMessage(
-              requestId,
-              'runtime_error',
-              message,
-              msg.generationId,
-            ));
-          } else {
-            self.postMessage(createInitResultMessage(false, msg.generationId, message));
-          }
-        } catch {
-          // Last resort: log to console (worker console is visible in DevTools)
-          console.error('[unzen-worker] Unrecoverable error:', message);
-        }
+        postRejectedMessage(event.data, message, self.postMessage.bind(self));
       });
   };
 }

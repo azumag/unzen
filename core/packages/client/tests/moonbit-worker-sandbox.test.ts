@@ -20,6 +20,7 @@ import {
   UnzenRuntimeError,
 } from '@unzen/shared';
 import { MoonBitWorkerSandboxExecutor } from '../src/moonbit-worker-sandbox';
+import { MAX_MOONBIT_ARGUMENTS } from '../src/moonbit-array-bridge';
 import {
   MOONBIT_WORKER_PROTOCOL_VERSION,
   createMoonbitInitMessage,
@@ -437,6 +438,65 @@ describe('MoonBitWorkerSandboxExecutor', () => {
       type: 'init-result',
       success: false,
       error: 'Invalid importedStringConstants setting',
+    });
+  });
+
+  it('ignores unaddressable data and rejects malformed execute requests safely', async () => {
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = {
+      compiledModules: new Map<string, WebAssembly.Module>(),
+      importedStringConstants: '_' as string | null,
+    };
+    const responses: MoonbitWorkerResponse[] = [];
+
+    await expect(handleMoonbitWorkerMessage(
+      { data: null },
+      state,
+      (response) => responses.push(response),
+    )).resolves.toBeUndefined();
+    expect(responses).toHaveLength(0);
+
+    await handleMoonbitWorkerMessage({
+      data: {
+        ...createMoonbitExecuteMessage(
+          'req-invalid',
+          'fib.wasm',
+          new ArrayBuffer(0),
+          true,
+          'fibonacci',
+          [],
+          1,
+        ),
+        args: {},
+      },
+    }, state, (response) => responses.push(response));
+
+    expect(state.compiledModules.size).toBe(0);
+    expect(responses.at(-1)).toMatchObject({
+      type: 'execute-result',
+      requestId: 'req-invalid',
+      success: false,
+      errorType: 'runtime_error',
+      error: expect.stringContaining('cache/export/args'),
+    });
+
+    await handleMoonbitWorkerMessage({
+      data: createMoonbitExecuteMessage(
+        'req-oversized',
+        'fib.wasm',
+        new ArrayBuffer(0),
+        true,
+        'fibonacci',
+        new Array(MAX_MOONBIT_ARGUMENTS + 1).fill(0),
+        1,
+      ),
+    }, state, (response) => responses.push(response));
+
+    expect(state.compiledModules.size).toBe(0);
+    expect(responses.at(-1)).toMatchObject({
+      requestId: 'req-oversized',
+      success: false,
+      error: expect.stringContaining(`at most ${MAX_MOONBIT_ARGUMENTS}`),
     });
   });
 
