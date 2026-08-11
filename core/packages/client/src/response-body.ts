@@ -28,13 +28,35 @@ function assertDeclaredResponseSize(
   }
 }
 
+function cancelResponseBody(response: Response, reason: unknown): void {
+  try {
+    const cancellation = response.body?.cancel(reason);
+    void cancellation?.catch(() => {});
+  } catch {
+    // Releasing a rejected body is best-effort and must not mask the size error.
+  }
+}
+
+function assertDeclaredResponseSizeOrCancel(
+  response: Response,
+  maximumBytes: number,
+  label: string,
+): void {
+  try {
+    assertDeclaredResponseSize(response, maximumBytes, label);
+  } catch (error) {
+    cancelResponseBody(response, error);
+    throw error;
+  }
+}
+
 /** Read a response without allowing a missing/false Content-Length to bypass the cap. */
 export async function readBoundedResponseBytes(
   response: Response,
   maximumBytes: number,
   label: string,
 ): Promise<ArrayBuffer> {
-  assertDeclaredResponseSize(response, maximumBytes, label);
+  assertDeclaredResponseSizeOrCancel(response, maximumBytes, label);
 
   const body = (response as Response & {
     body?: ReadableStream<Uint8Array> | null;
@@ -107,7 +129,7 @@ export async function readBoundedJsonResponse(
 
   // Some embedders/tests expose only response.json(). Preflight declared size,
   // then retain a post-parse encoded-size check so the cap still applies.
-  assertDeclaredResponseSize(response, maximumBytes, label);
+  assertDeclaredResponseSizeOrCancel(response, maximumBytes, label);
   const parseJson = (response as Response & { json?: () => Promise<unknown> }).json;
   if (typeof parseJson !== 'function') {
     throw new Error(`${label} body cannot be read`);

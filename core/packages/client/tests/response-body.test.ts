@@ -7,14 +7,22 @@ import {
 describe('bounded response bodies', () => {
   it('rejects an oversized declared length without reading the body', async () => {
     const readBody = vi.fn().mockResolvedValue(new ArrayBuffer(0));
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
     const response = {
       headers: new Headers({ 'Content-Length': '11' }),
+      body,
       arrayBuffer: readBody,
     } as unknown as Response;
 
     await expect(readBoundedResponseBytes(response, 10, 'Test response'))
       .rejects.toThrow('Test response exceeds 10 bytes');
     expect(readBody).not.toHaveBeenCalled();
+    expect(cancelled).toBe(true);
   });
 
   it('cancels a chunked body when its actual bytes exceed the limit', async () => {

@@ -27,12 +27,30 @@ function assertDeclaredRequestSize(
   }
 }
 
+function assertDeclaredRequestSizeOrCancel(
+  request: Request,
+  maximumBytes: number,
+  label: string,
+): void {
+  try {
+    assertDeclaredRequestSize(request, maximumBytes, label);
+  } catch (error) {
+    try {
+      const cancellation = request.body?.cancel(error);
+      void cancellation?.catch(() => {});
+    } catch {
+      // Releasing a rejected request is best-effort; preserve the limit error.
+    }
+    throw error;
+  }
+}
+
 export async function readBoundedJsonRequest(
   request: Request,
   maximumBytes: number,
   label: string,
 ): Promise<unknown> {
-  assertDeclaredRequestSize(request, maximumBytes, label);
+  assertDeclaredRequestSizeOrCancel(request, maximumBytes, label);
 
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;

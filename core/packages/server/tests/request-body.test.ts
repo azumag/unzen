@@ -15,6 +15,23 @@ describe('bounded request bodies', () => {
       .resolves.toEqual({ args: [1, 2] });
   });
 
+  it('cancels a request rejected by its declared length', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = {
+      headers: new Headers({ 'Content-Length': '11' }),
+      body,
+    } as unknown as Request;
+
+    await expect(readBoundedJsonRequest(request, 10, 'Declared request'))
+      .rejects.toThrow(RequestBodyLimitError);
+    expect(cancelled).toBe(true);
+  });
+
   it('cancels a chunked request when actual bytes exceed the limit', async () => {
     let pullCount = 0;
     let cancelled = false;
