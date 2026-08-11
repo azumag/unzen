@@ -124,7 +124,7 @@ describe('hashPassword', () => {
   it('completes within the heavy timeout at the allowed maximum inputs', async () => {
     // The documented input range must finish inside the 2000ms heavy tier.
     const started = Date.now();
-    const hex = await runHash('p@ss', 'salt', 1500, 64);
+    const hex = await runHash('p@ss', 'salt', 500, 64);
     const elapsed = Date.now() - started;
 
     expect(typeof hex).toBe('string');

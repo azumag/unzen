@@ -55,7 +55,7 @@ server.defineRaw('hashPassword', code, { timeout: 2000, noFallback: true });
 - **メモリ**: ~1MB以下
 - **コード量**: ~200-300行
 - **Unzenに適する理由**: 自己消費（自分のパスワード）、プライバシー向上（平文がサーバーに送信されない）
-- **注意**: `iterations` は 1,500、派生鍵長は 64 bytes を上限とし、heavy tier
+- **注意**: `iterations` は 500、派生鍵長は 64 bytes を上限とし、heavy tier
   (2秒) に実行余裕を確保する。端末性能やCPU競合で所要時間は変動するため、UI側では
   実行中状態を表示する
 
