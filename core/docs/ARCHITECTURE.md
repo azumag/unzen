@@ -513,6 +513,8 @@ GET /code/name?v=N&h=sha256:... → CacheStorage (`unzen-code-v2`)
   manifest・fallback・一般 asset・cross-origin request には介入しない
 - integrity 検証用 clone は `Content-Length` と stream 実 byte 数の両方を 16 MiB に制限する。
   超過時は network / verification の両 response branch を cancel し、`502 no-store` で fail closed
+- 検証済み network response は CacheStorage 書き込みを待たず返し、`cache.put()` は fetch event の
+  `waitUntil` で完了させる。quota / private-mode / lifecycle failure は永続化missに留める
 - registration options と container の `register` method は一度だけ読み取ってから検証し、
   不正 shape / unreadable getter では Service Worker 登録を開始しない
 - activation 時は `unzen-code-` prefix の旧 generation のみ削除する。bounded policy 導入時に

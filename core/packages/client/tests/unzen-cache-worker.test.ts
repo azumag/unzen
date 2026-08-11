@@ -207,6 +207,55 @@ describe('Unzen cache worker policy', () => {
     expect(storage.cache.putCount).toBe(0);
   });
 
+  it('defers cache persistence without delaying a verified code response', async () => {
+    let finishPut: (() => void) | undefined;
+    const put = vi.fn(() => new Promise<void>((resolve) => {
+      finishPut = resolve;
+    }));
+    const storage: UnzenCodeCacheStorage = {
+      open: async () => ({
+        match: async () => undefined,
+        put,
+      }),
+      keys: async () => [],
+      delete: async () => false,
+    };
+    const tasks: Promise<void>[] = [];
+
+    const response = await respondWithUnzenCodeCache(codeRequest(), {
+      cacheStorage: storage,
+      fetch: async () => immutableCodeResponse(),
+      digest: async (bytes) => hashBytes(bytes),
+      waitUntil: (task) => tasks.push(task),
+    });
+
+    expect(response.status).toBe(200);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(tasks).toHaveLength(1);
+    finishPut?.();
+    await expect(tasks[0]).resolves.toBeUndefined();
+  });
+
+  it('returns verified code when cache persistence throws synchronously', async () => {
+    const storage: UnzenCodeCacheStorage = {
+      open: async () => ({
+        match: async () => undefined,
+        put: () => { throw new Error('cache unavailable'); },
+      }),
+      keys: async () => [],
+      delete: async () => false,
+    };
+
+    const response = await respondWithUnzenCodeCache(codeRequest(), {
+      cacheStorage: storage,
+      fetch: async () => immutableCodeResponse(),
+      digest: async (bytes) => hashBytes(bytes),
+      waitUntil: () => { throw new Error('lifecycle unavailable'); },
+    });
+
+    await expect(response.text()).resolves.toBe('function run() {}');
+  });
+
   it('still rejects a hash mismatch when CacheStorage is unavailable', async () => {
     const brokenStorage: UnzenCodeCacheStorage = {
       open: async () => { throw new Error('quota'); },

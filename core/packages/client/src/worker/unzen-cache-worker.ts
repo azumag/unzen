@@ -16,6 +16,7 @@ interface LifecycleEventLike {
 interface FetchEventLike {
   request: Request;
   respondWith(response: Promise<Response>): void;
+  waitUntil(promise: Promise<unknown>): void;
 }
 
 interface UnzenServiceWorkerScope {
@@ -45,9 +46,20 @@ scope.addEventListener('activate', (event) => {
 
 scope.addEventListener('fetch', (event) => {
   if (!isVersionedUnzenCodeRequest(event.request, scope.location.origin)) return;
-  event.respondWith(respondWithUnzenCodeCache(event.request, {
+  let persistence = Promise.resolve();
+  const response = respondWithUnzenCodeCache(event.request, {
     cacheStorage: scope.caches,
     fetch: (request) => scope.fetch(request),
     digest: (bytes) => digestUnzenCode(bytes, scope.crypto.subtle),
-  }));
+    waitUntil: (task) => {
+      persistence = task;
+    },
+  });
+  event.respondWith(response);
+  // Register the lifetime extension synchronously. `persistence` is assigned
+  // before the response promise settles, after integrity verification.
+  event.waitUntil(response.then(
+    () => persistence,
+    () => undefined,
+  ));
 });

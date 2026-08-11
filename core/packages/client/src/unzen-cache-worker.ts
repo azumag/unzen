@@ -41,6 +41,8 @@ export interface UnzenCodeCacheRuntime {
   fetch(request: Request): Promise<Response>;
   /** Returns a lowercase `sha256:<hex>` identity for the supplied bytes. */
   digest?: (bytes: ArrayBuffer) => Promise<string>;
+  /** Keep optional cache persistence alive without delaying the code response. */
+  waitUntil?: (task: Promise<void>) => void;
 }
 
 /**
@@ -183,10 +185,24 @@ export async function respondWithUnzenCodeCache(
   }
 
   if (cache !== undefined) {
+    let persistence: Promise<void>;
     try {
-      await cache.put(request, response.clone());
+      persistence = cache.put(request, response.clone()).catch(() => {
+        // Quota/private-mode CacheStorage failures are an optimization miss only.
+      });
     } catch {
-      // Quota/private-mode CacheStorage failures are an optimization miss only.
+      return response;
+    }
+    if (runtime.waitUntil !== undefined) {
+      try {
+        runtime.waitUntil(persistence);
+      } catch {
+        // A lifecycle scheduler failure must not delay or reject verified code.
+      }
+    } else {
+      // Direct/test runtimes without a Service Worker lifecycle keep the old
+      // completion contract so callers can observe a finished cache write.
+      await persistence;
     }
   }
   return response;
