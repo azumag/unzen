@@ -21,9 +21,10 @@
  *    (IIFE, ES2018, browser platform)
  *    - esbuild onResolve plugin validates ALL modules at resolution time
  *      (catches aliased/transitive imports the pre-check might miss)
- * 4. Wrap IIFE output as function run and enforce the payload size limit
- * 5. Scan output for forbidden APIs (defense-in-depth)
- * 6. Return bundled code with metadata
+ * 4. Collect absolute dependency files from esbuild's metafile
+ * 5. Wrap IIFE output as function run and enforce the payload size limit
+ * 6. Scan output for forbidden APIs (defense-in-depth)
+ * 7. Return bundled code with metadata
  */
 
 import * as esbuild from 'esbuild';
@@ -59,6 +60,8 @@ export interface BundleResult {
   size: number;
   /** Static import and re-export specifiers found in the entry source */
   modules: string[];
+  /** Absolute files read by esbuild, excluding the in-memory entry. */
+  watchFiles: string[];
 }
 
 interface EntryImportAnalysis {
@@ -86,12 +89,13 @@ function normalizeMaxBundleSize(value: number | undefined): number {
  * Process:
  * 1. Analyze module syntax, reject dynamic imports, and validate static modules
  * 2. Bundle the in-memory entry relative to resolveDir
- * 3. Wrap the output and enforce the configured UTF-8 byte limit
- * 4. Scan output for forbidden APIs
- * 5. Return bundled code
+ * 3. Collect absolute dependency files from esbuild's metafile
+ * 4. Wrap the output and enforce the configured UTF-8 byte limit
+ * 5. Scan output for forbidden APIs
+ * 6. Return bundled code
  *
  * @param options - Bundle configuration
- * @returns Bundled code, size, and module list
+ * @returns Bundled code, size, module list, and dependency files
  * @throws Error if configuration or size is invalid, a module is blocked,
  * or an API is forbidden
  */
@@ -141,6 +145,7 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
     platform: 'browser',
     target: 'es2018',
     write: false,
+    metafile: true,
     globalName: '__unzen_module',
     minify: false,
     logLevel: 'silent',
@@ -148,6 +153,11 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
   });
 
   const output = result.outputFiles?.[0]?.text ?? '';
+  const watchFiles = Array.from(new Set(
+    Object.keys(result.metafile?.inputs ?? {})
+      .filter((input) => !input.startsWith('<'))
+      .map((input) => resolve(resolveDir, input)),
+  )).sort();
 
   // Step 3: Measure the exact payload registered through defineRaw. Reject oversized
   // output before the more expensive AST security scan and before it can reach
@@ -177,6 +187,7 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
     code: bundledCode,
     size,
     modules: importedModules,
+    watchFiles,
   };
 }
 

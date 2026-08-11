@@ -7,6 +7,7 @@ import { bundle } from './bundler';
 import {
   createLexicalTypeChecker,
   isIdentifierReference,
+  isWithin,
   symbolForReference,
 } from './lexical-scope';
 import { createUnzenPurityAnalyzer } from './pure-function-check';
@@ -44,6 +45,8 @@ export interface UnzenSourceTransformResult {
   code: string;
   map: SourceMap;
   definitions: ExtractedUnzenDefinition[];
+  /** Absolute files read while bundling extracted runtime imports. */
+  watchFiles: string[];
 }
 
 /** Explicit opt-in for bundling runtime imports referenced by inline functions. */
@@ -429,11 +432,9 @@ function filterRuntimeImport(
 }
 
 function renderRuntimeImports(
-  functionNode: ExtractableFunction,
-  checker: ts.TypeChecker,
+  imports: Map<ts.ImportDeclaration, Set<string>>,
   sourceFile: ts.SourceFile,
 ): string[] {
-  const imports = collectRuntimeImports(functionNode, checker);
   const rendered: string[] = [];
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
@@ -446,6 +447,88 @@ function renderRuntimeImports(
     }
   }
   return rendered;
+}
+
+function mergeRuntimeImports(
+  target: Map<ts.ImportDeclaration, Set<string>>,
+  source: Map<ts.ImportDeclaration, Set<string>>,
+): void {
+  for (const [declaration, names] of source) {
+    const merged = target.get(declaration) ?? new Set<string>();
+    for (const name of names) merged.add(name);
+    target.set(declaration, merged);
+  }
+}
+
+function collectRuntimeImportsUsedOutsideDefinitions(
+  analysis: UnzenSourceAnalysis,
+  bundledImports: Map<ts.ImportDeclaration, Set<string>>,
+): Map<ts.ImportDeclaration, Set<string>> {
+  const usedOutside = new Map<ts.ImportDeclaration, Set<string>>();
+
+  const visit = (node: ts.Node): void => {
+    // Import specifiers are declarations, not host-side reads. Skipping the
+    // whole declaration also avoids treating an aliased propertyName as one.
+    if (ts.isImportDeclaration(node)) return;
+    if (ts.isIdentifier(node) && isIdentifierReference(node)) {
+      const symbol = symbolForReference(node, analysis.checker);
+      const binding = symbol && runtimeImportBindingForSymbol(symbol);
+      const bundledNames = binding && bundledImports.get(binding.declaration);
+      if (
+        binding
+        && bundledNames?.has(binding.localName)
+        && !analysis.plans.some((plan) => isWithin(node, plan.functionNode))
+      ) {
+        const names = usedOutside.get(binding.declaration) ?? new Set<string>();
+        names.add(binding.localName);
+        usedOutside.set(binding.declaration, names);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(analysis.sourceFile);
+  return usedOutside;
+}
+
+function stripRuntimeImportBindings(
+  declaration: ts.ImportDeclaration,
+  removableNames: Set<string>,
+): ts.ImportDeclaration | undefined {
+  const clause = declaration.importClause;
+  if (!clause || clause.isTypeOnly) return declaration;
+
+  const defaultImport = clause.name && !removableNames.has(clause.name.text)
+    ? clause.name
+    : undefined;
+  let namedBindings: ts.NamedImportBindings | undefined;
+  if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+    if (!removableNames.has(clause.namedBindings.name.text)) {
+      namedBindings = clause.namedBindings;
+    }
+  } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+    const elements = clause.namedBindings.elements.filter(
+      (element) => !removableNames.has(element.name.text),
+    );
+    if (elements.length > 0) {
+      namedBindings = ts.factory.updateNamedImports(clause.namedBindings, elements);
+    }
+  }
+
+  if (!defaultImport && !namedBindings) return undefined;
+  const importClause = ts.factory.updateImportClause(
+    clause,
+    clause.phaseModifier,
+    defaultImport,
+    namedBindings,
+  );
+  return ts.factory.updateImportDeclaration(
+    declaration,
+    declaration.modifiers,
+    importClause,
+    declaration.moduleSpecifier,
+    declaration.attributes,
+  );
 }
 
 function analyzeUnzenSource(
@@ -534,8 +617,30 @@ function renderTransformResult(
   fileName: string,
   analysis: UnzenSourceAnalysis,
   functionCodes: string[],
+  watchFiles: string[] = [],
+  bundledImports?: Map<ts.ImportDeclaration, Set<string>>,
 ): UnzenSourceTransformResult {
   const output = new MagicString(source);
+  if (bundledImports) {
+    const usedOutside = collectRuntimeImportsUsedOutsideDefinitions(analysis, bundledImports);
+    for (const [declaration, bundledNames] of bundledImports) {
+      const retainedNames = usedOutside.get(declaration);
+      const removableNames = new Set(
+        [...bundledNames].filter((name) => !retainedNames?.has(name)),
+      );
+      if (removableNames.size === 0) continue;
+      const rewritten = stripRuntimeImportBindings(declaration, removableNames);
+      if (rewritten) {
+        output.overwrite(
+          declaration.getStart(analysis.sourceFile),
+          declaration.end,
+          TYPE_PRINTER.printNode(ts.EmitHint.Unspecified, rewritten, analysis.sourceFile),
+        );
+      } else {
+        output.remove(declaration.getStart(analysis.sourceFile), declaration.end);
+      }
+    }
+  }
   for (const [index, plan] of analysis.plans.entries()) {
     const replacement = `${plan.receiver.expression.getText(analysis.sourceFile)}.defineRaw(`
       + `${JSON.stringify(plan.name)}, ${JSON.stringify(functionCodes[index]!)}${plan.optionsText})`;
@@ -551,6 +656,7 @@ function renderTransformResult(
       hires: true,
     }),
     definitions: analysis.plans.map((plan) => plan.definition),
+    watchFiles: Array.from(new Set(watchFiles)).sort(),
   };
 }
 
@@ -591,13 +697,16 @@ export async function transformUnzenDefinitionsWithDependencies(
   const resolveDir = options.resolveDir ?? dirname(fileName);
 
   const functionCodes: string[] = [];
+  const bundledImports = new Map<ts.ImportDeclaration, Set<string>>();
+  const watchFiles = new Set<string>();
   for (const plan of analysis.plans) {
     const functionCode = transpileFunction(analysis.sourceFile, plan.functionNode);
-    const imports = renderRuntimeImports(
+    const runtimeImports = collectRuntimeImports(
       plan.functionNode,
       analysis.checker,
-      analysis.sourceFile,
     );
+    mergeRuntimeImports(bundledImports, runtimeImports);
+    const imports = renderRuntimeImports(runtimeImports, analysis.sourceFile);
     if (imports.length === 0) {
       functionCodes.push(functionCode);
       continue;
@@ -611,6 +720,7 @@ export async function transformUnzenDefinitionsWithDependencies(
         maxBundleSize: options.maxBundleSize,
       });
       functionCodes.push(result.code);
+      for (const watchFile of result.watchFiles) watchFiles.add(watchFile);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       fail(
@@ -621,5 +731,12 @@ export async function transformUnzenDefinitionsWithDependencies(
     }
   }
 
-  return renderTransformResult(source, fileName, analysis, functionCodes);
+  return renderTransformResult(
+    source,
+    fileName,
+    analysis,
+    functionCodes,
+    [...watchFiles],
+    bundledImports,
+  );
 }

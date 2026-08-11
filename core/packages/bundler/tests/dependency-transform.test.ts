@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   transformUnzenDefinitionsWithDependencies,
@@ -45,6 +46,35 @@ function executeRegistration(source: string): unknown[] {
   return registrations[0] ?? [];
 }
 
+function importedNames(source: string, moduleName: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    'transformed.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || statement.moduleSpecifier.text !== moduleName
+    ) {
+      continue;
+    }
+    const clause = statement.importClause;
+    if (!clause) return [];
+    const names = clause.name ? [clause.name.text] : [];
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+      names.push(clause.namedBindings.name.text);
+    } else if (clause.namedBindings) {
+      names.push(...clause.namedBindings.elements.map((element) => element.name.text));
+    }
+    return names;
+  }
+  return [];
+}
+
 afterEach(() => {
   for (const directory of fixtureDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -66,6 +96,10 @@ server.define('triple', (value: number): number => triple(value), { timeout: 500
     );
 
     expect(result?.definitions[0]?.returnType).toBe('number');
+    expect(result?.watchFiles).toEqual([
+      join(resolveDir, 'node_modules', 'unzen-safe-math', 'index.js'),
+    ]);
+    expect(importedNames(result!.code, 'unzen-safe-math')).toEqual(['TripleOptions']);
     const registration = executeRegistration(result!.code);
     expect(registration[0]).toBe('triple');
     expect(registration[2]).toEqual({ timeout: 500 });
@@ -89,6 +123,61 @@ server.define('triple', (value: number) => triple(value));`;
     );
 
     expect(result?.code).toContain('server.defineRaw');
+    expect(importedNames(result!.code, 'unzen-safe-math')).toEqual([]);
+    expect(importedNames(result!.code, 'not-allowed')).toEqual(['unused']);
+  });
+
+  it('keeps a bundled binding when host code also references it', async () => {
+    const resolveDir = createPackageProject();
+    const source = `import { triple } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('triple', (value: number) => triple(value));
+export const hostValue = triple(2);`;
+
+    const result = await transformUnzenDefinitionsWithDependencies(
+      source,
+      join(resolveDir, 'functions.ts'),
+      { allowedModules: ['unzen-safe-math'] },
+    );
+
+    expect(importedNames(result!.code, 'unzen-safe-math')).toEqual(['triple']);
+    expect(result?.code).toContain('export const hostValue = triple(2)');
+  });
+
+  it('keeps a bundled binding referenced by a host type query', async () => {
+    const resolveDir = createPackageProject();
+    const source = `import { triple } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+type TripleFunction = typeof triple;
+const server = new UnzenServer();
+server.define('triple', (value: number) => triple(value));
+export type { TripleFunction };`;
+
+    const result = await transformUnzenDefinitionsWithDependencies(
+      source,
+      join(resolveDir, 'functions.ts'),
+      { allowedModules: ['unzen-safe-math'] },
+    );
+
+    expect(importedNames(result!.code, 'unzen-safe-math')).toEqual(['triple']);
+  });
+
+  it('removes only extracted bindings from a mixed host import', async () => {
+    const resolveDir = createPackageProject();
+    const source = `import { triple, settings } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('triple', (value: number) => triple(value));
+export const hostFactor = settings.factor;`;
+
+    const result = await transformUnzenDefinitionsWithDependencies(
+      source,
+      join(resolveDir, 'functions.ts'),
+      { allowedModules: ['unzen-safe-math'] },
+    );
+
+    expect(importedNames(result!.code, 'unzen-safe-math')).toEqual(['settings']);
   });
 
   it.each([
@@ -124,6 +213,7 @@ server.define('calculate', (value: number) => ${expression});`;
     );
     const bundledCode = executeRegistration(result!.code)[1] as string;
 
+    expect(importedNames(result!.code, 'unzen-safe-math')).toEqual([]);
     expect(new Function(`${bundledCode}\nreturn run(4);`)()).toBe(expected);
   });
 

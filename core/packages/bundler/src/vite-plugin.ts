@@ -33,10 +33,15 @@ export interface UnzenVitePlugin {
   enforce: 'pre';
   buildStart(): void;
   transform(
+    this: UnzenViteTransformContext,
     code: string,
     id: string,
   ): UnzenViteTransformResult | null | Promise<UnzenViteTransformResult | null>;
   generateBundle(this: UnzenViteEmitContext): void;
+}
+
+export interface UnzenViteTransformContext {
+  addWatchFile?(id: string): void;
 }
 
 export interface UnzenViteEmitContext {
@@ -107,6 +112,9 @@ export function unzenVitePlugin(options: UnzenVitePluginOptions = {}): UnzenVite
         // were removed or moved by the latest transform.
         if (result) definitionsByFile.set(id, result.definitions);
         else definitionsByFile.delete(id);
+        for (const watchFile of result?.watchFiles ?? []) {
+          this.addWatchFile?.(watchFile);
+        }
         return result ? { code: result.code, map: result.map } : null;
       };
 

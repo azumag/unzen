@@ -45,6 +45,7 @@ describe('bundler', () => {
     expect(result.code.length).toBeGreaterThan(0);
     expect(result.size).toBeGreaterThan(0);
     expect(result.modules).toEqual([]);
+    expect(result.watchFiles).toEqual([]);
   });
 
   it('should produce code containing function run', async () => {
@@ -217,6 +218,9 @@ describe('bundler', () => {
     });
 
     expect(result.modules).toEqual(['unzen-safe-math']);
+    expect(result.watchFiles).toEqual([
+      join(resolveDir, 'node_modules', 'unzen-safe-math', 'index.js'),
+    ]);
     expect(result.code).not.toContain(basename(resolveDir));
     expect(new Function(`${result.code}\nreturn run(7);`)()).toBe(21);
   });

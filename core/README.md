@@ -84,6 +84,8 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 拒否する。runtime importは標準では拒否し、`dependencyBundling`を明示した場合だけ
 allowlist検証とbundle後の禁止API検査を経て自己完結コードへ変換する。
 依存bundleは最終コードをUTF-8で計測し、既定100KiBを超える場合はbuild errorになる。
+抽出関数だけが使うruntime import bindingはhost bundleから除去し、host codeでも使う
+bindingは保持する。実際に読んだ依存fileはVite / webpackのwatch graphへ登録される。
 webpack loader設定、生成型の利用例、対象構文の制約は
 [モジュールバンドラーガイド](docs/bundler.md)を参照。
 

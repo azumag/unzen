@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build } from 'vite';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { unzenVitePlugin } from '../src/vite-plugin';
 
 describe('unzenVitePlugin with Vite', () => {
@@ -59,7 +59,8 @@ export { server };`);
     }));
     writeFileSync(
       join(packageDirectory, 'index.js'),
-      'export const triple = (value) => value * 3;',
+      `throw new Error('UNZEN_HOST_IMPORT_EXECUTED');
+export const triple = (value) => value * 3;`,
     );
     const entry = join(root, 'functions.ts');
     writeFileSync(entry, `import { triple } from 'unzen-safe-math';
@@ -100,6 +101,15 @@ export { server };`);
       expect(declaration?.type).toBe('asset');
       expect(declaration && declaration.type === 'asset' ? declaration.source : '')
         .toContain('readonly "triple": (value: number) => number;');
+
+      const defineRaw = vi.fn();
+      const executable = code
+        .replace(/^import[^\n]+;\n?/gm, '')
+        .replace(/^export\s*\{[^}]*\};?\n?/gm, '');
+      expect(() => new Function('UnzenServer', executable)(
+        class TestUnzenServer { defineRaw = defineRaw; },
+      )).not.toThrow();
+      expect(defineRaw).toHaveBeenCalledOnce();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

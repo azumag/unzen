@@ -67,12 +67,21 @@ server.define('triple', (value: number) => triple(value));`;
       const plugin = unzenVitePlugin({
         dependencyBundling: { allowedModules: ['unzen-safe-math'] },
       });
-      const pending = plugin.transform(source, join(root, 'functions.ts'));
+      const addWatchFile = vi.fn();
+      const pending = plugin.transform.call(
+        { addWatchFile },
+        source,
+        join(root, 'functions.ts'),
+      );
       expect(pending).toBeInstanceOf(Promise);
 
       const result = await pending;
       expect(result?.code).toContain('server.defineRaw');
       expect(result?.code).toContain('function run(...args)');
+      expect(result?.code).not.toContain("from 'unzen-safe-math'");
+      expect(addWatchFile).toHaveBeenCalledWith(
+        join(packageDirectory, 'index.js'),
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

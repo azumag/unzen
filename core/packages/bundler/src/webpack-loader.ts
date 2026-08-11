@@ -22,6 +22,7 @@ export interface UnzenWebpackLoaderContext {
   resourcePath: string;
   sourceMap?: boolean;
   cacheable?(flag?: boolean): void;
+  addDependency?(file: string): void;
   getOptions?(): UnzenWebpackLoaderOptions;
   async?(): UnzenWebpackLoaderCallback;
   callback: UnzenWebpackLoaderCallback;
@@ -53,6 +54,9 @@ export function unzenWebpackLoader(
         if (!result) {
           callback(null, source, inputSourceMap, meta);
           return;
+        }
+        for (const watchFile of result.watchFiles) {
+          this.addDependency?.(watchFile);
         }
         callback(null, result.code, this.sourceMap ? result.map : undefined, meta);
       },

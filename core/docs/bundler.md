@@ -97,7 +97,9 @@ export default defineConfig({
 
 inline関数からnpm packageを参照する場合は`dependencyBundling`を明示する。関数が実際に
 読むruntime importだけがesbuild entryへコピーされ、元moduleの無関係なimportや
-type-only importは抽出コードへ入らない。外部のlocal変数は引き続きclosure errorになる。
+type-only importは抽出コードへ入らない。抽出関数だけが使うruntime import bindingはhost
+sourceから除去し、同じbindingをhost codeも使う場合は保持する。esbuildが読んだ依存fileは
+Viteのwatch graphへ登録される。外部のlocal変数は引き続きclosure errorになる。
 
 ```typescript
 import { defineConfig } from 'vite';
@@ -252,6 +254,7 @@ server.defineRaw('sortUsers', result.code, { timeout: 500 });
 | `code` | `string` | `function run(...args)`形式の自己完結型コード（`defineRaw()`へ直接登録可能） |
 | `size` | `number` | バイトサイズ |
 | `modules` | `string[]` | entryの静的import / re-exportから検出したspecifier（重複除去） |
+| `watchFiles` | `string[]` | esbuildが読んだin-memory entry以外の絶対file path（重複除去・sort済み） |
 
 ### `DEFAULT_MAX_BUNDLE_SIZE_BYTES`
 
@@ -279,7 +282,8 @@ Node.js 組み込みモジュールかどうかを判定する。`node:` プレ�
 ### `transformUnzenDefinitions(source, fileName)`
 
 adapter共通のAST変換。変更がなければ`null`、変更時は`code`、`map`、抽出した
-`definitions`（source位置、型引数、引数、戻り値）を返す。
+`definitions`（source位置、型引数、引数、戻り値）、`watchFiles`を返す。同期変換の
+`watchFiles`は空配列になる。
 
 ### `transformUnzenDefinitionsWithDependencies(source, fileName, options)`
 
@@ -287,6 +291,8 @@ runtime importを関数単位でbundleする非同期AST変換。`options.allowe
 `options.resolveDir`は省略時にsource fileのdirectoryとなる。`options.maxBundleSize`は
 関数ごとの最大UTF-8 byte数（既定100KiB）。関数が参照したimport bindingだけを含め、
 module allowlist、推移依存の解決時検査、サイズ上限、bundle後の禁止API検査を適用する。
+抽出関数だけが使うruntime import bindingはhost sourceから除去し、host codeでも使う
+bindingと同じ宣言内の無関係なbindingは保持する。
 
 ### `generateUnzenTypeDeclarations(definitions)`
 
@@ -300,13 +306,15 @@ Vite/Rollup互換のpre-transform pluginを返す。標準ではJS/TS系拡張�
 `node_modules`、virtual module、query付きrequestを除外する。`include` / `exclude`には
 単一または複数の正規表現を指定できる。`declarationFile`は親directory traversalを含まない
 相対`.d.ts` asset pathだけを受け付ける。`dependencyBundling`指定時だけtransform hookが
-非同期になり、許可したruntime importを自己完結コードへbundleする。
+非同期になり、許可したruntime importを自己完結コードへbundleする。返された
+`watchFiles`はplugin contextの`addWatchFile()`へ登録する。
 
 ### `@unzen/bundler/webpack-loader`
 
 ESMとCommonJSの両方で公開するwebpack loader。変換結果とsource mapをwebpackの
 loader callbackへ渡す。`dependencyBundling`指定時はwebpackのasync callbackを使い、
-esbuildが読む依存graphに対する古いloader cacheを再利用しない。
+esbuildが読む依存graphに対する古いloader cacheを再利用しない。返された`watchFiles`は
+loader contextの`addDependency()`へ登録する。
 
 ## バンドルパイプライン
 
@@ -314,9 +322,10 @@ esbuildが読む依存graphに対する古いloader cacheを再利用しない�
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
 3. `stdin.resolveDir`を基準にesbuildでバンドルする（内部IIFE、ES2018、browser platform）
    - `onResolve`で全bare moduleをallowlist検証し、推移依存内のdynamic importも拒否する
-4. IIFEとexportされたentryを自己完結した`function run(...args)`で包む
-5. 最終コードのUTF-8 byte数を計測し、`maxBundleSize`（既定100KiB）超過を拒否する
-6. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
+4. esbuildのmetafileからin-memory entry以外の依存fileを絶対pathで収集する
+5. IIFEとexportされたentryを自己完結した`function run(...args)`で包む
+6. 最終コードのUTF-8 byte数を計測し、`maxBundleSize`（既定100KiB）超過を拒否する
+7. バンドル出力をAST + symbol/scopeで解析し、禁止global参照がないか検査する
 
 ## テスト
 
@@ -347,8 +356,9 @@ npx vitest run
   limitとparse時の追加memoryを考慮し、`maxBundleSize`を明示する
 - compile-time抽出はクロージャ値を埋め込まない。runtime importのbundleは
   `dependencyBundling`を明示した場合だけ行う
-- 元moduleのimport宣言はbuild toolのmodule graphとwatch対象を保つため残る。bindingが
-  抽出後に未使用なら通常のtree shaking対象になるが、副作用を持つmoduleはhost側でも実行される
+- 抽出関数だけが使うruntime import bindingは元moduleから除去する。同じbindingをhost codeも
+  使う場合と、同じ宣言内の無関係なbindingは保持する。side-effect-only importはbundle対象外で
+  元moduleに残る。bundle依存fileはVite / webpack adapterが各build toolのwatch対象へ登録する
 - 生成`.d.ts`はsource annotationを型検査・module解決せず保持する。import/local typeを
   使用する場合は生成先で解決できる構成が必要
 

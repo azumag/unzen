@@ -44,6 +44,7 @@ export {
   type UnzenViteEmitContext,
   type UnzenVitePlugin,
   type UnzenVitePluginOptions,
+  type UnzenViteTransformContext,
   type UnzenViteTransformResult,
 } from './vite-plugin';
 export {

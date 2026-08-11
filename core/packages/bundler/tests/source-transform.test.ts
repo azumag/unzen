@@ -29,6 +29,7 @@ server.define('sum', (a: number, b: number): number => a + b, { timeout: 500 });
     const result = transformUnzenDefinitions(source, '/src/functions.ts');
 
     expect(result).not.toBeNull();
+    expect(result?.watchFiles).toEqual([]);
     expect(result?.definitions).toEqual([{
       name: 'sum',
       fileName: '/src/functions.ts',

@@ -71,12 +71,14 @@ const server = new UnzenServer();
 server.define('triple', (value: number) => triple(value));`;
     const callback = vi.fn();
     const cacheable = vi.fn();
+    const addDependency = vi.fn();
     const asyncLoader = vi.fn(() => callback);
     const context: UnzenWebpackLoaderContext = {
       resourcePath: join(root, 'functions.ts'),
       sourceMap: true,
       callback: vi.fn(),
       cacheable,
+      addDependency,
       async: asyncLoader,
       getOptions: () => ({
         dependencyBundling: { allowedModules: ['unzen-safe-math'] },
@@ -89,6 +91,7 @@ server.define('triple', (value: number) => triple(value));`;
 
       expect(asyncLoader).toHaveBeenCalledOnce();
       expect(cacheable).toHaveBeenCalledWith(false);
+      expect(addDependency).toHaveBeenCalledWith(join(packageDirectory, 'index.js'));
       expect(context.callback).not.toHaveBeenCalled();
       const [error, code, map, meta] = callback.mock.calls[0]!;
       expect(error).toBeNull();

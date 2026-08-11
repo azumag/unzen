@@ -345,6 +345,7 @@ skepticの批判に対し、designerが実証実験計画を提案。skepticが�
 - [ ] useModule() API
 - [x] モジュールホワイトリスト（security-perf P0要件）
 - [x] 最終bundleのUTF-8サイズ上限（既定100KiB、関数単位）
+- [x] sandbox専用importのhost除去 + build toolへの依存watch登録
 - [x] 禁止API静的解析ツール（AST + symbol/scopeベース）
 - [ ] IndexedDB + Service Workerキャッシュ（Service Worker CacheStorageは実装済み、IndexedDBは未実装）
 - [ ] サンプル実装:

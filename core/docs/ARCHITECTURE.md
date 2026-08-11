@@ -652,7 +652,9 @@ TypeScript source
   → inline関数だけをES2018 JavaScriptへtranspile
   → [dependencyBundling指定時] 参照runtime importだけをesbuildで自己完結化
      → entry / 推移依存をallowlist検証 → 100KiB既定上限 → bundle後の禁止API検査
+     → metafileから依存fileを収集し、抽出関数だけが使うimport bindingをhost sourceから除去
   → MagicStringで defineRaw(name, code, options) に局所置換 + source map
+  → Vite addWatchFile / webpack addDependencyへ依存fileを登録
   → Vite pre-transform / webpack loaderへ同じ結果を返す（依存bundle時だけ非同期）
   → Vite build時は名前順のunzen-functions.d.ts assetをemit
 ```
@@ -669,7 +671,9 @@ TypeScript source
 - AST変換はクロージャ値を埋め込まない。runtime importは標準では拒否し、Vite plugin /
   webpack loaderで`dependencyBundling.allowedModules`を明示した場合だけ、関数が実際に
   参照するimport bindingを`bundle()`へ渡す。type-only importと同じmoduleの無関係な
-  runtime importは抽出entryに含めない
+  runtime importは抽出entryに含めない。抽出関数だけが使うruntime bindingはhost sourceから
+  除去し、host codeでも使うbindingは保持する。esbuildが読んだ依存fileはVite / webpackの
+  watch graphへ登録する
 - `bundle()`はin-memory entryを`resolveDir`（省略時`process.cwd()`）基準で解決する。
   entryの静的import / re-exportはASTで収集し、dynamic importはesbuild変換前に拒否する。
   bare packageの推移依存も`onResolve`で個別にallowlist検証し、依存内のdynamic importも
