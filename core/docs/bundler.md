@@ -336,6 +336,7 @@ loader contextの`addDependency()`へ登録する。
 2. 各 import をホワイトリスト + Node.js 組み込みブロックリストで検証する
 3. `stdin.resolveDir`を基準にesbuildでバンドルする（内部IIFE、ES2018、browser platform）
    - `onResolve`で全bare moduleをallowlist検証し、推移依存内のdynamic importも拒否する
+   - dependency package内のrelative / absolute importは、そのpackage root内だけに制限する
 4. esbuildのmetafileからin-memory entry以外の依存fileを絶対pathで収集する
 5. IIFEとexportされたentryを自己完結した`function run(...args)`で包む
 6. 最終コードのUTF-8 byte数を計測し、`maxBundleSize`（既定100KiB）超過を拒否する
@@ -363,7 +364,8 @@ npx vitest run
   文字列を含む可能性がある
 - npm packageは`resolveDir`（省略時は実行時のcurrent working directory）から解決する。
   entryで許可したpackageでも、別のbare packageを推移依存に持つ場合はその依存もallowlistへ
-  明示する。relative / absolute local importは既存契約どおりmodule allowlistの対象外
+  明示する。application側のrelative / absolute local importはmodule allowlistの対象外だが、
+  dependency packageからのlocal importは自身のpackage rootを越えられない
 - ランタイムのサンドボックス（QuickJS）がこれらの API を提供しないことが最終的な安全保証となる
 - バンドルされた npm モジュールは事前にインストールされている必要がある
 - 100KiBを超える依存コードは既定で拒否する。上限を増やす場合はQuickJSの16MB memory

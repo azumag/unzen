@@ -252,6 +252,62 @@ describe('bundler', () => {
     expect(new Function(`${result.code}\nreturn run(7);`)()).toBe(21);
   });
 
+  it('should allow static relative imports from the application', async () => {
+    const resolveDir = createPackageProject({});
+    writeFileSync(join(resolveDir, 'helper.js'), 'export const value = 42;');
+
+    const result = await bundle({
+      code: `import { value } from './helper.js'; export function run() { return value; }`,
+      allowedModules: [],
+      resolveDir,
+    });
+
+    expect(new Function(`${result.code}\nreturn run();`)()).toBe(42);
+  });
+
+  it('should allow relative modules contained by an allowed package', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-safe-math': `
+        import { triple } from './internal.js';
+        export { triple };
+      `,
+    });
+    writeFileSync(
+      join(resolveDir, 'node_modules', 'unzen-safe-math', 'internal.js'),
+      'export function triple(value) { return value * 3; }',
+    );
+
+    const result = await bundle({
+      code: `
+        import { triple } from 'unzen-safe-math';
+        export function run(value) { return triple(value); }
+      `,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    });
+
+    expect(new Function(`${result.code}\nreturn run(7);`)()).toBe(21);
+  });
+
+  it('should reject a relative escape from an allowed package', async () => {
+    const resolveDir = createPackageProject({
+      'unzen-safe-math': `
+        import { secret } from '../unzen-hidden-helper/index.js';
+        export { secret };
+      `,
+      'unzen-hidden-helper': `export const secret = 'not allowed';`,
+    });
+
+    await expect(bundle({
+      code: `
+        import { secret } from 'unzen-safe-math';
+        export function run() { return secret; }
+      `,
+      allowedModules: ['unzen-safe-math'],
+      resolveDir,
+    })).rejects.toThrow(/escapes dependency package "unzen-safe-math"/);
+  });
+
   it('should reject asynchronous execution inside an allowed dependency', async () => {
     const resolveDir = createPackageProject({
       'unzen-async-helper': `

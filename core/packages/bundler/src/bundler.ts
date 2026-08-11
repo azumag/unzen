@@ -28,7 +28,7 @@
  */
 
 import * as esbuild from 'esbuild';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import ts from 'typescript';
 import { checkModuleAllowed, isNodeBuiltin } from './module-whitelist';
 import { checkForbiddenApis } from './forbidden-api-check';
@@ -69,8 +69,49 @@ interface EntryImportAnalysis {
   hasDynamicImport: boolean;
 }
 
+interface DependencyPackageBoundary {
+  name: string;
+  root: string;
+}
+
 const DYNAMIC_IMPORT_VIOLATION =
   'dynamic import() - dynamic module loading is blocked in sandbox';
+
+function normalizedAbsolutePath(filePath: string): string {
+  return resolve(filePath).replace(/\\/g, '/');
+}
+
+function dependencyPackageBoundary(importer: string): DependencyPackageBoundary | undefined {
+  if (importer.length === 0) return undefined;
+  const normalized = normalizedAbsolutePath(importer);
+  const marker = '/node_modules/';
+  const markerIndex = normalized.lastIndexOf(marker);
+  if (markerIndex < 0) return undefined;
+
+  const packageStart = markerIndex + marker.length;
+  const segments = normalized.slice(packageStart).split('/');
+  const segmentCount = segments[0]?.startsWith('@') ? 2 : 1;
+  if (segments.length < segmentCount) return undefined;
+  const name = segments.slice(0, segmentCount).join('/');
+  return {
+    name,
+    root: `${normalized.slice(0, packageStart)}${name}`,
+  };
+}
+
+function isLocalFileSpecifier(specifier: string): boolean {
+  return specifier === '.'
+    || specifier === '..'
+    || specifier.startsWith('./')
+    || specifier.startsWith('../')
+    || specifier.startsWith('.\\')
+    || specifier.startsWith('..\\')
+    || isAbsolute(specifier);
+}
+
+function isWithinDirectory(filePath: string, directory: string): boolean {
+  return filePath === directory || filePath.startsWith(`${directory}/`);
+}
 
 function normalizeMaxBundleSize(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_BUNDLE_SIZE_BYTES;
@@ -115,6 +156,9 @@ export async function bundle(options: BundleOptions): Promise<BundleResult> {
     );
   }
   for (const mod of importedModules) {
+    // Local application modules are resolved from resolveDir. Dependency-local
+    // imports are separately confined to their package root in onResolve.
+    if (isLocalFileSpecifier(mod)) continue;
     // Check Node.js built-ins first (always blocked, even if in allowedModules)
     if (isNodeBuiltin(mod)) {
       throw new Error(
@@ -285,6 +329,24 @@ function createModuleWhitelistPlugin(allowedModules: string[]): esbuild.Plugin {
       build.onResolve({ filter: /.*/ }, (args) => {
         if (args.kind !== 'dynamic-import') return undefined;
         return { errors: [{ text: DYNAMIC_IMPORT_VIOLATION }] };
+      });
+
+      // App-local files remain supported, as do a package's own relative
+      // modules. A dependency must not spell a sibling package or project file
+      // as a relative/absolute path to bypass the bare-module allowlist.
+      build.onResolve({ filter: /.*/ }, (args) => {
+        if (!isLocalFileSpecifier(args.path)) return undefined;
+        const boundary = dependencyPackageBoundary(args.importer);
+        if (!boundary) return undefined;
+        const target = normalizedAbsolutePath(resolve(args.resolveDir, args.path));
+        if (isWithinDirectory(target, boundary.root)) return undefined;
+        return {
+          errors: [{
+            text: `Import ${JSON.stringify(args.path)} escapes dependency package `
+              + `${JSON.stringify(boundary.name)}. External packages must be imported `
+              + 'by name and explicitly included in allowedModules.',
+          }],
+        };
       });
 
       // Intercept all non-relative, non-absolute module resolutions.
