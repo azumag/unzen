@@ -246,6 +246,10 @@ export class ManifestFetcher {
       // Reuse the last known manifest instead of parsing a new response body
       // (304 responses have no body per HTTP spec)
       if (response.status === 304 && this.lastManifest) {
+        // A fetch adapter may resolve after invalidate() or after the final
+        // caller cancelled even though its signal was aborted. Do not let a
+        // stale 304 resurrect the in-memory cache in that case.
+        throwIfAborted(signal);
         this.cache = this.lastManifest;
         return this.lastManifest;
       }

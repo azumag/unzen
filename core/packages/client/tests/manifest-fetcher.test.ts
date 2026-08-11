@@ -598,6 +598,34 @@ describe('ManifestFetcher', () => {
       expect(manifest).toEqual(mockManifest);
     });
 
+    it('must not let a late 304 resurrect an invalidated cache', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'ETag': 'W/"abc123"' }),
+        json: async () => mockManifest,
+      });
+      const fetcher = new ManifestFetcher('https://example.com');
+      await fetcher.fetch();
+      fetcher.invalidate();
+
+      let resolveResponse!: (response: {
+        ok: boolean;
+        status: number;
+        statusText: string;
+      }) => void;
+      globalThis.fetch = vi.fn(() => new Promise((resolve) => {
+        resolveResponse = resolve;
+      })) as unknown as typeof fetch;
+
+      const request = fetcher.fetch();
+      fetcher.invalidate();
+      resolveResponse({ ok: false, status: 304, statusText: 'Not Modified' });
+
+      await expect(request).rejects.toThrow(UnzenCancelledError);
+      expect(fetcher.isCached()).toBe(false);
+    });
+
     it('should update cached manifest and ETag on 200 after invalidation', async () => {
       // First fetch: initial manifest
       globalThis.fetch = vi.fn().mockResolvedValue({
