@@ -22,7 +22,11 @@ import {
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { UnzenServer } from '../src/unzen-server';
-import { MAX_FUNCTION_PAYLOAD_BYTES, type FunctionDefinition } from '@unzen/shared';
+import {
+  MAX_FUNCTION_PAYLOAD_BYTES,
+  MAX_MANIFEST_RESPONSE_BYTES,
+  type FunctionDefinition,
+} from '@unzen/shared';
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -499,6 +503,21 @@ describe('UnzenServer', () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it('rejects a registration that would make the manifest unreadable', () => {
+      server.defineRaw('beforeManifestLimit', '() => 1');
+
+      expect(() => server.defineMoonbit(
+        'tooWideManifest',
+        join(fixtureDir, 'fibonacci.wasm'),
+        { exportName: 'x'.repeat(MAX_MANIFEST_RESPONSE_BYTES) },
+      )).toThrow(`Manifest exceeds ${MAX_MANIFEST_RESPONSE_BYTES} bytes`);
+      expect(server.getFunction('tooWideManifest')).toBeUndefined();
+
+      server.defineRaw('afterManifestLimit', '() => 2');
+      expect(server.getFunction('afterManifestLimit')?.version).toBe(2);
+    });
+
     it('should register a MoonBit wasm module with export metadata', () => {
       server.defineMoonbit('fibonacci', join(fixtureDir, 'fibonacci.wasm'), {
         exportName: 'fibonacci',

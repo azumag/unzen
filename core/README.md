@@ -268,6 +268,8 @@ request を拒否し、server/client の受信側は `Content-Length` だけに�
 計測する。chunked body も上限を越えた時点で cancel し、JSON parse・cache・compile 前に拒否する。
 server は 16 MiB を超える raw source / MoonBit file を version 採番前に登録拒否し、
 `/code/:name` は検証済み payload の正確な `Content-Length` を返す。
+候補登録後の manifest が 1 MiB を超える場合も registry を変更せず拒否し、`/manifest` は
+一度だけ serialize した body と一致する `Content-Length` / ETag を返す。
 
 ## 4層隔離モデル
 

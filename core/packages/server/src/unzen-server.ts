@@ -22,10 +22,12 @@ import type {
   MoonBitAbi,
 } from '@unzen/shared';
 import {
+  createManifestResponse,
   createExecutionResponse,
   MAX_EXECUTION_ARGUMENTS,
   MAX_FUNCTION_PAYLOAD_BYTES,
   MAX_EXECUTION_REQUEST_BYTES,
+  MAX_MANIFEST_RESPONSE_BYTES,
   UnzenFunctionError,
   UnzenRuntimeError,
   MAX_FUNCTION_TIMEOUT,
@@ -121,7 +123,8 @@ export class UnzenServer {
    * @param config - Server configuration
    */
   constructor(config: UnzenServerConfig = {}) {
-    this.baseUrl = config.baseUrl || 'http://localhost:3000';
+    const baseUrl = config.baseUrl || 'http://localhost:3000';
+    this.baseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
     this.registry = new FunctionRegistry();
     this.manifestBuilder = new ManifestBuilder(this.registry, this.baseUrl);
     this.runtime = new QuickJSRuntime();
@@ -217,12 +220,7 @@ export class UnzenServer {
       throw new Error(`Function code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
     }
 
-    // Warn only for definitions that passed every registration boundary.
-    this.warnIfImpure(name, code);
-
-    // Increment version counter for this registration
-    // This ensures each function registration gets a unique version
-    this.versionCounter++;
+    const version = this.getNextVersion();
 
     // Generate SHA-256 hash of the wrapped code for integrity verification
     // This allows clients to verify that downloaded code matches the manifest
@@ -234,16 +232,21 @@ export class UnzenServer {
       name,
       runtime: 'quickjs', // Only QuickJS is supported in Phase 1 MVP
       code: wrappedCode,
-      version: this.versionCounter,
+      version,
       hash,
       ...(timeout !== undefined && { timeout }),
       ...(noFallback !== undefined && { noFallback }),
     };
 
+    this.assertManifestWithinLimit(definition);
+    // Warn only for definitions that passed every registration boundary.
+    this.warnIfImpure(name, code);
+    this.versionCounter = version;
+
     // Register the function definition
     this.captureVersionedCode(
       name,
-      this.versionCounter,
+      version,
       'quickjs',
       hash,
       Buffer.from(wrappedCode, 'utf-8'),
@@ -321,7 +324,7 @@ export class UnzenServer {
       throw new Error(`MoonBit module for "${name}" failed WebAssembly validation`);
     }
 
-    this.versionCounter++;
+    const version = this.getNextVersion();
 
     const definition: FunctionDefinition = {
       name,
@@ -330,7 +333,7 @@ export class UnzenServer {
       // bytes captured at registration); the manifest advertises the codeUrl
       // for browser fetches.
       code: wasmPath,
-      version: this.versionCounter,
+      version,
       hash: this.generateBytesHash(bytes),
       exportName: exportName ?? 'run',
       ...(moonbitAbi !== undefined && { moonbitAbi }),
@@ -339,11 +342,38 @@ export class UnzenServer {
       ...(timeout !== undefined && { timeout }),
     };
 
+    this.assertManifestWithinLimit(definition);
+    this.versionCounter = version;
+
     // Capture the exact validated bytes for immutable delivery, keyed by
     // version so a re-registration with different bytes cannot change what an
     // already-published ?v=N&h=HASH URL delivers.
-    this.captureVersionedCode(name, this.versionCounter, 'moonbit', definition.hash, bytes);
+    this.captureVersionedCode(name, version, 'moonbit', definition.hash, bytes);
     this.registry.register(definition);
+  }
+
+  /** Return the next safe manifest version without mutating server state. */
+  private getNextVersion(): number {
+    const version = this.versionCounter + 1;
+    if (!Number.isSafeInteger(version)) {
+      throw new Error('Function version counter exhausted');
+    }
+    return version;
+  }
+
+  /** Ensure a candidate registration remains readable by every Core client. */
+  private assertManifestWithinLimit(candidate: FunctionDefinition): void {
+    const definitions = this.registry.getAll();
+    definitions.set(candidate.name, candidate);
+    const record = Object.create(null) as Record<string, FunctionDefinition>;
+    for (const [name, definition] of definitions) {
+      record[name] = definition;
+    }
+    const manifest = createManifestResponse(record, this.baseUrl);
+    const body = JSON.stringify(manifest);
+    if (Buffer.byteLength(body, 'utf8') > MAX_MANIFEST_RESPONSE_BYTES) {
+      throw new Error(`Manifest exceeds ${MAX_MANIFEST_RESPONSE_BYTES} bytes`);
+    }
   }
 
   /** Record the exact payload served by a published ?v=N&h=HASH URL. */
@@ -389,6 +419,13 @@ export class UnzenServer {
     // This saves bandwidth and client-side JSON parsing for unchanged manifests.
     app.get('/manifest', (c) => {
       const manifest = this.manifestBuilder.build();
+      const body = JSON.stringify(manifest);
+      const bodyBytes = Buffer.byteLength(body, 'utf8');
+      if (bodyBytes > MAX_MANIFEST_RESPONSE_BYTES) {
+        return c.json({ error: 'Manifest exceeds the configured response limit' }, 500, {
+          'Cache-Control': 'no-store',
+        });
+      }
       const etag = this.generateManifestETag(manifest);
 
       // Check If-None-Match header for conditional request (RFC 7232)
@@ -400,13 +437,16 @@ export class UnzenServer {
         return c.body(null, 304, {
           'ETag': etag,
           'Cache-Control': 'no-cache',
+          'Content-Length': String(bodyBytes),
         });
       }
 
       // Cache-Control: no-cache allows caching but requires revalidation
       // with the origin server before using a cached copy. This ensures
       // clients always get a fresh or validated manifest via ETag check.
-      return c.json(manifest, 200, {
+      return c.body(body, 200, {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Content-Length': String(bodyBytes),
         'ETag': etag,
         'Cache-Control': 'no-cache',
       });

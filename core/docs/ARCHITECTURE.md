@@ -204,6 +204,9 @@ Error
 - server 登録境界は raw source の UTF-8 byte 数と MoonBit file の stat/captured byte 数を
   16 MiB に制限し、超過時は version 採番・hash・registry 変更前に拒否する。code response は
   captured payload と一致する `Content-Length` を返す
+- candidate definition を含む aggregate manifest を登録前に生成し、UTF-8 1 MiB 超なら
+  version counter / registry / immutable payload store を変更せず拒否する。manifest response は
+  同じ serialized body から `Content-Length` と ETag を返す
 - FallbackHandler: HTTP 4xx + error body → `UnzenFunctionError` (リトライ不可)
   HTTP 5xx + error body → `UnzenNetworkError` (リトライ可)
   body解析不可 → `UnzenNetworkError`

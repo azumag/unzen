@@ -28,7 +28,9 @@ describe('HTTP Routes', () => {
       const res = await app.request('/unzen/manifest');
 
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const body = await res.text();
+      expect(res.headers.get('content-length')).toBe(String(Buffer.byteLength(body)));
+      const data = JSON.parse(body);
       expect(data.functions).toEqual({});
     });
 
