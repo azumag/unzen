@@ -50,6 +50,10 @@ import {
   snapshotMoonBitCall,
   unmarshalMoonBitResult,
 } from './moonbit-array-bridge';
+import {
+  normalizeMoonBitModuleUrl,
+  snapshotMoonBitExecutionOptions,
+} from './moonbit-call';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 
 /** A compiled MoonBit module ready for instantiation. */
@@ -139,11 +143,17 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     if (this.disposed) {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
+    let moduleUrl: string;
+    try {
+      moduleUrl = normalizeMoonBitModuleUrl(code);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
     if (expectedHash !== undefined && !isValidUnzenContentHash(expectedHash)) {
       throw new UnzenNetworkError('Invalid MoonBit module hash in manifest');
     }
 
-    const cacheKey = createUnzenContentCacheKey(code, expectedHash);
+    const cacheKey = createUnzenContentCacheKey(moduleUrl, expectedHash);
     const cached = this.moduleCache.get(cacheKey);
     if (cached && !isInflight(cached)) {
       // Already fetched and compiled: return the settled module.
@@ -157,7 +167,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     } else {
       const controller = new AbortController();
       pending = {
-        promise: this.fetchAndCompile(code, controller.signal, expectedHash),
+        promise: this.fetchAndCompile(moduleUrl, controller.signal, expectedHash),
         controller,
         waiters: 0,
       };
@@ -218,24 +228,45 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     args: unknown[],
     options?: ExecuteOptions,
   ): Promise<unknown> {
-    throwIfAborted(options?.signal);
+    let executionOptions: ReturnType<typeof snapshotMoonBitExecutionOptions>;
+    try {
+      executionOptions = snapshotMoonBitExecutionOptions(options);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+    if (executionOptions.signalInitiallyAborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
     if (this.disposed) {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
 
     let call: ReturnType<typeof snapshotMoonBitCall>;
     try {
-      call = snapshotMoonBitCall(args, options?.moonbitAbi);
+      call = snapshotMoonBitCall(args, executionOptions.moonbitAbi);
     } catch (error) {
       throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
     }
 
-    const prepared = typeof code === 'string'
-      ? await this.prepare(code, options?.signal, options?.expectedHash)
-      : code;
+    let prepared: PreparedMoonBitModule;
+    if (typeof code === 'string') {
+      let moduleUrl: string;
+      try {
+        moduleUrl = normalizeMoonBitModuleUrl(code);
+      } catch (error) {
+        throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+      prepared = await this.prepare(
+        moduleUrl,
+        executionOptions.signal,
+        executionOptions.expectedHash,
+      );
+    } else {
+      prepared = code;
+    }
     // Re-check after prepare and before instantiation: a cancel during fetch
     // must prevent the module from being instantiated or invoked.
-    throwIfAborted(options?.signal);
+    throwIfAborted(executionOptions.signal);
 
     let instance: WebAssembly.Instance;
     try {
@@ -245,8 +276,8 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
         prepared.module,
         buildMoonbitImports(this.imports),
       );
-      instance = options?.signal
-        ? await raceWithAbort(instantiate, options.signal)
+      instance = executionOptions.signal
+        ? await raceWithAbort(instantiate, executionOptions.signal)
         : await instantiate;
     } catch (error) {
       if (error instanceof UnzenCancelledError) {
@@ -258,9 +289,9 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     }
     // The instantiate await can be slow (wasm compile). A cancel that arrived
     // during it must prevent the export from running at all.
-    throwIfAborted(options?.signal);
+    throwIfAborted(executionOptions.signal);
 
-    const exportName = options?.exportName ?? 'run';
+    const exportName = executionOptions.exportName;
     const target = (instance.exports as Record<string, unknown>)[exportName];
     if (typeof target !== 'function') {
       throw new UnzenFunctionError(
@@ -276,7 +307,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
         error instanceof Error ? error.message : String(error),
       );
     }
-    throwIfAborted(options?.signal);
+    throwIfAborted(executionOptions.signal);
 
     let result: unknown;
     try {

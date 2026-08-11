@@ -828,8 +828,11 @@ Chromium 145 と Firefox 146 で probe した結果:
   `UnzenRuntimeError` で fail closed する。`i32[]` は符号付き32 bit整数、
   `f64[]` は JS number のみ許容する。入力は1実行の全配列合計10万要素、
   戻り値は10万要素、引数数は128を上限とし、コピー前に型とサイズを検証する。
-  引数と ABI は待機/初期化前にスナップショットし、呼び出し後の
-  caller mutation を実行中に反映させない。ABI 省略時の配列拒否は維持する。
+  引数、ABI、`signal`、export 名、expected hash は待機/初期化前に一度だけ
+  読み取ってスナップショットする。worker に直接渡す inline `ArrayBuffer` も
+  同時点でコピーし、呼び出し後の caller mutation を実行中に反映させない。
+  空 module URL / 不正 option / 非 `ArrayBuffer` は fetch・worker 生成前に拒否する。
+  ABI 省略時の配列拒否は維持する。
 
 ### MoonBit Worker 強制終了の検証 (2026-08-11)
 

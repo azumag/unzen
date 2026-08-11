@@ -279,6 +279,9 @@ JavaScriptのデータとWasm関数間のデータ受け渡し方法。
 >   WebAssembly.instantiate`（`instantiateStreaming` は未使用）
 > - `defineMoonbit(..., { abi })` で登録した `moonbitAbi` をマニフェストから
 >   main/worker executor へ伝播し、引数数・型・サイズ・bridge export を検証する
+> - main/worker executor は module 準備前に引数、ABI、`signal`、export 名、
+>   expected hash を一度だけ読み取って所有し、worker の inline `ArrayBuffer` も
+>   同時点でコピーする。空 URL と不正な execution option は副作用前に拒否する
 
 #### QuickJS ランタイムの場合
 

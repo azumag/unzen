@@ -322,6 +322,11 @@ bridge を使って JS 数値配列を wasm-gc 配列と相互コピーする。
 1呼び出し合計10万要素、戻り値配列は10万要素、引数数は128まで。
 オブジェクトは非対応。bridge の正確なシグネチャは
 [reference implementation](moonbit-poc/interop/main.mbt) を参照。
+main-thread / worker executor は非同期 module 準備より前に、引数、ABI、
+`signal`、export 名、expected hash を一度だけ読み取って snapshot する。
+worker に直接渡した inline `ArrayBuffer` も同時点でコピーするため、呼び出し後の
+option / byte mutation は実行へ反映されない。空 module URL や不正な option は
+fetch / Worker 生成前に `UnzenRuntimeError` で拒否する。
 String は Chromium / Firefox で
 動作確認済み。Safari は wasm-gc が 18.2+、JS String Builtins が 26.2+ で
 対応となり、本プロジェクトでは Safari 未検証。

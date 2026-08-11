@@ -52,6 +52,11 @@ import {
 } from './content-integrity';
 import { snapshotMoonBitCall } from './moonbit-array-bridge';
 import {
+  normalizeMoonBitModuleUrl,
+  snapshotMoonBitExecutionOptions,
+  snapshotMoonBitModuleBytes,
+} from './moonbit-call';
+import {
   normalizeMoonBitImportedStringConstants,
   type MoonBitImportedStringConstants,
 } from './moonbit-compile-options';
@@ -279,11 +284,17 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
+    let moduleUrl: string;
+    try {
+      moduleUrl = normalizeMoonBitModuleUrl(code);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
     if (expectedHash !== undefined && !isValidUnzenContentHash(expectedHash)) {
       throw new UnzenNetworkError('Invalid MoonBit module hash in manifest');
     }
 
-    const cacheKey = createUnzenContentCacheKey(code, expectedHash);
+    const cacheKey = createUnzenContentCacheKey(moduleUrl, expectedHash);
     const cached = this.bytesCache.get(cacheKey);
     if (cached && !isInflight(cached)) {
       // Do not expose the cache-owned buffer: ArrayBuffer is mutable, and a
@@ -297,7 +308,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     } else {
       const controller = new AbortController();
       pending = {
-        promise: this.fetchBytes(code, controller.signal, expectedHash),
+        promise: this.fetchBytes(moduleUrl, controller.signal, expectedHash),
         controller,
         waiters: 0,
       };
@@ -347,7 +358,15 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     args: unknown[],
     options?: ExecuteOptions,
   ): Promise<unknown> {
-    throwIfAborted(options?.signal);
+    let executionOptions: ReturnType<typeof snapshotMoonBitExecutionOptions>;
+    try {
+      executionOptions = snapshotMoonBitExecutionOptions(options);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+    if (executionOptions.signalInitiallyAborted) {
+      throw new UnzenCancelledError('Execution cancelled by caller');
+    }
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
@@ -356,15 +375,35 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     // same contract as worker-side validation instead of a DataCloneError.
     let call: ReturnType<typeof snapshotMoonBitCall>;
     try {
-      call = snapshotMoonBitCall(args, options?.moonbitAbi);
+      call = snapshotMoonBitCall(args, executionOptions.moonbitAbi);
     } catch (error) {
       throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
     }
 
-    const bytes = typeof code === 'string'
-      ? await this.prepare(code, options?.signal, options?.expectedHash)
-      : code;
-    throwIfAborted(options?.signal);
+    let moduleUrl: string | undefined;
+    let bytes: ArrayBuffer;
+    try {
+      if (typeof code === 'string') {
+        moduleUrl = normalizeMoonBitModuleUrl(code);
+        bytes = await this.prepare(
+          moduleUrl,
+          executionOptions.signal,
+          executionOptions.expectedHash,
+        );
+      } else {
+        bytes = snapshotMoonBitModuleBytes(code);
+      }
+    } catch (error) {
+      if (
+        error instanceof UnzenCancelledError
+        || error instanceof UnzenNetworkError
+        || error instanceof UnzenRuntimeError
+      ) {
+        throw error;
+      }
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+    throwIfAborted(executionOptions.signal);
 
     const requestId = `req-${++requestIdCounter}`;
     return new Promise<unknown>((resolve, reject) => {
@@ -375,14 +414,14 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         // compiled modules per URL). The byte identity is not recomputed per
         // request; the key only needs to differ across distinct buffers in one
         // executor, which the monotonic request id guarantees.
-        code: typeof code === 'string' ? code : `inline:${requestId}`,
+        code: moduleUrl ?? `inline:${requestId}`,
         args: call.args,
         bytes,
-        exportName: options?.exportName ?? 'run',
+        exportName: executionOptions.exportName,
         moonbitAbi: call.abi,
         resolve,
         reject,
-        signal: options?.signal,
+        signal: executionOptions.signal,
       };
 
       if (this.state.status === 'initializing' || this.runningRequest) {

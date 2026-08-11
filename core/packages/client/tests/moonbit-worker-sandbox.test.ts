@@ -229,6 +229,88 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('snapshots inline wasm bytes and execution options before worker initialization', async () => {
+    const worker = new MockMoonbitWorker();
+    let receivedBytes: Uint8Array | undefined;
+    let receivedExportName: string | undefined;
+    worker.onPostMessage((msg) => {
+      if (msg.type === 'init') {
+        worker.respond({ type: 'init-result', success: true });
+      } else if (msg.type === 'execute') {
+        receivedBytes = new Uint8Array(msg.wasm.slice(0));
+        receivedExportName = msg.exportName;
+        worker.respond({
+          type: 'execute-result',
+          requestId: msg.requestId,
+          success: true,
+          value: 55,
+        });
+      }
+    });
+    const reads = { signal: 0, exportName: 0, moonbitAbi: 0, expectedHash: 0 };
+    const options = {
+      get signal() {
+        reads.signal += 1;
+        if (reads.signal > 1) throw new Error('signal read more than once');
+        return undefined;
+      },
+      get exportName() {
+        reads.exportName += 1;
+        if (reads.exportName > 1) throw new Error('exportName read more than once');
+        return 'fibonacci';
+      },
+      get moonbitAbi() {
+        reads.moonbitAbi += 1;
+        if (reads.moonbitAbi > 1) throw new Error('moonbitAbi read more than once');
+        return undefined;
+      },
+      get expectedHash() {
+        reads.expectedHash += 1;
+        if (reads.expectedHash > 1) throw new Error('expectedHash read more than once');
+        return undefined;
+      },
+    };
+    const inline = fibonacciBytes.buffer.slice(
+      fibonacciBytes.byteOffset,
+      fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+    ) as ArrayBuffer;
+    const expectedBytes = new Uint8Array(inline.slice(0));
+    const executor = createExecutor(worker);
+
+    const execution = executor.execute(inline, [10], options);
+    new Uint8Array(inline).fill(0);
+
+    await expect(execution).resolves.toBe(55);
+    expect(receivedBytes).toEqual(expectedBytes);
+    expect(receivedExportName).toBe('fibonacci');
+    expect(reads).toEqual({ signal: 1, exportName: 1, moonbitAbi: 1, expectedHash: 1 });
+    executor.dispose();
+  });
+
+  it('rejects invalid execution inputs before fetching or creating a worker', async () => {
+    const fetchMock = mockFetchBytes();
+    const worker = new MockMoonbitWorker();
+    const executor = createExecutor(worker);
+
+    await expect(executor.execute('  ', [], {})).rejects.toThrow(
+      'MoonBit module URL must be a non-empty string',
+    );
+    await expect(executor.execute(
+      new Uint8Array([0, 1, 2]) as never,
+      [],
+    )).rejects.toThrow('MoonBit inline module must be an ArrayBuffer');
+    await expect(executor.execute(
+      'https://example.com/fibonacci.wasm',
+      [],
+      { signal: { aborted: false } } as never,
+    )).rejects.toThrow('MoonBit execution signal must be an AbortSignal');
+    await expect(executor.prepare('')).rejects.toThrow(UnzenRuntimeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(worker.terminateCount).toBe(0);
+    expect(executor.isReady()).toBe(false);
+    executor.dispose();
+  });
+
   it('executes a custom string-constant namespace through worker init', async () => {
     const worker = new MockMoonbitWorker();
     const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');

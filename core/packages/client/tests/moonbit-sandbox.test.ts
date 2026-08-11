@@ -64,6 +64,78 @@ describe('MoonBitSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('snapshots execution options before asynchronous module preparation', async () => {
+    let resolveFetch: ((response: {
+      ok: boolean;
+      status: number;
+      arrayBuffer(): Promise<ArrayBuffer>;
+    }) => void) | undefined;
+    globalThis.fetch = vi.fn(() => new Promise((resolve) => {
+      resolveFetch = resolve;
+    })) as unknown as typeof fetch;
+    const reads = { signal: 0, exportName: 0, moonbitAbi: 0, expectedHash: 0 };
+    let selectedExport = 'fibonacci';
+    const options = {
+      get signal() {
+        reads.signal += 1;
+        if (reads.signal > 1) throw new Error('signal read more than once');
+        return undefined;
+      },
+      get exportName() {
+        reads.exportName += 1;
+        if (reads.exportName > 1) throw new Error('exportName read more than once');
+        return selectedExport;
+      },
+      get moonbitAbi() {
+        reads.moonbitAbi += 1;
+        if (reads.moonbitAbi > 1) throw new Error('moonbitAbi read more than once');
+        return undefined;
+      },
+      get expectedHash() {
+        reads.expectedHash += 1;
+        if (reads.expectedHash > 1) throw new Error('expectedHash read more than once');
+        return undefined;
+      },
+    };
+    const executor = new MoonBitSandboxExecutor();
+
+    const execution = executor.execute(
+      'https://example.com/fibonacci.wasm',
+      [10],
+      options,
+    );
+    selectedExport = 'missing';
+    resolveFetch?.({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => fibonacciBytes.buffer.slice(
+        fibonacciBytes.byteOffset,
+        fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+      ) as ArrayBuffer,
+    });
+
+    await expect(execution).resolves.toBe(55);
+    expect(reads).toEqual({ signal: 1, exportName: 1, moonbitAbi: 1, expectedHash: 1 });
+    executor.dispose();
+  });
+
+  it('rejects invalid execution inputs before fetching a module', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor();
+
+    await expect(executor.execute('   ', [], {})).rejects.toThrow(
+      'MoonBit module URL must be a non-empty string',
+    );
+    await expect(executor.execute(
+      'https://example.com/fibonacci.wasm',
+      [],
+      { exportName: 42 } as never,
+    )).rejects.toThrow('MoonBit exportName must be a string');
+    await expect(executor.prepare('')).rejects.toThrow(UnzenRuntimeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+    executor.dispose();
+  });
+
   it('prepares a module once and reuses it across executions', async () => {
     const fetchMock = mockFetchBytes();
     const executor = new MoonBitSandboxExecutor();
