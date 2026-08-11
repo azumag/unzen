@@ -525,6 +525,7 @@ interface UnzenExecutionRequest {
   compile option、custom executor の callable surface を component 生成前に検証する。選択肢は
   一度だけ読み、custom executor の method reference は元 instance に bind した snapshot として
   保持する。endpoint は trim し末尾 slash を除去して `//manifest` / `//exec` を作らない。
+  public `FallbackHandler` / `ManifestFetcher` の直接構築にも同じ正規化を適用する。
 - **request 境界**: `name` は safe identifier、`args` は最大128件の配列とし、manifest
   fetch より前に request field を一度だけ読む。top-level の引数 slot は iterator を
   呼ばない bounded indexed copy で浅く snapshot する。`signal` / `onEvent` も型検証して

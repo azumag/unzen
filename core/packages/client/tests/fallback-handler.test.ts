@@ -38,6 +38,13 @@ describe('FallbackHandler', () => {
     expect(handler).toBeInstanceOf(FallbackHandler);
   });
 
+  it('should reject invalid endpoints during construction', () => {
+    expect(() => new FallbackHandler('   ')).toThrow('endpoint must be a non-empty string');
+    expect(() => new FallbackHandler(null as unknown as string)).toThrow(
+      'endpoint must be a non-empty string',
+    );
+  });
+
   it('should execute function successfully', async () => {
     // Mock successful response
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -45,7 +52,7 @@ describe('FallbackHandler', () => {
       json: async () => ({ result: 42 }),
     });
 
-    const handler = new FallbackHandler('https://example.com');
+    const handler = new FallbackHandler('  https://example.com///  ');
     const result = await handler.execute('add', [1, 2]);
 
     expect(result).toBe(42);

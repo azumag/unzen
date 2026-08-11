@@ -359,6 +359,8 @@ constructor は component を作る前に option を検証・snapshot する。`
 末尾 slash は route 結合前に正規化される。custom `sandbox` / `moonbitSandbox` は
 `execute()` と `dispose()`（および指定した optional method）が callable でなければならない。
 custom executor が選ばれた場合、shadow された worker option は評価しない。
+直接利用できる `FallbackHandler` / `ManifestFetcher` も同じ endpoint 正規化を行い、
+空 endpoint を同期的に拒否する。
 
 `/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは

@@ -54,13 +54,20 @@ describe('ManifestFetcher', () => {
     expect(fetcher).toBeInstanceOf(ManifestFetcher);
   });
 
+  it('should reject invalid endpoints during construction', () => {
+    expect(() => new ManifestFetcher('')).toThrow('endpoint must be a non-empty string');
+    expect(() => new ManifestFetcher(null as unknown as string)).toThrow(
+      'endpoint must be a non-empty string',
+    );
+  });
+
   it('should fetch manifest from server', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => mockManifest,
     });
 
-    const fetcher = new ManifestFetcher('https://example.com');
+    const fetcher = new ManifestFetcher('  https://example.com///  ');
     const manifest = await fetcher.fetch();
 
     expect(manifest).toEqual(mockManifest);

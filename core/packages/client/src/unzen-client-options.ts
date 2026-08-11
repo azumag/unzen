@@ -4,6 +4,7 @@ import {
   type MoonBitImportedStringConstants,
 } from './moonbit-compile-options';
 import { normalizeWorkerUrl } from './worker-executor-options';
+import { normalizeUnzenEndpoint } from './endpoint';
 
 export type UnzenClientMode = 'production' | 'development' | 'browser-only';
 
@@ -36,14 +37,6 @@ function readOption(record: Record<string, unknown>, name: string): unknown {
   } catch {
     throw new TypeError(`UnzenClient option ${name} could not be read`);
   }
-}
-
-function normalizeEndpoint(value: unknown): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new TypeError('endpoint must be a non-empty string');
-  }
-  const trimmed = value.trim();
-  return trimmed.replace(/\/+$/, '');
 }
 
 function normalizeMode(value: unknown): UnzenClientMode {
@@ -123,7 +116,7 @@ export function normalizeUnzenClientOptions(value: unknown): NormalizedUnzenClie
     throw new TypeError('UnzenClient options must be an object');
   }
 
-  const endpoint = normalizeEndpoint(readOption(record, 'endpoint'));
+  const endpoint = normalizeUnzenEndpoint(readOption(record, 'endpoint'));
   const mode = normalizeMode(readOption(record, 'mode'));
 
   const customSandbox = readOption(record, 'sandbox');

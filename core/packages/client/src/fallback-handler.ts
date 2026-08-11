@@ -25,6 +25,7 @@ import {
   normalizeExecutionResponse,
 } from '@unzen/shared';
 import { isAbortError, throwIfAborted } from './abort';
+import { normalizeUnzenEndpoint } from './endpoint';
 
 export class FallbackHandler {
   /**
@@ -34,7 +35,7 @@ export class FallbackHandler {
   private readonly endpoint: string;
 
   constructor(endpoint: string) {
-    this.endpoint = endpoint;
+    this.endpoint = normalizeUnzenEndpoint(endpoint);
   }
 
   /**

@@ -36,6 +36,7 @@ import {
   type FunctionManifestEntry,
 } from '@unzen/shared';
 import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import { normalizeUnzenEndpoint } from './endpoint';
 
 /** A shared in-flight manifest request with per-caller waiter tracking. */
 interface InflightManifestRequest {
@@ -83,7 +84,7 @@ export class ManifestFetcher {
   private lastManifest: ManifestResponse | null = null;
 
   constructor(endpoint: string) {
-    this.endpoint = endpoint;
+    this.endpoint = normalizeUnzenEndpoint(endpoint);
   }
 
   /**
