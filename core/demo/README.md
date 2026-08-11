@@ -165,6 +165,9 @@ bash test-e2e.sh
 
 # ブラウザ E2E (Playwright; サーバー自動起動、desktop + mobile)
 npm run e2e
+
+# :3000 が使用中の場合
+UNZEN_DEMO_PORT=3100 npm run e2e
 ```
 
 - `tests/demo-state.test.ts` — 状態機械（二重送信ガード、イベント→状態、キャンセル遷移）

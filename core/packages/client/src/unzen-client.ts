@@ -55,6 +55,7 @@ import type { SandboxExecutor } from './sandbox-executor';
 import { WebWorkerSandboxExecutor } from './web-worker-sandbox';
 import { MoonBitSandboxExecutor } from './moonbit-sandbox';
 import { MoonBitWorkerSandboxExecutor } from './moonbit-worker-sandbox';
+import type { MoonBitImportedStringConstants } from './moonbit-compile-options';
 
 /**
  * Diagnostic metadata returned with successful callWithDiagnostics() calls.
@@ -293,6 +294,13 @@ export interface UnzenClientOptions {
    * explicit `moonbitSandbox` override wins over both.
    */
   moonbitWorkerUrl?: string;
+
+  /**
+   * Namespace configured by MoonBit's `imported-string-constants` option.
+   * Defaults to `_`; set `null` for modules that do not use imported string
+   * constants. Applied to the built-in main-thread and worker executors.
+   */
+  moonbitImportedStringConstants?: MoonBitImportedStringConstants;
 }
 
 /** Counter for generating unique execution ids */
@@ -344,9 +352,12 @@ export class UnzenClient {
       // thread, and timeouts/cancellation terminate the worker.
       this.moonbitSandbox = new MoonBitWorkerSandboxExecutor({
         workerUrl: options.moonbitWorkerUrl,
+        importedStringConstants: options.moonbitImportedStringConstants,
       });
     } else {
-      this.moonbitSandbox = new MoonBitSandboxExecutor();
+      this.moonbitSandbox = new MoonBitSandboxExecutor({
+        importedStringConstants: options.moonbitImportedStringConstants,
+      });
     }
 
     // Select sandbox executor: explicit sandbox > workerUrl > error

@@ -267,8 +267,10 @@ JavaScriptのデータとWasm関数間のデータ受け渡し方法。
 >   importedStringConstants: '_' })` による JS String Builtins 経由。
 >   ブラウザ要件: Chromium / Firefox は動作確認済み。Safari は wasm-gc が
 >   18.2+、JS String Builtins が 26.2+（本プロジェクトでは Safari 未検証））
-> - `importedStringConstants: '_'` は `_` namespace を予約するため、
->   MoonBit 以外の `_` imports を含む wasm は compile できない
+> - `importedStringConstants` の既定値は `_`。MoonBit 側の
+>   `imported-string-constants` と同じ namespace を client option で指定でき、
+>   `null` なら option を省略する。選択した namespace は文字列定数用に予約され、
+>   同 namespace の function import 等とは併用できない
 > - 非対応: `number[]` / `object`（plain JS 配列・オブジェクトは wasm-gc
 >   境界で拒否。配列戻り値は opaque handle のため executor が非スカラー
 >   として拒否）

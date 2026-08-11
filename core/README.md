@@ -257,12 +257,19 @@ wasm を実行できない）。number / boolean / bigint / string のスカラ�
 動作確認済み。Safari は wasm-gc が 18.2+、JS String Builtins が 26.2+ で
 対応となり、本プロジェクトでは Safari 未検証。
 
+MoonBit の `link.wasm-gc.imported-string-constants` namespace は、クライアントの
+`moonbitImportedStringConstants` と一致させる。既定値は既存の MoonBit fixture と
+同じ `_`。別 namespace を選べば `_` を通常 import に使え、文字列定数を import
+しない module では `null` で compile option 自体を省略できる。選択した namespace
+は文字列定数専用になり、同じ namespace の function import とは併用できない。
+
 ```typescript
 const client = new UnzenClient({
   endpoint: 'https://example.com/unzen',
   mode: 'production',
   workerUrl: '/worker.js',               // QuickJS worker
   moonbitWorkerUrl: '/moonbit-worker.js', // MoonBit worker (推奨)
+  moonbitImportedStringConstants: 'unzen:strings', // MoonBit link 設定と一致
 });
 ```
 

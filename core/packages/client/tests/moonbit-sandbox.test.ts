@@ -21,6 +21,7 @@ import { MoonBitSandboxExecutor } from '../src/moonbit-sandbox';
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fibonacciBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
 const interopBytes = readFileSync(join(fixtureDir, 'interop.wasm'));
+const customInteropBytes = readFileSync(join(fixtureDir, 'interop-custom-namespace.wasm'));
 
 function mockFetchBytes(bytes: Uint8Array = fibonacciBytes) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -118,6 +119,38 @@ describe('MoonBitSandboxExecutor', () => {
       (WebAssembly as unknown as { compile: unknown }).compile = originalCompile;
     }
     executor.dispose();
+  });
+
+  it('executes a module built with a custom string-constant namespace', async () => {
+    mockFetchBytes(customInteropBytes);
+    const executor = new MoonBitSandboxExecutor({
+      importedStringConstants: 'unzen:strings',
+    });
+
+    try {
+      await expect(executor.execute(
+        'https://example.com/interop-custom.wasm',
+        [],
+        { exportName: 'weird_string' },
+      )).resolves.toBe('__proto__');
+    } finally {
+      executor.dispose();
+    }
+  });
+
+  it('executes a module with imported string constants disabled', async () => {
+    mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor({ importedStringConstants: null });
+
+    try {
+      await expect(executor.execute(
+        'https://example.com/fibonacci.wasm',
+        [10],
+        { exportName: 'fibonacci' },
+      )).resolves.toBe(55);
+    } finally {
+      executor.dispose();
+    }
   });
 
   it('throws UnzenNetworkError on a non-OK response', async () => {

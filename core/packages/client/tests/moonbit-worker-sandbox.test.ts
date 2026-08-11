@@ -19,6 +19,7 @@ import {
 import { MoonBitWorkerSandboxExecutor } from '../src/moonbit-worker-sandbox';
 import {
   MOONBIT_WORKER_PROTOCOL_VERSION,
+  createMoonbitInitMessage,
   type MoonbitWorkerMessage,
   type MoonbitWorkerResponse,
 } from '../src/worker/moonbit-worker-protocol';
@@ -26,6 +27,7 @@ import {
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fibonacciBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
 const interopBytes = readFileSync(join(fixtureDir, 'interop.wasm'));
+const customInteropBytes = readFileSync(join(fixtureDir, 'interop-custom-namespace.wasm'));
 const sortBytes = readFileSync(
   join(fixtureDir, '..', '..', '..', 'server', 'tests', 'fixtures', 'sort.wasm'),
 );
@@ -191,6 +193,104 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     expect(result).toBe(55);
     expect(executor.isReady()).toBe(true);
     executor.dispose();
+  });
+
+  it('executes a custom string-constant namespace through worker init', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state: {
+      compiledModules: Map<string, WebAssembly.Module>;
+      importedStringConstants?: string | null;
+    } = { compiledModules: new Map() };
+    let receivedNamespace: string | null | undefined;
+    worker.onPostMessage((msg) => {
+      if (msg.type === 'init') {
+        receivedNamespace = msg.importedStringConstants;
+      }
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker, {
+      importedStringConstants: 'unzen:strings',
+    });
+
+    await expect(executor.execute(
+      customInteropBytes.buffer.slice(
+        customInteropBytes.byteOffset,
+        customInteropBytes.byteOffset + customInteropBytes.byteLength,
+      ) as ArrayBuffer,
+      [],
+      { exportName: 'weird_string' },
+    )).resolves.toBe('__proto__');
+    expect(receivedNamespace).toBe('unzen:strings');
+    executor.dispose();
+  });
+
+  it('executes with imported string constants disabled through worker init', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state: {
+      compiledModules: Map<string, WebAssembly.Module>;
+      importedStringConstants?: string | null;
+    } = { compiledModules: new Map() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker, { importedStringConstants: null });
+
+    await expect(executor.execute(
+      fibonacciBytes.buffer.slice(
+        fibonacciBytes.byteOffset,
+        fibonacciBytes.byteOffset + fibonacciBytes.byteLength,
+      ) as ArrayBuffer,
+      [10],
+      { exportName: 'fibonacci' },
+    )).resolves.toBe(55);
+    expect(state.importedStringConstants).toBeNull();
+    executor.dispose();
+  });
+
+  it('validates worker init settings and clears cache only when they change', async () => {
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const compiled = await WebAssembly.compile(fibonacciBytes);
+    const state = {
+      compiledModules: new Map<string, WebAssembly.Module>([['fib.wasm', compiled]]),
+      importedStringConstants: '_' as string | null,
+    };
+    const responses: MoonbitWorkerResponse[] = [];
+
+    await handleMoonbitWorkerMessage(
+      { data: createMoonbitInitMessage(1, 'unzen:strings') },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(state.importedStringConstants).toBe('unzen:strings');
+    expect(state.compiledModules.size).toBe(0);
+    expect(responses.at(-1)).toMatchObject({ type: 'init-result', success: true });
+
+    state.compiledModules.set('fib.wasm', compiled);
+    await handleMoonbitWorkerMessage(
+      { data: createMoonbitInitMessage(2, 'unzen:strings') },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(state.compiledModules.size).toBe(1);
+
+    const invalid = {
+      ...createMoonbitInitMessage(3),
+      importedStringConstants: 42,
+    } as unknown as MoonbitWorkerMessage;
+    await handleMoonbitWorkerMessage(
+      { data: invalid },
+      state,
+      (response) => responses.push(response),
+    );
+    expect(state.importedStringConstants).toBe('unzen:strings');
+    expect(state.compiledModules.size).toBe(1);
+    expect(responses.at(-1)).toMatchObject({
+      type: 'init-result',
+      success: false,
+      error: 'Invalid importedStringConstants setting',
+    });
   });
 
   it('prepares bytes once and reuses the cache across executions', async () => {

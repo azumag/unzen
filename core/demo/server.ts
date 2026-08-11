@@ -147,7 +147,11 @@ export { app };
 
 // Start server only if running directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const port = 3000;
+  const configuredPort = process.env.UNZEN_DEMO_PORT ?? '3000';
+  const port = Number(configuredPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Invalid UNZEN_DEMO_PORT: ${configuredPort}`);
+  }
   console.log(`🚀 Demo server running at http://localhost:${port}`);
   console.log(`📄 Demo page: http://localhost:${port}/`);
   console.log(`📋 Manifest: http://localhost:${port}/unzen/manifest`);

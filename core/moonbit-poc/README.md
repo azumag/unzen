@@ -219,9 +219,12 @@ Builtins (Chromium / Firefox / Node 24 verified 2026-08-11). Safari supports
 wasm-gc since 18.2 but JS String Builtins only since 26.2; String
 arguments/results on Safari 18.2–26.1 are unavailable and unverified in this
 repo (compile options do not apply there, leaving `_`/`wasm:js-string`
-imports unresolved at instantiation). `importedStringConstants: '_'` reserves
-the `_` namespace for string constants, so a module with other `_` imports
-(e.g. functions) cannot be compiled by these executors.
+imports unresolved at instantiation). The executors default to
+`importedStringConstants: '_'`, but advanced executor options (or
+the `UnzenClient` option `moonbitImportedStringConstants`) can select the namespace that
+matches the module's `imported-string-constants` setting. `null` omits the
+compile option for modules without imported constants. The selected namespace
+is reserved for string constants and cannot also contain function imports.
 
 ### String / Array interop measurements (2026-08-11)
 

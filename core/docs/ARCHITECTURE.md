@@ -673,11 +673,17 @@ Chromium 145 と Firefox 146 で probe した結果:
   Chromium 145 / Firefox 146 で動作確認済み。Safari は wasm-gc が 18.2+、
   JS String Builtins が 26.2+ で対応となるため、18.2–26.1 では String
   引数・戻り値は使えない（本変更では Safari/WebKit 未検証。compile
-  options が効かない場合、`_` / `wasm:js-string` import が解決されず
+  options が効かない場合、文字列定数 / `wasm:js-string` import が解決されず
   低レベルな import エラーになる）。
-  `importedStringConstants: '_'` は `_` namespace を文字列定数用に予約
-  するため、MoonBit 以外の `_` imports（function 等）を含む wasm は
-  この executor ではコンパイルできない。
+  executor の既定値は `importedStringConstants: '_'` だが、
+  `MoonBitSandboxOptions.importedStringConstants`、
+  `MoonBitWorkerSandboxOptions.importedStringConstants`、または
+  `UnzenClientOptions.moonbitImportedStringConstants` で変更できる。値は MoonBit
+  側の `imported-string-constants` と一致させる。`null` はこの compile option
+  を省略する（文字列定数を import しない module 用）。選択した namespace は
+  文字列定数用に予約されるため、同 namespace の function import 等とは
+  併用できない。Worker は namespace を init protocol v2 で受け取り、generation
+  内の全 compile に同じ値を使う。
 - **Array は opaque handle のみ**: plain JS 配列は wasm 境界で
   `type incompatibility when transforming from/to JS` となり渡せない。
   `make_array()` の戻り値は opaque な wasm-gc 配列 handle で `.length` や

@@ -21,6 +21,12 @@ describe('MoonBit worker protocol', () => {
       type: 'init',
       protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
       generationId: 3,
+      importedStringConstants: '_',
+    });
+
+    expect(createMoonbitInitMessage(4, 'unzen:strings')).toMatchObject({
+      generationId: 4,
+      importedStringConstants: 'unzen:strings',
     });
 
     const bytes = new Uint8Array([0, 1, 2]).buffer;

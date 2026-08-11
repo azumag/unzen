@@ -66,6 +66,7 @@ export {
   type MoonBitWorkerSandboxOptions,
   type MoonBitExecutorDiagnostics,
 } from './moonbit-worker-sandbox';
+export type { MoonBitImportedStringConstants } from './moonbit-compile-options';
 
 // Re-export commonly used types from @unzen/shared for convenience
 export type {

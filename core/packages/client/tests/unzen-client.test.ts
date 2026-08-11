@@ -1363,7 +1363,10 @@ describe('UnzenClient', () => {
       // UnzenClient → MoonBitWorkerSandboxExecutor → worker script path end
       // to end (including the wasm fetch on the main thread).
       const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
-      const workerState = { compiledModules: new Map<string, WebAssembly.Module>() };
+      const workerState: {
+        compiledModules: Map<string, WebAssembly.Module>;
+        importedStringConstants?: string | null;
+      } = { compiledModules: new Map() };
 
       class FakeWorker {
         onmessage: ((event: MessageEvent) => void) | null = null;
@@ -1417,6 +1420,7 @@ describe('UnzenClient', () => {
           endpoint,
           sandbox: new MockSandboxExecutor(),
           moonbitWorkerUrl: '/moonbit-worker.js',
+          moonbitImportedStringConstants: 'unzen:strings',
         });
         const result = await client.executeWithDiagnostics<number>({
           name: 'fibonacci',
@@ -1428,6 +1432,7 @@ describe('UnzenClient', () => {
           expect(result.result).toBe(55);
           expect(result.diagnostics.finalRoute).toBe('browser');
         }
+        expect(workerState.importedStringConstants).toBe('unzen:strings');
         client.dispose();
       } finally {
         (globalThis as unknown as { Worker: unknown }).Worker = originalWorker;

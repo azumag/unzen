@@ -18,11 +18,9 @@
  *   - Non-scalar argument → runtime_error (ABI boundary, not user code)
  *
  * String interop:
- * - Modules compiled with `use-js-builtin-string` are compiled here with
- *   `WebAssembly.compile(bytes, { builtins: ['js-string'],
- *   importedStringConstants: '_' })`. The compile options resolve the
- *   `wasm:js-string` builtins and the `_` string-constant imports (MoonBit's
- *   `imported-string-constants: "_"`), so instantiation needs only the
+ * - Modules compiled with `use-js-builtin-string` are compiled here with JS
+ *   String Builtins and the imported-string-constants namespace received in
+ *   the init message (default `_`). Instantiation then needs only the
  *   spectest/console runtime imports.
  */
 
@@ -34,31 +32,19 @@ import {
   type MoonbitWorkerMessage,
   type MoonbitWorkerResponse,
 } from './moonbit-worker-protocol';
+import {
+  compileMoonBitModule,
+  DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
+  type MoonBitImportedStringConstants,
+} from '../moonbit-compile-options';
 import { describeMoonbitArgError, isSupportedScalar } from '../moonbit-scalar';
 
 /** Worker state — holds the per-URL compiled module cache. */
 export interface MoonbitWorkerState {
   /** Compiled modules keyed by module URL (compile is the expensive step) */
   compiledModules: Map<string, WebAssembly.Module>;
-}
-
-/**
- * Compile options for MoonBit wasm-gc modules compiled with
- * `use-js-builtin-string`. `builtins: ['js-string']` resolves
- * `wasm:js-string` imports and `importedStringConstants: '_'` resolves
- * MoonBit's `imported-string-constants: "_"` string literals at compile time.
- * This avoids manual `_` import entries, which would break for literals such
- * as "__proto__" (prototype-pollution) or arbitrary Unicode. The standard TS
- * lib types omit these options, so the APIs are widened locally.
- */
-const MOONBIT_COMPILE_OPTIONS = { builtins: ['js-string'], importedStringConstants: '_' } as const;
-
-async function compileMoonbitModule(bytes: BufferSource): Promise<WebAssembly.Module> {
-  const compile = WebAssembly.compile as unknown as (
-    bytes: BufferSource,
-    options: typeof MOONBIT_COMPILE_OPTIONS,
-  ) => Promise<WebAssembly.Module>;
-  return compile(bytes, MOONBIT_COMPILE_OPTIONS);
+  /** Set by init; optional only for direct handler tests/backward compatibility. */
+  importedStringConstants?: MoonBitImportedStringConstants;
 }
 
 /**
@@ -76,6 +62,21 @@ export async function handleMoonbitWorkerMessage(
   const msg = event.data;
 
   if (msg.type === 'init') {
+    if (
+      msg.importedStringConstants !== null
+      && typeof msg.importedStringConstants !== 'string'
+    ) {
+      postMessage(createMoonbitInitResultMessage(
+        false,
+        msg.generationId,
+        'Invalid importedStringConstants setting',
+      ));
+      return;
+    }
+    if (state.importedStringConstants !== msg.importedStringConstants) {
+      state.compiledModules.clear();
+    }
+    state.importedStringConstants = msg.importedStringConstants;
     postMessage(createMoonbitInitResultMessage(true, msg.generationId));
     return;
   }
@@ -107,10 +108,15 @@ async function handleMoonbitExecute(
     try {
       // Compile with JS String Builtins enabled so MoonBit String parameters
       // and results cross the boundary as real JS strings. The compile
-      // options resolve `wasm:js-string` builtins and the `_` string-constant
-      // imports (imported-string-constants), so no `_` import entries are
-      // needed at instantiation time.
-      module = await compileMoonbitModule(msg.wasm);
+      // options resolve `wasm:js-string` builtins and the configured
+      // imported-string-constants namespace, so those imports need no
+      // explicit entries at instantiation time.
+      module = await compileMoonBitModule(
+        msg.wasm,
+        state.importedStringConstants === undefined
+          ? DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS
+          : state.importedStringConstants,
+      );
       // Only URL-based (cacheable) executions are stored; inline ArrayBuffer
       // executions compile per call and never accumulate in the cache.
       if (msg.cacheable) {
@@ -211,9 +217,8 @@ async function handleMoonbitExecute(
  *
  * - `spectest.print_char`: MoonBit println support.
  * - `console.log`: MoonBit's JS-target console output.
- * - `wasm:js-string` builtins are provided by the `builtins: ['js-string']`
- *   compile option and `importedStringConstants: '_'` resolves MoonBit's
- *   `_` string-constant imports, so neither needs explicit import entries.
+ * - `wasm:js-string` builtins and the configured imported string constants
+ *   are resolved by compile options, so neither needs explicit imports.
  */
 function buildMoonbitImports(): WebAssembly.Imports {
   return {
@@ -227,7 +232,10 @@ function buildMoonbitImports(): WebAssembly.Imports {
 // ============================================================
 
 if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
-  const workerState: MoonbitWorkerState = { compiledModules: new Map() };
+  const workerState: MoonbitWorkerState = {
+    compiledModules: new Map(),
+    importedStringConstants: DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
+  };
 
   self.onmessage = (event: MessageEvent<MoonbitWorkerMessage>) => {
     // Top-level try/catch so an unexpected error is reported (and the main

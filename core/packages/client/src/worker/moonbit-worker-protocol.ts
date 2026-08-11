@@ -23,8 +23,13 @@
  * - errorType distinguishes function errors (no fallback) from runtime errors
  */
 
+import {
+  DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
+  type MoonBitImportedStringConstants,
+} from '../moonbit-compile-options';
+
 // Version of the MoonBit worker wire protocol. Bump on incompatible changes.
-export const MOONBIT_WORKER_PROTOCOL_VERSION = 1;
+export const MOONBIT_WORKER_PROTOCOL_VERSION = 2;
 
 // ============================================================
 // Main Thread → Worker Messages
@@ -35,6 +40,8 @@ export interface MoonbitInitMessage {
   readonly type: 'init';
   readonly protocolVersion: number;
   readonly generationId: number;
+  /** Namespace used by MoonBit's imported-string-constants compile option. */
+  readonly importedStringConstants: MoonBitImportedStringConstants;
 }
 
 /** Execute an export of a wasm-gc module. */
@@ -117,11 +124,15 @@ export type MoonbitWorkerResponse =
 // Factory Functions
 // ============================================================
 
-export function createMoonbitInitMessage(generationId: number): MoonbitInitMessage {
+export function createMoonbitInitMessage(
+  generationId: number,
+  importedStringConstants: MoonBitImportedStringConstants = DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
+): MoonbitInitMessage {
   return {
     type: 'init',
     protocolVersion: MOONBIT_WORKER_PROTOCOL_VERSION,
     generationId,
+    importedStringConstants,
   };
 }
 

@@ -44,6 +44,10 @@ import {
   UnzenRuntimeError,
 } from '@unzen/shared';
 import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import {
+  normalizeMoonBitImportedStringConstants,
+  type MoonBitImportedStringConstants,
+} from './moonbit-compile-options';
 import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import {
@@ -96,6 +100,11 @@ export interface MoonBitWorkerSandboxOptions {
   hardKillMultiplier?: number;
   /** Factory for creating Worker instances (injectable for testing) */
   createWorker?: (url: string | URL) => Worker;
+  /**
+   * Namespace configured by MoonBit's `imported-string-constants` option.
+   * Defaults to `_`. Use `null` for modules without imported constants.
+   */
+  importedStringConstants?: MoonBitImportedStringConstants;
 }
 
 type ExecutorState =
@@ -164,6 +173,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   private readonly maxQueueSize: number;
   private readonly hardKillMultiplier: number;
   private readonly createWorkerFn: (url: string | URL) => Worker;
+  private readonly importedStringConstants: MoonBitImportedStringConstants;
 
   private state: ExecutorState = { status: 'empty' };
   private generationId = 0;
@@ -199,6 +209,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     this.hardKillMultiplier = options.hardKillMultiplier ?? DEFAULT_HARD_KILL_MULTIPLIER;
     this.createWorkerFn = options.createWorker
       ?? ((url) => new Worker(url, { type: 'module' }));
+    this.importedStringConstants = normalizeMoonBitImportedStringConstants(
+      options.importedStringConstants,
+    );
   }
 
   get diagnostics(): MoonBitExecutorDiagnostics {
@@ -616,7 +629,10 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       };
 
       try {
-        worker.postMessage(createMoonbitInitMessage(generationId));
+        worker.postMessage(createMoonbitInitMessage(
+          generationId,
+          this.importedStringConstants,
+        ));
       } catch (error) {
         if (settled) return;
         settled = true;
