@@ -350,7 +350,7 @@ export function createManifestResponse(
     if (!isRecord(functions)) {
       throw new TypeError('Invalid manifest function definitions');
     }
-    names = Object.keys(functions);
+    names = Object.keys(functions).sort();
   } catch (error) {
     if (error instanceof TypeError && error.message === 'Invalid manifest function definitions') {
       throw error;

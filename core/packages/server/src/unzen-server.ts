@@ -18,7 +18,6 @@ import { readFileSync, statSync } from 'fs';
 import { Hono } from 'hono';
 import type {
   FunctionDefinition,
-  ManifestResponse,
   MoonBitAbi,
 } from '@unzen/shared';
 import {
@@ -438,7 +437,7 @@ export class UnzenServer {
           'Cache-Control': 'no-store',
         });
       }
-      const etag = this.generateManifestETag(manifest);
+      const etag = this.generateManifestETag(body);
 
       // Check If-None-Match using weak comparison, including lists and the
       // wildcard condition. Malformed fields are ignored and receive 200.
@@ -779,32 +778,19 @@ export class UnzenServer {
   /**
    * Generate ETag for the current manifest state (Phase 3 ETag caching)
    *
-   * Combines all function hashes and versions into a single SHA-256 digest.
-   * Uses Weak ETag (W/"...") since the manifest is semantically equivalent
-   * across different JSON serializations (key ordering may vary).
+   * Hashes the exact serialized body so every client-visible field participates
+   * in cache identity. Manifest generation sorts function names, keeping this
+   * stable when definitions arrive in a different record insertion order.
    *
-   * The ETag is deterministic: same set of functions with same hashes/versions
-   * always produces the same ETag, regardless of registration order.
-   * This is achieved by sorting function names alphabetically before hashing.
-   *
-   * @param manifest - Current manifest response
+   * @param body - Exact JSON body returned for a 200 response
    * @returns Weak ETag string in format W/"<64-char hex>"
    */
-  private generateManifestETag(manifest: ManifestResponse): string {
-    const hash = createHash('sha256');
-    // Sort function names for deterministic ordering
-    // Without sorting, the same set of functions registered in different
-    // orders would produce different ETags, causing unnecessary cache misses
-    const sortedNames = Object.keys(manifest.functions).sort();
-    for (const name of sortedNames) {
-      const entry = manifest.functions[name];
-      // Include name, hash, and version in the digest to detect any change
-      hash.update(`${name}:${entry.hash}:${entry.version}`);
-    }
+  private generateManifestETag(body: string): string {
+    const hash = createHash('sha256').update(body);
     // Use full SHA-256 (256 bits) for maximum collision resistance.
     // Truncated ETags (64-bit) risk birthday collisions at ~2^32 manifests.
-    // Weak ETag (W/ prefix) is appropriate because JSON serialization
-    // of the same manifest could vary (key ordering, whitespace).
+    // A weak validator retains the existing HTTP contract while identifying
+    // this complete representation rather than a metadata subset.
     return `W/"${hash.digest('hex')}"`;
   }
 }

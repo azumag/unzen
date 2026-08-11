@@ -104,6 +104,44 @@ describe('ETag Caching', () => {
     expect(etag1).not.toBe(etag2);
   });
 
+  it('changes ETag when non-code manifest metadata changes after restart', async () => {
+    server.defineRaw('sameCode', '() => 1', { noFallback: false });
+    const first = await app.request('/unzen/manifest');
+    const firstEtag = first.headers.get('ETag')!;
+
+    const restartedApp = new Hono();
+    const restartedServer = new UnzenServer({ baseUrl: 'https://example.com/unzen' });
+    await restartedServer.initialize();
+    restartedServer.defineRaw('sameCode', '() => 1', { noFallback: true });
+    restartedApp.route('/unzen', restartedServer.middleware());
+
+    const revalidated = await restartedApp.request('/unzen/manifest', {
+      headers: { 'If-None-Match': firstEtag },
+    });
+    expect(revalidated.status).toBe(200);
+    expect(revalidated.headers.get('ETag')).not.toBe(firstEtag);
+    expect((await revalidated.json()).functions.sameCode.noFallback).toBe(true);
+  });
+
+  it('changes ETag when generated code URLs change after restart', async () => {
+    server.defineRaw('sameCode', '() => 1');
+    const firstEtag = (await app.request('/unzen/manifest')).headers.get('ETag')!;
+
+    const movedApp = new Hono();
+    const movedServer = new UnzenServer({ baseUrl: 'https://cdn.example/unzen' });
+    await movedServer.initialize();
+    movedServer.defineRaw('sameCode', '() => 1');
+    movedApp.route('/unzen', movedServer.middleware());
+
+    const revalidated = await movedApp.request('/unzen/manifest', {
+      headers: { 'If-None-Match': firstEtag },
+    });
+    expect(revalidated.status).toBe(200);
+    expect(revalidated.headers.get('ETag')).not.toBe(firstEtag);
+    expect((await revalidated.json()).functions.sameCode.codeUrl)
+      .toMatch(/^https:\/\/cdn\.example\/unzen\/code\//);
+  });
+
   it('should return 200 with new ETag when If-None-Match does not match', async () => {
     server.define('test', () => 1);
     // Send a stale ETag that doesn't match the current manifest

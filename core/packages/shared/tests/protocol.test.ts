@@ -377,6 +377,28 @@ describe('createManifestResponse', () => {
       .toBe(`/unzen/code/calculate?v=1&h=${encodeURIComponent(VALID_HASH)}`);
   });
 
+  it('serializes the same function set independently of record insertion order', () => {
+    const alpha = {
+      name: 'alpha',
+      runtime: 'quickjs' as const,
+      code: 'function run() { return 1; }',
+      version: 1,
+      hash: VALID_HASH,
+    };
+    const zulu = {
+      ...alpha,
+      name: 'zulu',
+      version: 2,
+      hash: VALID_HASH_B,
+    };
+
+    const first = createManifestResponse({ zulu, alpha }, '/unzen');
+    const second = createManifestResponse({ alpha, zulu }, '/unzen');
+
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    expect(Object.keys(first.functions)).toEqual(['alpha', 'zulu']);
+  });
+
   it.each([
     'relative/path',
     '//attacker.example/unzen',

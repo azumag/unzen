@@ -215,7 +215,8 @@ Error
   `FunctionRegistry.register()` も `FunctionDefinition.code` の UTF-8 byte 数へ同じ上限を適用する
 - candidate definition を含む aggregate manifest を登録前に生成し、UTF-8 1 MiB 超なら
   version counter / registry / immutable payload store を変更せず拒否する。manifest response は
-  同じ serialized body から `Content-Length` と ETag を返す
+  function key を canonical 順に serialize し、同じ body から `Content-Length` と ETag を返す。
+  ETag は `codeUrl` / `noFallback` / export / ABI を含む全 field を識別する
 - manifest の `If-None-Match` は weak comparison で strong/weak tag、quoted comma を含む
   tag list、`*` を評価する。field 全体を parse できない場合は条件を無視して `200` を返す
 - server `baseUrl` は credential / query / fragment のない HTTP(S) absolute URL または

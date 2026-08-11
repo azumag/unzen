@@ -277,6 +277,8 @@ server は 16 MiB を超える raw source / MoonBit file を version 採番前�
 同じ上限を適用し、advanced API から過大な definition を保持できない。
 候補登録後の manifest が 1 MiB を超える場合も registry を変更せず拒否し、`/manifest` は
 一度だけ serialize した body と一致する `Content-Length` / ETag を返す。
+manifest function key は canonical 順に並び、ETag は code identity だけでなく `codeUrl`、
+`noFallback`、export / ABI を含む serialized body 全体の SHA-256 から生成する。
 `If-None-Match` は weak comparison で strong/weak tag、tag list、`*` を評価し、
 不正文法の field は無視して通常の `200` manifest response を返す。
 server `baseUrl` は credential・query・fragment のない absolute HTTP(S) URL または
