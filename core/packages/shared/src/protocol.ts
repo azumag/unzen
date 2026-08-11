@@ -5,7 +5,8 @@
  * All messages are JSON-serializable for transmission over HTTP.
  */
 
-import { FunctionDefinition, RuntimeType } from './types';
+import { normalizeMoonBitAbi } from './types';
+import type { FunctionDefinition, MoonBitAbi, RuntimeType } from './types';
 
 /**
  * Request type for fetching the function manifest
@@ -41,6 +42,8 @@ export interface FunctionManifestEntry {
   codeUrl: string;
   /** Name of the export to call on a MoonBit wasm-gc module (defaults to 'run') */
   exportName?: string;
+  /** Optional MoonBit array-copy ABI for this export. */
+  moonbitAbi?: MoonBitAbi;
   /** When true, a browser failure never falls back to the server. */
   noFallback?: boolean;
 }
@@ -109,6 +112,13 @@ export function createManifestResponse(
   const result: ManifestResponse = { functions: {} };
 
   for (const [name, def] of Object.entries(functions)) {
+    const sourceMoonbitAbi = def.moonbitAbi;
+    const moonbitAbi = sourceMoonbitAbi === undefined
+      ? undefined
+      : normalizeMoonBitAbi(sourceMoonbitAbi);
+    if (sourceMoonbitAbi !== undefined && moonbitAbi === undefined) {
+      throw new Error(`Invalid MoonBit ABI metadata for "${name}"`);
+    }
     result.functions[name] = {
       runtime: def.runtime,
       hash: def.hash,
@@ -117,6 +127,7 @@ export function createManifestResponse(
       codeUrl: `${baseUrl}/code/${name}?v=${def.version}`,
       // MoonBit modules may export under their pub fn name rather than 'run'
       exportName: def.exportName,
+      moonbitAbi,
       noFallback: def.noFallback,
     };
   }

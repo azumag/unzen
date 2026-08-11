@@ -240,13 +240,17 @@ is reserved for string constants and cannot also contain function imports.
 | `Array[Int]` input (plain JS array) | REJECTED | `type incompatibility when transforming from/to JS` |
 | `Array[Int]` output | OPAQUE | opaque wasm-gc handle; no `.length` / index access |
 | `Array[Int]` handle re-input | PASS | `sum_array(make_array()) = 6` (opaque handle round-trip) |
+| unzen `i32[]` copy bridge | PASS | main/worker: sum, reverse, output-only array |
+| unzen `f64[]` copy bridge | PASS | main/worker: mixed array + scalar scale round-trip |
 
-Plain JS arrays cannot cross the export boundary; wasm-gc arrays only return
-as opaque handles that can be passed back into MoonBit exports. A copy/glue
-layer for arrays is a design task, not a toolchain block. Numeric exports
-accept strings via WebAssembly's implicit ToNumber conversion
-(`fibonacci("10") → 55`); the unzen executors validate scalars only, not
-per-export ABI signatures.
+Plain JS arrays cannot cross the raw export boundary; wasm-gc arrays return as
+opaque handles that can be passed back into MoonBit exports. The unzen
+executors bridge that boundary when an export declares `i32[]` / `f64[]` ABI
+metadata and the module supplies the standard `unzen_array_i32_*` /
+`unzen_array_f64_*` exports. Values are copied in both directions, with a
+100,000-element bound. Without ABI metadata, arrays remain rejected. Numeric
+exports accept strings via WebAssembly's implicit ToNumber conversion
+(`fibonacci("10") → 55`) when the parameter uses the loose `scalar` ABI.
 
 ## Benchmark Methodology
 
@@ -286,15 +290,15 @@ Based on vendor benchmarks and community reports (not independently verified):
 - sort(10000) is a small workload where JIT warm-up dominates; larger arrays would show bigger differences
 - Real-world performance depends on data marshaling overhead (JS-to-Wasm and back)
 
-## Integration Considerations for Phase 4
+## Integration Status and Remaining Work
 
-### What needs to change in unzen
+### Current state
 
-1. **Client SDK**: Add `MoonBitWasmExecutor` alongside existing `WebWorkerSandboxExecutor`
-2. **Manifest**: Extend `ManifestEntry` with `runtime: "moonbit"` and `wasmUrl` field
-3. **Server SDK**: Add `defineMoonBit()` and `defineMoonBitModule()` APIs
-4. **Data marshaling**: Implement JS-to-MoonBit type conversion layer
-5. **Feature detection**: Detect wasm-gc support, fallback to QuickJS or server
+1. **Client SDK**: implemented by `MoonBitSandboxExecutor` and `MoonBitWorkerSandboxExecutor`
+2. **Manifest**: `runtime: "moonbit"`, versioned `codeUrl`, `exportName`, and optional `moonbitAbi`
+3. **Server SDK**: `defineMoonbit()` implemented; module-level multi-export registration remains future work
+4. **Data marshaling**: scalar/String plus explicit `i32[]` / `f64[]` copy ABI implemented; object mapping is intentionally unsupported
+5. **Feature detection**: wasm-gc/JS String Builtins compatibility handling remains future work
 
 ### Data marshaling challenges
 
@@ -306,10 +310,13 @@ MoonBit wasm-gc uses different memory representations than JavaScript:
 | `number` (float) | `Double` | Direct f64 (no marshaling needed) |
 | `boolean` | `Bool` | i32 0/1 (trivial) |
 | `string` | `String` | JS String Builtins (`use-js-builtin-string` + `builtins: ['js-string']`) — PASS (2026-08-11 実測) |
-| `number[]` | `Array[Int]` | plain JS 配列は境界で拒否。opaque handle の再入力のみ可 (2026-08-11 実測) |
-| `object` | - | JSON serialize/deserialize (slow) |
+| 32 bit整数の `number[]` | `Array[Int]` | `i32[]` ABI + 標準 bridge で相互コピー |
+| `number[]` | `Array[Double]` | `f64[]` ABI + 標準 bridge で相互コピー |
+| `object` | - | 非対応 |
 
-Primitive types (Int, Double, Bool) have zero marshaling cost. Arrays and objects require copying, which may offset MoonBit's speed advantage for small payloads.
+Primitive types (Int, Double, Bool) have zero marshaling cost. Arrays require
+full copies in both directions, which may offset MoonBit's speed advantage for
+small payloads.
 
 ### Security model
 
@@ -422,19 +429,19 @@ Exports match `moon.pkg.json` configuration:
 | Correctness | PASS | Deterministic results verified |
 | Performance vs V8 | PASS (Chrome) | fib 3.17x / sort 1.20x (2026-08-11 実測) |
 | Browser loading | PASS (Chrome) | wasm-gc fetch + instantiate 成功 (2026-08-11 実測) |
-| Data marshaling | PARTIAL | Int/Double/Bool は直接 i32/f64。String は JS String Builtins で往復可。Array は opaque handle のみ (2026-08-11 実測) |
+| Data marshaling | PASS (supported scope) | scalar/String に加え、`i32[]` / `f64[]` は明示 ABI bridge で往復可。object は非対応 |
 
 ### Next Steps
 
 1. ~~Open benchmark in Chrome and record numbers~~ (完了: 2026-08-11, fib 3.17x / sort 1.20x)
 2. Firefox / Safari での計測（cross-browser 未確認）
-3. ~~Data marshaling (Array / String) の検証~~ — 完了 (2026-08-11)
+3. ~~Data marshaling (Array / String) の検証と数値配列 bridge 実装~~ — 完了 (2026-08-11)
    String は `use-js-builtin-string: true` + `imported-string-constants: "_"` +
    `await WebAssembly.compile(bytes, { builtins: ['js-string'],
    importedStringConstants: '_' })` で引数・戻り値とも JS 文字列として往復可
    （Chromium 145 / Firefox 146 で確認。`"__proto__"` / Unicode も含む）。
-   Array[Int] は plain JS 配列の受け渡しが wasm 境界で
-   `type incompatibility` になり、戻り値は opaque handle（別 export への
-   再入力のみ可）。配列の glue 層実装は設計タスク。
+   raw wasm では Array が `type incompatibility` / opaque handle となるが、
+   unzen は標準 bridge export と明示 ABI で `i32[]` / `f64[]` をコピーし、
+   main/worker の両 executor で往復を検証済み。
 4. sort は Go/No-Go 基準 1.5x に未達 (1.20x) のため、配列中心ワークロードでは
    QuickJS との比較を含めた再評価が必要

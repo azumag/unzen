@@ -244,18 +244,32 @@ Browser Main Thread                  Web Worker Thread
 | 用途 | 手軽にJS関数を委任 | 性能が重要な計算処理 |
 | 実装状況 | **Phase 2 完了** | **Phase 3 クライアント統合済み** (`MoonBitSandboxExecutor` / `MoonBitWorkerSandboxExecutor`) |
 
-MoonBit 関数は `UnzenServer.defineMoonbit(name, wasmPath, { exportName })` で
-登録し、マニフェストは `runtime: 'moonbit'` と wasm の配信 URL を公開する。
+MoonBit 関数は `UnzenServer.defineMoonbit(name, wasmPath, { exportName, abi })` で
+登録し、マニフェストは `runtime: 'moonbit'` と wasm の配信 URL、
+指定時は `moonbitAbi` を公開する。
 クライアントは `moonbitWorkerUrl` 指定時に `MoonBitWorkerSandboxExecutor`（専用
 Web Worker、メインスレッド非ブロック・terminate で強制停止）、未指定時は
 `MoonBitSandboxExecutor`（メインスレッド、デモ用途）が wasm をフェッチ・
-インスタンス化し、指定の export（既定 `run`）をスカラー引数で呼び出す。
+インスタンス化し、指定の export（既定 `run`）を呼び出す。
 実行はブラウザ限定で、サーバーフォールバックは行わない（QuickJS ランタイムでは
-wasm を実行できない）。number / boolean / bigint / string のスカラー入出力のみ
-対応。String は JS String Builtins 経由（`use-js-builtin-string`）、配列・
-オブジェクトは wasm-gc 境界で非対応。String は Chromium / Firefox で
+wasm を実行できない）。ABI 省略時は number / boolean / bigint / string の
+スカラー入出力のみ対応。String は JS String Builtins 経由
+（`use-js-builtin-string`）。`abi.params` / `abi.result` で `i32[]` または
+`f64[]` を明示すると、モジュールが公開する標準 `unzen_array_*`
+bridge を使って JS 数値配列を wasm-gc 配列と相互コピーする。入力配列は
+1呼び出し合計10万要素、戻り値配列は10万要素、引数数は128まで。
+オブジェクトは非対応。bridge の正確なシグネチャは
+[reference implementation](moonbit-poc/interop/main.mbt) を参照。
+String は Chromium / Firefox で
 動作確認済み。Safari は wasm-gc が 18.2+、JS String Builtins が 26.2+ で
 対応となり、本プロジェクトでは Safari 未検証。
+
+```typescript
+server.defineMoonbit('scaleArray', './scale.wasm', {
+  exportName: 'scale_double_array',
+  abi: { params: ['f64[]', 'scalar'], result: 'f64[]' },
+});
+```
 
 MoonBit の `link.wasm-gc.imported-string-constants` namespace は、クライアントの
 `moonbitImportedStringConstants` と一致させる。既定値は既存の MoonBit fixture と
@@ -275,7 +289,9 @@ const client = new UnzenClient({
 
 `/moonbit-worker.js` は `packages/client/dist/moonbit-worker.js` をサーバーから
 配信する（`npm run build -w @unzen/client` で生成。demo サーバーは
-`/moonbit-worker.js` で配信済み）。
+`/moonbit-worker.js` で配信済み）。Worker protocol v3 は配列 ABI を含むため、
+client bundle と worker bundle は必ず同じ build/version から同時配信する。
+異なる protocol version の Worker response は fail closed で拒否される。
 
 ## プロジェクト構成
 

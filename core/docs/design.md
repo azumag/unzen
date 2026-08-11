@@ -257,12 +257,11 @@ export const stdDev = unzen.defineMoonBit('stdDev', {
 
 JavaScriptのデータとWasm関数間のデータ受け渡し方法。
 
-> **注 (2026-08-11)**: 本節のマーシャリング表・変換フロー・ABI 型情報は
-> **将来設計** であり、現行実装（Phase 3）は以下の契約に限定される。
+> **注 (2026-08-11)**: 現行実装（Phase 3）の契約は以下。
 > 実測・実装の最新情報は `docs/ARCHITECTURE.md` の
 > 「MoonBit の String / Array interop」節を参照。
 >
-> - 対応型: `number` / `boolean` / `bigint` / `string` のみ
+> - ABI 省略時: `number` / `boolean` / `bigint` / `string` のスカラーのみ
 >   （`string` は `WebAssembly.compile(bytes, { builtins: ['js-string'],
 >   importedStringConstants: '_' })` による JS String Builtins 経由。
 >   ブラウザ要件: Chromium / Firefox は動作確認済み。Safari は wasm-gc が
@@ -271,12 +270,15 @@ JavaScriptのデータとWasm関数間のデータ受け渡し方法。
 >   `imported-string-constants` と同じ namespace を client option で指定でき、
 >   `null` なら option を省略する。選択した namespace は文字列定数用に予約され、
 >   同 namespace の function import 等とは併用できない
-> - 非対応: `number[]` / `object`（plain JS 配列・オブジェクトは wasm-gc
->   境界で拒否。配列戻り値は opaque handle のため executor が非スカラー
->   として拒否）
+> - 明示 ABI 指定時: `i32[]` / `f64[]` の数値配列を標準
+>   `unzen_array_i32_*` / `unzen_array_f64_*` bridge で相互コピー。
+>   `i32[]` は符号付き32 bit整数に限定。入力合計/戻り値それぞれ
+>   10万要素を上限とする
+> - 非対応: `object`。ABI なしの plain JS 配列も従来どおり拒否
 > - ロード: `fetch → validate → WebAssembly.compile →
 >   WebAssembly.instantiate`（`instantiateStreaming` は未使用）
-> - ABI シグネチャ単位の検証・glue コード生成は未導入（将来設計）
+> - `defineMoonbit(..., { abi })` で登録した `moonbitAbi` をマニフェストから
+>   main/worker executor へ伝播し、引数数・型・サイズ・bridge export を検証する
 
 #### QuickJS ランタイムの場合
 
@@ -304,17 +306,19 @@ MoonBit wasm-gcは `externref` を通じてJSオブジェクトを受け渡し�
 | `number` | `Int`, `Double` | Wasm ABI直接渡し (i32, f64) |
 | `boolean` | `Bool` | i32 (0/1) |
 | `string` | `String` | wasm-gc JS String Builtins (externref) |
-| `number[]` | `Array[Double]` | JS→MoonBit配列変換 (glueコード生成) |
-| `object` | - | JSON文字列経由 (将来: 構造体マッピング) ※性能注意 |
+| 32 bit整数の `number[]` | `Array[Int]` | `i32[]` ABI + 標準 bridge でコピー |
+| `number[]` | `Array[Double]` | `f64[]` ABI + 標準 bridge でコピー |
+| `object` | - | 非対応 |
 
-> **性能注意**: `object` のJSON経由マーシャリングは、大きなオブジェクトではシリアライズ/デシリアライズのコストが発生し、MoonBitの速度上の利点を損なう可能性がある。パフォーマンスが重要な場面では、プリミティブ型や `number[]` を使用すること。
+> **性能注意**: 数値配列は JS と wasm-gc の間で全要素を往復コピーするため、
+> 小さな計算ではマーシャリングコストが MoonBit の速度上の利点を上回る可能性がある。
 
 **変換フロー**:
 
 ```
 1. unzen.call('stdDev', [1.0, 2.0, 3.0])
 2. Client SDK がマニフェストから引数型情報を取得
-3. 型に応じた変換: number[] → MoonBit Array[Double] (glueコード経由)
+3. 型に応じた変換: number[] → MoonBit Array[Double] (標準 bridge 経由)
 4. Wasmエクスポート関数を呼び出し
 5. 戻り値を JavaScript 型に逆変換
 ```
@@ -323,11 +327,13 @@ MoonBit wasm-gcは `externref` を通じてJSオブジェクトを受け渡し�
 
 ```json
 {
-  "stdDev": {
-    "runtime": "moonbit",
-    "params": [{ "name": "data", "type": "Array[Double]" }],
-    "returns": "Double",
-    "wasmUrl": "/unzen/wasm/stats.wasm?v=1"
+  "functions": {
+    "stdDev": {
+      "runtime": "moonbit",
+      "codeUrl": "/unzen/code/stdDev?v=1",
+      "exportName": "std_dev",
+      "moonbitAbi": { "params": ["f64[]"], "result": "scalar" }
+    }
   }
 }
 ```

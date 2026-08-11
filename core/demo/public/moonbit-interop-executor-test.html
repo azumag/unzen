@@ -16,9 +16,12 @@
       lines.push(line);
       resultEl.textContent = lines.join('\n');
     };
-    const run = async (executor, label, args, exportName) => {
+    const run = async (executor, label, args, exportName, moonbitAbi) => {
       try {
-        const value = await executor.execute('/moonbit/interop.wasm', args, { exportName });
+        const value = await executor.execute('/moonbit/interop.wasm', args, {
+          exportName,
+          moonbitAbi,
+        });
         log(`${label} = ${JSON.stringify(value)}`);
       } catch (error) {
         log(`${label} ERR: ${error && error.message ? error.message : error}`);
@@ -39,6 +42,22 @@
       await run(main, 'main unicode_string', [], 'unicode_string');
       await run(main, 'main sum_array(plain)', [[1, 2, 3]], 'sum_array');
       await run(main, 'main make_array (opaque result)', [], 'make_array');
+      await run(main, 'main sum_array(ABI)', [[1, 2, 3]], 'sum_array', {
+        params: ['i32[]'],
+      });
+      await run(main, 'main reverse_array(ABI)', [[1, 2, 3]], 'reverse_array', {
+        params: ['i32[]'],
+        result: 'i32[]',
+      });
+      await run(main, 'main make_array(ABI)', [], 'make_array', {
+        params: [],
+        result: 'i32[]',
+      });
+      await run(main, 'main scale_double_array(ABI)', [[1.5, -2.25, 4], 2],
+        'scale_double_array', {
+          params: ['f64[]', 'scalar'],
+          result: 'f64[]',
+        });
       main.dispose();
 
       const worker = new MoonBitWorkerSandboxExecutor({
@@ -54,6 +73,22 @@
       await run(worker, 'worker unicode_string', [], 'unicode_string');
       await run(worker, 'worker sum_array(plain)', [[1, 2, 3]], 'sum_array');
       await run(worker, 'worker make_array (opaque result)', [], 'make_array');
+      await run(worker, 'worker sum_array(ABI)', [[1, 2, 3]], 'sum_array', {
+        params: ['i32[]'],
+      });
+      await run(worker, 'worker reverse_array(ABI)', [[1, 2, 3]], 'reverse_array', {
+        params: ['i32[]'],
+        result: 'i32[]',
+      });
+      await run(worker, 'worker make_array(ABI)', [], 'make_array', {
+        params: [],
+        result: 'i32[]',
+      });
+      await run(worker, 'worker scale_double_array(ABI)', [[1.5, -2.25, 4], 2],
+        'scale_double_array', {
+          params: ['f64[]', 'scalar'],
+          result: 'f64[]',
+        });
       worker.dispose();
     } catch (error) {
       log(`ERROR: ${error && error.message ? error.message : error}`);

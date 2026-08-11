@@ -156,6 +156,29 @@ describe('createManifestResponse', () => {
 
     expect(response.functions).toEqual({});
   });
+
+  it('copies MoonBit ABI metadata into the manifest', () => {
+    const abi = { params: ['f64[]', 'scalar'] as const, result: 'f64[]' as const };
+    const sourceParams = [...abi.params];
+    Object.defineProperty(sourceParams, Symbol.iterator, {
+      value: () => { throw new Error('iterator must not run'); },
+    });
+    const sourceAbi = { params: sourceParams, result: abi.result };
+    const response = createManifestResponse({
+      scale: {
+        name: 'scale',
+        runtime: 'moonbit',
+        code: 'scale.wasm',
+        version: 1,
+        hash: 'sha256:abc123',
+        moonbitAbi: sourceAbi,
+      },
+    }, 'https://example.com/unzen');
+
+    expect(response.functions.scale.moonbitAbi).toEqual(abi);
+    expect(response.functions.scale.moonbitAbi).not.toBe(sourceAbi);
+    expect(response.functions.scale.moonbitAbi?.params).not.toBe(sourceParams);
+  });
 });
 
 describe('createExecutionResponse', () => {

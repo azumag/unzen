@@ -809,6 +809,7 @@ export class UnzenClient {
           ? await executor.execute(entry.codeUrl, request.args, {
               signal: internalController.signal,
               exportName: entry.exportName,
+              moonbitAbi: entry.moonbitAbi,
             })
           : await executor.execute(code!, request.args, {
               signal: internalController.signal,

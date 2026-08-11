@@ -2,7 +2,28 @@
   "is-main": true,
   "link": {
     "wasm-gc": {
-      "exports": ["echo", "join_words", "string_len", "make_string", "weird_string", "empty_string", "unicode_string", "sum_array", "make_array", "reverse_array"],
+      "exports": [
+        "echo",
+        "join_words",
+        "string_len",
+        "make_string",
+        "weird_string",
+        "empty_string",
+        "unicode_string",
+        "sum_array",
+        "make_array",
+        "reverse_array",
+        "sum_double_array",
+        "scale_double_array",
+        "unzen_array_i32_new",
+        "unzen_array_i32_set",
+        "unzen_array_i32_length",
+        "unzen_array_i32_get",
+        "unzen_array_f64_new",
+        "unzen_array_f64_set",
+        "unzen_array_f64_length",
+        "unzen_array_f64_get"
+      ],
       "use-js-builtin-string": true,
       "imported-string-constants": "_"
     }

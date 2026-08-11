@@ -1,12 +1,10 @@
 /**
  * Shared scalar validation for MoonBit wasm-gc executors.
  *
- * Strings work via the MoonBit JS String Builtins; arrays/objects do NOT
- * (plain JS arrays are rejected at the wasm boundary, and wasm-gc arrays
- * return as unreadable opaque handles). Note: numeric exports still accept
- * strings via WebAssembly's implicit ToNumber conversion (e.g.
- * fibonacci("10") → 55); the executors validate only that values are scalars,
- * not per-export ABI types.
+ * Strings work via the MoonBit JS String Builtins. Arrays are handled by the
+ * separate explicit ABI bridge; this module defines the legacy/no-ABI scalar
+ * contract. Note: numeric exports still accept strings via WebAssembly's
+ * implicit ToNumber conversion (e.g. fibonacci("10") → 55).
  */
 export function isSupportedScalar(value: unknown): boolean {
   return (

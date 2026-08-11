@@ -22,6 +22,67 @@ export function isRuntimeType(value: unknown): value is RuntimeType {
   return typeof value === 'string' && (value === 'quickjs' || value === 'moonbit');
 }
 
+/** Value categories supported by the MoonBit wasm-gc boundary. */
+export type MoonBitAbiType = 'scalar' | 'i32[]' | 'f64[]';
+
+/**
+ * Per-export MoonBit ABI metadata.
+ *
+ * Array entries opt into the standard unzen copy bridge. `scalar` keeps the
+ * existing loose scalar contract (number / boolean / bigint / string).
+ * When `result` is omitted it defaults to `scalar`.
+ */
+export interface MoonBitAbi {
+  params: MoonBitAbiType[];
+  result?: MoonBitAbiType;
+}
+
+/** Bound manifest metadata and the number of arguments copied per call. */
+export const MAX_MOONBIT_ABI_PARAMS = 128;
+
+export function isMoonBitAbiType(value: unknown): value is MoonBitAbiType {
+  return value === 'scalar' || value === 'i32[]' || value === 'f64[]';
+}
+
+/** Validate and copy ABI metadata without invoking a source array iterator. */
+export function normalizeMoonBitAbi(value: unknown): MoonBitAbi | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  try {
+    const abi = value as Record<string, unknown>;
+    const sourceParams = abi.params;
+    const result = abi.result;
+    if (!Array.isArray(sourceParams)) return undefined;
+    const paramCount = sourceParams.length;
+    if (
+      typeof paramCount !== 'number'
+      || !Number.isInteger(paramCount)
+      || paramCount < 0
+      || paramCount > MAX_MOONBIT_ABI_PARAMS
+    ) {
+      return undefined;
+    }
+
+    const params = new Array<MoonBitAbiType>(paramCount);
+    for (let index = 0; index < paramCount; index++) {
+      const type = sourceParams[index];
+      if (!isMoonBitAbiType(type)) return undefined;
+      params[index] = type;
+    }
+    if (result !== undefined && !isMoonBitAbiType(result)) return undefined;
+    return {
+      params,
+      ...(result !== undefined && { result }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runtime validation for manifest and JavaScript callers. */
+export function isValidMoonBitAbi(value: unknown): value is MoonBitAbi {
+  return normalizeMoonBitAbi(value) !== undefined;
+}
+
 /**
  * Function definition metadata
  *
@@ -41,6 +102,8 @@ export interface FunctionDefinition {
   hash: string;
   /** Name of the export to call on a MoonBit wasm-gc module (defaults to 'run') */
   exportName?: string;
+  /** Optional MoonBit array-copy ABI for this export. */
+  moonbitAbi?: MoonBitAbi;
   /**
    * Per-function execution timeout in milliseconds (1-2000).
    * Controls server-side fallback execution timeout only.
@@ -92,6 +155,12 @@ export function isValidFunctionDefinition(def: unknown): def is FunctionDefiniti
       d.timeout < 1 ||
       d.timeout > MAX_FUNCTION_TIMEOUT
     ) {
+      return false;
+    }
+  }
+
+  if (d.moonbitAbi !== undefined) {
+    if (d.runtime !== 'moonbit' || !isValidMoonBitAbi(d.moonbitAbi)) {
       return false;
     }
   }

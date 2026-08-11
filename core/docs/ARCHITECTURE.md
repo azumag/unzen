@@ -627,9 +627,11 @@ defineRaw('add', '(a, b) => a + b')
 
 ### MoonBit wasm-gc 統合 (Phase 3)
 
-- `UnzenServer.defineMoonbit(name, wasmPath, { exportName })` は wasm モジュールを
+- `UnzenServer.defineMoonbit(name, wasmPath, { exportName, abi })` は wasm モジュールを
   登録し、`/code/:name` が `application/wasm` でバイト配信する。
-  マニフェストエントリは `runtime: 'moonbit'` と `exportName` を持つ。
+  マニフェストエントリは `runtime: 'moonbit'`、`exportName`、指定時は
+  `moonbitAbi` を持つ。ABI は export ごとの `params` / `result` を
+  `scalar` / `i32[]` / `f64[]` で表す。
   登録時に検証した正確なバイトを `{name, version}` キーで保持し、`?v=N` の
   immutable URL は常にその version のバイトを返す（同名再登録で旧 URL の
   内容が変わらない）。registry 上で quickjs に上書きされても、既に公開済みの
@@ -642,11 +644,12 @@ defineRaw('add', '(a, b) => a + b')
   専用 Web Worker で wasm を実行する（QuickJS パスと同じ Layer 1 の分離）。
   単一実行のみ・有界キュー・init timeout・hard-kill timeout（Worker terminate）・
   generation 管理・キャンセル（終了）を備える。worker バンドルは
-  `moonbit-worker.js`（tsup エントリ）として配信する。
+  `moonbit-worker.js`（tsup エントリ）として配信する。client/worker bundle は同じ
+  build/version から同時配信し、protocol v3 mismatch は fail closed で拒否する。
 - Worker 内の MoonBit export は同期・中断不可のため、タイムアウト/キャンセルは
-  `Worker.terminate()` で強制する。number / boolean / bigint / string の
-  スカラー入出力のみ対応（配列・オブジェクトは wasm-gc 境界で非対応、
-  String は JS String Builtins 経由）。
+  `Worker.terminate()` で強制する。ABI 省略時は number / boolean / bigint /
+  string のスカラーのみ、ABI 指定時は `i32[]` / `f64[]` も対応する。
+  オブジェクトは非対応。String は JS String Builtins 経由。
 - サーバーフォールバックは非対応 (`/exec/:name` は 501)。ブラウザ実行のみ。
 
 ### MoonBit の String / Array interop (2026-08-11 実測)
@@ -666,9 +669,9 @@ Chromium 145 と Firefox 146 で probe した結果:
   `join_words("foo","bar") = "foobar"` に加え、`"__proto__"` / 空文字 /
   Unicode リテラルの往復も両ブラウザで確認した。compile / instantiate は
   非同期 API（`WebAssembly.compile` / `WebAssembly.instantiate`）を使い、
-  メインスレッドを長時間ブロックしない。数値 export へ string を渡すと
-  WebAssembly の暗黙変換で数値化される（`fibonacci("10") → 55`）ため、
-  引数検証はスカラー判定のみ（ABI シグネチャ単位の検証は未導入）。
+  メインスレッドを長時間ブロックしない。`scalar` ABI はスカラーの種類までは
+  固定しない。数値 export へ string を渡すと WebAssembly の暗黙変換で
+  数値化される（`fibonacci("10") → 55`）。
   **ブラウザ要件**: String interop は JS String Builtins が別途必要。
   Chromium 145 / Firefox 146 で動作確認済み。Safari は wasm-gc が 18.2+、
   JS String Builtins が 26.2+ で対応となるため、18.2–26.1 では String
@@ -682,16 +685,37 @@ Chromium 145 と Firefox 146 で probe した結果:
   側の `imported-string-constants` と一致させる。`null` はこの compile option
   を省略する（文字列定数を import しない module 用）。選択した namespace は
   文字列定数用に予約されるため、同 namespace の function import 等とは
-  併用できない。Worker は namespace を init protocol v2 で受け取り、generation
+  併用できない。Worker は namespace を init protocol v3 で受け取り、generation
   内の全 compile に同じ値を使う。
-- **Array は opaque handle のみ**: plain JS 配列は wasm 境界で
+- **raw wasm の Array は opaque handle**: plain JS 配列は wasm 境界で
   `type incompatibility when transforming from/to JS` となり渡せない。
   `make_array()` の戻り値は opaque な wasm-gc 配列 handle で `.length` や
   添字アクセスはできないが、`sum_array(opaque) = 6` / `reverse_array(opaque)`
   のように別の MoonBit export への再入力（handle round-trip）は動く。
-  配列の glue 層（コピー/シリアライズ）は設計タスクであり toolchain の
-  ブロックではない。unzen の executor は配列・オブジェクト引数を
-  `UnzenRuntimeError` で拒否し、String 引数・戻り値を許容する。
+- **unzen は数値配列を明示 ABI でコピー**: `abi.params` / `abi.result` に
+  `i32[]` または `f64[]` を指定すると、executor は次の標準 export で
+  plain JS 配列と opaque wasm-gc 配列を相互コピーする:
+  `unzen_array_i32_new/set/length/get` と
+  `unzen_array_f64_new/set/length/get`。正確な MoonBit 契約は次のとおり
+  （[reference implementation](../moonbit-poc/interop/main.mbt)）:
+
+  ```moonbit
+  unzen_array_i32_new(length : Int) -> Array[Int]
+  unzen_array_i32_set(arr : Array[Int], index : Int, value : Int) -> Unit
+  unzen_array_i32_length(arr : Array[Int]) -> Int
+  unzen_array_i32_get(arr : Array[Int], index : Int) -> Int
+  unzen_array_f64_new(length : Int) -> Array[Double]
+  unzen_array_f64_set(arr : Array[Double], index : Int, value : Double) -> Unit
+  unzen_array_f64_length(arr : Array[Double]) -> Int
+  unzen_array_f64_get(arr : Array[Double], index : Int) -> Double
+  ```
+
+  必要な bridge が欠ける場合は
+  `UnzenRuntimeError` で fail closed する。`i32[]` は符号付き32 bit整数、
+  `f64[]` は JS number のみ許容する。入力は1実行の全配列合計10万要素、
+  戻り値は10万要素、引数数は128を上限とし、コピー前に型とサイズを検証する。
+  引数と ABI は待機/初期化前にスナップショットし、呼び出し後の
+  caller mutation を実行中に反映させない。ABI 省略時の配列拒否は維持する。
 
 ### MoonBit Worker 強制終了の検証 (2026-08-11)
 

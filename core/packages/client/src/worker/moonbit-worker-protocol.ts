@@ -6,9 +6,10 @@
  *
  * Unlike the QuickJS worker (which sends JS source), the MoonBit worker
  * receives the wasm-gc module BYTES (transferred as an ArrayBuffer) plus the
- * export name and scalar arguments, compiles/instantiates, and calls the
- * export synchronously. Execution inside the worker is uninterruptible, so
- * the main thread enforces timeouts by terminating the worker.
+ * export name, arguments, and optional numeric-array ABI, then
+ * compiles/instantiates and calls the export synchronously. Execution inside
+ * the worker is uninterruptible, so the main thread enforces timeouts by
+ * terminating the worker.
  *
  * Message flow:
  *   Main → Worker:  InitMessage | ExecuteMessage | CancelMessage
@@ -27,9 +28,10 @@ import {
   DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
   type MoonBitImportedStringConstants,
 } from '../moonbit-compile-options';
+import type { MoonBitAbi } from '@unzen/shared';
 
 // Version of the MoonBit worker wire protocol. Bump on incompatible changes.
-export const MOONBIT_WORKER_PROTOCOL_VERSION = 2;
+export const MOONBIT_WORKER_PROTOCOL_VERSION = 3;
 
 // ============================================================
 // Main Thread → Worker Messages
@@ -60,8 +62,10 @@ export interface MoonbitExecuteMessage {
   readonly cacheable: boolean;
   /** Export to call (defaults to 'run') */
   readonly exportName: string;
-  /** Scalar arguments for the export */
+  /** Scalar/array arguments for the export */
   readonly args: unknown[];
+  /** Optional standard array-copy ABI. */
+  readonly moonbitAbi?: MoonBitAbi;
 }
 
 /** Cooperatively cancel a running execution (best-effort; see worker docs). */
@@ -144,6 +148,7 @@ export function createMoonbitExecuteMessage(
   exportName: string,
   args: unknown[],
   generationId: number,
+  moonbitAbi?: MoonBitAbi,
 ): MoonbitExecuteMessage {
   return {
     type: 'execute',
@@ -155,6 +160,7 @@ export function createMoonbitExecuteMessage(
     cacheable,
     exportName,
     args,
+    moonbitAbi,
   };
 }
 

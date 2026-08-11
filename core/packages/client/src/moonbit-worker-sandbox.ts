@@ -42,13 +42,14 @@ import {
   UnzenFunctionError,
   UnzenNetworkError,
   UnzenRuntimeError,
+  type MoonBitAbi,
 } from '@unzen/shared';
 import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import { snapshotMoonBitCall } from './moonbit-array-bridge';
 import {
   normalizeMoonBitImportedStringConstants,
   type MoonBitImportedStringConstants,
 } from './moonbit-compile-options';
-import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import {
   createMoonbitExecuteMessage,
@@ -123,6 +124,8 @@ interface BaseRequest {
   bytes: ArrayBuffer;
   /** export to call on the module */
   exportName: string;
+  /** Optional array-copy ABI for this export. */
+  moonbitAbi?: MoonBitAbi;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   signal?: AbortSignal;
@@ -287,31 +290,26 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
    * Execute a MoonBit module.
    *
    * @param code - wasm URL (fetched via prepare) or already-fetched bytes
-   * @param args - Scalar arguments for the export
-   * @param options - signal + exportName (default 'run')
+   * @param args - Scalar arguments, plus numeric arrays declared by moonbitAbi
+   * @param options - signal + exportName (default 'run') + MoonBit ABI
    */
   async execute(
     code: string | ArrayBuffer,
     args: unknown[],
-    options?: ExecuteOptions & { exportName?: string },
+    options?: ExecuteOptions,
   ): Promise<unknown> {
     throwIfAborted(options?.signal);
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
 
-    // Validate on the main thread BEFORE postMessage so non-cloneable values
-    // (function/symbol) and arrays/objects get the same type-specific error
-    // contract as the worker-side check, instead of a DataCloneError.
-    for (const arg of args) {
-      if (!isSupportedScalar(arg)) {
-        throw new UnzenRuntimeError(
-          describeMoonbitArgError(
-            'MoonBit supports number/boolean/bigint/string arguments only',
-            arg,
-          ),
-        );
-      }
+    // Validate before postMessage so invalid/non-cloneable inputs have the
+    // same contract as worker-side validation instead of a DataCloneError.
+    let call: ReturnType<typeof snapshotMoonBitCall>;
+    try {
+      call = snapshotMoonBitCall(args, options?.moonbitAbi);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
     }
 
     const bytes = typeof code === 'string' ? await this.prepare(code, options?.signal) : code;
@@ -327,9 +325,10 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         // request; the key only needs to differ across distinct buffers in one
         // executor, which the monotonic request id guarantees.
         code: typeof code === 'string' ? code : `inline:${requestId}`,
-        args,
+        args: call.args,
         bytes,
         exportName: options?.exportName ?? 'run',
+        moonbitAbi: call.abi,
         resolve,
         reject,
         signal: options?.signal,
@@ -495,6 +494,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         running.exportName,
         running.args,
         generationId,
+        running.moonbitAbi,
       );
       this.worker!.postMessage(msg, [transferable]);
     } catch (error) {

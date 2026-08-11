@@ -71,6 +71,8 @@ export type { MoonBitImportedStringConstants } from './moonbit-compile-options';
 // Re-export commonly used types from @unzen/shared for convenience
 export type {
   RuntimeType,
+  MoonBitAbiType,
+  MoonBitAbi,
   FunctionDefinition,
   ExecutionOptions,
   ExecutionResult,

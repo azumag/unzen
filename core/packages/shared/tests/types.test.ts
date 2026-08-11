@@ -14,6 +14,9 @@ import {
   ExecutionOptions,
   ExecutionResult,
   isRuntimeType,
+  MAX_MOONBIT_ABI_PARAMS,
+  normalizeMoonBitAbi,
+  isValidMoonBitAbi,
   isValidFunctionDefinition,
 } from '../src/types';
 
@@ -30,6 +33,38 @@ describe('RuntimeType', () => {
       expect(isRuntimeType('javascript')).toBe(false);
       expect(isRuntimeType(undefined as unknown as string)).toBe(false);
     });
+  });
+});
+
+describe('MoonBitAbi', () => {
+  it('accepts scalar/i32/f64 signatures', () => {
+    expect(isValidMoonBitAbi({
+      params: ['i32[]', 'scalar'],
+      result: 'f64[]',
+    })).toBe(true);
+    expect(isValidMoonBitAbi({ params: [] })).toBe(true);
+  });
+
+  it('rejects invalid, sparse, and oversized metadata', () => {
+    expect(isValidMoonBitAbi({ params: ['u32[]'] })).toBe(false);
+    expect(isValidMoonBitAbi({ params: new Array(1) })).toBe(false);
+    expect(isValidMoonBitAbi({
+      params: new Array(MAX_MOONBIT_ABI_PARAMS + 1).fill('scalar'),
+    })).toBe(false);
+    expect(isValidMoonBitAbi({ params: [], result: 'object' })).toBe(false);
+  });
+
+  it('normalizes params by bounded index without invoking a custom iterator', () => {
+    const params = ['i32[]', 'scalar'];
+    Object.defineProperty(params, Symbol.iterator, {
+      value: () => { throw new Error('iterator must not run'); },
+    });
+
+    expect(normalizeMoonBitAbi({ params, result: 'f64[]' })).toEqual({
+      params: ['i32[]', 'scalar'],
+      result: 'f64[]',
+    });
+    expect(isValidMoonBitAbi({ params })).toBe(true);
   });
 });
 
@@ -57,6 +92,23 @@ describe('FunctionDefinition', () => {
     it('should reject definitions with invalid runtime type', () => {
       const invalidRuntime = { ...validDefinition, runtime: 'invalid' as RuntimeType };
       expect(isValidFunctionDefinition(invalidRuntime)).toBe(false);
+    });
+
+    it('accepts MoonBit ABI only on valid MoonBit definitions', () => {
+      const moonbitDefinition: FunctionDefinition = {
+        ...validDefinition,
+        runtime: 'moonbit',
+        moonbitAbi: { params: ['i32[]'], result: 'scalar' },
+      };
+      expect(isValidFunctionDefinition(moonbitDefinition)).toBe(true);
+      expect(isValidFunctionDefinition({
+        ...validDefinition,
+        moonbitAbi: { params: ['i32[]'] },
+      })).toBe(false);
+      expect(isValidFunctionDefinition({
+        ...moonbitDefinition,
+        moonbitAbi: { params: ['bad'] },
+      })).toBe(false);
     });
 
     it('should reject definitions with invalid version', () => {

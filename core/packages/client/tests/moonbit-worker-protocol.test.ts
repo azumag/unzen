@@ -42,6 +42,18 @@ describe('MoonBit worker protocol', () => {
     });
     expect(exec.wasm).toBe(bytes);
 
+    const arrayExec = createMoonbitExecuteMessage(
+      'req-2',
+      'arrays.wasm',
+      bytes,
+      true,
+      'reverse_array',
+      [[1, 2, 3]],
+      3,
+      { params: ['i32[]'], result: 'i32[]' },
+    );
+    expect(arrayExec.moonbitAbi).toEqual({ params: ['i32[]'], result: 'i32[]' });
+
     const cancel = createMoonbitCancelMessage('req-1', 3);
     expect(cancel).toMatchObject({ type: 'cancel', requestId: 'req-1', generationId: 3 });
   });

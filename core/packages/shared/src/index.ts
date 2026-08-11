@@ -19,10 +19,16 @@
 // Type definitions
 export {
   type RuntimeType,
+  type MoonBitAbiType,
+  type MoonBitAbi,
   type FunctionDefinition,
   type ExecutionOptions,
   type ExecutionResult,
   isRuntimeType,
+  isMoonBitAbiType,
+  normalizeMoonBitAbi,
+  isValidMoonBitAbi,
+  MAX_MOONBIT_ABI_PARAMS,
   isValidFunctionDefinition,
   MAX_FUNCTION_TIMEOUT,
 } from './types';

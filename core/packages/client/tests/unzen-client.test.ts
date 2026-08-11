@@ -1357,6 +1357,47 @@ describe('UnzenClient', () => {
       client.dispose();
     });
 
+    it('passes manifest MoonBit ABI metadata to the selected executor', async () => {
+      const moonbitManifest: ManifestResponse = {
+        functions: {
+          sumArray: {
+            runtime: 'moonbit',
+            hash: 'mb-array-hash',
+            version: 1,
+            codeUrl: 'https://example.com/code/arrays.wasm',
+            exportName: 'sum_array',
+            moonbitAbi: { params: ['i32[]'] },
+          },
+        },
+      };
+      const moonbitSandbox = {
+        prepare: async () => new ArrayBuffer(8),
+        execute: async (_url: string, args: unknown[], opts?: {
+          exportName?: string;
+          moonbitAbi?: { params: string[]; result?: string };
+        }) => {
+          expect(args).toEqual([[1, 2, 3]]);
+          expect(opts?.exportName).toBe('sum_array');
+          expect(opts?.moonbitAbi).toEqual({ params: ['i32[]'] });
+          return 6;
+        },
+        dispose: () => {},
+        isReady: () => true,
+      };
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/manifest')) return jsonResponse(moonbitManifest);
+        throw new Error('unexpected URL: ' + url);
+      });
+      const client = new UnzenClient({
+        endpoint,
+        sandbox: new MockSandboxExecutor(),
+        moonbitSandbox,
+      });
+
+      await expect(client.call<number>('sumArray', [1, 2, 3])).resolves.toBe(6);
+      client.dispose();
+    });
+
     it('routes moonbit entries through the real worker executor when moonbitWorkerUrl is set', async () => {
       // Global Worker is replaced with a mock that runs the REAL MoonBit
       // worker message handler against the fibonacci fixture, so this proves

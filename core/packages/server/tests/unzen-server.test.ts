@@ -396,6 +396,33 @@ describe('UnzenServer', () => {
       expect(server.getFunction('defaultRun')?.exportName).toBe('run');
     });
 
+    it('should register, copy, and advertise MoonBit ABI metadata', async () => {
+      const abi = { params: ['f64[]', 'scalar'] as const, result: 'f64[]' as const };
+      const supplied = { params: [...abi.params], result: abi.result };
+      Object.defineProperty(supplied.params, Symbol.iterator, {
+        value: () => { throw new Error('iterator must not run'); },
+      });
+      server.defineMoonbit('scaleArray', join(fixtureDir, 'fibonacci.wasm'), {
+        exportName: 'scale_double_array',
+        abi: supplied,
+      });
+
+      const stored = server.getFunction('scaleArray')?.moonbitAbi;
+      expect(stored).toEqual(abi);
+      expect(stored?.params).not.toBe(supplied.params);
+
+      const manifest = await (await server.middleware().request('/manifest')).json();
+      expect(manifest.functions.scaleArray.moonbitAbi).toEqual(abi);
+    });
+
+    it('should reject invalid MoonBit ABI metadata from JavaScript callers', () => {
+      expect(() => server.defineMoonbit(
+        'badAbi',
+        join(fixtureDir, 'fibonacci.wasm'),
+        { abi: { params: ['u32[]'] } as never },
+      )).toThrow('Invalid MoonBit ABI');
+    });
+
     it('should reject a missing module file', () => {
       expect(() =>
         server.defineMoonbit('missing', join(fixtureDir, 'does-not-exist.wasm')),

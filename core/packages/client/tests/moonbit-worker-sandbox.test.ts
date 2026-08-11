@@ -645,6 +645,34 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     executor.dispose();
   });
 
+  it('copies i32[] and f64[] through the real worker bridge', async () => {
+    const worker = new MockMoonbitWorker();
+    const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
+    const state = { compiledModules: new Map<string, WebAssembly.Module>() };
+    worker.onPostMessage((msg) => {
+      void handleMoonbitWorkerMessage({ data: msg }, state, (resp) => worker.respond(resp));
+    });
+    const executor = createExecutor(worker);
+    const bytes = () => interopBytes.buffer.slice(
+      interopBytes.byteOffset,
+      interopBytes.byteOffset + interopBytes.byteLength,
+    ) as ArrayBuffer;
+
+    await expect(executor.execute(bytes(), [[7, -2, 5]], {
+      exportName: 'sum_array',
+      moonbitAbi: { params: ['i32[]'] },
+    })).resolves.toBe(10);
+    await expect(executor.execute(bytes(), [[7, -2, 5]], {
+      exportName: 'reverse_array',
+      moonbitAbi: { params: ['i32[]'], result: 'i32[]' },
+    })).resolves.toEqual([5, -2, 7]);
+    await expect(executor.execute(bytes(), [[1.5, -2.25, 4], 2], {
+      exportName: 'scale_double_array',
+      moonbitAbi: { params: ['f64[]', 'scalar'], result: 'f64[]' },
+    })).resolves.toEqual([3, -4.5, 8]);
+    executor.dispose();
+  });
+
   it('round-trips special String literals (__proto__, empty, Unicode)', async () => {
     // Compile-time importedStringConstants resolve `_` string-constant
     // imports without touching JS object prototypes, so even "__proto__"
@@ -672,7 +700,7 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     executor.dispose();
   });
 
-  it('rejects plain JS array arguments (documented wasm-gc boundary limit)', async () => {
+  it('rejects plain JS array arguments when ABI metadata is omitted', async () => {
     const worker = new MockMoonbitWorker();
     const { handleMoonbitWorkerMessage } = await import('../src/worker/moonbit-worker');
     const state = { compiledModules: new Map<string, WebAssembly.Module>() };

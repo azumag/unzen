@@ -450,13 +450,60 @@ describe('MoonBitSandboxExecutor', () => {
     executor.dispose();
   });
 
-  it('rejects plain JS array arguments (documented wasm-gc boundary limit)', async () => {
+  it('rejects plain JS array arguments when ABI metadata is omitted', async () => {
     mockFetchBytes(interopBytes);
     const executor = new MoonBitSandboxExecutor();
 
     await expect(
       executor.execute('https://example.com/interop.wasm', [[1, 2, 3]], { exportName: 'sum_array' }),
     ).rejects.toThrow('arrays and objects cannot cross');
+    executor.dispose();
+  });
+
+  it('copies i32[] arguments/results through the standard bridge', async () => {
+    mockFetchBytes(interopBytes);
+    const executor = new MoonBitSandboxExecutor();
+    const url = 'https://example.com/interop-array.wasm';
+
+    expect(await executor.execute(url, [[7, -2, 5]], {
+      exportName: 'sum_array',
+      moonbitAbi: { params: ['i32[]'] },
+    })).toBe(10);
+    expect(await executor.execute(url, [[7, -2, 5]], {
+      exportName: 'reverse_array',
+      moonbitAbi: { params: ['i32[]'], result: 'i32[]' },
+    })).toEqual([5, -2, 7]);
+    expect(await executor.execute(url, [], {
+      exportName: 'make_array',
+      moonbitAbi: { params: [], result: 'i32[]' },
+    })).toEqual([1, 2, 3]);
+    executor.dispose();
+  });
+
+  it('copies f64[] with mixed scalar arguments/results', async () => {
+    mockFetchBytes(interopBytes);
+    const executor = new MoonBitSandboxExecutor();
+
+    expect(await executor.execute(
+      'https://example.com/interop-f64.wasm',
+      [[1.5, -2.25, 4], 2],
+      {
+        exportName: 'scale_double_array',
+        moonbitAbi: { params: ['f64[]', 'scalar'], result: 'f64[]' },
+      },
+    )).toEqual([3, -4.5, 8]);
+    executor.dispose();
+  });
+
+  it('fails closed when ABI metadata requires bridge exports the module lacks', async () => {
+    mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor();
+
+    await expect(executor.execute(
+      'https://example.com/fibonacci-no-bridge.wasm',
+      [[10]],
+      { exportName: 'fibonacci', moonbitAbi: { params: ['i32[]'] } },
+    )).rejects.toThrow('unzen_array_i32_new');
     executor.dispose();
   });
 

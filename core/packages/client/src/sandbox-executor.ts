@@ -12,6 +12,8 @@
  * - Support cleanup via dispose()
  */
 
+import type { MoonBitAbi } from '@unzen/shared';
+
 /**
  * Optional per-execution controls passed to execute().
  *
@@ -25,6 +27,8 @@ export interface ExecuteOptions {
   /** Export to call on a module-based runtime (e.g. MoonBit wasm-gc); ignored
    * by source-based runtimes (QuickJS). */
   exportName?: string;
+  /** Optional array-copy ABI for a MoonBit export; ignored by QuickJS. */
+  moonbitAbi?: MoonBitAbi;
 }
 
 export interface SandboxExecutor {

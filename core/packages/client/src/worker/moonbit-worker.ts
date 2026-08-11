@@ -15,7 +15,7 @@
  * Error classification:
  *   - Compile/instantiate failure → runtime_error (fallback-eligible)
  *   - Missing export / export throw → function_error (no fallback, user bug)
- *   - Non-scalar argument → runtime_error (ABI boundary, not user code)
+ *   - Invalid scalar/array ABI input → runtime_error (boundary, not user code)
  *
  * String interop:
  * - Modules compiled with `use-js-builtin-string` are compiled here with JS
@@ -37,7 +37,11 @@ import {
   DEFAULT_MOONBIT_IMPORTED_STRING_CONSTANTS,
   type MoonBitImportedStringConstants,
 } from '../moonbit-compile-options';
-import { describeMoonbitArgError, isSupportedScalar } from '../moonbit-scalar';
+import {
+  marshalMoonBitArguments,
+  unmarshalMoonBitResult,
+  validateMoonBitArguments,
+} from '../moonbit-array-bridge';
 
 /** Worker state — holds the per-URL compiled module cache. */
 export interface MoonbitWorkerState {
@@ -135,22 +139,18 @@ async function handleMoonbitExecute(
     }
   }
 
-  // Argument validation: only scalars cross the ABI boundary.
-  for (const arg of msg.args) {
-    if (!isSupportedScalar(arg)) {
-      postMessage(createMoonbitExecuteResultMessage(
-        msg.requestId,
-        false,
-        msg.generationId,
-        undefined,
-        describeMoonbitArgError(
-          'MoonBit supports number/boolean/bigint/string arguments only',
-          arg,
-        ),
-        'runtime_error',
-      ));
-      return;
-    }
+  try {
+    validateMoonBitArguments(msg.args, msg.moonbitAbi);
+  } catch (error) {
+    postMessage(createMoonbitExecuteResultMessage(
+      msg.requestId,
+      false,
+      msg.generationId,
+      undefined,
+      error instanceof Error ? error.message : String(error),
+      'runtime_error',
+    ));
+    return;
   }
 
   let instance: WebAssembly.Instance;
@@ -181,19 +181,38 @@ async function handleMoonbitExecute(
     return;
   }
 
+  let marshalledArgs: unknown[];
   try {
-    const result = (target as (...a: unknown[]) => unknown)(...msg.args);
-    if (!isSupportedScalar(result)) {
-      postMessage(createMoonbitExecuteResultMessage(
-        msg.requestId,
-        false,
-        msg.generationId,
-        undefined,
-        'MoonBit export returned an unsupported (non-scalar) value',
-        'runtime_error',
-      ));
-      return;
-    }
+    marshalledArgs = marshalMoonBitArguments(instance, msg.args, msg.moonbitAbi);
+  } catch (error) {
+    postMessage(createMoonbitExecuteResultMessage(
+      msg.requestId,
+      false,
+      msg.generationId,
+      undefined,
+      error instanceof Error ? error.message : String(error),
+      'runtime_error',
+    ));
+    return;
+  }
+
+  let rawResult: unknown;
+  try {
+    rawResult = (target as (...a: unknown[]) => unknown)(...marshalledArgs);
+  } catch (error) {
+    postMessage(createMoonbitExecuteResultMessage(
+      msg.requestId,
+      false,
+      msg.generationId,
+      undefined,
+      `MoonBit function execution failed: ${error instanceof Error ? error.message : String(error)}`,
+      'function_error',
+    ));
+    return;
+  }
+
+  try {
+    const result = unmarshalMoonBitResult(instance, rawResult, msg.moonbitAbi);
     postMessage(createMoonbitExecuteResultMessage(
       msg.requestId,
       true,
@@ -206,8 +225,8 @@ async function handleMoonbitExecute(
       false,
       msg.generationId,
       undefined,
-      `MoonBit function execution failed: ${error instanceof Error ? error.message : String(error)}`,
-      'function_error',
+      error instanceof Error ? error.message : String(error),
+      'runtime_error',
     ));
   }
 }

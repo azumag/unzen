@@ -16,8 +16,19 @@
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { Hono } from 'hono';
-import type { FunctionDefinition, ExecutionRequest, ManifestResponse } from '@unzen/shared';
-import { createExecutionResponse, UnzenFunctionError, UnzenRuntimeError, MAX_FUNCTION_TIMEOUT } from '@unzen/shared';
+import type {
+  FunctionDefinition,
+  ExecutionRequest,
+  ManifestResponse,
+  MoonBitAbi,
+} from '@unzen/shared';
+import {
+  createExecutionResponse,
+  UnzenFunctionError,
+  UnzenRuntimeError,
+  MAX_FUNCTION_TIMEOUT,
+  normalizeMoonBitAbi,
+} from '@unzen/shared';
 import { FunctionRegistry } from './function-registry';
 import { ManifestBuilder } from './manifest-builder';
 import { QuickJSRuntime } from './quickjs-runtime';
@@ -183,12 +194,12 @@ export class UnzenServer {
    *
    * @param name - Function name (used as identifier)
    * @param wasmPath - Filesystem path to the compiled .wasm module
-   * @param options - Optional settings (exportName defaults to 'run', timeout)
+   * @param options - Optional settings (exportName defaults to 'run', timeout, ABI)
    */
   defineMoonbit(
     name: string,
     wasmPath: string,
-    options?: { exportName?: string; timeout?: number },
+    options?: { exportName?: string; timeout?: number; abi?: MoonBitAbi },
   ): void {
     // Fail fast: the .wasm must exist and be a valid module at registration.
     let bytes: Buffer;
@@ -215,6 +226,14 @@ export class UnzenServer {
       }
     }
 
+    const requestedAbi = options?.abi;
+    const moonbitAbi = requestedAbi === undefined
+      ? undefined
+      : normalizeMoonBitAbi(requestedAbi);
+    if (requestedAbi !== undefined && moonbitAbi === undefined) {
+      throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
+    }
+
     this.versionCounter++;
 
     const definition: FunctionDefinition = {
@@ -227,6 +246,7 @@ export class UnzenServer {
       version: this.versionCounter,
       hash: this.generateBytesHash(bytes),
       exportName: options?.exportName ?? 'run',
+      ...(moonbitAbi !== undefined && { moonbitAbi }),
       // The QuickJS server runtime cannot execute wasm-gc: browser-only.
       noFallback: true,
       ...(options?.timeout !== undefined && { timeout: options.timeout }),

@@ -12,9 +12,9 @@
  *   happens per call (cheap, and keeps state isolated between requests).
  * - Scalar arguments/results are supported (number / boolean / bigint /
  *   string). String values cross via the MoonBit JS String Builtins
- *   (`use-js-builtin-string` + `builtins: ['js-string']`). Arrays and objects
- *   cannot cross: plain JS arrays are rejected at the wasm boundary, and
- *   wasm-gc arrays return as unreadable opaque handles.
+ *   (`use-js-builtin-string` + `builtins: ['js-string']`). An explicit
+ *   MoonBit ABI can additionally copy i32[] / f64[] through standard bridge
+ *   exports; arrays without ABI metadata and objects are rejected.
  * - wasm-gc execution is synchronous and uninterruptible once started, so
  *   cancellation is honored only before the call begins (same cooperative
  *   boundary as the QuickJS timeout model).
@@ -40,7 +40,11 @@ import {
   validateMoonBitModule,
   type MoonBitImportedStringConstants,
 } from './moonbit-compile-options';
-import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
+import {
+  marshalMoonBitArguments,
+  snapshotMoonBitCall,
+  unmarshalMoonBitResult,
+} from './moonbit-array-bridge';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 
 /** A compiled MoonBit module ready for instantiation. */
@@ -193,41 +197,29 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
    * first). Calls the configured export with the request arguments.
    *
    * @param code - PreparedMoonBitModule, or the wasm URL to prepare
-   * @param args - Scalar arguments for the export
-   * @param options - Per-execution controls (signal, exportName override)
+   * @param args - Scalar arguments, plus numeric arrays declared by moonbitAbi
+   * @param options - Per-execution controls (signal, exportName, MoonBit ABI)
    */
   async execute(
     code: string | PreparedMoonBitModule,
     args: unknown[],
-    options?: ExecuteOptions & { exportName?: string },
+    options?: ExecuteOptions,
   ): Promise<unknown> {
     throwIfAborted(options?.signal);
     if (this.disposed) {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
 
-    const prepared = typeof code === 'string' ? await this.prepare(code, options?.signal) : code;
-    // Re-check after any await: the caller may have aborted during fetch.
-    throwIfAborted(options?.signal);
-
-    // Argument validation: only scalars can cross the wasm boundary in this
-    // integration. Strings work via the MoonBit JS String Builtins; null and
-    // undefined are rejected because wasm i32/f64/f64 parameters would
-    // silently coerce them (e.g. null → 0), masking ABI mismatches. Arrays
-    // and objects are rejected at the wasm boundary.
-    for (const arg of args) {
-      if (!isSupportedScalar(arg)) {
-        throw new UnzenRuntimeError(
-          describeMoonbitArgError(
-            'MoonBit sandbox supports number/boolean/bigint/string arguments only',
-            arg,
-          ),
-        );
-      }
+    let call: ReturnType<typeof snapshotMoonBitCall>;
+    try {
+      call = snapshotMoonBitCall(args, options?.moonbitAbi);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
     }
 
-    // Re-check before instantiation: the call below can be slow, and a cancel
-    // that arrives during it must prevent the export from running at all.
+    const prepared = typeof code === 'string' ? await this.prepare(code, options?.signal) : code;
+    // Re-check after prepare and before instantiation: a cancel during fetch
+    // must prevent the module from being instantiated or invoked.
     throwIfAborted(options?.signal);
 
     let instance: WebAssembly.Instance;
@@ -261,16 +253,30 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       );
     }
 
-    const result = (target as (...a: unknown[]) => unknown)(...args);
-    // Wasm results can be wasm-gc objects (e.g. arrays) that do not map to
-    // plain JS values. Reject non-scalar results instead of leaking an
-    // opaque wasm handle to the caller.
-    if (!isSupportedScalar(result)) {
+    let marshalledArgs: unknown[];
+    try {
+      marshalledArgs = marshalMoonBitArguments(instance, call.args, call.abi);
+    } catch (error) {
       throw new UnzenRuntimeError(
-        'MoonBit export returned an unsupported (non-scalar) value',
+        error instanceof Error ? error.message : String(error),
       );
     }
-    return result;
+    throwIfAborted(options?.signal);
+
+    let result: unknown;
+    try {
+      result = (target as (...a: unknown[]) => unknown)(...marshalledArgs);
+    } catch (error) {
+      throw new UnzenFunctionError(
+        `MoonBit function execution failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    try {
+      return unmarshalMoonBitResult(instance, result, call.abi);
+    } catch (error) {
+      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   /** Idempotent disposal — releases the module cache. */

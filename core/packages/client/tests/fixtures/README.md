@@ -19,5 +19,5 @@ To regenerate it without modifying the source fixture:
 Expected SHA-256:
 
 ```text
-979a94c6bb2f8ae945cf302c9ebff3c0883e69d9056637f76d0d33ed9c1e0186
+bd212ee0a04c5a5b33b74b2537327c43acf9442548ff8f6da0f9a2f2b723973a
 ```

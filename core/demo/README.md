@@ -180,5 +180,5 @@ UNZEN_DEMO_PORT=3100 npm run e2e
 - `e2e/demo.spec.ts` — ブラウザE2E（happy path / fallback / cancel / 二重送信 /
   input error+retry / keyboard-only / narrow viewport。Worker の故障は
   `page.route()` による /worker.js 差し替えで決定論的に注入。MoonBit は
-  実 wasm-gc の実行 / Worker 強制終了 / String・Array interop 境界を
-  raw probe と本番 executor（main + worker）の両方で検証）
+  実 wasm-gc の実行 / Worker 強制終了 / String interop / 明示 ABI による
+  `i32[]`・`f64[]` 配列 bridge を raw probe と本番 executor（main + worker）で検証）
