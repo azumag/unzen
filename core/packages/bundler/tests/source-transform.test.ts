@@ -244,6 +244,19 @@ server.define('read', (value: Payload): string => value.name);`;
     ['global object access', `globalThis.fetch('/private')`, 'forbidden global "globalThis"'],
     ['eval', `eval('1 + 1')`, 'forbidden global "eval"'],
     ['CommonJS require', `require('node:fs')`, 'forbidden global "require"'],
+    ['Proxy', `new Proxy({}, {})`, 'forbidden global "Proxy"'],
+    ['Reflect', `Reflect.get({}, 'value')`, 'forbidden global "Reflect"'],
+    ['WeakRef', `new WeakRef({})`, 'forbidden global "WeakRef"'],
+    [
+      'FinalizationRegistry',
+      `new FinalizationRegistry(() => undefined)`,
+      'forbidden global "FinalizationRegistry"',
+    ],
+    [
+      'WebAssembly',
+      `WebAssembly.compile(new Uint8Array())`,
+      'forbidden global "WebAssembly"',
+    ],
     ['dynamic import', `import('./private.js')`, 'dynamic import'],
   ])('rejects %s in an extracted function', (_label, expression, message) => {
     const source = `import { UnzenServer } from '@unzen/server';
@@ -328,8 +341,13 @@ server.define('safeNames', function (value: number) {
   // fetch('/comment-only')
   const note = "globalThis.fetch('/string-only')";
   const fetch = (input: number) => input + 1;
+  const Proxy = (input: number) => input;
+  const Reflect = { get: (input: number) => input };
   const apply = (input: number) => fetch(input);
-  return { note, value: Math.max(apply(value), arguments.length) };
+  return {
+    note,
+    value: Math.max(Proxy(Reflect.get(apply(value))), arguments.length),
+  };
 });`;
 
     const result = transformUnzenDefinitions(source, '/src/safe-names.ts');

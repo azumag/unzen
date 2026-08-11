@@ -44,7 +44,10 @@ export {
 } from './errors';
 
 // Sandbox security hardening (shared between server and client QuickJS runtimes)
-export { SANDBOX_SECURITY_INIT } from './sandbox-security';
+export {
+  SANDBOX_DISABLED_GLOBALS,
+  SANDBOX_SECURITY_INIT,
+} from './sandbox-security';
 
 // Protocol types
 export {

@@ -146,11 +146,18 @@ describe('bundler', () => {
     })).rejects.toThrow(/axios/);
   });
 
-  it('should reject code containing forbidden APIs after bundling', async () => {
+  it.each([
+    ['fetch', `fetch("https://evil.com")`],
+    ['Proxy', 'new Proxy({}, {})'],
+    ['Reflect', 'Reflect.get({}, "value")'],
+    ['WeakRef', 'new WeakRef({})'],
+    ['FinalizationRegistry', 'new FinalizationRegistry(() => undefined)'],
+    ['WebAssembly', 'WebAssembly.compile(new Uint8Array())'],
+  ])('should reject sandbox-disabled global %s after bundling', async (name, expression) => {
     await expect(bundle({
-      code: `export function run() { return fetch("https://evil.com"); }`,
+      code: `export function run() { return ${expression}; }`,
       allowedModules: [],
-    })).rejects.toThrow(/fetch/);
+    })).rejects.toThrow(name);
   });
 
   it('should use ES2018 target for QuickJS compatibility', async () => {

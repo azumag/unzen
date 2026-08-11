@@ -8,7 +8,8 @@
  * 1. Cut constructor chains on ALL 4 Function subclasses (Function, AsyncFunction,
  *    GeneratorFunction, AsyncGeneratorFunction) to prevent sandbox escape via
  *    prototype chain traversal (e.g., ({}).constructor.constructor → Function)
- * 2. Remove dangerous globals (eval, Function, Proxy, Reflect, WeakRef, FinalizationRegistry)
+ * 2. Remove dangerous globals (eval, Function, Proxy, Reflect, WeakRef,
+ *    FinalizationRegistry, WebAssembly)
  * 3. Freeze built-in prototypes to prevent prototype pollution
  *
  * This code is shared between:
@@ -21,6 +22,17 @@
  * @module @unzen/shared/sandbox-security
  */
 
+/** Globals deliberately made unavailable inside every QuickJS context. */
+export const SANDBOX_DISABLED_GLOBALS = Object.freeze([
+  'eval',
+  'Function',
+  'Proxy',
+  'Reflect',
+  'WeakRef',
+  'FinalizationRegistry',
+  'WebAssembly',
+] as const);
+
 /**
  * JavaScript code string that removes unsafe globals and hardens a QuickJS context.
  *
@@ -32,7 +44,7 @@
  * 1. Captures references to all 4 Function-derived prototypes via IIFE
  * 2. Sets .constructor = undefined (non-writable, non-configurable) on each
  * 3. Freezes each prototype to prevent re-adding .constructor
- * 4. Removes eval, Function, Proxy, Reflect, WeakRef, FinalizationRegistry from globalThis
+ * 4. Removes every SANDBOX_DISABLED_GLOBALS entry from globalThis
  * 5. Freezes Object, Array, String, Number, Boolean, RegExp prototypes
  */
 export const SANDBOX_SECURITY_INIT = `

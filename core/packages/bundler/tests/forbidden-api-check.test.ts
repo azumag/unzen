@@ -84,6 +84,18 @@ describe('forbidden-api-check', () => {
     expect(violations.some(v => v.includes('Function'))).toBe(true);
   });
 
+  it.each([
+    ['Proxy', 'new Proxy({}, {})'],
+    ['Reflect', 'Reflect.get({}, "value")'],
+    ['WeakRef', 'new WeakRef({})'],
+    ['FinalizationRegistry', 'new FinalizationRegistry(() => undefined)'],
+    ['WebAssembly', 'WebAssembly.compile(new Uint8Array())'],
+  ])('should detect sandbox-disabled global %s', (name, expression) => {
+    const violations = checkForbiddenApis(`function run() { return ${expression}; }`);
+
+    expect(violations.some(v => v.includes(name))).toBe(true);
+  });
+
   it('should detect require() calls', () => {
     const code = 'function run() { const fs = require("fs"); }';
     const violations = checkForbiddenApis(code);
@@ -180,13 +192,14 @@ describe('forbidden-api-check', () => {
 
   it('should allow local bindings that shadow forbidden globals', () => {
     const code = `
-      function run(fetch, require) {
+      function run(fetch, require, Proxy) {
         const WebSocket = class LocalSocket {};
         const globalThis = { eval: value => value };
+        const Reflect = { get: value => value };
         fetch("local");
         require("local");
         globalThis.eval("local");
-        return new WebSocket();
+        return [new WebSocket(), Proxy(Reflect.get("local"))];
       }
     `;
 

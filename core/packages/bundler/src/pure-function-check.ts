@@ -1,5 +1,6 @@
 /** Scope-aware purity checks for functions extracted into an isolated runtime. */
 
+import { SANDBOX_DISABLED_GLOBALS } from '@unzen/shared';
 import ts from 'typescript';
 import {
   createLexicalTypeChecker,
@@ -49,10 +50,8 @@ const PURE_GLOBALS = new Set([
   'NaN',
   'Number',
   'Object',
-  'Proxy',
   'RangeError',
   'ReferenceError',
-  'Reflect',
   'RegExp',
   'Set',
   'String',
@@ -78,18 +77,17 @@ const PURE_GLOBALS = new Set([
 ]);
 
 const FORBIDDEN_GLOBALS = new Set([
+  ...SANDBOX_DISABLED_GLOBALS,
   'Atomics',
   'BroadcastChannel',
   'Buffer',
   'Bun',
   'Deno',
   'EventSource',
-  'Function',
   'MessageChannel',
   'MessagePort',
   'SharedArrayBuffer',
   'SharedWorker',
-  'WebAssembly',
   'WebSocket',
   'Worker',
   'XMLHttpRequest',
@@ -97,7 +95,6 @@ const FORBIDDEN_GLOBALS = new Set([
   'console',
   'crypto',
   'document',
-  'eval',
   'exports',
   'fetch',
   'global',

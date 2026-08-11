@@ -298,6 +298,8 @@ server.defineRaw('add', `(a, b) => a + b`);
 | Function禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
 | Proxy禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
 | Reflect禁止 | undefined化 | `Object.defineProperty(configurable:false)` |
+| WeakRef / FinalizationRegistry禁止 | 存在時undefined化 | `Object.defineProperty(configurable:false)` |
+| WebAssembly禁止 | 存在時undefined化 | `Object.defineProperty(configurable:false)` |
 | プロトタイプ凍結 | 6種類 | `Object.freeze()` (Object/Array/String/Number/Boolean/RegExp) |
 | コンテキスト隔離 | 毎回新規 | `this.quickJS.newContext()` |
 
@@ -664,7 +666,9 @@ TypeScript source
 - 関数内のlocal bindingと外部captureをsymbolで区別するため、コメント・文字列・local
   shadowingは誤検知せず、標準モードのruntime import、`this`/`super`、禁止global、dynamic import、
   `import.meta`、入力/globalへの代入、`Math.random()`、`Date.now()`、
-  引数なし`Date`生成を位置付きerrorにする。local working stateへの代入は許可する
+  引数なし`Date`生成を位置付きerrorにする。QuickJS初期化が無効化するglobal一覧は
+  `SANDBOX_DISABLED_GLOBALS`を純粋性検査とbundle後検査でも共有する。local working stateへの
+  代入は許可する
 - unrelated `.define()`、nested call、`node_modules`は変換しない
 - webpack loaderはESM/CJS両方で配布し、raw TypeScriptを読むためloader chainの
   最初（`use`配列の右端）に置く

@@ -23,7 +23,7 @@ Layer 3: payloadサイズ上限
 
 Layer 4: 禁止API検出（バンドル後スキャン）
   └── バンドル出力をAST + symbol/scopeで解析し、禁止global参照を検出
-  └── fetch, WebSocket, eval, new Function, require, import() 等を検出
+  └── fetch, WebSocket, sandbox無効化global, require, import() 等を検出
 ```
 
 ### ブロックされるモジュール
@@ -39,6 +39,9 @@ Layer 4: 禁止API検出（バンドル後スキャン）
 - `WebSocket` - ネットワーク接続
 - `eval()` - 動的コード実行
 - `new Function()` - 動的コード実行
+- `Proxy` / `Reflect` - sandbox hardeningで無効化されたobject操作API
+- `WeakRef` / `FinalizationRegistry` - sandbox hardeningで無効化されたGC観測API
+- `WebAssembly` - sandbox内でのnested Wasm実行
 - `require()` - 動的モジュールロード
 - `import()` - 動的インポート
 - `importScripts` - スクリプトロード
@@ -70,7 +73,8 @@ server.defineRaw("sum", "(a, b) => a + b", { timeout: 500 });
 
 変換前にTypeScriptのsymbol/scope解析でinline関数の実行時参照を検査する。関数外の
 変数・標準モードのruntime import、`this`/`super`、禁止global（`fetch`、`globalThis`、`eval`、
-`require`等）、dynamic import、`import.meta`、入力/globalへの代入、
+`Proxy`、`Reflect`、`WeakRef`、`FinalizationRegistry`、`WebAssembly`、`require`等）、
+dynamic import、`import.meta`、入力/globalへの代入、
 `Math.random()`、`Date.now()`、`Date()`、引数なしの`new Date()`は、参照元の
 file/line/columnを含むbuild errorになる。local binding、local shadowing、local working
 stateへの代入は許可され、型annotationとtype-only importは実行時に消えるため無視する。
@@ -273,7 +277,8 @@ Node.js 組み込みモジュールかどうかを判定する。`node:` プレ�
 バンドル済みJavaScriptをTypeScript ASTとsymbol/scopeで解析し、禁止APIのglobal参照を
 検出する。`globalThis` / `self` / `window`経由の静的property accessと分割代入にも対応し、
 コメント・文字列・通常オブジェクトの同名property・local shadowingは無視する。同じAPIは
-一度だけ報告し、違反がなければ空配列を返す。
+一度だけ報告し、違反がなければ空配列を返す。QuickJS初期化が無効化する
+`SANDBOX_DISABLED_GLOBALS`も同じ一覧から検査する。
 
 ### `DEFAULT_ALLOWED_MODULES`
 

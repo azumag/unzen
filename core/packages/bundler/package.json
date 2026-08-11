@@ -28,6 +28,7 @@
     "typescript": "^5.4.0"
   },
   "devDependencies": {
+    "@unzen/shared": "file:../shared",
     "tsup": "^8.5.1",
     "vite": "^8.0.0",
     "vitest": "^4.1.7"

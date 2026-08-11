@@ -1,5 +1,6 @@
 /** Scope-aware forbidden API detection for bundled sandbox code. */
 
+import { SANDBOX_DISABLED_GLOBALS } from '@unzen/shared';
 import ts from 'typescript';
 import {
   createLexicalTypeChecker,
@@ -11,6 +12,20 @@ interface ForbiddenApiRule {
   name: string;
   description: string;
 }
+
+const SANDBOX_DISABLED_DESCRIPTIONS: Record<
+  (typeof SANDBOX_DISABLED_GLOBALS)[number],
+  string
+> = {
+  eval: 'eval() - dynamic code execution is blocked in sandbox',
+  Function: 'new Function() - dynamic code execution is blocked in sandbox',
+  Proxy: 'Proxy - object interception is disabled by sandbox hardening',
+  Reflect: 'Reflect - reflective object access is disabled by sandbox hardening',
+  WeakRef: 'WeakRef - garbage-collection observation is disabled by sandbox hardening',
+  FinalizationRegistry:
+    'FinalizationRegistry - garbage-collection observation is disabled by sandbox hardening',
+  WebAssembly: 'WebAssembly - nested Wasm execution is disabled by sandbox hardening',
+};
 
 const FORBIDDEN_API_RULES: ForbiddenApiRule[] = [
   {
@@ -29,14 +44,10 @@ const FORBIDDEN_API_RULES: ForbiddenApiRule[] = [
     name: 'importScripts',
     description: 'importScripts - dynamic script loading is blocked in sandbox',
   },
-  {
-    name: 'eval',
-    description: 'eval() - dynamic code execution is blocked in sandbox',
-  },
-  {
-    name: 'Function',
-    description: 'new Function() - dynamic code execution is blocked in sandbox',
-  },
+  ...SANDBOX_DISABLED_GLOBALS.map((name) => ({
+    name,
+    description: SANDBOX_DISABLED_DESCRIPTIONS[name],
+  })),
   {
     name: 'require',
     description: 'require() - dynamic module loading is blocked in sandbox',

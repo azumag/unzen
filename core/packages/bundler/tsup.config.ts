@@ -18,6 +18,7 @@ export default defineConfig([
     sourcemap: true,
     splitting: false,
     external: ['esbuild', 'magic-string', 'typescript'],
+    noExternal: ['@unzen/shared'],
   },
   // CommonJS loader output keeps require.resolve() usable from the webpack
   // configuration format most projects still use.
@@ -29,6 +30,7 @@ export default defineConfig([
     sourcemap: true,
     splitting: false,
     external: ['esbuild', 'magic-string', 'typescript'],
+    noExternal: ['@unzen/shared'],
     outExtension: () => ({ js: '.cjs' }),
   },
 ]);

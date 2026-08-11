@@ -254,7 +254,7 @@ Browser Main Thread                  Web Worker Thread
 | Layer 1: Web Worker | 別スレッド、DOMアクセス不可 |
 | Layer 2: Wasm sandbox | メモリ隔離（ホストからアクセス不可） |
 | Layer 3: QuickJS | 独立JSエンジン（V8とは別） |
-| Layer 4: API制限 | eval/Function/Proxy削除、プロトタイプ凍結 |
+| Layer 4: API制限 | eval/Function/Proxy/Reflect/WeakRef/FinalizationRegistry/WebAssembly無効化、プロトタイプ凍結 |
 
 > **MoonBit の隔離について**: `moonbitWorkerUrl` を指定すると MoonBit 関数は
 > 専用 Web Worker（`MoonBitWorkerSandboxExecutor`）で実行され、CPU 負荷の高い
