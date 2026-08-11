@@ -11,6 +11,7 @@
  * No production code is modified by the specs.
  */
 import { test, expect, type Page } from '@playwright/test';
+import { UNZEN_CODE_CACHE_NAME } from '@unzen/client/browser';
 
 /** Replace /worker.js with a worker that throws during load (init failure). */
 async function injectBrokenWorker(page: Page): Promise<void> {
@@ -123,22 +124,38 @@ test.describe('persistent versioned code cache', () => {
           (value) => value.toString(16).padStart(2, '0'),
         ).join('');
       };
-      const cache = await caches.open('unzen-code-v1');
-      const stored = await cache.match(codeUrl);
-      const storedWasm = await cache.match(wasmUrl);
       return {
         codeUrl,
         wasmUrl,
         firstBody,
         firstWasmHash: await toHash(firstWasmBytes),
-        storedBody: stored ? await stored.text() : null,
-        storedWasmHash: storedWasm ? await toHash(await storedWasm.arrayBuffer()) : null,
       };
     });
     expect(cached.codeUrl).toContain('&h=sha256%3A');
     expect(cached.wasmUrl).toContain('&h=sha256%3A');
-    expect(cached.storedBody).toBe(cached.firstBody);
-    expect(cached.storedWasmHash).toBe(cached.firstWasmHash);
+    await expect.poll(() => page.evaluate(async ({ cacheName, codeUrl, wasmUrl }) => {
+      const cache = await caches.open(cacheName);
+      const stored = await cache.match(codeUrl);
+      const storedWasm = await cache.match(wasmUrl);
+      const toHash = async (bytes: ArrayBuffer) => {
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(
+          new Uint8Array(digest),
+          (value) => value.toString(16).padStart(2, '0'),
+        ).join('');
+      };
+      return {
+        storedBody: stored ? await stored.text() : null,
+        storedWasmHash: storedWasm ? await toHash(await storedWasm.arrayBuffer()) : null,
+      };
+    }, {
+      cacheName: UNZEN_CODE_CACHE_NAME,
+      codeUrl: cached.codeUrl,
+      wasmUrl: cached.wasmUrl,
+    })).toEqual({
+      storedBody: cached.firstBody,
+      storedWasmHash: cached.firstWasmHash,
+    });
 
     await context.setOffline(true);
     try {
