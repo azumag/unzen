@@ -56,18 +56,36 @@ export interface UnzenFunctionOptions {
   noFallback?: boolean;
 }
 
-const UNSUPPORTED_FUNCTION_TAGS = new Set([
-  '[object AsyncFunction]',
-  '[object GeneratorFunction]',
-  '[object AsyncGeneratorFunction]',
+const FUNCTION_TO_STRING = Function.prototype.toString;
+const UNSUPPORTED_FUNCTION_PROTOTYPES = new Set<object>([
+  Object.getPrototypeOf(async function () {}),
+  Object.getPrototypeOf(function* () {}),
+  Object.getPrototypeOf(async function* () {}),
 ]);
 
 const RUN_FUNCTION_DECLARATION = /^function\s+run\s*\(/;
 
-function assertSynchronousFunction(fn: Function): void {
-  if (UNSUPPORTED_FUNCTION_TAGS.has(Object.prototype.toString.call(fn))) {
+function snapshotSynchronousFunctionSource(fn: unknown): string {
+  if (typeof fn !== 'function') {
+    throw new Error('Unzen define() requires a function');
+  }
+
+  let prototype: object | null;
+  let source: string;
+  try {
+    prototype = Object.getPrototypeOf(fn) as object | null;
+    source = Reflect.apply(FUNCTION_TO_STRING, fn, []) as string;
+  } catch {
+    throw new Error('Unzen define() could not inspect the function');
+  }
+
+  if (
+    (prototype !== null && UNSUPPORTED_FUNCTION_PROTOTYPES.has(prototype))
+    || /^(?:async(?:\s|\()|function\s*\*|\*)/.test(source.trimStart())
+  ) {
     throw new Error('Unzen define() supports synchronous non-generator functions only');
   }
+  return source;
 }
 
 function assertValidRegistrationName(name: unknown): asserts name is string {
@@ -171,10 +189,10 @@ export class UnzenServer {
     options?: UnzenFunctionOptions,
   ): void {
     assertValidRegistrationName(name);
-    assertSynchronousFunction(fn);
     // Extract function source code
-    // Function.toString() returns the complete function definition as a string
-    const code = fn.toString();
+    // The captured intrinsic cannot be replaced by a function object's own
+    // toString property, and does not consult Symbol.toStringTag.
+    const code = snapshotSynchronousFunctionSource(fn);
 
     // Use defineRaw to register with the extracted code
     this.defineRaw(name, code, options);

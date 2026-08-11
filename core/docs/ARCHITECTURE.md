@@ -316,6 +316,8 @@ server.defineRaw('add', `(a, b) => a + b`);
 登録名は英字で始まる1〜100文字の英数字・`_`・`-`だけを許可し、空コード、不正な
 timeout / fallback metadata、MoonBit の空path・不正なexport / ABI は、ファイル読込や
 version 更新より前に拒否する。
+`define()` は captured `Function.prototype.toString` で source を取得し、caller-owned
+`toString` / `Symbol.toStringTag` を実行せず async・generator を登録前に拒否する。
 
 `FunctionRegistry`は登録時に`FunctionDefinition`をruntime検証し、unknown fieldを落とした
 所有スナップショットとして保存する。`get()` / `getAll()`でも定義とネストしたMoonBit ABIを

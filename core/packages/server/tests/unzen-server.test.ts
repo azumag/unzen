@@ -62,6 +62,37 @@ describe('UnzenServer', () => {
       expect(server.getFunction('unsupported')).toBeUndefined();
     });
 
+    it('rejects async functions even when Symbol.toStringTag is spoofed', () => {
+      const fn = async () => 1;
+      Object.defineProperty(fn, Symbol.toStringTag, { value: 'Function' });
+
+      expect(() => server.define('spoofedAsync', fn))
+        .toThrow('synchronous non-generator');
+      expect(server.getFunction('spoofedAsync')).toBeUndefined();
+    });
+
+    it('extracts source with the intrinsic instead of a custom toString', () => {
+      const fn = () => 1;
+      Object.defineProperty(fn, 'toString', { value: () => '() => 999' });
+
+      server.define('intrinsicSource', fn);
+
+      expect(server.getFunction('intrinsicSource')?.code).toContain('() => 1');
+      expect(server.getFunction('intrinsicSource')?.code).not.toContain('999');
+    });
+
+    it('does not invoke a synchronous function Symbol.toStringTag getter', () => {
+      const fn = () => 1;
+      Object.defineProperty(fn, Symbol.toStringTag, {
+        get() {
+          throw new Error('tag getter must not run');
+        },
+      });
+
+      expect(() => server.define('tagSafe', fn)).not.toThrow();
+      expect(server.getFunction('tagSafe')).toBeDefined();
+    });
+
     it('should wrap function code with run() function', () => {
       const testFunc = function (x: number) {
         return x * 2;

@@ -77,6 +77,9 @@ unzen.define('sum', (a: number, b: number): number => a + b);
 // build output: unzen.defineRaw("sum", "(a, b) => a + b")
 ```
 
+direct `define()` は組み込みの `Function.prototype.toString` で source を1回取得し、関数自身の
+`toString` / `Symbol.toStringTag` に依存せず async・generator を登録前に拒否する。
+
 `declarationFile`はViteの`outDir`へ`UnzenFunctions`と`TypedUnzenClient`を生成する。
 生成型を使うと`client.call('sum', 1, 2)`の関数名・引数・戻り値を検査できる。
 抽出対象の関数はTypeScriptのsymbol/scope解析も通り、クロージャ・禁止global・
