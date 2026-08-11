@@ -15,6 +15,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_REQUEST_BYTES,
+  MAX_FUNCTION_PAYLOAD_BYTES,
   UnzenCancelledError,
   UnzenDeadlineExceededError,
   UnzenFunctionError,
@@ -206,6 +208,26 @@ describe('WebWorkerSandboxExecutor', () => {
         await expect(executor.execute(code as string, args as unknown[]))
           .rejects.toThrow(UnzenFunctionError);
       }
+
+      expect(factory).not.toHaveBeenCalled();
+      executor.dispose();
+    });
+
+    it('rejects oversized code and arguments before creating a worker', async () => {
+      const factory = vi.fn();
+      const executor = new WebWorkerSandboxExecutor({
+        workerUrl: '/worker.js',
+        createWorker: factory,
+      });
+
+      await expect(executor.execute(
+        'x'.repeat(MAX_FUNCTION_PAYLOAD_BYTES + 1),
+        [],
+      )).rejects.toThrow(`code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+      await expect(executor.execute(
+        'function run() { return 1; }',
+        ['x'.repeat(MAX_EXECUTION_REQUEST_BYTES)],
+      )).rejects.toThrow(`arguments exceed ${MAX_EXECUTION_REQUEST_BYTES} bytes`);
 
       expect(factory).not.toHaveBeenCalled();
       executor.dispose();

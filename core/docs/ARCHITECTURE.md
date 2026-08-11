@@ -199,9 +199,10 @@ Error
 
 **エラー分類の重要な詳細**:
 - QuickJSRuntime: 未知のエラーは `UnzenFunctionError` としてラップする (ユーザーコードが原因と推定するため)
-- QuickJSRuntime の公開 `execute()` 境界は timeout 1〜2,000ms、非空 code、最大128引数を
-  context 作成前に検証する。引数は iterator を使わない indexed copy 後に JSON 化し、
-  循環値・BigInt・caller mutation を QuickJS の外側で遮断する
+- server/browser QuickJS の公開 `execute()` 境界は code 16 MiB、serialized args 4 MiB、
+  最大128引数を worker / context 作成前に検証する。server timeout は 1〜2,000ms とする。
+  引数は iterator を使わない indexed copy 後に JSON 化し、循環値・BigInt・caller mutation と
+  過大 payload を QuickJS の外側で遮断する
 - QuickJSRuntime の `initialize()` は single-flight とし、`dispose()` は terminal state とする。
   dispose 中に完了した非同期初期化は module を公開せず、runtime を復活させない
 - fallback request は UTF-8 JSON 4 MiB、client の response body は manifest 1 MiB、

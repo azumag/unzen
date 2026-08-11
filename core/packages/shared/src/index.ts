@@ -57,6 +57,7 @@ export {
   UNZEN_ITERATOR_RESULT_ERROR,
   assertSynchronousUnzenResult,
 } from './sandbox-execution';
+export { utf8ByteLength, exceedsUtf8ByteLength } from './utf8';
 
 // Protocol types
 export {

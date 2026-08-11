@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { QuickJSRuntime } from '../src/quickjs-runtime';
 import {
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_REQUEST_BYTES,
+  MAX_FUNCTION_PAYLOAD_BYTES,
   MAX_FUNCTION_TIMEOUT,
   UnzenRuntimeError,
   UnzenFunctionError,
@@ -188,6 +190,17 @@ describe('QuickJSRuntime', () => {
         .rejects.toThrow('JSON-serializable');
       await expect(runtime.execute('function run() { return 1; }', [1n]))
         .rejects.toThrow('JSON-serializable');
+    });
+
+    it('rejects oversized direct-call code and argument payloads', async () => {
+      await expect(runtime.execute(
+        'x'.repeat(MAX_FUNCTION_PAYLOAD_BYTES + 1),
+        [],
+      )).rejects.toThrow(`code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`);
+      await expect(runtime.execute(
+        'function run() { return 1; }',
+        ['x'.repeat(MAX_EXECUTION_REQUEST_BYTES)],
+      )).rejects.toThrow(`arguments exceed ${MAX_EXECUTION_REQUEST_BYTES} bytes`);
     });
 
     it('should block eval() function', async () => {

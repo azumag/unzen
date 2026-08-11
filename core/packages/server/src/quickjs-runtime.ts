@@ -21,6 +21,8 @@
 import { getQuickJS, type QuickJSWASMModule } from 'quickjs-emscripten';
 import {
   MAX_EXECUTION_ARGUMENTS,
+  MAX_EXECUTION_REQUEST_BYTES,
+  MAX_FUNCTION_PAYLOAD_BYTES,
   MAX_FUNCTION_TIMEOUT,
   SANDBOX_SECURITY_INIT,
   SANDBOX_SYNCHRONOUS_EXECUTION,
@@ -64,7 +66,15 @@ function snapshotExecution(
     );
   }
 
-  if (typeof code !== 'string' || code.trim().length === 0) {
+  if (typeof code !== 'string') {
+    throw new UnzenFunctionError('QuickJS code must be a non-empty string');
+  }
+  if (Buffer.byteLength(code, 'utf8') > MAX_FUNCTION_PAYLOAD_BYTES) {
+    throw new UnzenFunctionError(
+      `QuickJS code exceeds ${MAX_FUNCTION_PAYLOAD_BYTES} bytes`,
+    );
+  }
+  if (code.trim().length === 0) {
     throw new UnzenFunctionError('QuickJS code must be a non-empty string');
   }
   if (!Array.isArray(args)) {
@@ -88,22 +98,29 @@ function snapshotExecution(
     );
   }
 
+  let argsJson: string;
   try {
     const snapshotArgs = new Array<unknown>(argumentCount);
     for (let index = 0; index < argumentCount; index += 1) {
       snapshotArgs[index] = args[index];
     }
-    const argsJson = JSON.stringify(snapshotArgs);
-    if (typeof argsJson !== 'string') {
+    const serialized = JSON.stringify(snapshotArgs);
+    if (typeof serialized !== 'string') {
       throw new Error('serialization returned no payload');
     }
-    return { code, argsJson, timeout };
+    argsJson = serialized;
   } catch {
     throw new UnzenFunctionError(
       `QuickJS arguments must be JSON-serializable and contain at most `
       + `${MAX_EXECUTION_ARGUMENTS} items`,
     );
   }
+  if (Buffer.byteLength(argsJson, 'utf8') > MAX_EXECUTION_REQUEST_BYTES) {
+    throw new UnzenFunctionError(
+      `QuickJS arguments exceed ${MAX_EXECUTION_REQUEST_BYTES} bytes`,
+    );
+  }
+  return { code, argsJson, timeout };
 }
 
 export class QuickJSRuntime {
