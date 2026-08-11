@@ -141,6 +141,13 @@ function isValidFunctionDefinition(def: unknown): def is FunctionDefinition;
 // HTTP 由来の manifest を検証し、prototype-safe な snapshot にコピー
 function normalizeManifestResponse(value: unknown): ManifestResponse | undefined;
 
+// server 側 manifest 生成も definition/base URL を検証し、null-prototype table と
+// encoded aggregate 1 MiB 上限を保証
+function createManifestResponse(
+  functions: Record<string, FunctionDefinition>,
+  baseUrl: string,
+): ManifestResponse;
+
 // マニフェストで公開される関数エントリ (コード本体を含まない)
 // FunctionDefinition との違い: code フィールドの代わりに codeUrl を持つ
 interface FunctionManifestEntry {

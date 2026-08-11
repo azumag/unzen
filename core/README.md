@@ -98,6 +98,9 @@ Promise/thenableまたはiterator/generator結果を同じ契約エラーとし�
 `function runner(...)` を含む他の関数式は outer `run` で包む。公開されている
 `FunctionRegistry`を直接使う場合も、定義全体を
 検証してABI配列を含むスナップショットを保持し、`get()` / `getAll()`は独立したコピーを返す。
+shared `createManifestResponse()` の直接利用も、base URL・record key と definition name・
+全 definition を検証し、null-prototype の関数表を返す。encoded aggregate は生成途中から
+1 MiB に制限され、advanced API でも client が拒否する manifest を生成しない。
 
 ```typescript
 // client.ts - ブラウザ側

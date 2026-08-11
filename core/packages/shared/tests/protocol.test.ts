@@ -14,6 +14,7 @@ import {
   FunctionManifestEntry,
   ExecutionRequest,
   ExecutionResponse,
+  MAX_MANIFEST_RESPONSE_BYTES,
   createManifestResponse,
   createExecutionResponse,
   isValidManifestResponse,
@@ -24,6 +25,7 @@ import {
 import { RuntimeType } from '../src/types';
 
 const VALID_HASH = `sha256:${'a'.repeat(64)}`;
+const VALID_HASH_B = `sha256:${'b'.repeat(64)}`;
 
 describe('ManifestRequest', () => {
   it('should be an empty object (no parameters needed)', () => {
@@ -296,17 +298,17 @@ describe('createManifestResponse', () => {
         runtime: 'quickjs' as RuntimeType,
         code: 'return /spam/i.test(args[0])',
         version: 1,
-        hash: 'sha256:abc123',
+        hash: VALID_HASH,
       },
     };
 
     const response = createManifestResponse(functions, 'https://example.com/unzen');
 
     expect(response.functions.spamCheck.runtime).toBe('quickjs');
-    expect(response.functions.spamCheck.hash).toBe('sha256:abc123');
+    expect(response.functions.spamCheck.hash).toBe(VALID_HASH);
     expect(response.functions.spamCheck.version).toBe(1);
     expect(response.functions.spamCheck.codeUrl).toBe(
-      'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aabc123',
+      `https://example.com/unzen/code/spamCheck?v=1&h=${encodeURIComponent(VALID_HASH)}`,
     );
   });
 
@@ -322,16 +324,18 @@ describe('createManifestResponse', () => {
       runtime: 'quickjs' as RuntimeType,
       code: 'function run() {}',
       version: 1,
-      hash: 'sha256:first',
+      hash: VALID_HASH,
     };
     const first = createManifestResponse({ calculate: definition }, '/unzen');
     const second = createManifestResponse({
-      calculate: { ...definition, hash: 'sha256:second' },
+      calculate: { ...definition, hash: VALID_HASH_B },
     }, '/unzen');
 
     expect(first.functions.calculate.codeUrl).not.toBe(second.functions.calculate.codeUrl);
-    expect(first.functions.calculate.codeUrl).toContain('v=1&h=sha256%3Afirst');
-    expect(second.functions.calculate.codeUrl).toContain('v=1&h=sha256%3Asecond');
+    expect(first.functions.calculate.codeUrl)
+      .toContain(`v=1&h=${encodeURIComponent(VALID_HASH)}`);
+    expect(second.functions.calculate.codeUrl)
+      .toContain(`v=1&h=${encodeURIComponent(VALID_HASH_B)}`);
   });
 
   it('copies MoonBit ABI metadata into the manifest', () => {
@@ -347,7 +351,7 @@ describe('createManifestResponse', () => {
         runtime: 'moonbit',
         code: 'scale.wasm',
         version: 1,
-        hash: 'sha256:abc123',
+        hash: VALID_HASH,
         moonbitAbi: sourceAbi,
       },
     }, 'https://example.com/unzen');
@@ -355,6 +359,72 @@ describe('createManifestResponse', () => {
     expect(response.functions.scale.moonbitAbi).toEqual(abi);
     expect(response.functions.scale.moonbitAbi).not.toBe(sourceAbi);
     expect(response.functions.scale.moonbitAbi?.params).not.toBe(sourceParams);
+  });
+
+  it('normalizes the base URL and returns a prototype-safe function table', () => {
+    const response = createManifestResponse({
+      calculate: {
+        name: 'calculate',
+        runtime: 'quickjs',
+        code: 'function run() { return 1; }',
+        version: 1,
+        hash: VALID_HASH,
+      },
+    }, '  /api/../unzen///  ');
+
+    expect(Object.getPrototypeOf(response.functions)).toBeNull();
+    expect(response.functions.calculate.codeUrl)
+      .toBe(`/unzen/code/calculate?v=1&h=${encodeURIComponent(VALID_HASH)}`);
+  });
+
+  it.each([
+    'relative/path',
+    '//attacker.example/unzen',
+    'javascript:alert(1)',
+    'https://user:secret@example.com/unzen',
+    'https://example.com/unzen?tenant=1',
+    'https://example.com/unzen#fragment',
+  ])('rejects unsafe manifest base URL %j', (baseUrl) => {
+    expect(() => createManifestResponse({}, baseUrl)).toThrow('baseUrl');
+  });
+
+  it('rejects invalid or mismatched function definitions', () => {
+    const definition = {
+      name: 'actualName',
+      runtime: 'quickjs' as const,
+      code: 'function run() {}',
+      version: 1,
+      hash: VALID_HASH,
+    };
+
+    expect(() => createManifestResponse({ manifestName: definition }, '/unzen'))
+      .toThrow('Invalid function definition');
+    expect(() => createManifestResponse({
+      actualName: { ...definition, hash: 'sha256:invalid' },
+    }, '/unzen')).toThrow('Invalid function definition');
+  });
+
+  it('rejects an aggregate manifest over the public response limit', () => {
+    const definitions: Record<string, {
+      name: string;
+      runtime: 'quickjs';
+      code: string;
+      version: number;
+      hash: string;
+    }> = {};
+    for (let index = 0; index < 6_000; index++) {
+      const name = `function${index}`;
+      definitions[name] = {
+        name,
+        runtime: 'quickjs',
+        code: 'function run() {}',
+        version: index + 1,
+        hash: VALID_HASH,
+      };
+    }
+
+    expect(() => createManifestResponse(definitions, '/unzen'))
+      .toThrow(`Manifest exceeds ${MAX_MANIFEST_RESPONSE_BYTES} bytes`);
   });
 });
 

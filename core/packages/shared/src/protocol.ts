@@ -9,10 +9,12 @@ import {
   isRuntimeType,
   isValidContentHash,
   isValidFunctionName,
+  normalizeFunctionDefinition,
   normalizeMoonBitAbi,
 } from './types';
 export { MAX_FUNCTION_PAYLOAD_BYTES } from './types';
 import type { FunctionDefinition, MoonBitAbi, RuntimeType } from './types';
+import { exceedsUtf8ByteLength, utf8ByteLength } from './utf8';
 
 /**
  * Request type for fetching the function manifest
@@ -26,6 +28,60 @@ export const MAX_MANIFEST_RESPONSE_BYTES = 1024 * 1024;
 
 /** Maximum encoded JSON size accepted for one fallback response (16 MiB). */
 export const MAX_EXECUTION_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+const MAX_MANIFEST_BASE_URL_BYTES = 2048;
+const RELATIVE_MANIFEST_BASE_ORIGIN = 'https://unzen.invalid';
+
+function invalidManifestBaseUrl(): TypeError {
+  return new TypeError(
+    'baseUrl must be an HTTP(S) URL or an origin-relative path without credentials, query, or fragment',
+  );
+}
+
+function normalizeManifestBaseUrl(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || value.trim().length === 0
+    || exceedsUtf8ByteLength(value.trim(), MAX_MANIFEST_BASE_URL_BYTES)
+  ) {
+    throw invalidManifestBaseUrl();
+  }
+  const trimmed = value.trim();
+
+  try {
+    if (trimmed.startsWith('/')) {
+      if (trimmed.startsWith('//')) throw invalidManifestBaseUrl();
+      const parsed = new URL(trimmed, `${RELATIVE_MANIFEST_BASE_ORIGIN}/`);
+      if (
+        parsed.origin !== RELATIVE_MANIFEST_BASE_ORIGIN
+        || parsed.username !== ''
+        || parsed.password !== ''
+        || parsed.search !== ''
+        || parsed.hash !== ''
+      ) {
+        throw invalidManifestBaseUrl();
+      }
+      return parsed.pathname.replace(/\/+$/, '');
+    }
+
+    const parsed = new URL(trimmed);
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      || parsed.username !== ''
+      || parsed.password !== ''
+      || parsed.search !== ''
+      || parsed.hash !== ''
+    ) {
+      throw invalidManifestBaseUrl();
+    }
+    return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '');
+  } catch (error) {
+    if (error instanceof TypeError && error.message.startsWith('baseUrl must')) {
+      throw error;
+    }
+    throw invalidManifestBaseUrl();
+  }
+}
 
 /**
  * Response type for manifest endpoint
@@ -268,7 +324,7 @@ export function isValidExecutionResponse(value: unknown): value is ExecutionResp
  *     runtime: 'quickjs',
  *     code: 'return /spam/i.test(args[0])',
  *     version: 1,
- *     hash: 'sha256:abc123',
+ *     hash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
  *   },
  * };
  *
@@ -277,9 +333,9 @@ export function isValidExecutionResponse(value: unknown): value is ExecutionResp
  * //   functions: {
  * //     spamCheck: {
  * //       runtime: 'quickjs',
- * //       hash: 'sha256:abc123',
+ * //       hash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
  * //       version: 1,
- * //       codeUrl: 'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aabc123',
+ * //       codeUrl: 'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aaaaaaaaa...',
  * //     },
  * //   },
  * // }
@@ -289,30 +345,63 @@ export function createManifestResponse(
   functions: Record<string, FunctionDefinition>,
   baseUrl: string
 ): ManifestResponse {
-  const result: ManifestResponse = { functions: {} };
-
-  for (const [name, def] of Object.entries(functions)) {
-    const sourceMoonbitAbi = def.moonbitAbi;
-    const moonbitAbi = sourceMoonbitAbi === undefined
-      ? undefined
-      : normalizeMoonBitAbi(sourceMoonbitAbi);
-    if (sourceMoonbitAbi !== undefined && moonbitAbi === undefined) {
-      throw new Error(`Invalid MoonBit ABI metadata for "${name}"`);
+  let names: string[];
+  try {
+    if (!isRecord(functions)) {
+      throw new TypeError('Invalid manifest function definitions');
     }
-    result.functions[name] = {
-      runtime: def.runtime,
-      hash: def.hash,
-      version: def.version,
+    names = Object.keys(functions);
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Invalid manifest function definitions') {
+      throw error;
+    }
+    throw new TypeError('Manifest function definitions could not be read');
+  }
+
+  const normalizedBaseUrl = normalizeManifestBaseUrl(baseUrl);
+  const functionEntries = Object.create(null) as Record<string, FunctionManifestEntry>;
+  const result: ManifestResponse = { functions: functionEntries };
+  let manifestBytes = utf8ByteLength('{"functions":{}}');
+  let firstEntry = true;
+
+  for (const name of names) {
+    const definition = normalizeFunctionDefinition(functions[name]);
+    if (definition === undefined || definition.name !== name) {
+      throw new TypeError(`Invalid function definition for "${name}"`);
+    }
+    if (
+      definition.exportName !== undefined
+      && exceedsUtf8ByteLength(definition.exportName, MAX_MANIFEST_RESPONSE_BYTES)
+    ) {
+      throw new Error(`Manifest exceeds ${MAX_MANIFEST_RESPONSE_BYTES} bytes`);
+    }
+
+    const entry: FunctionManifestEntry = {
+      runtime: definition.runtime,
+      hash: definition.hash,
+      version: definition.version,
       // Both values are required for persistent cache identity. The numeric
       // version distinguishes registrations within one server process; the
       // content hash keeps the URL unique across restarts/deployments where
       // version counters may start again from 1.
-      codeUrl: `${baseUrl}/code/${name}?v=${def.version}&h=${encodeURIComponent(def.hash)}`,
+      codeUrl: `${normalizedBaseUrl}/code/${name}?v=${definition.version}`
+        + `&h=${encodeURIComponent(definition.hash)}`,
       // MoonBit modules may export under their pub fn name rather than 'run'
-      exportName: def.exportName,
-      moonbitAbi,
-      noFallback: def.noFallback,
+      ...(definition.exportName !== undefined && { exportName: definition.exportName }),
+      ...(definition.moonbitAbi !== undefined && { moonbitAbi: definition.moonbitAbi }),
+      ...(definition.noFallback !== undefined && { noFallback: definition.noFallback }),
     };
+
+    const property = `${firstEntry ? '' : ','}${JSON.stringify(name)}:${JSON.stringify(entry)}`;
+    manifestBytes += utf8ByteLength(
+      property,
+      MAX_MANIFEST_RESPONSE_BYTES - manifestBytes,
+    );
+    if (manifestBytes > MAX_MANIFEST_RESPONSE_BYTES) {
+      throw new Error(`Manifest exceeds ${MAX_MANIFEST_RESPONSE_BYTES} bytes`);
+    }
+    functionEntries[name] = entry;
+    firstEntry = false;
   }
 
   return result;

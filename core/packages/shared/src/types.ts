@@ -5,6 +5,8 @@
  * Types are designed to be serializable and compatible with both browser and Node.js environments.
  */
 
+import { exceedsUtf8ByteLength } from './utf8';
+
 /**
  * Supported runtime types for function execution
  * - quickjs: JavaScript functions executed in QuickJS Wasm sandbox
@@ -133,33 +135,6 @@ export const MAX_FUNCTION_TIMEOUT = 2000;
 
 /** Maximum code/module payload size; also caps UTF-8 FunctionDefinition.code. */
 export const MAX_FUNCTION_PAYLOAD_BYTES = 16 * 1024 * 1024;
-
-function exceedsUtf8ByteLength(value: string, maximum: number): boolean {
-  let byteLength = 0;
-  for (let index = 0; index < value.length; index++) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x7f) {
-      byteLength += 1;
-    } else if (codeUnit <= 0x7ff) {
-      byteLength += 2;
-    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const nextCodeUnit = value.charCodeAt(index + 1);
-      if (nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
-        byteLength += 4;
-        index += 1;
-      } else {
-        byteLength += 3;
-      }
-    } else {
-      byteLength += 3;
-    }
-
-    if (byteLength > maximum) {
-      return true;
-    }
-  }
-  return false;
-}
 
 /**
  * Safe function name pattern
