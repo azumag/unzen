@@ -18,6 +18,7 @@ import {
   isRuntimeType,
   MAX_MOONBIT_ABI_PARAMS,
   normalizeMoonBitAbi,
+  normalizeFunctionDefinition,
   isValidMoonBitAbi,
   isValidFunctionDefinition,
 } from '../src/types';
@@ -98,6 +99,37 @@ describe('FunctionDefinition', () => {
 
     it('should accept valid function definitions', () => {
       expect(isValidFunctionDefinition(validDefinition)).toBe(true);
+    });
+
+    it('normalizes an isolated definition snapshot', () => {
+      const params = ['i32[]'] as const;
+      const source = {
+        ...validDefinition,
+        runtime: 'moonbit' as const,
+        exportName: 'double_values',
+        moonbitAbi: { params: [...params], result: 'i32[]' as const },
+        noFallback: true,
+        ignoredFutureField: true,
+      };
+
+      const normalized = normalizeFunctionDefinition(source);
+      expect(normalized).toEqual({
+        ...validDefinition,
+        runtime: 'moonbit',
+        exportName: 'double_values',
+        moonbitAbi: { params: ['i32[]'], result: 'i32[]' },
+        noFallback: true,
+      });
+      expect(normalized?.moonbitAbi?.params).not.toBe(source.moonbitAbi.params);
+    });
+
+    it.each([
+      ['non-boolean noFallback', { noFallback: 'yes' }],
+      ['QuickJS exportName', { exportName: 'run' }],
+      ['non-string MoonBit exportName', { runtime: 'moonbit', exportName: 42 }],
+    ])('rejects %s metadata', (_label, invalid) => {
+      expect(normalizeFunctionDefinition({ ...validDefinition, ...invalid }))
+        .toBeUndefined();
     });
 
     it('should reject definitions without required fields', () => {

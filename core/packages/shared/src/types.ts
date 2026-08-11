@@ -150,42 +150,105 @@ export function isValidContentHash(value: unknown): value is string {
   return typeof value === 'string' && SHA256_CONTENT_HASH.test(value);
 }
 
-export function isValidFunctionDefinition(def: unknown): def is FunctionDefinition {
-  if (typeof def !== 'object' || def === null) {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
-  // Use Record<string, unknown> for safe property access without type assertion lies
-  const d = def as Record<string, unknown>;
-
-  // Validate optional timeout: must be integer in range [1, 2000]
-  if (d.timeout !== undefined) {
+/** Validate and copy a function definition across an ownership boundary. */
+export function normalizeFunctionDefinition(value: unknown): FunctionDefinition | undefined {
+  try {
+    if (!isPlainRecord(value)) return undefined;
     if (
-      typeof d.timeout !== 'number' ||
-      !Number.isInteger(d.timeout) ||
-      d.timeout < 1 ||
-      d.timeout > MAX_FUNCTION_TIMEOUT
+      !Object.hasOwn(value, 'name')
+      || !Object.hasOwn(value, 'runtime')
+      || !Object.hasOwn(value, 'code')
+      || !Object.hasOwn(value, 'version')
+      || !Object.hasOwn(value, 'hash')
     ) {
-      return false;
+      return undefined;
     }
-  }
 
-  if (d.moonbitAbi !== undefined) {
-    if (d.runtime !== 'moonbit' || !isValidMoonBitAbi(d.moonbitAbi)) {
-      return false;
+    const name = value.name;
+    const runtime = value.runtime;
+    const code = value.code;
+    const version = value.version;
+    const hash = value.hash;
+    if (
+      !isValidFunctionName(name)
+      || !isRuntimeType(runtime)
+      || typeof code !== 'string'
+      || code.trim().length === 0
+      || typeof version !== 'number'
+      || !Number.isSafeInteger(version)
+      || version <= 0
+      || !isValidContentHash(hash)
+    ) {
+      return undefined;
     }
-  }
 
-  return (
-    isValidFunctionName(d.name) &&
-    isRuntimeType(d.runtime) &&
-    typeof d.code === 'string' &&
-    d.code.length > 0 &&
-    typeof d.version === 'number' &&
-    Number.isSafeInteger(d.version) &&
-    d.version > 0 &&
-    isValidContentHash(d.hash)
-  );
+    const timeout = Object.hasOwn(value, 'timeout') ? value.timeout : undefined;
+    if (
+      timeout !== undefined
+      && (
+        typeof timeout !== 'number'
+        || !Number.isInteger(timeout)
+        || timeout < 1
+        || timeout > MAX_FUNCTION_TIMEOUT
+      )
+    ) {
+      return undefined;
+    }
+
+    const exportName = Object.hasOwn(value, 'exportName') ? value.exportName : undefined;
+    if (
+      exportName !== undefined
+      && (runtime !== 'moonbit' || typeof exportName !== 'string')
+    ) {
+      return undefined;
+    }
+
+    const sourceMoonbitAbi = Object.hasOwn(value, 'moonbitAbi')
+      ? value.moonbitAbi
+      : undefined;
+    const moonbitAbi = sourceMoonbitAbi === undefined
+      ? undefined
+      : normalizeMoonBitAbi(sourceMoonbitAbi);
+    if (
+      sourceMoonbitAbi !== undefined
+      && (runtime !== 'moonbit' || moonbitAbi === undefined)
+    ) {
+      return undefined;
+    }
+
+    const noFallback = Object.hasOwn(value, 'noFallback')
+      ? value.noFallback
+      : undefined;
+    if (noFallback !== undefined && typeof noFallback !== 'boolean') {
+      return undefined;
+    }
+
+    return {
+      name,
+      runtime,
+      code,
+      version,
+      hash,
+      ...(exportName !== undefined && { exportName }),
+      ...(moonbitAbi !== undefined && { moonbitAbi }),
+      ...(timeout !== undefined && { timeout }),
+      ...(noFallback !== undefined && { noFallback }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function isValidFunctionDefinition(def: unknown): def is FunctionDefinition {
+  return normalizeFunctionDefinition(def) !== undefined;
 }
 
 /**

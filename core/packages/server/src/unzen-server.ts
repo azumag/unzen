@@ -27,6 +27,7 @@ import {
   UnzenFunctionError,
   UnzenRuntimeError,
   MAX_FUNCTION_TIMEOUT,
+  isValidFunctionName,
   normalizeMoonBitAbi,
 } from '@unzen/shared';
 import { FunctionRegistry } from './function-registry';
@@ -58,6 +59,30 @@ const UNSUPPORTED_FUNCTION_TAGS = new Set([
 function assertSynchronousFunction(fn: Function): void {
   if (UNSUPPORTED_FUNCTION_TAGS.has(Object.prototype.toString.call(fn))) {
     throw new Error('Unzen define() supports synchronous non-generator functions only');
+  }
+}
+
+function assertValidRegistrationName(name: unknown): asserts name is string {
+  if (!isValidFunctionName(name)) {
+    throw new Error(
+      'Invalid function name: use 1-100 ASCII letters, numbers, underscores, or hyphens, starting with a letter',
+    );
+  }
+}
+
+function assertValidTimeout(timeout: unknown): asserts timeout is number | undefined {
+  if (
+    timeout !== undefined
+    && (
+      typeof timeout !== 'number'
+      || !Number.isInteger(timeout)
+      || timeout < 1
+      || timeout > MAX_FUNCTION_TIMEOUT
+    )
+  ) {
+    throw new Error(
+      `Invalid timeout ${String(timeout)}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`,
+    );
   }
 }
 
@@ -126,6 +151,7 @@ export class UnzenServer {
     fn: (...args: TArgs) => TReturn,
     options?: UnzenFunctionOptions,
   ): void {
+    assertValidRegistrationName(name);
     assertSynchronousFunction(fn);
     // Extract function source code
     // Function.toString() returns the complete function definition as a string
@@ -157,16 +183,15 @@ export class UnzenServer {
     code: string,
     options?: UnzenFunctionOptions,
   ): void {
-    // Validate per-function timeout if provided
-    // Must be an integer in [1, 2000] to prevent abuse and match timeout tiers:
-    // 50ms (default), 500ms (medium), 2000ms (heavy)
-    if (options?.timeout !== undefined) {
-      const t = options.timeout;
-      if (!Number.isInteger(t) || t < 1 || t > MAX_FUNCTION_TIMEOUT) {
-        throw new Error(
-          `Invalid timeout ${t}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`
-        );
-      }
+    assertValidRegistrationName(name);
+    if (typeof code !== 'string' || code.trim().length === 0) {
+      throw new Error('Function code must be a non-empty string');
+    }
+    const timeout = options?.timeout;
+    const noFallback = options?.noFallback;
+    assertValidTimeout(timeout);
+    if (noFallback !== undefined && typeof noFallback !== 'boolean') {
+      throw new Error('Invalid noFallback option: expected a boolean');
     }
 
     // Warn if function code contains non-pure APIs that won't work in sandbox
@@ -201,8 +226,8 @@ export class UnzenServer {
       code: wrappedCode,
       version: this.versionCounter,
       hash,
-      ...(options?.timeout !== undefined && { timeout: options.timeout }),
-      ...(options?.noFallback !== undefined && { noFallback: options.noFallback }),
+      ...(timeout !== undefined && { timeout }),
+      ...(noFallback !== undefined && { noFallback }),
     };
 
     // Register the function definition
@@ -234,6 +259,25 @@ export class UnzenServer {
     wasmPath: string,
     options?: { exportName?: string; timeout?: number; abi?: MoonBitAbi },
   ): void {
+    assertValidRegistrationName(name);
+    if (typeof wasmPath !== 'string' || wasmPath.trim().length === 0) {
+      throw new Error('MoonBit module path must be a non-empty string');
+    }
+    const timeout = options?.timeout;
+    const exportName = options?.exportName;
+    const requestedAbi = options?.abi;
+    assertValidTimeout(timeout);
+    if (exportName !== undefined && typeof exportName !== 'string') {
+      throw new Error('Invalid MoonBit exportName: expected a string');
+    }
+
+    const moonbitAbi = requestedAbi === undefined
+      ? undefined
+      : normalizeMoonBitAbi(requestedAbi);
+    if (requestedAbi !== undefined && moonbitAbi === undefined) {
+      throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
+    }
+
     // Fail fast: the .wasm must exist and be a valid module at registration.
     let bytes: Buffer;
     try {
@@ -250,23 +294,6 @@ export class UnzenServer {
       throw new Error(`MoonBit module for "${name}" failed WebAssembly validation`);
     }
 
-    if (options?.timeout !== undefined) {
-      const t = options.timeout;
-      if (!Number.isInteger(t) || t < 1 || t > MAX_FUNCTION_TIMEOUT) {
-        throw new Error(
-          `Invalid timeout ${t}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`
-        );
-      }
-    }
-
-    const requestedAbi = options?.abi;
-    const moonbitAbi = requestedAbi === undefined
-      ? undefined
-      : normalizeMoonBitAbi(requestedAbi);
-    if (requestedAbi !== undefined && moonbitAbi === undefined) {
-      throw new Error('Invalid MoonBit ABI: expected params/result using scalar, i32[], or f64[]');
-    }
-
     this.versionCounter++;
 
     const definition: FunctionDefinition = {
@@ -278,11 +305,11 @@ export class UnzenServer {
       code: wasmPath,
       version: this.versionCounter,
       hash: this.generateBytesHash(bytes),
-      exportName: options?.exportName ?? 'run',
+      exportName: exportName ?? 'run',
       ...(moonbitAbi !== undefined && { moonbitAbi }),
       // The QuickJS server runtime cannot execute wasm-gc: browser-only.
       noFallback: true,
-      ...(options?.timeout !== undefined && { timeout: options.timeout }),
+      ...(timeout !== undefined && { timeout }),
     };
 
     // Capture the exact validated bytes for immutable delivery, keyed by

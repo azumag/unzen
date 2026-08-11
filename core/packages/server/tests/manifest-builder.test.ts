@@ -10,6 +10,9 @@ import { ManifestBuilder } from '../src/manifest-builder';
 import { FunctionRegistry } from '../src/function-registry';
 import type { FunctionDefinition } from '@unzen/shared';
 
+const HASH_A = `sha256:${'a'.repeat(64)}`;
+const HASH_B = `sha256:${'b'.repeat(64)}`;
+
 describe('ManifestBuilder', () => {
   let registry: FunctionRegistry;
 
@@ -31,7 +34,7 @@ describe('ManifestBuilder', () => {
         runtime: 'quickjs',
         code: 'return /spam/i.test(args[0])',
         version: 1,
-        hash: 'sha256:abc123',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -41,9 +44,9 @@ describe('ManifestBuilder', () => {
       expect(manifest.functions).toHaveProperty('spamCheck');
       expect(manifest.functions.spamCheck).toEqual({
         runtime: 'quickjs',
-        hash: 'sha256:abc123',
+        hash: HASH_A,
         version: 1,
-        codeUrl: 'https://example.com/unzen/code/spamCheck?v=1&h=sha256%3Aabc123',
+        codeUrl: `https://example.com/unzen/code/spamCheck?v=1&h=${encodeURIComponent(HASH_A)}`,
       });
     });
 
@@ -53,7 +56,7 @@ describe('ManifestBuilder', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:a',
+        hash: HASH_A,
       };
 
       const def2: FunctionDefinition = {
@@ -61,7 +64,7 @@ describe('ManifestBuilder', () => {
         runtime: 'moonbit',
         code: 'https://example.com/func2.wasm',
         version: 2,
-        hash: 'sha256:b',
+        hash: HASH_B,
       };
 
       registry.register(def1);
@@ -72,10 +75,10 @@ describe('ManifestBuilder', () => {
 
       expect(Object.keys(manifest.functions)).toHaveLength(2);
       expect(manifest.functions.func1.codeUrl).toBe(
-        'https://example.com/unzen/code/func1?v=1&h=sha256%3Aa',
+        `https://example.com/unzen/code/func1?v=1&h=${encodeURIComponent(HASH_A)}`,
       );
       expect(manifest.functions.func2.codeUrl).toBe(
-        'https://example.com/unzen/code/func2?v=2&h=sha256%3Ab',
+        `https://example.com/unzen/code/func2?v=2&h=${encodeURIComponent(HASH_B)}`,
       );
     });
 
@@ -85,7 +88,7 @@ describe('ManifestBuilder', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:abc',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -93,7 +96,7 @@ describe('ManifestBuilder', () => {
       const manifest = builder.build();
 
       expect(manifest.functions.testFunc.codeUrl).toBe(
-        'https://example.com/unzen/code/testFunc?v=1&h=sha256%3Aabc',
+        `https://example.com/unzen/code/testFunc?v=1&h=${encodeURIComponent(HASH_A)}`,
       );
     });
 
@@ -103,7 +106,7 @@ describe('ManifestBuilder', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:abc',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -112,7 +115,7 @@ describe('ManifestBuilder', () => {
 
       // Should not have double slashes
       expect(manifest.functions.testFunc.codeUrl).toBe(
-        'https://example.com/unzen/code/testFunc?v=1&h=sha256%3Aabc',
+        `https://example.com/unzen/code/testFunc?v=1&h=${encodeURIComponent(HASH_A)}`,
       );
     });
 
@@ -122,7 +125,7 @@ describe('ManifestBuilder', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:a',
+        hash: HASH_A,
       };
 
       const moonbitFunc: FunctionDefinition = {
@@ -130,7 +133,7 @@ describe('ManifestBuilder', () => {
         runtime: 'moonbit',
         code: 'https://example.com/func.wasm',
         version: 1,
-        hash: 'sha256:b',
+        hash: HASH_B,
       };
 
       registry.register(quickjsFunc);

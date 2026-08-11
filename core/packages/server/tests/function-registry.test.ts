@@ -9,6 +9,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { FunctionRegistry } from '../src/function-registry';
 import type { FunctionDefinition } from '@unzen/shared';
 
+const HASH_A = `sha256:${'a'.repeat(64)}`;
+const HASH_B = `sha256:${'b'.repeat(64)}`;
+
 describe('FunctionRegistry', () => {
   let registry: FunctionRegistry;
 
@@ -23,7 +26,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return args[0] + 1',
         version: 1,
-        hash: 'sha256:abc123',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -36,7 +39,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return args[0] + 1',
         version: 1,
-        hash: 'sha256:abc123',
+        hash: HASH_A,
       };
 
       const def2: FunctionDefinition = {
@@ -44,7 +47,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return args[0] + 2',
         version: 2,
-        hash: 'sha256:def456',
+        hash: HASH_B,
       };
 
       registry.register(def1);
@@ -52,7 +55,7 @@ describe('FunctionRegistry', () => {
 
       const result = registry.get('testFunc');
       expect(result?.version).toBe(2);
-      expect(result?.hash).toBe('sha256:def456');
+      expect(result?.hash).toBe(HASH_B);
     });
 
     it('should handle multiple functions', () => {
@@ -61,7 +64,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:a',
+        hash: HASH_A,
       };
 
       const def2: FunctionDefinition = {
@@ -69,7 +72,7 @@ describe('FunctionRegistry', () => {
         runtime: 'moonbit',
         code: 'https://example.com/func2.wasm',
         version: 1,
-        hash: 'sha256:b',
+        hash: HASH_B,
       };
 
       registry.register(def1);
@@ -77,6 +80,40 @@ describe('FunctionRegistry', () => {
 
       expect(registry.has('func1')).toBe(true);
       expect(registry.has('func2')).toBe(true);
+    });
+
+    it('snapshots definitions and nested MoonBit ABI metadata', () => {
+      const def: FunctionDefinition = {
+        name: 'sumArray',
+        runtime: 'moonbit',
+        code: 'sum.wasm',
+        version: 1,
+        hash: HASH_A,
+        exportName: 'sum_array',
+        moonbitAbi: { params: ['i32[]'], result: 'scalar' },
+        noFallback: true,
+      };
+      registry.register(def);
+
+      def.code = 'tampered.wasm';
+      def.hash = `sha256:${'f'.repeat(64)}`;
+      def.moonbitAbi!.params[0] = 'f64[]';
+
+      expect(registry.get('sumArray')).toMatchObject({
+        code: 'sum.wasm',
+        hash: HASH_A,
+        moonbitAbi: { params: ['i32[]'], result: 'scalar' },
+      });
+    });
+
+    it('rejects invalid definitions', () => {
+      expect(() => registry.register({
+        name: '../escape',
+        runtime: 'quickjs',
+        code: 'function run() {}',
+        version: 1,
+        hash: HASH_A,
+      })).toThrow('Invalid function definition');
     });
   });
 
@@ -87,7 +124,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return args[0] + 1',
         version: 1,
-        hash: 'sha256:abc123',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -100,6 +137,24 @@ describe('FunctionRegistry', () => {
       const result = registry.get('nonExistent');
       expect(result).toBeUndefined();
     });
+
+    it('returns an isolated copy on every read', () => {
+      const def: FunctionDefinition = {
+        name: 'testFunc',
+        runtime: 'quickjs',
+        code: 'function run() { return 1; }',
+        version: 1,
+        hash: HASH_A,
+      };
+      registry.register(def);
+
+      const first = registry.get('testFunc')!;
+      first.code = 'function run() { return 999; }';
+      const second = registry.get('testFunc')!;
+
+      expect(second.code).toBe('function run() { return 1; }');
+      expect(second).not.toBe(first);
+    });
   });
 
   describe('has', () => {
@@ -109,7 +164,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:abc',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -133,7 +188,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:a',
+        hash: HASH_A,
       };
 
       const def2: FunctionDefinition = {
@@ -141,7 +196,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return 2',
         version: 1,
-        hash: 'sha256:b',
+        hash: HASH_B,
       };
 
       registry.register(def1);
@@ -159,7 +214,7 @@ describe('FunctionRegistry', () => {
         runtime: 'quickjs',
         code: 'return 1',
         version: 1,
-        hash: 'sha256:abc',
+        hash: HASH_A,
       };
 
       registry.register(def);
@@ -168,6 +223,21 @@ describe('FunctionRegistry', () => {
 
       // Original registry should not be affected
       expect(registry.has('testFunc')).toBe(true);
+    });
+
+    it('returns isolated definition values in the copied map', () => {
+      const def: FunctionDefinition = {
+        name: 'testFunc',
+        runtime: 'quickjs',
+        code: 'function run() { return 1; }',
+        version: 1,
+        hash: HASH_A,
+      };
+      registry.register(def);
+
+      registry.getAll().get('testFunc')!.code = 'tampered';
+      expect(registry.getAll().get('testFunc')?.code)
+        .toBe('function run() { return 1; }');
     });
   });
 });

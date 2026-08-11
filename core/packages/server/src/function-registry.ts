@@ -10,7 +10,29 @@
  * - Returns copies of internal state to prevent external mutation
  */
 
-import type { FunctionDefinition } from '@unzen/shared';
+import {
+  normalizeFunctionDefinition,
+  normalizeMoonBitAbi,
+  type FunctionDefinition,
+} from '@unzen/shared';
+
+function copyDefinition(definition: FunctionDefinition): FunctionDefinition {
+  const moonbitAbi = definition.moonbitAbi === undefined
+    ? undefined
+    : normalizeMoonBitAbi(definition.moonbitAbi);
+
+  return {
+    name: definition.name,
+    runtime: definition.runtime,
+    code: definition.code,
+    version: definition.version,
+    hash: definition.hash,
+    ...(definition.exportName !== undefined && { exportName: definition.exportName }),
+    ...(moonbitAbi !== undefined && { moonbitAbi }),
+    ...(definition.timeout !== undefined && { timeout: definition.timeout }),
+    ...(definition.noFallback !== undefined && { noFallback: definition.noFallback }),
+  };
+}
 
 export class FunctionRegistry {
   /**
@@ -32,7 +54,11 @@ export class FunctionRegistry {
    * @param def - Function definition to register
    */
   register(def: FunctionDefinition): void {
-    this.functions.set(def.name, def);
+    const snapshot = normalizeFunctionDefinition(def);
+    if (snapshot === undefined) {
+      throw new TypeError('Invalid function definition');
+    }
+    this.functions.set(snapshot.name, snapshot);
   }
 
   /**
@@ -42,7 +68,10 @@ export class FunctionRegistry {
    * @returns Function definition if found, undefined otherwise
    */
   get(name: string): FunctionDefinition | undefined {
-    return this.functions.get(name);
+    const definition = this.functions.get(name);
+    return definition === undefined
+      ? undefined
+      : copyDefinition(definition);
   }
 
   /**
@@ -58,13 +87,16 @@ export class FunctionRegistry {
   /**
    * Get all registered functions
    *
-   * Returns a copy of the internal map to prevent external modification.
-   * This is important to maintain encapsulation and prevent accidental mutations.
+   * Returns a copy of the map and every definition value, including nested ABI
+   * metadata, to prevent external modification of registry-owned state.
    *
    * @returns Copy of the internal function map
    */
   getAll(): Map<string, FunctionDefinition> {
-    // Return a new Map to prevent external modification of internal state
-    return new Map(this.functions);
+    const definitions = new Map<string, FunctionDefinition>();
+    for (const [name, definition] of this.functions) {
+      definitions.set(name, copyDefinition(definition));
+    }
+    return definitions;
   }
 }

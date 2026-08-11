@@ -281,6 +281,13 @@ server.defineRaw('add', `(a, b) => a + b`);
 ```
 
 ラップ後のコードに対して SHA-256 ハッシュを生成し、バージョン番号を付与する。
+登録名は英字で始まる1〜100文字の英数字・`_`・`-`だけを許可し、空コード、不正な
+timeout / fallback metadata、MoonBit の空path・不正なexport / ABI は、ファイル読込や
+version 更新より前に拒否する。
+
+`FunctionRegistry`は登録時に`FunctionDefinition`をruntime検証し、unknown fieldを落とした
+所有スナップショットとして保存する。`get()` / `getAll()`でも定義とネストしたMoonBit ABIを
+再コピーするため、呼び出し側による変更がmanifest・code配信・fallback実行へ逆流しない。
 
 ### 5.3 QuickJS サンドボックス実行エンジン
 

@@ -31,6 +31,7 @@ export {
   normalizeMoonBitAbi,
   isValidMoonBitAbi,
   MAX_MOONBIT_ABI_PARAMS,
+  normalizeFunctionDefinition,
   isValidFunctionDefinition,
   MAX_FUNCTION_TIMEOUT,
 } from './types';

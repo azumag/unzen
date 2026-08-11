@@ -200,6 +200,42 @@ describe('UnzenServer', () => {
       const fn = server.getFunction('double');
       expect(fn?.code).toContain('function run(...args)');
     });
+
+    it('rejects unsafe names and empty code before registration', () => {
+      expect(() => server.defineRaw('../escape', '() => 1'))
+        .toThrow('Invalid function name');
+      expect(() => server.defineRaw('emptyCode', '   '))
+        .toThrow('Function code must be a non-empty string');
+      expect(server.getFunction('../escape')).toBeUndefined();
+      expect(server.getFunction('emptyCode')).toBeUndefined();
+    });
+
+    it('validates and snapshots options before changing registry state', () => {
+      let timeoutReads = 0;
+      let fallbackReads = 0;
+      const options = new Proxy({}, {
+        get(_target, property) {
+          if (property === 'timeout') return ++timeoutReads === 1 ? 500 : 0;
+          if (property === 'noFallback') return ++fallbackReads === 1 ? true : 'invalid';
+          return undefined;
+        },
+      });
+
+      server.defineRaw('stableOptions', '() => 1', options);
+      expect(server.getFunction('stableOptions')).toMatchObject({
+        timeout: 500,
+        noFallback: true,
+      });
+      expect(timeoutReads).toBe(1);
+      expect(fallbackReads).toBe(1);
+
+      expect(() => server.defineRaw(
+        'badOptions',
+        '() => 2',
+        { noFallback: 'yes' } as never,
+      )).toThrow('Invalid noFallback option');
+      expect(server.getFunction('badOptions')).toBeUndefined();
+    });
   });
 
   describe('pure function warnings', () => {
@@ -273,6 +309,22 @@ describe('UnzenServer', () => {
     it('should return undefined for non-existent function', () => {
       const fn = server.getFunction('nonExistent');
       expect(fn).toBeUndefined();
+    });
+
+    it('does not expose mutable registry state', async () => {
+      server.defineRaw('stable', '() => 7');
+      const exposed = server.getFunction('stable')!;
+      exposed.code = 'function run() { return 999; }';
+      exposed.hash = `sha256:${'f'.repeat(64)}`;
+      exposed.noFallback = true;
+
+      const fresh = server.getFunction('stable')!;
+      expect(fresh.code).not.toContain('999');
+      expect(fresh.hash).not.toBe(exposed.hash);
+      expect(fresh.noFallback).toBeUndefined();
+
+      const manifest = await (await server.middleware().request('/manifest')).json();
+      expect(manifest.functions.stable.hash).toBe(fresh.hash);
     });
   });
 
@@ -441,6 +493,23 @@ describe('UnzenServer', () => {
         join(fixtureDir, 'fibonacci.wasm'),
         { abi: { params: ['u32[]'] } as never },
       )).toThrow('Invalid MoonBit ABI');
+    });
+
+    it('rejects an unsafe name before reading a MoonBit module', () => {
+      expect(() => server.defineMoonbit('../escape', 'missing.wasm'))
+        .toThrow('Invalid function name');
+    });
+
+    it('rejects invalid MoonBit metadata before reading the module', () => {
+      expect(() => server.defineMoonbit(
+        'badExport',
+        'missing.wasm',
+        { exportName: 42 } as never,
+      )).toThrow('Invalid MoonBit exportName');
+      expect(() => server.defineMoonbit('emptyPath', '   '))
+        .toThrow('MoonBit module path must be a non-empty string');
+      expect(server.getFunction('badExport')).toBeUndefined();
+      expect(server.getFunction('emptyPath')).toBeUndefined();
     });
 
     it('should reject a missing module file', () => {
