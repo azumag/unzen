@@ -58,7 +58,10 @@ describe('Next.js App Router example', () => {
     expect(e2eScript).toContain('/api/unzen/exec/jsonSchemaValidate');
     expect(e2eScript).toContain('/unzen/worker.js');
     expect(e2eScript).toContain('/unzen-cache-worker.js');
-    expect(e2eScript).toContain("caches.open('unzen-code-v2')");
+    expect(e2eScript).toContain(
+      "import { UNZEN_CODE_CACHE_NAME } from '@unzen/client/browser'",
+    );
+    expect(e2eScript).toContain('caches.open(cacheName)');
     expect(e2eScript).toContain('context.setOffline(true)');
     expect(e2eScript).toContain("getByRole('button', { name: 'Run validation' })");
     expect(e2eScript).toContain("payload.diagnostics?.executedOn === 'browser'");

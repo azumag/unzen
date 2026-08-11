@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { UNZEN_CODE_CACHE_NAME } from '@unzen/client/browser';
 
 const port = Number(process.env.UNZEN_E2E_PORT ?? 3100);
 const origin = `http://127.0.0.1:${port}`;
@@ -153,15 +154,20 @@ async function verifyBrowserFlow() {
         `expected browser execution, got ${payload.diagnostics?.executedOn}`
       );
 
-      const cachedCode = await page.evaluate(async () => {
+      const cachedCode = await page.evaluate(async (cacheName) => {
         const manifest = await fetch('/api/unzen/manifest').then((response) => response.json());
         const codeUrl = new URL(
           manifest.functions.jsonSchemaValidate.codeUrl,
           location.href
         ).href;
-        const cached = await (await caches.open('unzen-code-v2')).match(codeUrl);
-        return { codeUrl, stored: cached !== undefined };
-      });
+        const cache = await caches.open(cacheName);
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          if (await cache.match(codeUrl)) return { codeUrl, stored: true };
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return { codeUrl, stored: false };
+      }, UNZEN_CODE_CACHE_NAME);
       assert(cachedCode.stored, 'versioned function code should be stored in CacheStorage');
 
       await context.setOffline(true);
