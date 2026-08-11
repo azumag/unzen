@@ -55,6 +55,60 @@ describe('MoonBitSandboxExecutor', () => {
     },
   );
 
+  it('rejects malformed import maps during construction', () => {
+    expect(() => new MoonBitSandboxExecutor({ imports: null as never }))
+      .toThrow('MoonBit imports must be an object');
+    expect(() => new MoonBitSandboxExecutor({ imports: [] as never }))
+      .toThrow('MoonBit imports must be an object');
+    expect(() => new MoonBitSandboxExecutor({
+      imports: { env: null } as never,
+    })).toThrow('MoonBit import module "env" must be an object');
+
+    const unreadable = new Proxy({}, {
+      ownKeys() {
+        throw new Error('boom');
+      },
+    });
+    expect(() => new MoonBitSandboxExecutor({ imports: unreadable }))
+      .toThrow('MoonBit imports could not be read');
+  });
+
+  it('snapshots prototype-named imports without mutating object prototypes', async () => {
+    const originalImport = vi.fn(() => 7);
+    const replacementImport = vi.fn(() => 9);
+    const moduleImports = Object.create(null) as WebAssembly.ModuleImports;
+    moduleImports.__proto__ = originalImport;
+    const imports = Object.create(null) as WebAssembly.Imports;
+    imports.__proto__ = moduleImports;
+    const executor = new MoonBitSandboxExecutor({ imports });
+
+    moduleImports.__proto__ = replacementImport;
+    let instantiatedImports: WebAssembly.Imports | undefined;
+    const originalInstantiate = WebAssembly.instantiate;
+    (WebAssembly as unknown as { instantiate: unknown }).instantiate = vi.fn(
+      async (_module: WebAssembly.Module, runtimeImports: WebAssembly.Imports) => {
+        instantiatedImports = runtimeImports;
+        return { exports: { run: () => 1 } } as unknown as WebAssembly.Instance;
+      },
+    );
+
+    try {
+      await expect(executor.execute({
+        url: 'https://example.com/prototype-import.wasm',
+        module: {} as WebAssembly.Module,
+      }, [])).resolves.toBe(1);
+      expect(Object.getPrototypeOf(instantiatedImports)).toBeNull();
+      expect(Object.hasOwn(instantiatedImports ?? {}, '__proto__')).toBe(true);
+      const snapshottedModule = instantiatedImports?.__proto__;
+      expect(Object.getPrototypeOf(snapshottedModule)).toBeNull();
+      expect(Object.hasOwn(snapshottedModule ?? {}, '__proto__')).toBe(true);
+      expect(snapshottedModule?.__proto__).toBe(originalImport);
+    } finally {
+      (WebAssembly as unknown as { instantiate: unknown }).instantiate = originalInstantiate;
+      executor.dispose();
+    }
+  });
+
   it('fetches, instantiates, and calls the configured export', async () => {
     const fetchMock = mockFetchBytes();
     const executor = new MoonBitSandboxExecutor();

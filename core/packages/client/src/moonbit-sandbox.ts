@@ -503,13 +503,60 @@ function mergeImports(
   base: WebAssembly.Imports,
   extra?: WebAssembly.Imports,
 ): WebAssembly.Imports {
-  if (!extra) return base;
-  const merged: WebAssembly.Imports = {};
-  for (const [mod, fns] of Object.entries(base)) {
-    merged[mod] = { ...fns } as WebAssembly.ModuleImports;
-  }
-  for (const [mod, fns] of Object.entries(extra)) {
-    merged[mod] = { ...(merged[mod] ?? {}), ...fns } as WebAssembly.ModuleImports;
-  }
+  const merged = Object.create(null) as WebAssembly.Imports;
+  copyImportModules(merged, base);
+  if (extra !== undefined) copyImportModules(merged, extra);
   return merged;
+}
+
+/** Copy an import map without invoking custom iterators or object prototypes. */
+function copyImportModules(
+  target: WebAssembly.Imports,
+  source: WebAssembly.Imports,
+): void {
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) {
+    throw new TypeError('MoonBit imports must be an object');
+  }
+
+  let moduleNames: string[];
+  try {
+    moduleNames = Object.keys(source);
+  } catch {
+    throw new TypeError('MoonBit imports could not be read');
+  }
+
+  for (const moduleName of moduleNames) {
+    let sourceModule: unknown;
+    try {
+      sourceModule = (source as Record<string, unknown>)[moduleName];
+    } catch {
+      throw new TypeError('MoonBit imports could not be read');
+    }
+    if (
+      typeof sourceModule !== 'object'
+      || sourceModule === null
+      || Array.isArray(sourceModule)
+    ) {
+      throw new TypeError(`MoonBit import module "${moduleName}" must be an object`);
+    }
+
+    let importNames: string[];
+    try {
+      importNames = Object.keys(sourceModule);
+    } catch {
+      throw new TypeError('MoonBit imports could not be read');
+    }
+    const targetModule = target[moduleName]
+      ?? (Object.create(null) as WebAssembly.ModuleImports);
+    for (const importName of importNames) {
+      try {
+        targetModule[importName] = (
+          sourceModule as Record<string, WebAssembly.ImportValue>
+        )[importName];
+      } catch {
+        throw new TypeError('MoonBit imports could not be read');
+      }
+    }
+    target[moduleName] = targetModule;
+  }
 }
