@@ -1,9 +1,12 @@
 /** Shared cache policy used by the Unzen Service Worker and its tests. */
 
+import { isValidUnzenContentHash } from './content-integrity';
+
+export { digestUnzenContent as digestUnzenCode } from './content-integrity';
+
 export const UNZEN_CODE_CACHE_PREFIX = 'unzen-code-';
 export const UNZEN_CODE_CACHE_NAME = `${UNZEN_CODE_CACHE_PREFIX}v1`;
 
-const SHA256_IDENTITY = /^sha256:[a-f0-9]{64}$/;
 const POSITIVE_VERSION = /^[1-9][0-9]*$/;
 const CACHEABLE_CONTENT_TYPES = new Set([
   'application/javascript',
@@ -59,13 +62,13 @@ export function isVersionedUnzenCodeRequest(request: Request, origin: string): b
     if (key !== 'v' && key !== 'h') return false;
   }
 
-  return POSITIVE_VERSION.test(versions[0]!) && SHA256_IDENTITY.test(hashes[0]!);
+  return POSITIVE_VERSION.test(versions[0]!) && isValidUnzenContentHash(hashes[0]);
 }
 
 /** Return the hash identity from a request already accepted by the matcher. */
 export function getUnzenCodeRequestHash(request: Request): string | null {
   const hash = new URL(request.url).searchParams.get('h');
-  return hash !== null && SHA256_IDENTITY.test(hash) ? hash : null;
+  return isValidUnzenContentHash(hash) ? hash : null;
 }
 
 /** Cache only successful, non-redirected immutable JavaScript/Wasm payloads. */
@@ -89,17 +92,6 @@ export function isCacheableUnzenCodeResponse(response: Response): boolean {
     .trim()
     .toLowerCase();
   return CACHEABLE_CONTENT_TYPES.has(contentType);
-}
-
-/** Digest bytes with Web Crypto into the manifest's `sha256:<hex>` format. */
-export async function digestUnzenCode(
-  bytes: ArrayBuffer,
-  subtle: Pick<SubtleCrypto, 'digest'>,
-): Promise<string> {
-  const digest = await subtle.digest('SHA-256', bytes);
-  const hex = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0'))
-    .join('');
-  return `sha256:${hex}`;
 }
 
 function integrityFailure(): Response {

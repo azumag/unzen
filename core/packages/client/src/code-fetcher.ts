@@ -28,6 +28,10 @@ import {
   type FunctionManifestEntry,
 } from '@unzen/shared';
 import { isAbortError, throwIfAborted } from './abort';
+import {
+  assertUnzenContentIntegrity,
+  isValidUnzenContentHash,
+} from './content-integrity';
 
 export class CodeFetcher {
   /**
@@ -72,6 +76,12 @@ export class CodeFetcher {
     // cached code must not be handed out after cancellation.
     throwIfAborted(signal);
 
+    // The hash is the trust anchor for both verification and cache identity.
+    // Reject malformed manifests before performing any network request.
+    if (!isValidUnzenContentHash(entry.hash)) {
+      throw new UnzenNetworkError('Invalid code hash in manifest');
+    }
+
     // Check cache first
     // Rationale: Hash represents content identity, so cache hit is safe
     const cached = this.cache.get(entry.hash);
@@ -94,8 +104,20 @@ export class CodeFetcher {
         );
       }
 
-      // Parse response as text (JavaScript source code)
-      const code = await response.text();
+      // Read and verify raw bytes before decoding or caching. The optional
+      // Service Worker cache is an optimization, not a security dependency,
+      // so every normal fetch path repeats this integrity check.
+      const bytes = await response.arrayBuffer();
+      throwIfAborted(signal);
+      await assertUnzenContentIntegrity(bytes, entry.hash);
+      throwIfAborted(signal);
+
+      let code: string;
+      try {
+        code = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        throw new UnzenNetworkError('Fetched function code is not valid UTF-8');
+      }
 
       // Cache by hash
       // Rationale: Same hash = same content, so safe to cache indefinitely

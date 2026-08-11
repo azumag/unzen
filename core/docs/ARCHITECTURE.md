@@ -339,7 +339,7 @@ Hono ミドルウェアとして3つのエンドポイントを提供:
 ```
 UnzenClient
  ├── ManifestFetcher     GET /manifest (インメモリキャッシュ)
- ├── CodeFetcher         GET /code/:name (ハッシュベースキャッシュ)
+ ├── CodeFetcher         GET /code/:name (SHA-256 検証 + ハッシュキャッシュ)
  ├── SandboxExecutor     ブラウザ内サンドボックス実行
  │    └── MockSandboxExecutor (MVP: Node.js vm)
  └── FallbackHandler     POST /exec/:name (サーバーフォールバック)
@@ -361,7 +361,7 @@ call(name, ...args)
 │   │   ├── ManifestFetcher.fetch() → マニフェスト取得 (キャッシュ)
 │   │   ├── manifest.functions[name] → エントリ検索
 │   │   │   └── 無い場合: throw UnzenFunctionError (フォールバックしない)
-│   │   ├── CodeFetcher.fetch(entry) → コード取得 (ハッシュキャッシュ)
+│   │   ├── CodeFetcher.fetch(entry) → 生バイト取得・SHA-256 検証・キャッシュ
 │   │   └── SandboxExecutor.execute(code, args) → ブラウザ実行
 │   │
 │   ├── [UnzenFunctionError] → そのまま throw (フォールバックしない)
@@ -409,10 +409,16 @@ invalidate() → キャッシュクリア (次回fetchでサーバーアクセ�
 ```
 fetch(entry) → entry.hash をキーにキャッシュ検索
   キャッシュヒット → 即座に返却
-  キャッシュミス → GET entry.codeUrl → ダウンロード → hash でキャッシュ
+  キャッシュミス → GET entry.codeUrl → 生バイトを SHA-256 検証
+                 → UTF-8 decode → hash でキャッシュ
 ```
 
 - **ハッシュベースキャッシュ**: URL ではなくコンテンツハッシュをキーに使用する
+- manifest hash は canonical な `sha256:<64 lowercase hex>` だけを受理する
+- SHA-256 不一致、invalid UTF-8、Web Crypto 不在時は decode / 実行 / cache 前に
+  fail closed とし、不正な payload をキャッシュしない
+- 検証は Service Worker に依存せず通常 fetch path で必ず行う。Service Worker は
+  CacheStorage への永続化前に同じ生バイト検証を重ねる
 - 同一コードの関数が複数あっても1回だけダウンロードする
 - ハッシュが変わらない限りキャッシュは永続する
 
@@ -582,6 +588,7 @@ defineRaw('add', '(a, b) => a + b')
 
 4. CodeFetcher.fetch(entry)
    → [キャッシュミス] GET /unzen/code/add?v=1&h=sha256%3A...
+   → response の生バイトを entry.hash と SHA-256 照合
    → 'function run(...args) { return ((a, b) => a + b)(...args); }'
    → entry.hash をキーにキャッシュ
 
@@ -702,12 +709,13 @@ TypeScript source
   `?v=N&h=HASH` の immutable URL は常にその version のバイトを返す（同名再登録で旧 URL の
   内容が変わらない）。registry 上で quickjs に上書きされても、既に公開済みの
   versioned URL を守るため旧バイトは保持される。
-- `MoonBitSandboxExecutor` (client) は wasm をフェッチ・`WebAssembly.compile` で
-  キャッシュし、`spectest` 等の MoonBit ランタイム import のみでインスタンス化して
-  指定 export を呼ぶ。`UnzenClient` はマニフェストの `runtime` で
-  QuickJS パスと MoonBit パスを振り分ける。
+- `MoonBitSandboxExecutor` (client) は wasm をフェッチし、生バイトを manifest hash と
+  SHA-256 照合してから `WebAssembly.compile` でキャッシュする。`spectest` 等の MoonBit
+  ランタイム import のみでインスタンス化して指定 export を呼ぶ。`UnzenClient` は
+  マニフェストの `runtime` で QuickJS パスと MoonBit パスを振り分ける。
 - `MoonBitWorkerSandboxExecutor` (client) は `moonbitWorkerUrl` 指定時に使われ、
-  専用 Web Worker で wasm を実行する（QuickJS パスと同じ Layer 1 の分離）。
+  main thread で同じ生バイト検証を終えてから専用 Web Worker へ渡して wasm を
+  実行する（QuickJS パスと同じ Layer 1 の分離）。
   単一実行のみ・有界キュー・init timeout・hard-kill timeout（Worker terminate）・
   generation 管理・キャンセル（終了）を備える。worker バンドルは
   `moonbit-worker.js`（tsup エントリ）として配信する。client/worker bundle は同じ

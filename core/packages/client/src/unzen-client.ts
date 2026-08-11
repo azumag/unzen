@@ -799,7 +799,11 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
           // module (fetch + compile the .wasm from the manifest codeUrl). The
           // executor instance is ready after preparation; the execution itself
           // happens in step 4.
-          await this.moonbitSandbox.prepare?.(entry.codeUrl, internalController.signal);
+          await this.moonbitSandbox.prepare?.(
+            entry.codeUrl,
+            internalController.signal,
+            entry.hash,
+          );
         } else {
           code = await this.codeFetcher.fetch(entry, internalController.signal);
         }
@@ -835,6 +839,7 @@ export class UnzenClient<Functions = UnzenFunctionMap> {
               signal: internalController.signal,
               exportName: entry.exportName,
               moonbitAbi: entry.moonbitAbi,
+              expectedHash: entry.hash,
             })
           : await executor.execute(code!, request.args, {
               signal: internalController.signal,

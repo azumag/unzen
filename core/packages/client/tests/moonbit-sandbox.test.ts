@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,10 @@ const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fibonacciBytes = readFileSync(join(fixtureDir, 'fibonacci.wasm'));
 const interopBytes = readFileSync(join(fixtureDir, 'interop.wasm'));
 const customInteropBytes = readFileSync(join(fixtureDir, 'interop-custom-namespace.wasm'));
+
+function hashBytes(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
 
 function mockFetchBytes(bytes: Uint8Array = fibonacciBytes) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -71,6 +76,19 @@ describe('MoonBitSandboxExecutor', () => {
 
     expect(await executor.execute(prepared, [15], { exportName: 'fibonacci' })).toBe(610);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    executor.dispose();
+  });
+
+  it('rejects a module hash mismatch without caching unverified bytes', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = new MoonBitSandboxExecutor();
+    const url = 'https://example.com/fibonacci.wasm';
+
+    await expect(executor.prepare(url, undefined, hashBytes(new Uint8Array([1]))))
+      .rejects.toThrow(UnzenNetworkError);
+    await expect(executor.prepare(url, undefined, hashBytes(fibonacciBytes)))
+      .resolves.toMatchObject({ url });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     executor.dispose();
   });
 

@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +31,15 @@ import { MockSandboxExecutor } from '../src/quickjs-sandbox';
 const fibonacciWasmBytes = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fibonacci.wasm'),
 );
+const MOCK_CONTENT_HASH = `sha256:${'a'.repeat(64)}`;
+
+function hashText(value: string): string {
+  return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+}
+
+function hashBytes(value: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
 
 /** Create an AbortError-compatible rejection for mocked fetch/sandbox */
 function abortError(): Error {
@@ -43,11 +53,16 @@ function jsonResponse(data: unknown) {
 
 /** Helper: fetch mock that resolves a text body for a URL */
 function textResponse(data: string) {
-  return Promise.resolve({ ok: true, text: async () => data });
+  return Promise.resolve(new Response(data, {
+    status: 200,
+    headers: { 'Content-Type': 'text/javascript; charset=utf-8' },
+  }));
 }
 
 describe('UnzenClient', () => {
   let originalFetch: typeof globalThis.fetch;
+
+  const mockAddCode = 'function run(a, b) { return a + b; }';
 
   const mockManifest: ManifestResponse = {
     functions: {
@@ -55,12 +70,10 @@ describe('UnzenClient', () => {
         version: 1,
         runtime: 'quickjs',
         codeUrl: 'https://example.com/code/add.js',
-        hash: 'abc123',
+        hash: hashText(mockAddCode),
       },
     },
   };
-
-  const mockAddCode = 'function run(a, b) { return a + b; }';
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -194,10 +207,7 @@ describe('UnzenClient', () => {
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => mockAddCode,
-          });
+          return textResponse(mockAddCode);
         }
         throw new Error('Unexpected URL');
       });
@@ -229,19 +239,21 @@ describe('UnzenClient', () => {
       // Syntax error in code should throw UnzenFunctionError
       // This is a function/code error, not a runtime environment error
       const invalidCode = 'this is not valid code';
+      const invalidCodeManifest: ManifestResponse = {
+        functions: {
+          add: { ...mockManifest.functions.add, hash: hashText(invalidCode) },
+        },
+      };
 
       const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) {
           return Promise.resolve({
             ok: true,
-            json: async () => mockManifest,
+            json: async () => invalidCodeManifest,
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => invalidCode,
-          });
+          return textResponse(invalidCode);
         }
         throw new Error('Should not reach here');
       });
@@ -270,19 +282,21 @@ describe('UnzenClient', () => {
     it('should NOT fallback on UnzenFunctionError', async () => {
       // Code that throws function error
       const errorCode = 'function run() { throw new Error("User error"); }';
+      const errorManifest: ManifestResponse = {
+        functions: {
+          add: { ...mockManifest.functions.add, hash: hashText(errorCode) },
+        },
+      };
 
       const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) {
           return Promise.resolve({
             ok: true,
-            json: async () => mockManifest,
+            json: async () => errorManifest,
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => errorCode,
-          });
+          return textResponse(errorCode);
         }
         throw new Error('Should not call other endpoints');
       });
@@ -354,10 +368,7 @@ describe('UnzenClient', () => {
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => mockAddCode,
-          });
+          return textResponse(mockAddCode);
         }
         throw new Error('Unexpected URL');
       });
@@ -378,19 +389,21 @@ describe('UnzenClient', () => {
 
     it('should throw error on runtime error without fallback', async () => {
       const invalidCode = 'this is not valid code';
+      const invalidCodeManifest: ManifestResponse = {
+        functions: {
+          add: { ...mockManifest.functions.add, hash: hashText(invalidCode) },
+        },
+      };
 
       const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) {
           return Promise.resolve({
             ok: true,
-            json: async () => mockManifest,
+            json: async () => invalidCodeManifest,
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => invalidCode,
-          });
+          return textResponse(invalidCode);
         }
         throw new Error('Should not call other endpoints');
       });
@@ -425,10 +438,7 @@ describe('UnzenClient', () => {
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => mockAddCode,
-          });
+          return textResponse(mockAddCode);
         }
         throw new Error('Unexpected URL');
       });
@@ -493,10 +503,7 @@ describe('UnzenClient', () => {
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => mockAddCode,
-          });
+          return textResponse(mockAddCode);
         }
         throw new Error('Unexpected URL');
       });
@@ -523,19 +530,21 @@ describe('UnzenClient', () => {
       // Function error: user code throws. Error result should include
       // partial diagnostics (durationMs, cached, executedOn) for debugging.
       const errorCode = 'function run() { throw new Error("Test error"); }';
+      const errorManifest: ManifestResponse = {
+        functions: {
+          add: { ...mockManifest.functions.add, hash: hashText(errorCode) },
+        },
+      };
 
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/manifest')) {
           return Promise.resolve({
             ok: true,
-            json: async () => mockManifest,
+            json: async () => errorManifest,
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => errorCode,
-          });
+          return textResponse(errorCode);
         }
         throw new Error('Unexpected URL');
       });
@@ -603,10 +612,7 @@ describe('UnzenClient', () => {
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => mockAddCode,
-          });
+          return textResponse(mockAddCode);
         }
         throw new Error('Should not call other endpoints');
       });
@@ -648,10 +654,7 @@ describe('UnzenClient', () => {
           });
         }
         if (url.includes('/code/add.js')) {
-          return Promise.resolve({
-            ok: true,
-            text: async () => mockAddCode,
-          });
+          return textResponse(mockAddCode);
         }
         if (url.includes('/exec/add')) {
           return Promise.resolve({
@@ -966,8 +969,13 @@ describe('UnzenClient', () => {
     it('should return stable error codes from executeWithDiagnostics', async () => {
       // function error → 'function_failed'
       const errorCode = 'function run() { throw new Error("User error"); }';
+      const errorManifest: ManifestResponse = {
+        functions: {
+          add: { ...mockManifest.functions.add, hash: hashText(errorCode) },
+        },
+      };
       const fetchMock = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/manifest')) return jsonResponse(mockManifest);
+        if (url.includes('/manifest')) return jsonResponse(errorManifest);
         if (url.includes('/code/add.js')) return textResponse(errorCode);
         throw new Error('unexpected URL');
       });
@@ -1163,25 +1171,26 @@ describe('UnzenClient', () => {
 
     it('should route moonbit manifest entries to the moonbit sandbox', async () => {
       const events: string[] = [];
+      const contentHash = `sha256:${'a'.repeat(64)}`;
       const moonbitManifest: ManifestResponse = {
         functions: {
           fibonacci: {
             runtime: 'moonbit',
-            hash: 'mb-hash',
+            hash: contentHash,
             version: 1,
             codeUrl: 'https://example.com/code/fibonacci.wasm',
             exportName: 'fibonacci',
           },
         },
       };
-      const prepared: string[] = [];
-      const executed: Array<{ url: string; args: unknown[] }> = [];
+      const prepared: Array<{ url: string; expectedHash?: string }> = [];
+      const executed: Array<{ url: string; args: unknown[]; expectedHash?: string }> = [];
       const fakeMoonbit = {
-        prepare: async (url: string) => {
-          prepared.push(url);
+        prepare: async (url: string, _signal?: AbortSignal, expectedHash?: string) => {
+          prepared.push({ url, expectedHash });
         },
-        execute: async (url: string, args: unknown[]) => {
-          executed.push({ url, args });
+        execute: async (url: string, args: unknown[], options?: { expectedHash?: string }) => {
+          executed.push({ url, args, expectedHash: options?.expectedHash });
           return 55;
         },
         dispose: () => {},
@@ -1215,9 +1224,16 @@ describe('UnzenClient', () => {
       }
       // The wasm module was prepared and executed via the moonbit executor,
       // not the QuickJS code fetcher (which would corrupt wasm bytes as text).
-      expect(prepared).toEqual(['https://example.com/code/fibonacci.wasm']);
+      expect(prepared).toEqual([{
+        url: 'https://example.com/code/fibonacci.wasm',
+        expectedHash: contentHash,
+      }]);
       expect(executed).toEqual([
-        { url: 'https://example.com/code/fibonacci.wasm', args: [10] },
+        {
+          url: 'https://example.com/code/fibonacci.wasm',
+          args: [10],
+          expectedHash: contentHash,
+        },
       ]);
       expect(fetchMock).toHaveBeenCalledTimes(1); // manifest only
       client.dispose();
@@ -1228,7 +1244,7 @@ describe('UnzenClient', () => {
         functions: {
           boom: {
             runtime: 'moonbit',
-            hash: 'mb-hash',
+            hash: MOCK_CONTENT_HASH,
             version: 1,
             codeUrl: 'https://example.com/code/boom.wasm',
             noFallback: true,
@@ -1282,7 +1298,7 @@ describe('UnzenClient', () => {
         functions: {
           fib: {
             runtime: 'moonbit',
-            hash: 'h',
+            hash: MOCK_CONTENT_HASH,
             version: 1,
             codeUrl: 'https://example.com/code/fib.wasm',
             // noFallback intentionally omitted
@@ -1326,7 +1342,7 @@ describe('UnzenClient', () => {
         functions: {
           fibonacci: {
             runtime: 'moonbit',
-            hash: 'mb-hash',
+            hash: MOCK_CONTENT_HASH,
             version: 1,
             codeUrl: 'https://example.com/code/fibonacci.wasm',
             exportName: 'fibonacci',
@@ -1380,7 +1396,7 @@ describe('UnzenClient', () => {
         functions: {
           sumArray: {
             runtime: 'moonbit',
-            hash: 'mb-array-hash',
+            hash: MOCK_CONTENT_HASH,
             version: 1,
             codeUrl: 'https://example.com/code/arrays.wasm',
             exportName: 'sum_array',
@@ -1450,7 +1466,7 @@ describe('UnzenClient', () => {
         functions: {
           fibonacci: {
             runtime: 'moonbit',
-            hash: 'mb-hash',
+            hash: hashBytes(fibonacciWasmBytes),
             version: 1,
             codeUrl: 'https://example.com/code/fibonacci.wasm',
             exportName: 'fibonacci',
@@ -1503,7 +1519,7 @@ describe('UnzenClient', () => {
         functions: {
           hashPassword: {
             runtime: 'quickjs',
-            hash: 'h',
+            hash: hashText('function run() {}'),
             version: 1,
             codeUrl: 'https://example.com/code/hashPassword.js',
             noFallback: true,
@@ -1546,7 +1562,7 @@ describe('UnzenClient', () => {
         functions: {
           fib: {
             runtime: 'moonbit',
-            hash: 'h',
+            hash: MOCK_CONTENT_HASH,
             version: 1,
             codeUrl: 'https://example.com/code/fib.wasm',
           },
@@ -1665,7 +1681,7 @@ describe('UnzenClient', () => {
         functions: {
           hashPassword: {
             runtime: 'quickjs',
-            hash: 'h',
+            hash: hashText('function run() {}'),
             version: 1,
             codeUrl: 'https://example.com/code/hashPassword.js',
             noFallback: true,

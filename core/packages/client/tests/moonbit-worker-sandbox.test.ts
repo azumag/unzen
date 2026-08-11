@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ import {
   UnzenCancelledError,
   UnzenDeadlineExceededError,
   UnzenFunctionError,
+  UnzenNetworkError,
   UnzenRuntimeError,
 } from '@unzen/shared';
 import { MoonBitWorkerSandboxExecutor } from '../src/moonbit-worker-sandbox';
@@ -31,6 +33,10 @@ const customInteropBytes = readFileSync(join(fixtureDir, 'interop-custom-namespa
 const sortBytes = readFileSync(
   join(fixtureDir, '..', '..', '..', 'server', 'tests', 'fixtures', 'sort.wasm'),
 );
+
+function hashBytes(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
 
 /** A response fixture without the envelope — the mock adds version/generation. */
 type RespondFixture =
@@ -293,21 +299,45 @@ describe('MoonBitWorkerSandboxExecutor', () => {
     });
   });
 
-  it('prepares bytes once and reuses the cache across executions', async () => {
+  it('keeps verified cached bytes isolated from caller mutation', async () => {
     const fetchMock = mockFetchBytes();
     const executor = createExecutor(createRealWorker());
+    const expectedHash = hashBytes(fibonacciBytes);
 
-    const first = await executor.prepare('https://example.com/fibonacci.wasm');
-    const second = await executor.prepare('https://example.com/fibonacci.wasm');
-    expect(first).toBe(second);
+    const first = await executor.prepare(
+      'https://example.com/fibonacci.wasm',
+      undefined,
+      expectedHash,
+    );
+    new Uint8Array(first)[0] = 0;
+    const second = await executor.prepare(
+      'https://example.com/fibonacci.wasm',
+      undefined,
+      expectedHash,
+    );
+    expect(second).not.toBe(first);
+    expect(new Uint8Array(second)).toEqual(new Uint8Array(fibonacciBytes));
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     expect(await executor.execute(
       'https://example.com/fibonacci.wasm',
       [15],
-      { exportName: 'fibonacci' },
+      { exportName: 'fibonacci', expectedHash },
     )).toBe(610);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    executor.dispose();
+  });
+
+  it('rejects a module hash mismatch without caching unverified bytes', async () => {
+    const fetchMock = mockFetchBytes();
+    const executor = createExecutor(createRealWorker());
+    const url = 'https://example.com/fibonacci.wasm';
+
+    await expect(executor.prepare(url, undefined, hashBytes(new Uint8Array([1]))))
+      .rejects.toThrow(UnzenNetworkError);
+    await expect(executor.prepare(url, undefined, hashBytes(fibonacciBytes)))
+      .resolves.toBeInstanceOf(ArrayBuffer);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     executor.dispose();
   });
 

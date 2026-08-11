@@ -29,6 +29,8 @@ export interface ExecuteOptions {
   exportName?: string;
   /** Optional array-copy ABI for a MoonBit export; ignored by QuickJS. */
   moonbitAbi?: MoonBitAbi;
+  /** Expected `sha256:<hex>` identity for a fetched module payload. */
+  expectedHash?: string;
 }
 
 export interface SandboxExecutor {
@@ -57,8 +59,11 @@ export interface SandboxExecutor {
    * (e.g. MoonBit wasm-gc). The client calls this during the code-fetch phase
    * so the module is ready before browser-execution-started. Implementations
    * without a separate preparation step can omit it.
+   *
+   * @param expectedHash - Optional manifest identity verified before compiling
+   * or caching a downloaded module
    */
-  prepare?(code: string, signal?: AbortSignal): Promise<unknown>;
+  prepare?(code: string, signal?: AbortSignal, expectedHash?: string): Promise<unknown>;
 
   /**
    * Whether the sandbox runtime is ready to execute without (re)initialization.

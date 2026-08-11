@@ -464,9 +464,10 @@ unzen.define('check', (text: string) => {
 
 キャッシュ戦略:
 1. **マニフェスト**: ETag/Last-Modified ヘッダで条件付きリクエストを行う
-2. **関数コード/Wasm**: version + SHA-256 の URL でイミュータブルキャッシュを使用する (`Cache-Control: immutable`)
-3. **Service Worker**: SHA-256 を再検証した同一 origin の versioned code/Wasm のみ CacheStorage に永続化する
-4. **更新フロー**: サーバー側で関数を変更 → ハッシュが変わる → 次回マニフェスト取得時に検出する
+2. **SDK 検証**: JavaScript / Wasm の生バイトを manifest の SHA-256 と照合し、一致後だけ decode / compile / cache する
+3. **関数コード/Wasm**: version + SHA-256 の URL でイミュータブルキャッシュを使用する (`Cache-Control: immutable`)
+4. **Service Worker**: SHA-256 を再検証した同一 origin の versioned code/Wasm のみ CacheStorage に永続化する
+5. **更新フロー**: サーバー側で関数を変更 → ハッシュが変わる → 次回マニフェスト取得時に検出する
 
 ---
 

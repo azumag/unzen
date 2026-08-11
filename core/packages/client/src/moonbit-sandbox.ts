@@ -35,6 +35,11 @@ import {
 import { raceWithAbort, throwIfAborted } from './abort';
 import { isAbortError } from './abort';
 import {
+  assertUnzenContentIntegrity,
+  createUnzenContentCacheKey,
+  isValidUnzenContentHash,
+} from './content-integrity';
+import {
   compileMoonBitModule,
   normalizeMoonBitImportedStringConstants,
   validateMoonBitModule,
@@ -49,7 +54,7 @@ import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 
 /** A compiled MoonBit module ready for instantiation. */
 export interface PreparedMoonBitModule {
-  /** Module URL (also the cache key) */
+  /** Original module URL */
   url: string;
   /** Compiled WebAssembly module */
   module: WebAssembly.Module;
@@ -99,9 +104,9 @@ export interface MoonBitSandboxOptions {
 export class MoonBitSandboxExecutor implements SandboxExecutor {
   private readonly imports: WebAssembly.Imports;
   private readonly importedStringConstants: MoonBitImportedStringConstants;
-  /** Compiled modules per URL. A settled module is cached directly; while a
-   * fetch/compile is in flight the entry carries waiter tracking so the last
-   * caller's cancel (or dispose) aborts the underlying work. */
+  /** Compiled modules per URL + expected hash. A settled module is cached
+   * directly; while fetch/compile is in flight the entry carries waiter
+   * tracking so the last caller's cancel (or dispose) aborts the work. */
   private readonly moduleCache = new Map<string, PreparedMoonBitModule | InflightModuleRequest>();
   private disposed = false;
 
@@ -120,18 +125,26 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
   /**
    * Fetch and compile the wasm module at `code` (a URL).
    *
-   * Fetches are deduplicated per URL and cached. The shared fetch/compile
-   * promise is NOT bound to any single caller's signal: each caller races it
-   * against their own AbortSignal, so cancelling one execution settles only
-   * that caller while the shared work continues for the others.
+   * Fetches are deduplicated per URL + expected hash and cached. The shared
+   * fetch/compile promise is NOT bound to any single caller's signal: each
+   * caller races it against their own AbortSignal, so cancelling one execution
+   * settles only that caller while the shared work continues for the others.
    */
-  async prepare(code: string, signal?: AbortSignal): Promise<PreparedMoonBitModule> {
+  async prepare(
+    code: string,
+    signal?: AbortSignal,
+    expectedHash?: string,
+  ): Promise<PreparedMoonBitModule> {
     throwIfAborted(signal);
     if (this.disposed) {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
+    if (expectedHash !== undefined && !isValidUnzenContentHash(expectedHash)) {
+      throw new UnzenNetworkError('Invalid MoonBit module hash in manifest');
+    }
 
-    const cached = this.moduleCache.get(code);
+    const cacheKey = createUnzenContentCacheKey(code, expectedHash);
+    const cached = this.moduleCache.get(cacheKey);
     if (cached && !isInflight(cached)) {
       // Already fetched and compiled: return the settled module.
       throwIfAborted(signal);
@@ -144,7 +157,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     } else {
       const controller = new AbortController();
       pending = {
-        promise: this.fetchAndCompile(code, controller.signal),
+        promise: this.fetchAndCompile(code, controller.signal, expectedHash),
         controller,
         waiters: 0,
       };
@@ -155,14 +168,14 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
           // that finished after the last waiter aborted (or after dispose)
           // must not overwrite a newer retry's cache slot or resurrect the
           // cache after dispose.
-          if (!this.disposed && this.moduleCache.get(code) === pending) {
-            this.moduleCache.set(code, module);
+          if (!this.disposed && this.moduleCache.get(cacheKey) === pending) {
+            this.moduleCache.set(cacheKey, module);
           }
         },
         () => {
           // On failure, drop the entry so a retry can start fresh.
-          if (this.moduleCache.get(code) === pending) {
-            this.moduleCache.delete(code);
+          if (this.moduleCache.get(cacheKey) === pending) {
+            this.moduleCache.delete(cacheKey);
           }
         },
       ).catch(() => {
@@ -170,7 +183,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
         // raceWithAbort; this trailing catch keeps the internal chain handled
         // (e.g. an abort after the last waiter left, or a dispose).
       });
-      this.moduleCache.set(code, pending);
+      this.moduleCache.set(cacheKey, pending);
     }
     pending.waiters++;
     try {
@@ -180,13 +193,13 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       pending.waiters--;
       if (
         pending.waiters === 0
-        && this.moduleCache.get(code) === pending
-        && !isSettled(this.moduleCache, code, pending)
+        && this.moduleCache.get(cacheKey) === pending
+        && !isSettled(this.moduleCache, cacheKey, pending)
       ) {
         // The in-flight fetch has no waiters left and has not settled yet:
         // stop it so a cancelled caller does not leave network traffic
         // running. A settled module stays cached (promoted above).
-        this.moduleCache.delete(code);
+        this.moduleCache.delete(cacheKey);
         pending.controller.abort();
       }
     }
@@ -217,7 +230,9 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
     }
 
-    const prepared = typeof code === 'string' ? await this.prepare(code, options?.signal) : code;
+    const prepared = typeof code === 'string'
+      ? await this.prepare(code, options?.signal, options?.expectedHash)
+      : code;
     // Re-check after prepare and before instantiation: a cancel during fetch
     // must prevent the module from being instantiated or invoked.
     throwIfAborted(options?.signal);
@@ -290,7 +305,11 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     this.moduleCache.clear();
   }
 
-  private async fetchAndCompile(url: string, signal: AbortSignal): Promise<PreparedMoonBitModule> {
+  private async fetchAndCompile(
+    url: string,
+    signal: AbortSignal,
+    expectedHash?: string,
+  ): Promise<PreparedMoonBitModule> {
     let response: Response;
     try {
       response = await globalThis.fetch(url, { method: 'GET', signal });
@@ -315,6 +334,16 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     // while the body was streaming. Stop publishing a result for work nobody
     // wants anymore.
     throwIfAborted(signal);
+    if (expectedHash !== undefined) {
+      try {
+        await assertUnzenContentIntegrity(bytes, expectedHash);
+      } catch (error) {
+        throw new UnzenNetworkError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throwIfAborted(signal);
+    }
     if (!validateMoonBitModule(bytes, this.importedStringConstants)) {
       throw new UnzenRuntimeError('MoonBit module failed WebAssembly validation');
     }

@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   UnzenNetworkError,
   type FunctionManifestEntry,
@@ -22,14 +23,20 @@ import { CodeFetcher } from '../src/code-fetcher';
 describe('CodeFetcher', () => {
   let originalFetch: typeof globalThis.fetch;
 
+  const mockCode = 'function add(a, b) { return a + b; }';
+  const hashText = (value: string): string =>
+    `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+  const codeResponse = (value: string): Response => new Response(value, {
+    status: 200,
+    headers: { 'Content-Type': 'text/javascript; charset=utf-8' },
+  });
+
   const mockEntry: FunctionManifestEntry = {
     version: 1,
     runtime: 'quickjs',
     codeUrl: 'https://example.com/code/add.js',
-    hash: 'abc123',
+    hash: hashText(mockCode),
   };
-
-  const mockCode = 'function add(a, b) { return a + b; }';
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -45,10 +52,7 @@ describe('CodeFetcher', () => {
   });
 
   it('should fetch code from URL', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => mockCode,
-    });
+    globalThis.fetch = vi.fn().mockResolvedValue(codeResponse(mockCode));
 
     const fetcher = new CodeFetcher('https://example.com');
     const code = await fetcher.fetch(mockEntry);
@@ -61,10 +65,7 @@ describe('CodeFetcher', () => {
   });
 
   it('should cache code by hash', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => mockCode,
-    });
+    const fetchMock = vi.fn().mockResolvedValue(codeResponse(mockCode));
     globalThis.fetch = fetchMock;
 
     const fetcher = new CodeFetcher('https://example.com');
@@ -79,10 +80,10 @@ describe('CodeFetcher', () => {
   });
 
   it('should fetch again if hash changes', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => mockCode,
-    });
+    const updatedCode = `${mockCode}\n`;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(codeResponse(mockCode))
+      .mockResolvedValueOnce(codeResponse(updatedCode));
     globalThis.fetch = fetchMock;
 
     const fetcher = new CodeFetcher('https://example.com');
@@ -94,7 +95,7 @@ describe('CodeFetcher', () => {
     // Second fetch with different hash - should fetch again
     const updatedEntry: FunctionManifestEntry = {
       ...mockEntry,
-      hash: 'def456', // Different hash
+      hash: hashText(updatedCode),
     };
     await fetcher.fetch(updatedEntry);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -106,10 +107,7 @@ describe('CodeFetcher', () => {
         url.includes('add.js')
           ? 'function add(a, b) { return a + b; }'
           : 'function multiply(a, b) { return a * b; }';
-      return Promise.resolve({
-        ok: true,
-        text: async () => code,
-      });
+      return Promise.resolve(codeResponse(code));
     });
     globalThis.fetch = fetchMock;
 
@@ -119,14 +117,14 @@ describe('CodeFetcher', () => {
       version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/add.js',
-      hash: 'hash1',
+      hash: hashText('function add(a, b) { return a + b; }'),
     };
 
     const multiplyEntry: FunctionManifestEntry = {
       version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/multiply.js',
-      hash: 'hash2',
+      hash: hashText('function multiply(a, b) { return a * b; }'),
     };
 
     const addCode = await fetcher.fetch(addEntry);
@@ -159,10 +157,7 @@ describe('CodeFetcher', () => {
 
   it('should cache even if same hash is used for different function names', async () => {
     // Edge case: Two different functions with same code (same hash)
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => mockCode,
-    });
+    const fetchMock = vi.fn().mockResolvedValue(codeResponse(mockCode));
     globalThis.fetch = fetchMock;
 
     const fetcher = new CodeFetcher('https://example.com');
@@ -171,14 +166,14 @@ describe('CodeFetcher', () => {
       version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/func1.js',
-      hash: 'same-hash',
+      hash: hashText(mockCode),
     };
 
     const entry2: FunctionManifestEntry = {
       version: 1,
       runtime: 'quickjs',
       codeUrl: 'https://example.com/code/func2.js',
-      hash: 'same-hash', // Same hash as func1
+      hash: hashText(mockCode),
     };
 
     await fetcher.fetch(entry1);
@@ -187,5 +182,27 @@ describe('CodeFetcher', () => {
     // Should only fetch once since hash is the same
     // This is correct behavior: hash represents content, not identity
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reject a hash mismatch without caching the response', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(codeResponse('function run() { return "tampered"; }'))
+      .mockResolvedValueOnce(codeResponse(mockCode));
+    globalThis.fetch = fetchMock;
+    const fetcher = new CodeFetcher('https://example.com');
+
+    await expect(fetcher.fetch(mockEntry)).rejects.toThrow(UnzenNetworkError);
+    await expect(fetcher.fetch(mockEntry)).resolves.toBe(mockCode);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('should reject a malformed manifest hash before fetching code', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(codeResponse(mockCode));
+    globalThis.fetch = fetchMock;
+    const fetcher = new CodeFetcher('https://example.com');
+
+    await expect(fetcher.fetch({ ...mockEntry, hash: 'sha256:not-a-digest' }))
+      .rejects.toThrow(UnzenNetworkError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

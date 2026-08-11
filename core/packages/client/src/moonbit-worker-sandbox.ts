@@ -45,6 +45,11 @@ import {
   type MoonBitAbi,
 } from '@unzen/shared';
 import { isAbortError, raceWithAbort, throwIfAborted } from './abort';
+import {
+  assertUnzenContentIntegrity,
+  createUnzenContentCacheKey,
+  isValidUnzenContentHash,
+} from './content-integrity';
 import { snapshotMoonBitCall } from './moonbit-array-bridge';
 import {
   normalizeMoonBitImportedStringConstants,
@@ -188,7 +193,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   /** True when a generation failure left queued work to restart */
   private pendingRestart = false;
 
-  /** Fetched wasm bytes cached per URL (waiter-managed while in flight) */
+  /** Fetched wasm bytes cached per URL + expected hash. */
   private readonly bytesCache = new Map<string, ArrayBuffer | InflightBytesRequest>();
 
   private readonly diagnosticsState: MoonBitExecutorDiagnostics = {
@@ -229,20 +234,30 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
   /**
    * Fetch (and cache) the wasm module bytes for `url`.
    *
-   * Fetches are deduplicated per URL and cached. The shared fetch is NOT bound
-   * to any single caller's signal: each caller races it against their own
+   * Fetches are deduplicated per URL + expected hash. The shared fetch is NOT
+   * bound to any single caller's signal: each caller races it against their own
    * AbortSignal, and the underlying fetch is aborted only when the last waiter
    * leaves or the executor is disposed.
    */
-  async prepare(code: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  async prepare(
+    code: string,
+    signal?: AbortSignal,
+    expectedHash?: string,
+  ): Promise<ArrayBuffer> {
     throwIfAborted(signal);
     if (this.state.status === 'disposed') {
       throw new UnzenRuntimeError('Executor has been disposed. Create a new instance.');
     }
+    if (expectedHash !== undefined && !isValidUnzenContentHash(expectedHash)) {
+      throw new UnzenNetworkError('Invalid MoonBit module hash in manifest');
+    }
 
-    const cached = this.bytesCache.get(code);
+    const cacheKey = createUnzenContentCacheKey(code, expectedHash);
+    const cached = this.bytesCache.get(cacheKey);
     if (cached && !isInflight(cached)) {
-      return cached;
+      // Do not expose the cache-owned buffer: ArrayBuffer is mutable, and a
+      // caller could otherwise alter already-verified bytes for later calls.
+      return cached.slice(0);
     }
 
     let pending: InflightBytesRequest;
@@ -251,36 +266,39 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     } else {
       const controller = new AbortController();
       pending = {
-        promise: this.fetchBytes(code, controller.signal),
+        promise: this.fetchBytes(code, controller.signal, expectedHash),
         controller,
         waiters: 0,
       };
       pending.promise.then(
         (bytes) => {
-          if (!this.isDisposed() && this.bytesCache.get(code) === pending) {
-            this.bytesCache.set(code, bytes);
+          if (!this.isDisposed() && this.bytesCache.get(cacheKey) === pending) {
+            this.bytesCache.set(cacheKey, bytes);
           }
         },
         () => {
-          if (this.bytesCache.get(code) === pending) {
-            this.bytesCache.delete(code);
+          if (this.bytesCache.get(cacheKey) === pending) {
+            this.bytesCache.delete(cacheKey);
           }
         },
       ).catch(() => {});
-      this.bytesCache.set(code, pending);
+      this.bytesCache.set(cacheKey, pending);
     }
 
     pending.waiters++;
     try {
-      return await (signal ? raceWithAbort(pending.promise, signal) : pending.promise);
+      const bytes = await (signal ? raceWithAbort(pending.promise, signal) : pending.promise);
+      // Each waiter receives an isolated snapshot while the original remains
+      // private to the verified cache.
+      return bytes.slice(0);
     } finally {
       pending.waiters--;
       if (
         pending.waiters === 0
-        && this.bytesCache.get(code) === pending
-        && !isSettled(this.bytesCache, code, pending)
+        && this.bytesCache.get(cacheKey) === pending
+        && !isSettled(this.bytesCache, cacheKey, pending)
       ) {
-        this.bytesCache.delete(code);
+        this.bytesCache.delete(cacheKey);
         pending.controller.abort();
       }
     }
@@ -312,7 +330,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
     }
 
-    const bytes = typeof code === 'string' ? await this.prepare(code, options?.signal) : code;
+    const bytes = typeof code === 'string'
+      ? await this.prepare(code, options?.signal, options?.expectedHash)
+      : code;
     throwIfAborted(options?.signal);
 
     const requestId = `req-${++requestIdCounter}`;
@@ -836,7 +856,11 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     this.initPromise = null;
   }
 
-  private async fetchBytes(url: string, signal: AbortSignal): Promise<ArrayBuffer> {
+  private async fetchBytes(
+    url: string,
+    signal: AbortSignal,
+    expectedHash?: string,
+  ): Promise<ArrayBuffer> {
     let response: Response;
     try {
       response = await globalThis.fetch(url, { method: 'GET', signal });
@@ -855,6 +879,16 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     }
     const bytes = await response.arrayBuffer();
     throwIfAborted(signal);
+    if (expectedHash !== undefined) {
+      try {
+        await assertUnzenContentIntegrity(bytes, expectedHash);
+      } catch (error) {
+        throw new UnzenNetworkError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throwIfAborted(signal);
+    }
     return bytes;
   }
 }
