@@ -387,6 +387,10 @@ try {
 | `UnzenFunctionError` | しない | ユーザー関数内の throw、型エラー |
 | `UnzenNetworkError` | - | マニフェスト取得失敗、フォールバックAPI失敗 |
 
+fallback API は最大128引数の JSON transport とし、client/server の両側で request
+shape を検証する。client は response の `result` / `error` envelope も実行時検証し、
+malformed JSON、redirect、rate limit、5xx を `UnzenNetworkError` として fail closed にする。
+
 #### MoonBit のエラー
 
 MoonBitのパニック (`abort`) はWasmトラップとして発生し、`UnzenFunctionError` に変換される。

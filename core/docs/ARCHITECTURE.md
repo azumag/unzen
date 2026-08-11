@@ -229,6 +229,11 @@ function run(...args) { return ((text) => /spam/i.test(text))(...args); }
 { "args": ["test message"] }
 ```
 
+- 関数名は英字開始の safe identifier、引数は最大128件
+- client は top-level 配列を iterator を使わず index 順に snapshot し、JSON 化できない
+  入力を network request 前に `UnzenFunctionError` で拒否する
+- server は top-level JSON object と `args` array を型検証し、違反を 400 で返す
+
 成功レスポンス:
 ```json
 { "result": true }
@@ -238,6 +243,14 @@ function run(...args) { return ((text) => /spam/i.test(text))(...args); }
 ```json
 { "result": null, "error": "Function execution failed: ..." }
 ```
+
+- client は plain object の envelope だけを受理する。成功は `result`、失敗は非空の
+  string `error` と `result: null` の組み合わせに正規化する
+- 現行 JSON transport では successful `undefined` の `result` key が省略されるため、
+  空 object は互換表現として `undefined` に復元する。その他の unknown-only object は拒否する
+- 2xx の error edge case と 400 / 404 / 422 は `UnzenFunctionError`、redirect、認証系、
+  rate limit、5xx、malformed envelope は `UnzenNetworkError` に分類する
+- response body の完了後にも AbortSignal を再確認し、cancel 後の遅延 body は採用しない
 
 ---
 

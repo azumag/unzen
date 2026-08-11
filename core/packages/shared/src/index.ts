@@ -64,8 +64,11 @@ export {
   type FunctionManifestEntry,
   type ExecutionRequest,
   type ExecutionResponse,
+  MAX_EXECUTION_ARGUMENTS,
   createManifestResponse,
   normalizeManifestResponse,
   isValidManifestResponse,
   createExecutionResponse,
+  normalizeExecutionResponse,
+  isValidExecutionResponse,
 } from './protocol';

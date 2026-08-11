@@ -182,20 +182,62 @@ export function isValidManifestResponse(value: unknown): value is ManifestRespon
  * Used when browser execution fails and server fallback is needed.
  */
 export interface ExecutionRequest {
-  /** Arguments to pass to the function */
+  /** Arguments to pass to the function (bounded by MAX_EXECUTION_ARGUMENTS). */
   args: unknown[];
 }
+
+/** Maximum number of arguments accepted by the fallback transport. */
+export const MAX_EXECUTION_ARGUMENTS = 128;
 
 /**
  * Response type for function execution (fallback API)
  *
  * Contains either the result or error from server-side execution.
  */
-export interface ExecutionResponse {
-  /** Function return value (null if error exists) */
-  result: unknown;
-  /** Error message if execution failed (undefined if success) */
-  error?: string;
+export type ExecutionResponse =
+  | {
+      /** Function return value. */
+      result: unknown;
+      error?: never;
+    }
+  | {
+      /** Error responses use null because the fallback transport is JSON. */
+      result: null;
+      /** Sanitized non-empty error message. */
+      error: string;
+    };
+
+/**
+ * Validate the fallback response envelope without constraining its result.
+ *
+ * An empty object is retained as the legacy wire representation of a
+ * successful `undefined` result (`JSON.stringify` omits that property).
+ */
+export function normalizeExecutionResponse(value: unknown): ExecutionResponse | undefined {
+  try {
+    if (!isRecord(value)) return undefined;
+
+    if (Object.hasOwn(value, 'error')) {
+      const error = value.error;
+      if (typeof error !== 'string' || error.trim().length === 0) return undefined;
+      if (!Object.hasOwn(value, 'result') || value.result !== null) return undefined;
+      return { result: null, error };
+    }
+
+    if (!Object.hasOwn(value, 'result') && Reflect.ownKeys(value).length !== 0) {
+      return undefined;
+    }
+    return {
+      result: Object.hasOwn(value, 'result') ? value.result : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runtime type guard for a fallback execution response. */
+export function isValidExecutionResponse(value: unknown): value is ExecutionResponse {
+  return normalizeExecutionResponse(value) !== undefined;
 }
 
 /**

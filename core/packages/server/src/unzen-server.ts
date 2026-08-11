@@ -18,12 +18,12 @@ import { readFileSync } from 'fs';
 import { Hono } from 'hono';
 import type {
   FunctionDefinition,
-  ExecutionRequest,
   ManifestResponse,
   MoonBitAbi,
 } from '@unzen/shared';
 import {
   createExecutionResponse,
+  MAX_EXECUTION_ARGUMENTS,
   UnzenFunctionError,
   UnzenRuntimeError,
   MAX_FUNCTION_TIMEOUT,
@@ -463,9 +463,9 @@ export class UnzenServer {
 
       try {
         // Parse request body with JSON error handling (H2 fix)
-        let body: ExecutionRequest;
+        let body: unknown;
         try {
-          body = await c.req.json<ExecutionRequest>();
+          body = await c.req.json();
         } catch {
           return c.json(
             createExecutionResponse({
@@ -479,7 +479,12 @@ export class UnzenServer {
         // Validate args field: must be an array with bounded length (H2 fix)
         // Without validation, non-array args cause runtime errors (DoS vector)
         // and unbounded arrays consume excessive memory
-        if (!Array.isArray(body.args)) {
+        if (
+          typeof body !== 'object'
+          || body === null
+          || Array.isArray(body)
+          || !Array.isArray((body as Record<string, unknown>).args)
+        ) {
           return c.json(
             createExecutionResponse({
               success: false,
@@ -488,12 +493,13 @@ export class UnzenServer {
             400
           );
         }
-        // 128 args is a generous upper bound; no legitimate function needs more
-        if (body.args.length > 128) {
+        const args = (body as { args: unknown[] }).args;
+        // The shared bound is generous; no legitimate function needs more.
+        if (args.length > MAX_EXECUTION_ARGUMENTS) {
           return c.json(
             createExecutionResponse({
               success: false,
-              error: 'Too many arguments (max 128)',
+              error: `Too many arguments (max ${MAX_EXECUTION_ARGUMENTS})`,
             }),
             400
           );
@@ -502,7 +508,7 @@ export class UnzenServer {
         // Execute the function using shared runtime
         // The runtime creates a fresh context for each execution to ensure isolation
         // Pass per-function timeout if set; otherwise runtime uses default 50ms
-        const result = await this.runtime.execute(fn.code, body.args,
+        const result = await this.runtime.execute(fn.code, args,
           fn.timeout !== undefined ? { timeout: fn.timeout } : undefined
         );
 

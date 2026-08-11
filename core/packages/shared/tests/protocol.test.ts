@@ -17,6 +17,8 @@ import {
   createManifestResponse,
   createExecutionResponse,
   isValidManifestResponse,
+  isValidExecutionResponse,
+  normalizeExecutionResponse,
   normalizeManifestResponse,
 } from '../src/protocol';
 import { RuntimeType } from '../src/types';
@@ -243,6 +245,46 @@ describe('ExecutionResponse', () => {
     };
 
     expect(response.error).toBeDefined();
+  });
+
+  it('normalizes success, failure, and legacy undefined success envelopes', () => {
+    expect(normalizeExecutionResponse({ result: 0 })).toEqual({ result: 0 });
+    expect(normalizeExecutionResponse({
+      result: null,
+      error: 'Function failed',
+      ignoredFutureField: true,
+    })).toEqual({ result: null, error: 'Function failed' });
+    // JSON.stringify omits an undefined result from the current server
+    // envelope, so an empty object remains the wire representation of a
+    // successful undefined return value.
+    expect(normalizeExecutionResponse({})).toEqual({ result: undefined });
+    expect(isValidExecutionResponse({ result: false })).toBe(true);
+  });
+
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['primitive', 'result'],
+    ['empty error', { result: null, error: '' }],
+    ['blank error', { result: null, error: '   ' }],
+    ['non-string error', { result: null, error: 42 }],
+    ['error without null result', { error: 'failed' }],
+    ['conflicting result and error', { result: 42, error: 'failed' }],
+    ['unknown-only success', { status: 'ok' }],
+  ])('rejects an invalid %s envelope', (_label, value) => {
+    expect(normalizeExecutionResponse(value)).toBeUndefined();
+    expect(isValidExecutionResponse(value)).toBe(false);
+  });
+
+  it('contains hostile response accessors without throwing', () => {
+    const hostile = {};
+    Object.defineProperty(hostile, 'error', {
+      enumerable: true,
+      get: () => { throw new Error('getter must be contained'); },
+    });
+
+    expect(() => normalizeExecutionResponse(hostile)).not.toThrow();
+    expect(normalizeExecutionResponse(hostile)).toBeUndefined();
   });
 });
 

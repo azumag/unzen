@@ -177,7 +177,8 @@ describe('UnzenClient', () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            error: { type: 'function_error', message: 'Test error' },
+            result: null,
+            error: 'Test error',
           }),
         });
       });

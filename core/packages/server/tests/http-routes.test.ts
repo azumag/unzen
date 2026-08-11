@@ -238,6 +238,26 @@ describe('HTTP Routes', () => {
       expect(data.error).toBeDefined();
     });
 
+    it.each([null, [], 42, 'invalid'])(
+      'should return 400 for an invalid top-level request body (%j)',
+      async (body) => {
+        server.defineRaw('testRoot', '() => 1');
+
+        const res = await app.request('/unzen/exec/testRoot', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data).toEqual({
+          result: null,
+          error: 'Request body must contain "args" array',
+        });
+      },
+    );
+
     it('should return 400 for non-array args', async () => {
       server.defineRaw('test', '() => 1');
 

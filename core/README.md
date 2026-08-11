@@ -140,6 +140,11 @@ if (!result.success && result.error.code === 'cancelled') {
 `deadline_exceeded` / `server_fallback_failed` / `server_network_failed` /
 `cancelled` など）で分類され、UI はメッセージ文字列ではなくコードで状態を判定する。
 
+fallback transport は安全な関数名と最大128引数だけを受け付け、引数を index 順に
+snapshot して JSON 化してから送信する。JSON 化できない入力は request 前に
+`UnzenFunctionError`、不正な response envelope、redirect、rate limit、5xx は
+`UnzenNetworkError` となる。body 読み取り中の cancel は遅延 response を採用しない。
+
 ## サンプル関数
 
 ### `jsonSchemaValidate` — JSON Schema バリデーション
