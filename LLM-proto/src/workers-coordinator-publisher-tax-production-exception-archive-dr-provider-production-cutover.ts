@@ -132,6 +132,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
   if (upstream.status !== 'pass') reasons.push('production-readiness-not-clean');
   if (!evidenceSupportsReadiness(readinessValidation, 'production-candidate')) reasons.push('readiness-evidence-not-production-candidate');
   if (options.productionReadinessEvidence.runId !== upstream.readinessEvidenceSummary.runId) reasons.push('readiness-run-mismatch');
+  if (JSON.stringify(options.productionReadinessEvidence) !== JSON.stringify(upstream.readinessInputEvidence)) reasons.push('readiness-input-mismatch');
   if (!evidenceSupportsReadiness(cutoverValidation, 'production-approved')) reasons.push('requires-production-approved-cutover-evidence');
   if (options.productionCutoverEvidence.evidenceKind !== PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_PRODUCTION_CUTOVER_EVIDENCE_KIND) reasons.push('cutover-evidence-kind-invalid');
   if (!payload || !readinessPayload) reasons.push('cutover-or-readiness-payload-missing');
