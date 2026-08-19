@@ -65,13 +65,15 @@ async function verifyArtifact(input: unknown, options: ProductionOperationsRollo
   if (!record(input) || !record(input.envelope) || !record(input.envelope.artifact) || !record(input.envelope.payload)) {
     return fail(options, 'production-rollout-artifact-request-invalid');
   }
-  const envelope = input.envelope;
+  const envelope = input.envelope as Record<string, unknown>;
+  const envelopeArtifact = envelope.artifact as Record<string, unknown>;
+  const envelopePayload = envelope.payload as Record<string, unknown>;
   if (envelope.evidenceKind !== PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_OPERATIONS_ROLLOUT_PHASE_EVIDENCE_KIND ||
     envelope.readinessStatus !== 'production-approved') {
     return fail(options, 'production-rollout-artifact-envelope-invalid');
   }
   const actualSha256 = text(input.actualSha256);
-  const expectedSha256 = text(envelope.artifact.sha256);
+  const expectedSha256 = text(envelopeArtifact.sha256);
   if (!SHA256.test(actualSha256) || actualSha256 !== expectedSha256) {
     return fail(options, 'production-rollout-artifact-digest-invalid');
   }
@@ -84,7 +86,7 @@ async function verifyArtifact(input: unknown, options: ProductionOperationsRollo
     return fail(options, 'production-rollout-artifact-schema-invalid');
   }
   const runId = text(envelope.runId);
-  if (stable(artifact.payload) !== stable(envelope.payload) || artifact.runId !== runId) {
+  if (stable(artifact.payload) !== stable(envelopePayload) || artifact.runId !== runId) {
     return fail(options, 'production-rollout-artifact-envelope-binding-mismatch', runId);
   }
   const reason = validateRecord(
@@ -94,7 +96,7 @@ async function verifyArtifact(input: unknown, options: ProductionOperationsRollo
     runId,
   );
   if (reason) return fail(options, reason, runId);
-  const completedAtMs = number(envelope.payload.completedAtMs);
+  const completedAtMs = number(envelopePayload.completedAtMs);
   const expectedVerifiedAt = new Date(completedAtMs + 1_000).toISOString();
   if (!record(envelope.verification) || envelope.verification.verifier !== options.verifierName ||
     envelope.verification.version !== options.verifierVersion || envelope.verification.result !== 'pass' ||
