@@ -3,6 +3,8 @@ import { runProductionDeploymentCanary } from '../worker-runtime/continuous-assu
 
 const NOW = Date.now();
 const CONFIG_SHA = 'a'.repeat(64);
+const DEPLOY_MANIFEST_SHA = 'b'.repeat(64);
+const DEPLOY_COMMIT_SHA = '0123456789abcdef0123456789abcdef01234567';
 const SECRET = 'test-canary-dispatch-secret';
 const VERIFIER = 'unzen-independent-evidence-verifier';
 
@@ -41,7 +43,8 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
     CANARY_DISPATCH_SECRET: SECRET,
     TRUSTED_VERIFIER_NAME: VERIFIER,
     CANARY_RETENTION_MS: '2592000000',
-    DEPLOY_COMMIT_SHA: '0123456789abcdef0123456789abcdef01234567',
+    DEPLOY_COMMIT_SHA,
+    DEPLOY_MANIFEST_SHA256: DEPLOY_MANIFEST_SHA,
     PROVIDER_ADAPTER: binding(() => Response.json(provider)),
     EVIDENCE_ADAPTER: binding(() => Response.json(evidence)),
     PAGER_ADAPTER: binding(() => Response.json(pager)),
@@ -128,11 +131,15 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
 }
 
 describe('continuous assurance production deployment canary controller', () => {
-  it('runs a read-only deployed wiring canary and captures a verified R2 artifact', async () => {
+  it('runs a read-only deployed wiring canary and captures a verified R2 artifact bound to the deploy manifest', async () => {
     const { env, writes, getRuntimeCalls } = makeEnv();
     const envelope = await runProductionDeploymentCanary({ scheduledTimeMs: NOW }, env as any);
     expect(envelope.evidenceLevel).toBe('captured-and-verified');
     expect(envelope.readinessStatus).toBe('production-candidate');
+    expect(envelope.producer.commitSha).toBe(DEPLOY_COMMIT_SHA);
+    expect(envelope.environment.metadata?.deploymentManifestSha256).toBe(DEPLOY_MANIFEST_SHA);
+    expect(envelope.payload.deployCommitSha).toBe(DEPLOY_COMMIT_SHA);
+    expect(envelope.payload.deploymentManifestSha256).toBe(DEPLOY_MANIFEST_SHA);
     expect(envelope.payload.runtimeResult.status).toBe('idle');
     expect(envelope.payload.runtimeResult.actionIdempotencyKeys).toEqual([]);
     expect(envelope.payload.runtimeResult.latestCycleRunId).toBeNull();
@@ -147,6 +154,12 @@ describe('continuous assurance production deployment canary controller', () => {
     });
     expect(writes).toHaveLength(1);
     expect(writes[0].key).toContain('deployment-canary/');
+    expect(writes[0].options).toMatchObject({
+      customMetadata: {
+        deployCommitSha: DEPLOY_COMMIT_SHA,
+        deploymentManifestSha256: DEPLOY_MANIFEST_SHA,
+      },
+    });
     expect(getRuntimeCalls()).toBe(2);
   });
 
@@ -184,5 +197,11 @@ describe('continuous assurance production deployment canary controller', () => {
     const { env } = makeEnv({ CONTINUOUS_ASSURANCE_RUNTIME: permissiveRuntime });
     await expect(runProductionDeploymentCanary({ scheduledTimeMs: NOW }, env as any))
       .rejects.toThrow('production-canary-bad-secret-not-rejected');
+  });
+
+  it('fails closed when deploy commit or deployment manifest identity is absent', async () => {
+    const { env } = makeEnv({ DEPLOY_MANIFEST_SHA256: '' });
+    await expect(runProductionDeploymentCanary({ scheduledTimeMs: NOW }, env as any))
+      .rejects.toThrow('production-canary-deployment-manifest-invalid');
   });
 });
