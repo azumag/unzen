@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "unzen-llm-continuous-assurance-independent-verifier",
-  "main": "./continuous-assurance-independent-verifier-worker.mjs",
+  "main": "./continuous-assurance-independent-verifier-provider-canary-wrapper.mjs",
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
