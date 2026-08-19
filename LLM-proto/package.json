@@ -39,6 +39,7 @@
     "test:workers-publisher-tax-production-exception-archive-dr-provider-production-cutover": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-production-cutover.test.ts",
     "test:workers-publisher-tax-production-exception-archive-dr-provider-post-cutover-reconciliation": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-post-cutover-reconciliation.test.ts",
     "test:workers-publisher-tax-production-exception-archive-dr-provider-steady-state-operations": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-steady-state-operations.test.ts",
+    "test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
