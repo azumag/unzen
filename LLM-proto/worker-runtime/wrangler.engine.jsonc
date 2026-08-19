@@ -42,7 +42,7 @@
     "CONFIG_FINGERPRINT_SHA256": "SET_BY_DEPLOY_PIPELINE"
   },
   "secrets": {
-    "required": ["ENGINE_BOOTSTRAP_SECRET"]
+    "required": ["ENGINE_BOOTSTRAP_SECRET", "CANARY_DISPATCH_SECRET"]
   },
   "observability": {
     "enabled": true,
