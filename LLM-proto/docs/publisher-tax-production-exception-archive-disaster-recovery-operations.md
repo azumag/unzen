@@ -8,6 +8,7 @@ This is a **contract/evidence gate**. A passing report does not by itself prove 
 
 - `src/workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.ts`
 - `tests/workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.test.ts`
+- `tests/workers-coordinator-publisher-tax-production-exception-archive-dr-failed-drill-incident.test.ts`
 
 Focused command:
 
@@ -52,7 +53,7 @@ Recovery ownership is explicit:
 - on-call route
 - escalation target
 
-Primary unavailability, backup recovery use, overdue drills, and threshold breaches require incident records linked to the upstream restore attempt. Incident records include trigger, severity, owner, escalation target, status, and opened-at timestamp.
+A failed upstream restore drill requires a `restore-drill-failed` incident record. Primary unavailability, backup recovery use, overdue drills, and threshold breaches likewise require incident records linked to the upstream restore attempt. An incident record never converts the underlying failed drill or threshold breach into a pass; it proves the operational escalation was captured separately. Incident records include trigger, severity, owner, escalation target, status, and opened-at timestamp.
 
 ### Provider provenance
 
