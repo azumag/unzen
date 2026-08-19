@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,55 +11,13 @@ const PROJECT_ROOT = resolve(HERE, '..');
 const R2_BUCKET = 'unzen-continuous-assurance-evidence';
 
 export const DEPLOYMENT_SERVICES = Object.freeze([
-  {
-    role: 'verifier',
-    service: 'unzen-llm-continuous-assurance-independent-verifier',
-    config: 'worker-runtime/wrangler.independent-verifier.jsonc',
-    secrets: [],
-    vars: {},
-  },
-  {
-    role: 'provider',
-    service: 'unzen-llm-continuous-assurance-provider-adapter',
-    config: 'worker-runtime/wrangler.provider-adapter.jsonc',
-    secrets: ['PROVIDER_API_TOKEN'],
-    vars: { PROVIDER_API_BASE_URL: 'PROVIDER_API_BASE_URL' },
-  },
-  {
-    role: 'pager',
-    service: 'unzen-llm-continuous-assurance-pager-adapter',
-    config: 'worker-runtime/wrangler.pager-adapter.jsonc',
-    secrets: ['PAGER_API_TOKEN'],
-    vars: { PAGER_API_URL: 'PAGER_API_URL' },
-  },
-  {
-    role: 'evidence',
-    service: 'unzen-llm-continuous-assurance-evidence-adapter',
-    config: 'worker-runtime/wrangler.evidence-adapter.jsonc',
-    secrets: [],
-    vars: { EVIDENCE_PRODUCER_COMMIT_SHA: 'DEPLOY_COMMIT_SHA' },
-  },
-  {
-    role: 'engine',
-    service: 'unzen-llm-continuous-assurance-engine',
-    config: 'worker-runtime/wrangler.engine.jsonc',
-    secrets: ['ENGINE_BOOTSTRAP_SECRET', 'CANARY_DISPATCH_SECRET'],
-    vars: {},
-  },
-  {
-    role: 'runtime',
-    service: 'unzen-llm-continuous-assurance',
-    config: 'worker-runtime/wrangler.jsonc',
-    secrets: ['CANARY_DISPATCH_SECRET'],
-    vars: {},
-  },
-  {
-    role: 'controller',
-    service: 'unzen-llm-continuous-assurance-production-canary',
-    config: 'worker-runtime/wrangler.production-canary.jsonc',
-    secrets: ['CANARY_DISPATCH_SECRET', 'CANARY_CONTROLLER_SECRET'],
-    vars: { DEPLOY_COMMIT_SHA: 'DEPLOY_COMMIT_SHA' },
-  },
+  { role: 'verifier', service: 'unzen-llm-continuous-assurance-independent-verifier', config: 'worker-runtime/wrangler.independent-verifier.jsonc', secrets: [], vars: {} },
+  { role: 'provider', service: 'unzen-llm-continuous-assurance-provider-adapter', config: 'worker-runtime/wrangler.provider-adapter.jsonc', secrets: ['PROVIDER_API_TOKEN'], vars: { PROVIDER_API_BASE_URL: 'PROVIDER_API_BASE_URL' } },
+  { role: 'pager', service: 'unzen-llm-continuous-assurance-pager-adapter', config: 'worker-runtime/wrangler.pager-adapter.jsonc', secrets: ['PAGER_API_TOKEN'], vars: { PAGER_API_URL: 'PAGER_API_URL' } },
+  { role: 'evidence', service: 'unzen-llm-continuous-assurance-evidence-adapter', config: 'worker-runtime/wrangler.evidence-adapter.jsonc', secrets: [], vars: { EVIDENCE_PRODUCER_COMMIT_SHA: 'DEPLOY_COMMIT_SHA' } },
+  { role: 'engine', service: 'unzen-llm-continuous-assurance-engine', config: 'worker-runtime/wrangler.engine.jsonc', secrets: ['ENGINE_BOOTSTRAP_SECRET', 'CANARY_DISPATCH_SECRET'], vars: {} },
+  { role: 'runtime', service: 'unzen-llm-continuous-assurance', config: 'worker-runtime/wrangler.jsonc', secrets: ['CANARY_DISPATCH_SECRET'], vars: {} },
+  { role: 'controller', service: 'unzen-llm-continuous-assurance-production-canary', config: 'worker-runtime/wrangler.production-canary.jsonc', secrets: ['CANARY_DISPATCH_SECRET', 'CANARY_CONTROLLER_SECRET'], vars: { DEPLOY_COMMIT_SHA: 'DEPLOY_COMMIT_SHA' } },
 ]);
 
 const REQUIRED_ACCOUNT_ENV = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'];
@@ -92,10 +51,7 @@ export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } =
       raw,
       Buffer.from(`\n--unzen-deploy-vars-v1--\n${stableJson(resolvedVars)}`, 'utf8'),
     ]));
-    const vars = {
-      CONFIG_FINGERPRINT_SHA256: configFingerprintSha256,
-      ...resolvedVars,
-    };
+    const vars = { CONFIG_FINGERPRINT_SHA256: configFingerprintSha256, ...resolvedVars };
     services.push({
       role: service.role,
       service: service.service,
@@ -171,7 +127,7 @@ export async function executeDeploymentPlan(plan, options = {}) {
     events.push({ command: ['npx', 'wrangler@latest', ...redactArgs(args)], kind: extra.kind ?? 'command' });
     return runner(['npx', 'wrangler@latest', ...args], {
       cwd: PROJECT_ROOT,
-      env,
+      env: { ...env, ...(extra.env ?? {}) },
       stdin: extra.stdin,
     });
   };
@@ -193,24 +149,32 @@ export async function executeDeploymentPlan(plan, options = {}) {
   const info = await run(['r2', 'bucket', 'info', plan.bucket], { kind: 'r2-info' }).catch((error) => ({ ok: false, error }));
   if (!info?.ok) await run(['r2', 'bucket', 'create', plan.bucket], { kind: 'r2-create' });
 
-  for (const service of plan.services) {
-    for (const secretName of service.secrets) {
-      const value = env[secretName];
-      if (!nonEmpty(value)) throw new Error(`deployment-secret-missing:${secretName}`);
-      await run(['secret', 'put', secretName, '--config', service.configPath], {
-        kind: 'secret-put',
-        stdin: `${value}\n`,
+  const outputRoot = await mkdtemp(join(tmpdir(), 'unzen-wrangler-output-'));
+  try {
+    for (const service of plan.services) {
+      for (const secretName of service.secrets) {
+        const value = env[secretName];
+        if (!nonEmpty(value)) throw new Error(`deployment-secret-missing:${secretName}`);
+        await run(['secret', 'put', secretName, '--config', service.configPath], {
+          kind: 'secret-put',
+          stdin: `${value}\n`,
+        });
+      }
+      const outputPath = join(outputRoot, `${service.role}.ndjson`);
+      await run(deployArgs(service, false), {
+        kind: 'deploy',
+        env: { WRANGLER_OUTPUT_FILE_PATH: outputPath },
+      });
+      const versionId = await readStructuredDeployVersion(outputPath, service.service);
+      versionIdentities.push({
+        role: service.role,
+        service: service.service,
+        versionId,
+        configFingerprintSha256: service.configFingerprintSha256,
       });
     }
-    const deployed = await run(deployArgs(service, false), { kind: 'deploy' });
-    const versionId = extractVersionId(`${deployed.stdout ?? ''}\n${deployed.stderr ?? ''}`);
-    if (!versionId) throw new Error(`deployment-version-id-missing:${service.role}`);
-    versionIdentities.push({
-      role: service.role,
-      service: service.service,
-      versionId,
-      configFingerprintSha256: service.configFingerprintSha256,
-    });
+  } finally {
+    await rm(outputRoot, { recursive: true, force: true });
   }
 
   return { events, manifest: redactedDeploymentManifest(plan), versionIdentities };
@@ -219,10 +183,32 @@ export async function executeDeploymentPlan(plan, options = {}) {
 function deployArgs(service, dryRun) {
   const args = ['deploy', '--config', service.configPath, '--keep-vars'];
   if (dryRun) args.push('--dry-run');
-  for (const [name, value] of Object.entries(service.vars)) {
-    args.push('--var', `${name}:${value}`);
-  }
+  for (const [name, value] of Object.entries(service.vars)) args.push('--var', `${name}:${value}`);
   return args;
+}
+
+async function readStructuredDeployVersion(outputPath, expectedService) {
+  let text;
+  try {
+    text = await readFile(outputPath, 'utf8');
+  } catch {
+    throw new Error(`deployment-structured-output-missing:${expectedService}`);
+  }
+  let versionId = null;
+  for (const line of text.split(/\r?\n/).filter(Boolean)) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      throw new Error(`deployment-structured-output-invalid:${expectedService}`);
+    }
+    if (entry?.type === 'deploy' && entry.worker_name === expectedService &&
+      typeof entry.version_id === 'string' && /^[A-Za-z0-9-]{8,128}$/.test(entry.version_id)) {
+      versionId = entry.version_id;
+    }
+  }
+  if (!versionId) throw new Error(`deployment-version-id-missing:${expectedService}`);
+  return versionId;
 }
 
 export async function runCommand(command, options = {}) {
@@ -238,12 +224,7 @@ export async function runCommand(command, options = {}) {
     child.stderr.on('data', (chunk) => stderr.push(chunk));
     child.on('error', rejectPromise);
     child.on('close', (code) => {
-      const result = {
-        ok: code === 0,
-        code,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      };
+      const result = { ok: code === 0, code, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') };
       if (code === 0) resolvePromise(result);
       else rejectPromise(Object.assign(new Error(`wrangler-command-failed:${command.slice(0, 4).join(' ')}`), { result }));
     });
@@ -252,27 +233,13 @@ export async function runCommand(command, options = {}) {
   });
 }
 
-function extractVersionId(output) {
-  const matches = [
-    /Current\s+Version\s+ID\s*:\s*([A-Za-z0-9-]{8,128})/i,
-    /Version\s+ID\s*:\s*([A-Za-z0-9-]{8,128})/i,
-  ];
-  for (const pattern of matches) {
-    const match = output.match(pattern);
-    if (match) return match[1];
-  }
-  return null;
-}
-
 function redactArgs(args) {
   return args.map((value) => SECRET_NAMES.has(value) ? value : value);
 }
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
-  }
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
 }
 
