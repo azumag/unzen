@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-pager-adapter",
+  "main": "./continuous-assurance-pager-adapter-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "vars": {
+    "PAGER_API_URL": "https://pager-api.example.invalid/events",
+    "PAGER_MAX_ATTEMPTS": "2"
+  },
+  "secrets": {
+    "required": ["PAGER_API_TOKEN"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
