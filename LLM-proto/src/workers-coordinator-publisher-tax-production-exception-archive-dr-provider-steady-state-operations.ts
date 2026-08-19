@@ -336,6 +336,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
     previewRunnerUrl: upstream.previewRunnerUrl,
     postCutoverReconciliationEvidence: upstream,
     steadyStateInputEvidence: options.steadyStateOperationsEvidence,
+    cycleInputEvidence: options.steadyStateCycleEvidence,
     steadyStateEvidenceSummary: {
       validationStatus: operationsValidation.status,
       effectiveEvidenceLevel: operationsValidation.effectiveEvidenceLevel,
