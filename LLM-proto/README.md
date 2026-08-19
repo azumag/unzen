@@ -135,6 +135,7 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Coordinator | `src/coordinator.ts` | request受付とpipeline統括 |
 | Durable Coordinator | `src/durable-coordinator.ts` | durable state・idempotency・request identity・retry/cancellationを備えたCoordinator (#103) |
 | Durable Repository | `src/durable-repository.ts` | storage境界を分けたrepository interface + in-memory実装 (#103) |
+| Durable Object Repository | `src/durable-object-repository.ts` | SQLite-backed Durable Objectの同期KVへCoordinator stateを永続化するproduction adapter (#103) |
 | State machine | `src/request-state-machine.ts` | accepted→queued→leased→running→completed等の遷移を検証するreducer (#103) |
 | Worker Registry | `src/worker-registry.ts` | connection世代ごとのworker登録・revoke・heartbeat policy (#103) |
 | Lease Manager | `src/lease-manager.ts` | assignment identityとactive leaseの一致検証 (#103) |
@@ -184,12 +185,14 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Tax production cutover readiness | `src/workers-coordinator-publisher-tax-production-cutover-readiness.ts` | upstream reportの判定 |
 | Tax production callbacks readiness | `src/workers-coordinator-publisher-tax-production-callbacks-readiness.ts` | upstream reportの判定 |
 | Tax production monitoring reconciliation | `src/workers-coordinator-publisher-tax-production-monitoring-reconciliation.ts` | upstream reportの判定 |
+| Tax production exception operations | `src/workers-coordinator-publisher-tax-production-exception-operations.ts` | rejected/corrected/duplicate/replayからrunbook・support・publisher statusを照合 (#91) |
 
 signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`EvidenceEnvelope`と`validateEvidenceEnvelope()`を経由してのみ証拠を受け付けます。手書きfixtureは`captured-and-verified`へ到達できず、`contract-tested`に留まります。
 
 詳細:
 
 - [`docs/workers-coordinator-prototype.md`](./docs/workers-coordinator-prototype.md)
+- [`docs/publisher-tax-production-exception-operations.md`](./docs/publisher-tax-production-exception-operations.md)
 - [`docs/evidence-readiness.md`](./docs/evidence-readiness.md)
 
 ## 6. テスト実行
@@ -230,6 +233,7 @@ npm run test:workers-publisher-tax-provider-sandbox
 npm run test:workers-publisher-tax-production-cutover
 npm run test:workers-publisher-tax-production-callbacks
 npm run test:workers-publisher-tax-production-monitoring
+npm run test:workers-publisher-tax-production-exceptions
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
@@ -248,19 +252,20 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 
 ## 7. 現在の重要な修正課題
 
+- [#91](https://github.com/azumag/unzen/issues/91): production monitoring後のexception operations runbook — rejected/corrected/duplicate-suppressed/replay-detected eventをoperator action、support escalation、publisher status、rollback/hold decisionへtraceし、次の`publisher-tax-filing-production-exception-resolution-audit`をbottleneckとして明示
 - [#101](https://github.com/azumag/unzen/issues/101): simulated evidenceと実測evidenceの分離 — evidence envelope基盤(#108)とbrowser preview・WebGPU pilot・telemetry gateのenvelope検証移行で対応済み。残りは各gateの実証拠artifactの取得
 - [#102](https://github.com/azumag/unzen/issues/102): hard-coded model geometryとplaceholder hashのmanifest化 — `SegmentedModelManifest` + 起動時fail-fast validatorで対応済み。30B/8segment/~2.1GBはEXAMPLE fixtureであり実測値ではない
-- [#103](https://github.com/azumag/unzen/issues/103): durable request state、idempotency、retry、cancellation — `DurableCoordinator` + in-memory repositoryで対応（詳細は[`docs/coordinator-durability.md`](./docs/coordinator-durability.md)）
+- [#103](https://github.com/azumag/unzen/issues/103): durable request state、idempotency、retry、cancellation — `DurableCoordinator` + `DurableObjectRepository`でproduction storage境界まで実装。実deployed Durable Object evidenceは別途必要（詳細は[`docs/coordinator-durability.md`](./docs/coordinator-durability.md)）
 - [#94](https://github.com/azumag/unzen/issues/94): InferenceBackend / `WorkerCapability`抽象化 — segmented・full-model・server-fallbackを同一capabilityでrouting（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
 - [#92](https://github.com/azumag/unzen/issues/92) / [#93](https://github.com/azumag/unzen/issues/93) / [#95](https://github.com/azumag/unzen/issues/95) / [#100](https://github.com/azumag/unzen/issues/100): Chrome Built-in AI / Prompt API — **破棄**（特別な設定なしにはAPIが露出しないことを実ブラウザ計測で確認。関連コード削除済み）
 
-これらが完了するまで、現在のgate chainをproduction-ready systemとは表現しません。
+contract gateが揃っていても、実provider・実tax filing・実browser artifactがcaptured-and-verifiedになるまではproduction-ready systemとは表現しません。
 
 ## 8. 既知の制約
 
 - 30B、8 segment、約2.1GB/segment、約4秒/segment等は**仮定値を含むEXAMPLE**であり、実測値ではない。権威あるgeometryは`SegmentedModelManifest`が保持する
 - `Coordinator`は検証済みの`SegmentedModelManifest`を注入され、起動時にplaceholder hash・fixture manifest・不整合geometryをrejectする（#102対応済み）
-- 基本Coordinator/Pipelineはprocess-local stateを含み、production durabilityが未完成（`DurableCoordinator`は#103でdurable repository上に構築済み。production storage adapterは未実装）
+- `DurableCoordinator`は`DurableObjectRepository`によりSQLite-backed Durable Objectの同期KVへrequest/status/idempotency/lease/checkpoint/result等を永続化できる。実Cloudflare deploymentでのproduction evidenceはまだ取得していない
 - 基本Pipelineのtimeoutは`withAbortableTimeout`（`src/pipeline-utils.ts`）でunderlying executionをabortする設計に移行済み（#103）
 - 手書きfixture fieldだけでは実行証拠にならない。browser preview・WebGPU pilot・telemetry gateはevidence envelopeの検証を必須とし、`contract-tested`以上へは昇格しない
 - Chrome Prompt API / Built-in AI は採用を破棄（#92/#93/#95/#100）。実ブラウザ計測で特別な設定なしにはAPIが露出しないことを確認（2026-08-06）。`browser-built-in-full-model` kindは#94抽象化としてのみ残存
@@ -279,9 +284,10 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 | [`docs/checkpoint-transfer-measurement.md`](./docs/checkpoint-transfer-measurement.md) | checkpoint measurement | deterministic harnessあり |
 | [`docs/browser-worker-retention-measurement.md`](./docs/browser-worker-retention-measurement.md) | retention measurement | sample aggregation harnessあり |
 | [`docs/coordinator-prototype.md`](./docs/coordinator-prototype.md) | Coordinator prototype | simulated harnessあり |
-| [`docs/coordinator-durability.md`](./docs/coordinator-durability.md) | Durable Coordinator (#103): durable state・idempotency・identity・retry/cancellation・checkpoint envelope | in-memory repository + durable Coordinator testでcontract検証 |
+| [`docs/coordinator-durability.md`](./docs/coordinator-durability.md) | Durable Coordinator (#103): durable state・idempotency・identity・retry/cancellation・checkpoint envelope | Durable Object production adapter実装済み、deployment evidenceは別 |
 | [`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md) | InferenceBackend / `WorkerCapability`抽象化 (#94): backend kind、capability validation、event union、capability routing、per-backend責任境界 | mock backend + routing unit testでcontract検証 |
 | [`docs/workers-coordinator-prototype.md`](./docs/workers-coordinator-prototype.md) | Workers/operations gate chain | contractとruntime evidenceを区別して読む |
+| [`docs/publisher-tax-production-exception-operations.md`](./docs/publisher-tax-production-exception-operations.md) | production monitoring後のexception runbook、support/publisher traceability、control decision、次bottleneck | #91 contract gate |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 
