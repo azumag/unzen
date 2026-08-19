@@ -41,9 +41,6 @@
     "TRUSTED_EVIDENCE_VERIFIERS_JSON": "[{\"name\":\"unzen-independent-evidence-verifier\"}]",
     "CONFIG_FINGERPRINT_SHA256": "SET_BY_DEPLOY_PIPELINE"
   },
-  "secrets": {
-    "required": ["ENGINE_BOOTSTRAP_SECRET", "CANARY_DISPATCH_SECRET"]
-  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
