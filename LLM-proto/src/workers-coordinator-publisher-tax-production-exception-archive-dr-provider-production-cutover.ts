@@ -182,6 +182,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
     status: failureReason ? 'fail' as const : 'pass' as const,
     previewRunnerUrl: upstream.previewRunnerUrl,
     productionReadinessEvidence: upstream,
+    cutoverInputEvidence: options.productionCutoverEvidence,
     cutoverEvidenceSummary: {
       validationStatus: cutoverValidation.status,
       effectiveEvidenceLevel: cutoverValidation.effectiveEvidenceLevel,
