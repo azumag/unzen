@@ -42,6 +42,7 @@ export interface WorkersCoordinatorPublisherTaxProductionArchiveDrOwnership {
 }
 
 export type WorkersCoordinatorPublisherTaxProductionArchiveDrIncidentTrigger =
+  | 'restore-drill-failed'
   | 'primary-unavailable'
   | 'backup-recovery-used'
   | 'drill-overdue'
@@ -199,7 +200,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDisaster
         'measured recovery duration and recovery-point age remain within RTO/RPO',
         'backup age and replication lag remain within configured freshness thresholds',
         'recovery owner, on-call route, and escalation target are explicit',
-        'every primary/backup exception or threshold breach has a traceable incident record',
+        'every failed drill, primary/backup exception, or threshold breach has a traceable incident record',
         'provider evidence is validated without overstating self-reported provenance',
         'archive identity, digest, retention/hold/deletion-review state, and network boundary remain unchanged',
       ],
@@ -225,9 +226,9 @@ function selectHoldReasons(
 ): string[] {
   const upstream = options.restoreDrillReport;
   const evidence = options.disasterRecoveryEvidence;
-  if (upstream.status === 'fail') return [`publisher-tax-production-exception-archive-restore-drill-not-clean: ${upstream.failureReason ?? 'unknown'}`];
   if (evidence.source !== 'publisher-tax-filing-production-exception-archive-disaster-recovery-operations') return ['publisher-tax-production-exception-archive-dr-must-use-operations-evidence'];
   const reasons: string[] = [];
+  if (upstream.status === 'fail') reasons.push(`publisher-tax-production-exception-archive-restore-drill-not-clean: ${upstream.failureReason ?? 'unknown'}`);
   const { schedule, objectives, measurements, ownership } = evidence;
   const recoveryDurationMs = measurements.recoveryCompletedAtMs - measurements.recoveryStartedAtMs;
   const recoveryPointAgeMs = measurements.recoveryStartedAtMs - measurements.recoveryPointAtMs;
@@ -280,6 +281,7 @@ function requiredIncidentTriggers(options: WorkersCoordinatorPublisherTaxProduct
   const recoveryDuration = e.measurements.recoveryCompletedAtMs - e.measurements.recoveryStartedAtMs;
   const rpoAge = e.measurements.recoveryStartedAtMs - e.measurements.recoveryPointAtMs;
   const backupAge = e.measurements.recoveryStartedAtMs - e.measurements.backupSnapshotAtMs;
+  if (upstream.status === 'fail') triggers.push('restore-drill-failed');
   if (upstream.primaryAvailability !== 'available') triggers.push('primary-unavailable');
   if (upstream.backupRecovery) triggers.push('backup-recovery-used');
   if (e.capturedAtMs > e.schedule.nextDueAtMs) triggers.push('drill-overdue');
