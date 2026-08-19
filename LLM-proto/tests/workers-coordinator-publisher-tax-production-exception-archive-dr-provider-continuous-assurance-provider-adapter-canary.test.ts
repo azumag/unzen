@@ -139,7 +139,7 @@ describe('continuous assurance provider adapter canary gate', () => {
     expect(report.failureReason).toBe('adapter-canary-evidence-not-production-candidate');
   });
 
-  it('keeps adapter production configs internal-only, binding-aligned, and secret-value free', async () => {
+  it('keeps engine and adapter production configs internal-only, binding-aligned, and secret-value free', async () => {
     const projectRoot = decodeURIComponent(new URL('..', import.meta.url).pathname);
     const engine = await readFile(join(projectRoot, 'worker-runtime', 'wrangler.engine.jsonc'), 'utf8');
     const provider = await readFile(join(projectRoot, 'worker-runtime', 'wrangler.provider-adapter.jsonc'), 'utf8');
@@ -147,9 +147,10 @@ describe('continuous assurance provider adapter canary gate', () => {
     const pager = await readFile(join(projectRoot, 'worker-runtime', 'wrangler.pager-adapter.jsonc'), 'utf8');
     const verifier = await readFile(join(projectRoot, 'worker-runtime', 'wrangler.independent-verifier.jsonc'), 'utf8');
 
-    for (const config of [provider, evidence, pager, verifier]) {
+    for (const config of [engine, provider, evidence, pager, verifier]) {
       expect(config).toContain('"compatibility_date": "2026-08-20"');
       expect(config).toContain('"workers_dev": false');
+      expect(config).toContain('"preview_urls": false');
       expect(config).not.toContain('"routes"');
     }
     expect(engine).toContain(`"service": "${CONTINUOUS_ASSURANCE_PROVIDER_ADAPTER_SERVICE}"`);
