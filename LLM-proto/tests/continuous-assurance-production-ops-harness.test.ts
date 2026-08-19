@@ -36,8 +36,9 @@ describe('continuous assurance production ops harness', () => {
     expect(bindingCalls).toBe(1);
     expect(response.status).toBe(201);
     expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(await response.text()).toContain('captured');
-    expect(await new Response(await response.clone().arrayBuffer()).text()).not.toContain(SECRET);
+    const responseText = await response.text();
+    expect(responseText).toContain('captured');
+    expect(responseText).not.toContain(SECRET);
   });
 
   it('rejects non-loopback requests before touching the remote binding', async () => {
