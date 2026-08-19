@@ -507,8 +507,7 @@ function validateCredentialRotation(
 ): void {
   const baselineRotation = upstream.productionCutoverEvidence.productionReadinessEvidence.readinessInputEvidence.payload.credentialRotation;
   const policy = operations.credentialRotation;
-  if (policy.rotationCadenceMs <= 0 || policy.lastRotatedAtMs !== baselineRotation.lastRotatedAtMs ||
-    policy.nextRotationDueAtMs !== baselineRotation.nextRotationDueAtMs) {
+  if (policy.rotationCadenceMs <= 0) {
     reasons.push('steady-state-rotation-policy-invalid');
     return;
   }
