@@ -513,7 +513,7 @@ function validateProviderPayload(path: string, payload: unknown): void {
     }
   } else if (path === '/provider/keys/rotate') {
     const value = payload as unknown as SteadyStateRotationEvent;
-    if (!value.rotationId || !Number.isFinite(value.rotatedAtMs)) {
+    if (!value.rotationEvidenceId || !Number.isFinite(value.rotatedAtMs)) {
       throw new AdapterContractError('provider-rotation-response-invalid', 502);
     }
   } else if (path === '/provider/dr/exercise') {
@@ -694,6 +694,6 @@ const PROVIDER_REQUIRED_FIELDS: Record<string, readonly string[]> = {
   '/provider/audit': ['auditStreamId', 'auditCursorStart', 'auditCursorEnd', 'providerAuditRecordIds', 'observedAtMs'],
   '/provider/archive/retrieve': ['retrievalOperationId', 'storageId', 'archiveId', 'observedContentDigest', 'integrityCheckId', 'integrityStatus'],
   '/provider/health': ['observedAtMs', 'operationCount', 'failureCount', 'providerAvailabilityPct', 'alertDispositions', 'incidentReviews', 'networkAttempts'],
-  '/provider/keys/rotate': ['rotationId', 'rotatedAtMs'],
+  '/provider/keys/rotate': ['rotationEvidenceId', 'rotatedAtMs'],
   '/provider/dr/exercise': ['exerciseId', 'sourceStorageId', 'observedContentDigest', 'integrityCheckId', 'integrityStatus'],
 };
