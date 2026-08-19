@@ -1,4 +1,4 @@
-# unzen-LLM 計画書 v2.6
+# unzen-LLM 計画書 v2.9
 
 ## 本文書の位置づけ
 
@@ -197,7 +197,6 @@ unzen-LLMは**広告の全面置換を目指さない**。広告と並立する�
 ---
 
 ## 3. UX設計
-
 ### 3.1 ユーザーへの提示方法
 
 **パターンA: 広告除去の対価**
@@ -710,7 +709,7 @@ All-or-Nothing パイプライン:
 3. [Checkpoint transfer measurement](./docs/checkpoint-transfer-measurement.md) で、checkpoint(hidden states)のシリアライズ・転送サイズ・速度・retry failure を report gate として検証し、manual browser/WebGPU 計測へ進む条件を固める
 4. [Browser worker retention measurement](./docs/browser-worker-retention-measurement.md) で、session duration distribution、retention curve、Tier 3 early abandon、checkpoint resume / retry impact を report gate として検証し、実際のサイトでのブラウザ離脱率測定へ進む条件を固める
 5. [Coordinator prototype](./docs/coordinator-prototype.md) で、API受付、worker registration / heartbeat、AdaptiveChunkDispatcher assignment、Coordinator checkpoint relay、resume/retry report、Tier 3 churn eligibility を simulated report gate として束ねる
-6. [Coordinator durability (#103)](./docs/coordinator-durability.md) で、durable request state、idempotency、request/attempt/lease identity、retry/cancellation、checkpoint envelope、worker generation policy を in-memory repository + durable Coordinator の contract test として検証する
+6. [Coordinator durability (#103)](./docs/coordinator-durability.md) で、durable request state、idempotency、request/attempt/lease identity、retry/cancellation、checkpoint envelope、worker generation policy を `DurableCoordinator` + `DurableObjectRepository` の contract testとして検証する。SQLite-backed Durable Objectのproduction storage adapterは実装済みで、実deployment evidenceは別途取得する
 6. [Workers Coordinator prototype](./docs/workers-coordinator-prototype.md) で、Cloudflare Workers 境界の API lifecycle、Durable Object single-writer worker state、AdaptiveChunkDispatcher assignment import、Coordinator-owned checkpoint relay、worker loss retry/resume impact、WebSocket heartbeat p95 fan-out、direct worker-to-worker rejection を report gate として検証する
 7. [Workers Coordinator Miniflare smoke](./docs/workers-coordinator-prototype.md) で、Miniflare/workerd の real Worker fetch、Durable Object storage、WebSocket upgrade、direct worker-to-worker rejection、load-shaped request concurrency、client-side heartbeat timing、restart persistence を focused smoke として検証する
 8. [Workers Coordinator deployed smoke](./docs/workers-coordinator-prototype.md) で、authenticated Wrangler preview / deployed Worker URL の auth header presence、Durable Object migration tag、real browser WebSocket timing、edge placement variance、direct worker-to-worker rejection を focused smoke として検証する
@@ -732,8 +731,9 @@ All-or-Nothing パイプライン:
 24. [Publisher tax filing production cutover readiness gate](./docs/workers-coordinator-prototype.md) で、sandbox provider filing IDs、operator approval evidence、production filing window、live-provider preflight evidence、duplicate-filing suppression、rollback / emergency hold controls、production callbacks readiness へ進む promote/hold thresholds を検証する
 25. [Publisher tax filing production callbacks readiness gate](./docs/workers-coordinator-prototype.md) で、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production monitoring reconciliation へ進む promote/hold thresholds を検証する
 26. [Publisher tax filing production monitoring reconciliation gate](./docs/workers-coordinator-prototype.md) で、accepted / rejected / corrected / duplicate-suppressed callback streams、operator monitoring records、publisher monitoring exports、alert traceability、duplicate-filing suppression replay、rollback / emergency hold replay controls、exception operations runbook へ進む promote/hold thresholds を検証する
-27. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
-28. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
+27. [Publisher tax filing production exception operations runbook gate (#91)](./docs/publisher-tax-production-exception-operations.md) で、rejected / corrected / duplicate-suppressed / replay-detected eventをoperator runbook actionへ変換し、monitoring alert / production callback / provider filing / approved production windowをsupport escalationへtraceする。affected provider filingごとのpublisher status update、duplicate-filing suppression維持、rollback / emergency-hold decision evidence、signed runner isolationを検証し、次の`publisher-tax-filing-production-exception-resolution-audit`へ進む
+28. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
+29. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
 
 ### 7.2 経済性の精緻化
 
@@ -784,10 +784,11 @@ ChromeLanguageModelBackend・descriptor）を削除しました。
 
 ---
 
-**ドキュメントバージョン**: 2.8
+**ドキュメントバージョン**: 2.9
 **作成日**: 2026年2月
 **ステータス**: レビュー済み方針確定版
 **変更履歴**:
+- v2.9: #91 production exception operations runbook gateを7.1項へ追加。monitoring exceptionからoperator action / support escalation / publisher status / duplicate suppression / rollback-hold decisionをtraceし、次のexception resolution auditを明示。#103 durability記述をDurableObjectRepository実装後の状態へ更新
 - v2.8: Chrome Built-in AI / Prompt API 採用方針（#92/#93/#95/#100）を破棄。実ブラウザ計測で特別な設定なしにはAPIが露出しないことを確認（7.5項に記録）。関連コード削除済み
 - v2.7: InferenceBackend / `WorkerCapability`抽象化（#94）を7.1項に追加。segmented・full-model・server-fallbackを同一capabilityでroutingする方針と、full-model backendが`SegmentExecutor`を装わないことを明記（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
 - v2.0: 初版(旧文書の矛盾解消、方針確定)
