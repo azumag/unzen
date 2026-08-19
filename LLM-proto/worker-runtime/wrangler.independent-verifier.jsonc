@@ -6,9 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
   "vars": {
     "VERIFIER_NAME": "unzen-independent-evidence-verifier",
-    "VERIFIER_VERSION": "1.0.0"
+    "VERIFIER_VERSION": "1.0.0",
+    "CONFIG_FINGERPRINT_SHA256": "SET_BY_DEPLOY_PIPELINE"
   },
   "observability": {
     "enabled": true,

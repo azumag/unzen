@@ -6,9 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
   "vars": {
     "PAGER_API_URL": "https://pager-api.example.invalid/events",
-    "PAGER_MAX_ATTEMPTS": "2"
+    "PAGER_MAX_ATTEMPTS": "2",
+    "CONFIG_FINGERPRINT_SHA256": "SET_BY_DEPLOY_PIPELINE"
   },
   "secrets": {
     "required": ["PAGER_API_TOKEN"]
