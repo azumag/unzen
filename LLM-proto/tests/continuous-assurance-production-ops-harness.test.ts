@@ -76,7 +76,7 @@ describe('continuous assurance production ops harness', () => {
     expect(config).not.toContain('"crons"');
   });
 
-  it('keeps the GitHub production workflow manual-only and defaults to a non-mutating plan', async () => {
+  it('keeps the GitHub production workflow manual-only, defaults to plan, and scopes secrets to authenticated steps', async () => {
     const repoRoot = decodeURIComponent(new URL('../..', import.meta.url).pathname);
     const workflow = await readFile(join(repoRoot, '.github', 'workflows', 'continuous-assurance-production-ops.yml'), 'utf8');
     expect(workflow).toContain('workflow_dispatch:');
@@ -89,5 +89,31 @@ describe('continuous assurance production ops harness', () => {
     expect(workflow).toContain('actions/upload-artifact@v4');
     expect(workflow).toContain('${{ secrets.PROVIDER_CANARY_CONTROLLER_SECRET }}');
     expect(workflow).not.toContain(SECRET);
+
+    const beforeSteps = workflow.split(/^\s{4}steps:/m)[0] ?? '';
+    expect(beforeSteps).not.toContain('${{ secrets.');
+
+    const installToPlan = workflow.slice(
+      workflow.indexOf('- name: Install dependencies'),
+      workflow.indexOf('- name: Run authenticated dry-run'),
+    );
+    expect(installToPlan).not.toContain('${{ secrets.');
+
+    const dryRunBlock = workflow.slice(
+      workflow.indexOf('- name: Run authenticated dry-run'),
+      workflow.indexOf('- name: Deploy production services'),
+    );
+    expect(dryRunBlock).toContain('${{ secrets.CLOUDFLARE_API_TOKEN }}');
+    expect(dryRunBlock).toContain('${{ secrets.CLOUDFLARE_ACCOUNT_ID }}');
+    expect(dryRunBlock).not.toContain('${{ secrets.PROVIDER_API_TOKEN }}');
+    expect(dryRunBlock).not.toContain('${{ secrets.PAGER_API_TOKEN }}');
+    expect(dryRunBlock).not.toContain('${{ secrets.ENGINE_BOOTSTRAP_SECRET }}');
+    expect(dryRunBlock).not.toContain('${{ secrets.PROVIDER_CANARY_CONTROLLER_SECRET }}');
+
+    const deployBlock = workflow.slice(workflow.indexOf('- name: Deploy production services'));
+    expect(deployBlock).toContain('${{ secrets.PROVIDER_API_TOKEN }}');
+    expect(deployBlock).toContain('${{ secrets.PAGER_API_TOKEN }}');
+    expect(deployBlock).toContain('${{ secrets.ENGINE_BOOTSTRAP_SECRET }}');
+    expect(deployBlock).toContain('${{ secrets.PROVIDER_CANARY_CONTROLLER_SECRET }}');
   });
 });
