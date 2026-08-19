@@ -13,8 +13,8 @@ import {
 
 export const PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_DEPLOYMENT_CANARY_EVIDENCE_KIND =
   'publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary' as const;
-export const PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_OPERATIONS_ROLLOUT_BOTTLENECK =
-  'publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout' as const;
+export const PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_PROVIDER_CANARY_BOTTLENECK =
+  'publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary' as const;
 
 export const CONTINUOUS_ASSURANCE_RUNTIME_SERVICE = 'unzen-llm-continuous-assurance' as const;
 export const CONTINUOUS_ASSURANCE_ENGINE_SERVICE = 'unzen-llm-continuous-assurance-engine' as const;
@@ -176,7 +176,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
     failureReason,
     bottlenecksToIssue: failureReason
       ? []
-      : [PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_OPERATIONS_ROLLOUT_BOTTLENECK],
+      : [PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_PROVIDER_CANARY_BOTTLENECK],
   };
 }
 
@@ -206,16 +206,14 @@ function validateRuntimeResult(
   result: ContinuousAssuranceDeploymentRuntimeResult,
   reasons: string[],
 ): void {
-  if (result.status !== 'pass' || result.runtimeDelivery.durableState !== 'completed' ||
+  if (result.status !== 'idle' || result.runtimeDelivery.durableState !== 'completed' ||
     result.runtimeDelivery.replayCount !== 0 || result.runtimeDelivery.replayed || result.failureReason) {
     reasons.push('production-deployment-canary-runtime-not-clean');
   }
-  if (!result.cycleId || !result.latestCycleRunId || !result.latestAggregateRunId) {
-    reasons.push('production-deployment-canary-runtime-output-incomplete');
+  if (!result.cycleId || result.latestCycleRunId !== null || result.latestAggregateRunId !== null) {
+    reasons.push('production-deployment-canary-runtime-output-invalid');
   }
-  if (result.actionIdempotencyKeys.length === 0 ||
-    result.actionIdempotencyKeys.some((key) => !key || key.length > 512) ||
-    new Set(result.actionIdempotencyKeys).size !== result.actionIdempotencyKeys.length) {
-    reasons.push('production-deployment-canary-idempotency-set-invalid');
+  if (result.actionIdempotencyKeys.length !== 0) {
+    reasons.push('production-deployment-canary-read-only-actions-detected');
   }
 }
