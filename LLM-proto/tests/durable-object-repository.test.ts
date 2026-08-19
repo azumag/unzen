@@ -9,6 +9,7 @@ import {
 } from '../src/durable-coordinator.js';
 import { createFixtureModelManifest } from '../src/model-manifest-fixtures.js';
 import { createCheckpointEnvelope } from '../src/checkpoint-envelope.js';
+import { ErrorCode, UnzenError } from '../src/errors.js';
 import { workerId, WorkerTier } from '../src/types.js';
 import type { WorkerId } from '../src/types.js';
 import type {
@@ -178,5 +179,40 @@ describe('DurableObjectRepository', () => {
       currentSegment: 7,
       lastHeartbeat: 20,
     });
+  });
+
+  it('does not let a stale record mutation roll a terminal transition back', async () => {
+    const storage = new CloneOnAccessKv();
+    const manifest = createFixtureModelManifest({ totalSegments: 1 });
+    const repo1 = new DurableObjectRepository(storage);
+    const failingExecutor: DurableSegmentExecutor = {
+      execute: async () => {
+        throw new UnzenError('invalid prompt', ErrorCode.InvalidInput);
+      },
+    };
+    const coordinator = new DurableCoordinator(
+      failingExecutor,
+      manifest,
+      { allowFixtureManifest: true, maxRetries: 0 },
+      repo1,
+    );
+    coordinator.registerWorker(
+      { workerId: workerId('failing-worker'), tier: WorkerTier.TIER_3, vramMB: 16_384 },
+      'connection-c',
+    );
+
+    const submission = coordinator.submit('bad input');
+    await expect(submission.result).rejects.toThrow('invalid prompt');
+
+    // finalizeStage performs a CAS transition and then records error/timing on
+    // a previously read record. The write-through proxy must merge those fields
+    // into the latest stored stage instead of writing the stale stage back.
+    const repo2 = new DurableObjectRepository(storage);
+    expect(repo2.getRequest(submission.requestId)).toMatchObject({
+      stage: 'failed',
+      lastErrorCode: ErrorCode.InvalidInput,
+      lastError: 'invalid prompt',
+    });
+    expect(repo2.getRequest(submission.requestId)?.completedAt).toBeDefined();
   });
 });
