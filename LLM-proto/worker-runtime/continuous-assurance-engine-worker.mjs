@@ -12,6 +12,18 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function engineErrorCode(error) {
+  return typeof error?.code === 'string' ? error.code : 'engine-service-failed';
+}
+
+function engineStatusForCode(code) {
+  return code === 'engine-trigger-identity-invalid' || code === 'engine-trigger-timeline-invalid'
+    ? 400
+    : code === 'engine-trigger-in-progress' || code === 'engine-scope-busy'
+      ? 409
+      : 503;
+}
+
 function parseTrustedVerifiers(value) {
   try {
     const parsed = JSON.parse(value || '[]');
@@ -34,13 +46,11 @@ async function timingSafeSecretEquals(provided, expected) {
 }
 
 function engineRuntimeError(error) {
-  const code = typeof error?.code === 'string' ? error.code : 'engine-service-failed';
-  const status = code === 'engine-trigger-identity-invalid' || code === 'engine-trigger-timeline-invalid'
-    ? 400
-    : code === 'engine-trigger-in-progress' || code === 'engine-scope-busy'
-      ? 409
-      : 503;
-  return Response.json({ error: code, message: errorMessage(error) }, { status });
+  const code = engineErrorCode(error);
+  return Response.json(
+    { error: code, message: errorMessage(error) },
+    { status: engineStatusForCode(code) },
+  );
 }
 
 export class ContinuousAssuranceEngineState extends DurableObject {
@@ -129,12 +139,23 @@ export class ContinuousAssuranceEngineState extends DurableObject {
       evidence: this.env.EVIDENCE_ADAPTER,
       pager: this.env.PAGER_ADAPTER,
     });
-    return runWorkersCoordinatorPublisherTaxProductionArchiveDrProviderContinuousAssuranceEngineService({
-      request,
-      repository: this.#repository(),
-      executor,
-      evidenceValidationOptions: this.#evidenceValidationOptions(request.deliveryAtMs),
-    });
+    try {
+      return {
+        ok: true,
+        result: await runWorkersCoordinatorPublisherTaxProductionArchiveDrProviderContinuousAssuranceEngineService({
+          request,
+          repository: this.#repository(),
+          executor,
+          evidenceValidationOptions: this.#evidenceValidationOptions(request.deliveryAtMs),
+        }),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: engineErrorCode(error),
+        message: errorMessage(error),
+      };
+    }
   }
 
   async readState(scope = DEFAULT_SCOPE) {
@@ -388,7 +409,14 @@ export default {
       const input = await request.json();
       const scope = input.scope || DEFAULT_SCOPE;
       try {
-        return Response.json(await env.ENGINE_STATE.getByName(scope).runTick(input));
+        const outcome = await env.ENGINE_STATE.getByName(scope).runTick(input);
+        if (!outcome.ok) {
+          return Response.json(
+            { error: outcome.error, message: outcome.message },
+            { status: engineStatusForCode(outcome.error) },
+          );
+        }
+        return Response.json(outcome.result);
       } catch (error) {
         return engineRuntimeError(error);
       }
