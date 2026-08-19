@@ -38,29 +38,35 @@ function verifyCapture(input: unknown, options: ProductionProviderCanaryVerifier
     input.requestedReadinessStatus !== 'production-candidate' || !SHA256.test(text(input.artifactSha256)) ||
     !record(input.payload)) return fail(options, 'provider-canary-capture-request-invalid');
   const runId = text(input.runId);
-  const reason = validatePayload(input.payload, runId);
+  const payload = input.payload;
+  const reason = validatePayload(payload, runId);
   if (reason) return fail(options, reason, runId);
-  return pass(options, runId, number(input.payload.completedAtMs));
+  return pass(options, runId, number(payload.completedAtMs));
 }
 
 async function verifyArtifact(input: unknown, options: ProductionProviderCanaryVerifierOptions) {
-  if (!record(input) || !record(input.envelope) || !record(input.envelope.artifact) || !record(input.envelope.payload)) {
+  if (!record(input) || !record(input.envelope)) {
     return fail(options, 'provider-canary-artifact-request-invalid');
   }
   const envelope = input.envelope;
+  const artifact = envelope.artifact;
+  const payload = envelope.payload;
+  if (!record(artifact) || !record(payload)) {
+    return fail(options, 'provider-canary-artifact-request-invalid');
+  }
   if (envelope.evidenceKind !== PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_PROVIDER_CANARY_EVIDENCE_KIND ||
     envelope.readinessStatus !== 'production-candidate') return fail(options, 'provider-canary-artifact-envelope-invalid');
   const actualSha = text(input.actualSha256);
-  const expectedSha = text(envelope.artifact.sha256);
+  const expectedSha = text(artifact.sha256);
   if (!SHA256.test(actualSha) || actualSha !== expectedSha) return fail(options, 'provider-canary-artifact-digest-invalid');
   const bytes = artifactBytes(input.artifactContent);
   if (await sha256(bytes) !== expectedSha) return fail(options, 'provider-canary-artifact-digest-mismatch');
   const runId = text(envelope.runId);
-  const reason = validatePayload(envelope.payload, runId);
+  const reason = validatePayload(payload, runId);
   if (reason) return fail(options, reason, runId);
-  const bindingReason = validateArtifactRecord(bytes, envelope.payload as unknown as ProductionProviderCanaryPayload);
+  const bindingReason = validateArtifactRecord(bytes, payload as unknown as ProductionProviderCanaryPayload);
   if (bindingReason) return fail(options, bindingReason, runId);
-  const completedAtMs = number(envelope.payload.completedAtMs);
+  const completedAtMs = number(payload.completedAtMs);
   const verifiedAt = new Date(completedAtMs + 1_000).toISOString();
   if (!record(envelope.verification) || envelope.verification.verifier !== options.verifierName ||
     envelope.verification.version !== options.verifierVersion || envelope.verification.verifiedAt !== verifiedAt ||
