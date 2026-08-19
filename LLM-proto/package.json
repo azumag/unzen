@@ -34,6 +34,7 @@
     "test:workers-publisher-tax-production-exception-archive": "vitest run tests/workers-coordinator-publisher-tax-production-exception-audit-archive-retention.test.ts",
     "test:workers-publisher-tax-production-exception-archive-restore": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-restore-drill.test.ts",
     "test:workers-publisher-tax-production-exception-archive-dr": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.test.ts",
+    "test:workers-publisher-tax-production-exception-archive-dr-provider-pilot": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-pilot.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
