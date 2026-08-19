@@ -1,7 +1,7 @@
 const EVIDENCE_KIND = 'publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary';
 const SERVICE = 'unzen-llm-continuous-assurance-production-canary';
 const DEFAULT_SCOPE = 'publisher-tax-exception-archive-dr';
-const DEFAULT_CRON = '17 * * * *';
+const DISPATCH_CRON = 'deployment-canary-idle';
 const VERIFIER_NAME = 'unzen-independent-evidence-verifier';
 const VERIFIER_VERSION = '1.0.0';
 
@@ -34,8 +34,25 @@ function roleMeta(role, value) {
 async function readMeta(binding, role) {
   const response = await binding.fetch(new Request(`https://${role}.internal/__meta`, { method: 'GET' }));
   if (!response.ok) throw new Error(`production-canary-meta-http-${role}-${response.status}`);
-  const value = await response.json();
-  return roleMeta(role, value);
+  return roleMeta(role, await response.json());
+}
+
+async function readEngineState(env, scope) {
+  const response = await env.ASSURANCE_ENGINE.fetch(new Request(
+    `https://engine.internal/__canary/state?scope=${encodeURIComponent(scope)}`,
+    { method: 'GET', headers: { 'x-unzen-canary-secret': env.CANARY_DISPATCH_SECRET } },
+  ));
+  if (!response.ok) throw new Error(`production-canary-engine-state-http-${response.status}`);
+  return response.json();
+}
+
+async function readEngineBindings(env) {
+  const response = await env.ASSURANCE_ENGINE.fetch(new Request('https://engine.internal/__canary/bindings', {
+    method: 'GET',
+    headers: { 'x-unzen-canary-secret': env.CANARY_DISPATCH_SECRET },
+  }));
+  if (!response.ok) throw new Error(`production-canary-engine-bindings-http-${response.status}`);
+  return response.json();
 }
 
 function metadataValid(meta) {
@@ -84,7 +101,8 @@ async function verifierCapture(env, body) {
   }));
   if (!response.ok) throw new Error(`production-canary-verifier-capture-http-${response.status}`);
   const attestation = await response.json();
-  if (attestation.result !== 'pass' || attestation.verifier !== VERIFIER_NAME || attestation.version !== VERIFIER_VERSION) {
+  if (attestation.result !== 'pass' || attestation.verifier !== VERIFIER_NAME || attestation.version !== VERIFIER_VERSION ||
+    attestation.readinessStatus !== 'production-candidate') {
     throw new Error('production-canary-verifier-attestation-invalid');
   }
   return attestation;
@@ -122,17 +140,20 @@ function runtimeResult(value, triggerKey) {
   };
 }
 
+function exactBindingMatches(bindings, direct) {
+  return ['provider', 'evidence', 'pager'].every((role) => {
+    const left = bindings?.[role];
+    const right = direct.find((item) => item.role === role);
+    return left && right && left.service === right.service && left.versionId === right.versionId &&
+      left.configFingerprintSha256 === right.configFingerprintSha256;
+  });
+}
+
 export async function runProductionDeploymentCanary(input, env) {
   const scope = env.CONTINUOUS_ASSURANCE_SCOPE || DEFAULT_SCOPE;
-  const cron = input.cron || env.PRODUCTION_CANARY_CRON || DEFAULT_CRON;
-  const scheduledTimeMs = Number(input.scheduledTimeMs);
-  const deliveryAtMs = Number(input.deliveryAtMs ?? Date.now());
-  if (!Number.isFinite(scheduledTimeMs) || !Number.isFinite(deliveryAtMs) || deliveryAtMs < scheduledTimeMs) {
-    throw new Error('production-canary-timeline-invalid');
-  }
-  const triggerKey = `${scope}:${cron}:${scheduledTimeMs}`;
-  const canaryRunId = `production-deployment-canary:${scheduledTimeMs}`;
-  const startedAtMs = deliveryAtMs;
+  const canaryScheduledTimeMs = Number(input.scheduledTimeMs);
+  if (!Number.isFinite(canaryScheduledTimeMs)) throw new Error('production-canary-schedule-invalid');
+  const canaryRunId = `production-deployment-canary:${canaryScheduledTimeMs}`;
 
   const deployments = await Promise.all([
     Promise.resolve(deploymentMetadata(env)),
@@ -145,6 +166,24 @@ export async function runProductionDeploymentCanary(input, env) {
   ]);
   if (!deployments.every(metadataValid)) throw new Error('production-canary-deployment-metadata-invalid');
 
+  const engineBindings = await readEngineBindings(env);
+  if (!exactBindingMatches(engineBindings, deployments)) throw new Error('production-canary-engine-binding-version-mismatch');
+
+  const state = await readEngineState(env, scope);
+  if (!Number.isFinite(state.nextDueAtMs) || !Number.isFinite(state.snapshotUpdatedAtMs)) {
+    throw new Error('production-canary-engine-snapshot-not-ready');
+  }
+  const latestIdleAtMs = state.nextDueAtMs - 1;
+  const logicalNowMs = Math.max(state.snapshotUpdatedAtMs, Math.min(Date.now(), latestIdleAtMs));
+  if (!Number.isFinite(logicalNowMs) || logicalNowMs >= state.nextDueAtMs) {
+    throw new Error('production-canary-no-safe-idle-window');
+  }
+  const scheduledTimeMs = logicalNowMs;
+  const deliveryAtMs = logicalNowMs;
+  const cron = DISPATCH_CRON;
+  const triggerKey = `${scope}:${cron}:${scheduledTimeMs}`;
+  const startedAtMs = logicalNowMs;
+
   const badSecret = await dispatchRuntime(env, { cron, scheduledTimeMs, deliveryAtMs }, 'intentionally-invalid');
   const badDispatchSecretRejected = badSecret.status === 403;
   if (!badDispatchSecretRejected) throw new Error('production-canary-bad-secret-not-rejected');
@@ -153,8 +192,10 @@ export async function runProductionDeploymentCanary(input, env) {
   if (!dispatched.ok) throw new Error(`production-canary-runtime-http-${dispatched.status}`);
   const first = await dispatched.json();
   const firstRuntime = runtimeResult(first, triggerKey);
-  if (firstRuntime.status !== 'pass' || firstRuntime.runtimeDelivery.durableState !== 'completed' || firstRuntime.runtimeDelivery.replayed) {
-    throw new Error('production-canary-runtime-not-clean');
+  if (firstRuntime.status !== 'idle' || firstRuntime.runtimeDelivery.durableState !== 'completed' ||
+    firstRuntime.runtimeDelivery.replayed || firstRuntime.actionIdempotencyKeys.length !== 0 ||
+    firstRuntime.latestCycleRunId !== null || firstRuntime.latestAggregateRunId !== null) {
+    throw new Error('production-canary-runtime-not-read-only');
   }
 
   const duplicate = await dispatchRuntime(env, { cron, scheduledTimeMs, deliveryAtMs: deliveryAtMs + 1 }, env.CANARY_DISPATCH_SECRET);
@@ -169,12 +210,13 @@ export async function runProductionDeploymentCanary(input, env) {
   const untrustedVerifierRejected = VERIFIER_NAME === env.TRUSTED_VERIFIER_NAME;
   if (!untrustedVerifierRejected) throw new Error('production-canary-trusted-verifier-mismatch');
 
-  const completedAtMs = Math.max(deliveryAtMs + 2, Date.now());
+  const completedAtMs = logicalNowMs + 2;
   const record = {
     schema: 'unzen-continuous-assurance-production-deployment-canary-v1',
     canaryRunId,
     triggerKey,
     deployments,
+    engineBindings,
     runtimeResult: firstRuntime,
     badDispatchSecretRejected,
     duplicateCompletedDispatchSuppressed,
@@ -206,7 +248,7 @@ export async function runProductionDeploymentCanary(input, env) {
     runtimeResult: firstRuntime,
     artifactLocator,
     artifactSha256,
-    verificationId: `pending:${canaryRunId}`,
+    verificationId: `${VERIFIER_NAME}:${canaryRunId}`,
     verifier: VERIFIER_NAME,
     verifierVersion: VERIFIER_VERSION,
     negativeChecks,
@@ -220,7 +262,6 @@ export async function runProductionDeploymentCanary(input, env) {
     artifactLocator,
     artifactSha256,
   });
-  const finalPayload = { ...payload, verificationId: `${attestation.verifier}:${attestation.verifiedAt}:${canaryRunId}` };
   const envelope = {
     schemaVersion: '1.0.0',
     evidenceKind: EVIDENCE_KIND,
@@ -242,7 +283,7 @@ export async function runProductionDeploymentCanary(input, env) {
     scenario: {
       feature: 'continuous-assurance-production-deployment',
       scenario: canaryRunId,
-      expectedResult: 'controlled deployed canary passes',
+      expectedResult: 'read-only deployed wiring canary passes',
     },
     artifact: {
       locator: artifactLocator,
@@ -256,7 +297,7 @@ export async function runProductionDeploymentCanary(input, env) {
       result: 'pass',
     },
     redaction: { applied: true, policyVersion: 'production-deployment-canary-v1' },
-    payload: finalPayload,
+    payload,
   };
 
   if (!(await verifyDigestMismatchRejected(env, envelope, artifactContent))) {
@@ -290,11 +331,7 @@ export default {
     const scheduledTimeMs = controller.scheduledTime instanceof Date
       ? controller.scheduledTime.getTime()
       : Number(controller.scheduledTime);
-    ctx.waitUntil(runProductionDeploymentCanary({
-      cron: controller.cron,
-      scheduledTimeMs,
-      deliveryAtMs: Date.now(),
-    }, env).then((envelope) => {
+    ctx.waitUntil(runProductionDeploymentCanary({ scheduledTimeMs }, env).then((envelope) => {
       console.log(JSON.stringify({
         event: 'production_deployment_canary_completed',
         runId: envelope.runId,
