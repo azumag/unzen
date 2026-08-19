@@ -31,6 +31,7 @@
     "test:workers-publisher-tax-production-monitoring": "vitest run tests/workers-coordinator-publisher-tax-production-monitoring-reconciliation.test.ts",
     "test:workers-publisher-tax-production-exceptions": "vitest run tests/workers-coordinator-publisher-tax-production-exception-operations.test.ts",
     "test:workers-publisher-tax-production-exception-resolution": "vitest run tests/workers-coordinator-publisher-tax-production-exception-resolution-audit.test.ts",
+    "test:workers-publisher-tax-production-exception-archive": "vitest run tests/workers-coordinator-publisher-tax-production-exception-audit-archive-retention.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

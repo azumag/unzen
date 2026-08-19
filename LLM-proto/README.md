@@ -187,6 +187,7 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Tax production monitoring reconciliation | `src/workers-coordinator-publisher-tax-production-monitoring-reconciliation.ts` | upstream reportの判定 |
 | Tax production exception operations | `src/workers-coordinator-publisher-tax-production-exception-operations.ts` | rejected/corrected/duplicate/replayからrunbook・support・publisher statusを照合 (#91) |
 | Tax production exception resolution audit | `src/workers-coordinator-publisher-tax-production-exception-resolution-audit.ts` | resolved/carry-forward、correction outcome、support/publisher final status、identity integrityを照合 (#116) |
+| Tax production exception archive / retention | `src/workers-coordinator-publisher-tax-production-exception-audit-archive-retention.ts` | versioned archive、SHA-256 digest、retrieval proof、retention/deletion reviewを照合 (#118) |
 
 signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`EvidenceEnvelope`と`validateEvidenceEnvelope()`を経由してのみ証拠を受け付けます。手書きfixtureは`captured-and-verified`へ到達できず、`contract-tested`に留まります。
 
@@ -195,6 +196,7 @@ signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`Evi
 - [`docs/workers-coordinator-prototype.md`](./docs/workers-coordinator-prototype.md)
 - [`docs/publisher-tax-production-exception-operations.md`](./docs/publisher-tax-production-exception-operations.md)
 - [`docs/publisher-tax-production-exception-resolution-audit.md`](./docs/publisher-tax-production-exception-resolution-audit.md)
+- [`docs/publisher-tax-production-exception-audit-archive-retention.md`](./docs/publisher-tax-production-exception-audit-archive-retention.md)
 - [`docs/evidence-readiness.md`](./docs/evidence-readiness.md)
 
 ## 6. テスト実行
@@ -237,6 +239,7 @@ npm run test:workers-publisher-tax-production-callbacks
 npm run test:workers-publisher-tax-production-monitoring
 npm run test:workers-publisher-tax-production-exceptions
 npm run test:workers-publisher-tax-production-exception-resolution
+npm run test:workers-publisher-tax-production-exception-archive
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
@@ -255,6 +258,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 
 ## 7. 現在の重要な修正課題
 
+- [#118](https://github.com/azumag/unzen/issues/118): production exception audit archive / retention — resolution audit identityをversioned archiveへ固定し、SHA-256 digest、archive/provider retrieval proof、minimum retention、carry-forward review、hold/deletion reviewを照合。次の`publisher-tax-filing-production-exception-archive-restore-drill`をbottleneckとして明示
 - [#116](https://github.com/azumag/unzen/issues/116): production exception resolution audit — runbook actionをresolved/carry-forwardへ収束させ、corrected filing provider outcome、support resolution、publisher final status、immutable identity auditを照合。次の`publisher-tax-filing-production-exception-audit-archive-retention`をbottleneckとして明示
 - [#91](https://github.com/azumag/unzen/issues/91): production monitoring後のexception operations runbook — rejected/corrected/duplicate-suppressed/replay-detected eventをoperator action、support escalation、publisher status、rollback/hold decisionへtraceし、次の`publisher-tax-filing-production-exception-resolution-audit`をbottleneckとして明示
 - [#101](https://github.com/azumag/unzen/issues/101): simulated evidenceと実測evidenceの分離 — evidence envelope基盤(#108)とbrowser preview・WebGPU pilot・telemetry gateのenvelope検証移行で対応済み。残りは各gateの実証拠artifactの取得
@@ -293,6 +297,7 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 | [`docs/workers-coordinator-prototype.md`](./docs/workers-coordinator-prototype.md) | Workers/operations gate chain | contractとruntime evidenceを区別して読む |
 | [`docs/publisher-tax-production-exception-operations.md`](./docs/publisher-tax-production-exception-operations.md) | production monitoring後のexception runbook、support/publisher traceability、control decision、次bottleneck | #91 contract gate |
 | [`docs/publisher-tax-production-exception-resolution-audit.md`](./docs/publisher-tax-production-exception-resolution-audit.md) | exception action resolution、correction outcome、support/publisher final status、identity integrity、次bottleneck | #116 contract gate |
+| [`docs/publisher-tax-production-exception-audit-archive-retention.md`](./docs/publisher-tax-production-exception-audit-archive-retention.md) | resolution audit archive、SHA-256 integrity、retrieval、retention/hold/deletion review、次bottleneck | #118 contract gate |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 
