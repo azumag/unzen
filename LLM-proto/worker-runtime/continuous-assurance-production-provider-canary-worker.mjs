@@ -250,7 +250,7 @@ async function verifierArtifact(env, envelope, artifactContent, actualSha256) {
   return { ok: response.ok, result: await response.json() };
 }
 
-async function untrustedVerifierRejected(artifactContent, artifactSha256, capturedAtMs) {
+async function probeUntrustedVerifierRejected(artifactContent, artifactSha256, capturedAtMs) {
   const verification = {
     verifier: 'untrusted-provider-canary-verifier',
     version: '0.0.0',
@@ -440,7 +440,7 @@ export async function runProductionProviderCanary(input, env) {
   const completedAtMs = Math.max(Date.now(), nowMs + 1);
   const preArtifact = canonicalJson({ canaryRunId, deploymentCanaryRunId: deploymentEvidence.runId, steadyStateRunId: steadyEvidence.runId });
   const preArtifactSha = await sha256Hex(preArtifact);
-  const untrustedVerifierRejected = await untrustedVerifierRejected(preArtifact, preArtifactSha, completedAtMs);
+  const untrustedVerifierRejected = await probeUntrustedVerifierRejected(preArtifact, preArtifactSha, completedAtMs);
   if (!untrustedVerifierRejected) throw new Error('production-provider-canary-untrusted-verifier-not-rejected');
 
   const negativeChecks = {
