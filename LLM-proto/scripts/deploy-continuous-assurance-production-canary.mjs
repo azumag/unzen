@@ -136,13 +136,10 @@ export async function executeDeploymentPlan(plan, options = {}) {
 
   await run(['whoami'], { kind: 'auth-check' });
   for (const service of plan.services) {
-    await run(['check', '--config', service.configPath], { kind: 'config-check' });
+    await run(deployArgs(service, true), { kind: 'deploy-preflight' });
   }
 
   if (plan.mode === 'dry-run') {
-    for (const service of plan.services) {
-      await run(deployArgs(service, true), { kind: 'deploy-dry-run' });
-    }
     return { events, manifest: redactedDeploymentManifest(plan), versionIdentities };
   }
 
@@ -181,7 +178,7 @@ export async function executeDeploymentPlan(plan, options = {}) {
 }
 
 function deployArgs(service, dryRun) {
-  const args = ['deploy', '--config', service.configPath, '--keep-vars'];
+  const args = ['deploy', '--config', service.configPath];
   if (dryRun) args.push('--dry-run');
   for (const [name, value] of Object.entries(service.vars)) args.push('--var', `${name}:${value}`);
   return args;
