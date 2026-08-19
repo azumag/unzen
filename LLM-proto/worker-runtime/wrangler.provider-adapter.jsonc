@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-provider-adapter",
+  "main": "./continuous-assurance-provider-adapter-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "vars": {
+    "PROVIDER_API_BASE_URL": "https://provider-api.example.invalid"
+  },
+  "secrets": {
+    "required": ["PROVIDER_API_TOKEN"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
