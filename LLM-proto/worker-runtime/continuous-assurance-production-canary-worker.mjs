@@ -6,6 +6,8 @@ const DEFAULT_SCOPE = 'publisher-tax-exception-archive-dr';
 const DISPATCH_CRON = 'deployment-canary-idle';
 const VERIFIER_NAME = 'unzen-independent-evidence-verifier';
 const VERIFIER_VERSION = '1.0.0';
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_COMMIT_PATTERN = /^[a-f0-9]{40,64}$/;
 
 function deploymentMetadata(env) {
   const version = env.CF_VERSION_METADATA || {};
@@ -61,7 +63,7 @@ function metadataValid(meta) {
   return meta && typeof meta.service === 'string' && meta.service.length > 0 &&
     typeof meta.versionId === 'string' && meta.versionId.length >= 8 &&
     typeof meta.versionTimestamp === 'string' && Number.isFinite(Date.parse(meta.versionTimestamp)) &&
-    typeof meta.configFingerprintSha256 === 'string' && /^[a-f0-9]{64}$/.test(meta.configFingerprintSha256);
+    typeof meta.configFingerprintSha256 === 'string' && SHA256_PATTERN.test(meta.configFingerprintSha256);
 }
 
 async function dispatchRuntime(env, input, secret) {
@@ -195,6 +197,11 @@ export async function runProductionDeploymentCanary(input, env) {
   const scope = env.CONTINUOUS_ASSURANCE_SCOPE || DEFAULT_SCOPE;
   const canaryScheduledTimeMs = Number(input.scheduledTimeMs);
   if (!Number.isFinite(canaryScheduledTimeMs)) throw new Error('production-canary-schedule-invalid');
+  const deployCommitSha = env.DEPLOY_COMMIT_SHA || '';
+  const deploymentManifestSha256 = env.DEPLOY_MANIFEST_SHA256 || '';
+  if (!GIT_COMMIT_PATTERN.test(deployCommitSha) || !SHA256_PATTERN.test(deploymentManifestSha256)) {
+    throw new Error('production-canary-deployment-manifest-invalid');
+  }
   const canaryRunId = `production-deployment-canary:${canaryScheduledTimeMs}`;
 
   const deployments = await Promise.all([
@@ -254,6 +261,8 @@ export async function runProductionDeploymentCanary(input, env) {
     schema: 'unzen-continuous-assurance-production-deployment-canary-v1',
     canaryRunId,
     triggerKey,
+    deployCommitSha,
+    deploymentManifestSha256,
     deployments,
     engineBindings,
     runtimeResult: firstRuntime,
@@ -268,7 +277,13 @@ export async function runProductionDeploymentCanary(input, env) {
 
   const key = `deployment-canary/${encodeURIComponent(canaryRunId)}/${artifactSha256}.json`;
   await env.CANARY_EVIDENCE_BUCKET.put(key, artifactContent, {
-    customMetadata: { sha256: artifactSha256, canaryRunId, triggerKey },
+    customMetadata: {
+      sha256: artifactSha256,
+      canaryRunId,
+      triggerKey,
+      deployCommitSha,
+      deploymentManifestSha256,
+    },
   });
   const artifactLocator = `r2://continuous-assurance-evidence/${encodeURIComponent(key)}`;
 
@@ -287,6 +302,8 @@ export async function runProductionDeploymentCanary(input, env) {
     canaryRunId,
     startedAtMs,
     completedAtMs,
+    deployCommitSha,
+    deploymentManifestSha256,
     deployments,
     runtimeResult: firstRuntime,
     artifactLocator,
@@ -313,7 +330,7 @@ export async function runProductionDeploymentCanary(input, env) {
     producer: {
       name: SERVICE,
       version: '1.0.0',
-      commitSha: env.DEPLOY_COMMIT_SHA || undefined,
+      commitSha: deployCommitSha,
     },
     runId: canaryRunId,
     capturedAt: new Date(completedAtMs).toISOString(),
@@ -322,6 +339,7 @@ export async function runProductionDeploymentCanary(input, env) {
       runtimeVersion: 'managed',
       executionSurface: 'production-deployment-canary',
       os: { name: 'cloudflare-workers', version: 'managed' },
+      metadata: { deploymentManifestSha256 },
     },
     scenario: {
       feature: 'continuous-assurance-production-deployment',
