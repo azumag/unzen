@@ -190,6 +190,7 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Tax production exception archive / retention | `src/workers-coordinator-publisher-tax-production-exception-audit-archive-retention.ts` | versioned archive、SHA-256 digest、retrieval proof、retention/deletion reviewを照合 (#118) |
 | Tax production exception archive restore / integrity drill | `src/workers-coordinator-publisher-tax-production-exception-archive-restore-drill.ts` | primary/backup restore、post-restore digest、integrity check、access audit、retention-state preservationを照合 (#121) |
 | Tax production exception archive disaster recovery operations | `src/workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.ts` | restore cadence、RTO/RPO、backup age/replication lag、incident escalation、provider evidence provenanceを照合 (#123) |
+| Tax production exception archive DR provider pilot | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-pilot.ts` | captured-and-verified provider artifact、primary/backup retrieval、scheduled restore、DR objectivesを照合 (#126) |
 
 signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`EvidenceEnvelope`と`validateEvidenceEnvelope()`を経由してのみ証拠を受け付けます。手書きfixtureは`captured-and-verified`へ到達できず、`contract-tested`に留まります。
 
@@ -201,6 +202,7 @@ signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`Evi
 - [`docs/publisher-tax-production-exception-audit-archive-retention.md`](./docs/publisher-tax-production-exception-audit-archive-retention.md)
 - [`docs/publisher-tax-production-exception-archive-restore-drill.md`](./docs/publisher-tax-production-exception-archive-restore-drill.md)
 - [`docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md`](./docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md)
+- [`docs/publisher-tax-production-exception-archive-dr-provider-pilot.md`](./docs/publisher-tax-production-exception-archive-dr-provider-pilot.md)
 - [`docs/evidence-readiness.md`](./docs/evidence-readiness.md)
 
 ## 6. テスト実行
@@ -246,6 +248,7 @@ npm run test:workers-publisher-tax-production-exception-resolution
 npm run test:workers-publisher-tax-production-exception-archive
 npm run test:workers-publisher-tax-production-exception-archive-restore
 npm run test:workers-publisher-tax-production-exception-archive-dr
+npm run test:workers-publisher-tax-production-exception-archive-dr-provider-pilot
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
@@ -264,6 +267,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 
 ## 7. 現在の重要な修正課題
 
+- [#126](https://github.com/azumag/unzen/issues/126): production exception archive DR provider pilot — self-reported provider metadataではなくcaptured-and-verified evidenceを必須化し、primary/backup retrieval、scheduled restore、RTO/RPO/freshness、provider/account/storage/replica identityを照合。次の`publisher-tax-filing-production-exception-archive-dr-provider-production-readiness`をbottleneckとして明示
 - [#123](https://github.com/azumag/unzen/issues/123): production exception archive disaster recovery operations — restore cadence、RTO/RPO、backup age/replication lag、recovery ownership、incident escalation、archival-provider evidence provenanceを照合。次の`publisher-tax-filing-production-exception-archive-dr-provider-pilot`をbottleneckとして明示
 - [#121](https://github.com/azumag/unzen/issues/121): production exception archive restore / integrity drill — primary/backupから同一archive identityを復元し、post-restore SHA-256 integrity check、backup recovery、access audit、retention/hold/deletion stateの不変性を検証。次の`publisher-tax-filing-production-exception-archive-disaster-recovery-operations`をbottleneckとして明示
 - [#118](https://github.com/azumag/unzen/issues/118): production exception audit archive / retention — resolution audit identityをversioned archiveへ固定し、SHA-256 digest、archive/provider retrieval proof、minimum retention、carry-forward review、hold/deletion reviewを照合。次の`publisher-tax-filing-production-exception-archive-restore-drill`をbottleneckとして明示
@@ -308,6 +312,7 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 | [`docs/publisher-tax-production-exception-audit-archive-retention.md`](./docs/publisher-tax-production-exception-audit-archive-retention.md) | resolution audit archive、SHA-256 integrity、retrieval、retention/hold/deletion review、次bottleneck | #118 contract gate |
 | [`docs/publisher-tax-production-exception-archive-restore-drill.md`](./docs/publisher-tax-production-exception-archive-restore-drill.md) | primary/backup restore、post-restore digest、integrity check、access audit、retention-state preservation、次bottleneck | #121 contract gate |
 | [`docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md`](./docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md) | recurring DR cadence、RTO/RPO、backup freshness、incident escalation、provider provenance、次bottleneck | #123 contract gate |
+| [`docs/publisher-tax-production-exception-archive-dr-provider-pilot.md`](./docs/publisher-tax-production-exception-archive-dr-provider-pilot.md) | captured-and-verified provider pilot、primary/backup retrieval、scheduled restore、DR objective再検証、次bottleneck | #126 verified-pilot gate |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 
