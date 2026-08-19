@@ -36,6 +36,26 @@ async function meta(binding, name) {
   return response.json();
 }
 
+function providerIdentity(evidence) {
+  const payload = evidence?.payload;
+  if (!payload) return null;
+  return {
+    providerName: payload.providerName,
+    accountId: payload.accountId,
+    primaryStorageId: payload.primaryStorageId,
+    backupStorageId: payload.backupStorageId,
+    replicaSiteId: payload.replicaSiteId,
+    replicaRegion: payload.replicaRegion,
+    archiveId: payload.archiveId,
+    archiveContentDigest: payload.archiveContentDigest,
+    credentialSetId: payload.credentialRotation?.currentCredentialSetId,
+    signingKeyId: payload.credentialRotation?.currentSigningKeyId,
+    encryptionKeyId: payload.credentialRotation?.currentEncryptionKeyId,
+    normalOnCallRoute: payload.onCallRoute,
+    normalEscalationTarget: payload.escalationTarget,
+  };
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -46,12 +66,14 @@ export default {
       if (!(await authorizedCanary(request, env))) return Response.json({ error: 'forbidden' }, { status: 403 });
       const scope = url.searchParams.get('scope') || DEFAULT_SCOPE;
       const state = await env.ENGINE_STATE.getByName(scope).readState(scope);
-      const evidence = state.snapshot?.steadyStateOperationsEvidence;
+      const evidence = state.snapshot?.steadyStateOperationsEvidence ?? null;
       return Response.json({
         scope,
         currentRunId: state.currentRunId,
         snapshotUpdatedAtMs: state.snapshot?.updatedAtMs ?? null,
         nextDueAtMs: evidence?.payload?.schedule?.nextDueAtMs ?? null,
+        providerIdentity: providerIdentity(evidence),
+        steadyStateOperationsEvidence: evidence,
       });
     }
     if (request.method === 'GET' && url.pathname === '/__canary/bindings') {
