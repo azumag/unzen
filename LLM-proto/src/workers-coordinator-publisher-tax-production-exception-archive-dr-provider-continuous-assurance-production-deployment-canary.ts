@@ -21,6 +21,7 @@ export const CONTINUOUS_ASSURANCE_ENGINE_SERVICE = 'unzen-llm-continuous-assuran
 export const CONTINUOUS_ASSURANCE_PRODUCTION_CANARY_SERVICE = 'unzen-llm-continuous-assurance-production-canary' as const;
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_COMMIT_PATTERN = /^[a-f0-9]{40,64}$/;
 const VERSION_ID_PATTERN = /^[A-Za-z0-9-]{8,128}$/;
 
 export type ContinuousAssuranceDeploymentServiceRole =
@@ -72,6 +73,8 @@ export interface ContinuousAssuranceProductionDeploymentCanaryPayload {
   readonly canaryRunId: string;
   readonly startedAtMs: number;
   readonly completedAtMs: number;
+  readonly deployCommitSha: string;
+  readonly deploymentManifestSha256: string;
   readonly deployments: readonly ContinuousAssuranceWorkerDeploymentIdentity[];
   readonly runtimeResult: ContinuousAssuranceDeploymentRuntimeResult;
   readonly artifactLocator: string;
@@ -87,6 +90,9 @@ export interface ContinuousAssuranceProductionDeploymentCanaryGateOptions {
   readonly canaryEvidence: EvidenceEnvelope<ContinuousAssuranceProductionDeploymentCanaryPayload>;
   readonly evidenceValidationOptions?: EvidenceValidationOptions;
   readonly expectedVerifierName?: string;
+  readonly expectedDeployCommitSha: string;
+  readonly expectedDeploymentManifestSha256: string;
+  readonly expectedConfigFingerprints: Readonly<Record<ContinuousAssuranceDeploymentServiceRole, string>>;
 }
 
 const EXPECTED_SERVICES: Readonly<Record<ContinuousAssuranceDeploymentServiceRole, string>> = {
@@ -115,6 +121,10 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
   if (!evidenceSupportsReadiness(validation, 'production-candidate')) {
     reasons.push('production-deployment-canary-evidence-not-production-candidate');
   }
+  if (!GIT_COMMIT_PATTERN.test(options.expectedDeployCommitSha) ||
+    !SHA256_PATTERN.test(options.expectedDeploymentManifestSha256)) {
+    reasons.push('production-deployment-canary-expected-deployment-identity-invalid');
+  }
   if (!payload) reasons.push('production-deployment-canary-payload-missing');
 
   if (payload) {
@@ -127,7 +137,12 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
       payload.completedAtMs < payload.startedAtMs || payload.capturedAtMs !== payload.completedAtMs) {
       reasons.push('production-deployment-canary-timeline-invalid');
     }
-    validateDeployments(payload.deployments, reasons);
+    if (!GIT_COMMIT_PATTERN.test(payload.deployCommitSha) || payload.deployCommitSha !== options.expectedDeployCommitSha ||
+      !SHA256_PATTERN.test(payload.deploymentManifestSha256) ||
+      payload.deploymentManifestSha256 !== options.expectedDeploymentManifestSha256) {
+      reasons.push('production-deployment-canary-deployment-manifest-mismatch');
+    }
+    validateDeployments(payload.deployments, options.expectedConfigFingerprints, reasons);
     validateRuntimeResult(payload.runtimeResult, reasons);
     if (!payload.artifactLocator || !SHA256_PATTERN.test(payload.artifactSha256) ||
       !payload.verificationId || !payload.verifier || !payload.verifierVersion) {
@@ -145,6 +160,9 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
     }
     if (options.canaryEvidence.runId !== payload.canaryRunId) {
       reasons.push('production-deployment-canary-run-identity-invalid');
+    }
+    if (options.canaryEvidence.producer.commitSha !== payload.deployCommitSha) {
+      reasons.push('production-deployment-canary-envelope-commit-mismatch');
     }
     if (options.canaryEvidence.artifact?.locator !== payload.artifactLocator ||
       options.canaryEvidence.artifact?.sha256 !== payload.artifactSha256) {
@@ -164,6 +182,8 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
       evidenceKind: options.canaryEvidence.evidenceKind,
       runId: options.canaryEvidence.runId,
     },
+    deploymentManifestSha256: payload?.deploymentManifestSha256 ?? null,
+    deployCommitSha: payload?.deployCommitSha ?? null,
     deploymentVersionIds: payload
       ? Object.fromEntries(payload.deployments.map((deployment) => [deployment.role, deployment.versionId]))
       : null,
@@ -182,9 +202,11 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
 
 function validateDeployments(
   deployments: readonly ContinuousAssuranceWorkerDeploymentIdentity[],
+  expectedConfigFingerprints: Readonly<Record<ContinuousAssuranceDeploymentServiceRole, string>>,
   reasons: string[],
 ): void {
   const roles = Object.keys(EXPECTED_SERVICES) as ContinuousAssuranceDeploymentServiceRole[];
+  const versionIds = new Set<string>();
   for (const role of roles) {
     const matches = deployments.filter((deployment) => deployment.role === role);
     if (matches.length !== 1) {
@@ -192,12 +214,19 @@ function validateDeployments(
       continue;
     }
     const deployment = matches[0];
+    const expectedFingerprint = expectedConfigFingerprints?.[role];
     if (deployment.service !== EXPECTED_SERVICES[role] ||
       !VERSION_ID_PATTERN.test(deployment.versionId) ||
       !SHA256_PATTERN.test(deployment.configFingerprintSha256) ||
+      !SHA256_PATTERN.test(expectedFingerprint ?? '') ||
+      deployment.configFingerprintSha256 !== expectedFingerprint ||
       !deployment.versionTimestamp || !Number.isFinite(Date.parse(deployment.versionTimestamp))) {
       reasons.push(`production-deployment-canary-deployment-invalid:${role}`);
     }
+    if (versionIds.has(deployment.versionId)) {
+      reasons.push(`production-deployment-canary-version-id-duplicate:${role}`);
+    }
+    versionIds.add(deployment.versionId);
   }
   if (deployments.length !== roles.length) reasons.push('production-deployment-canary-deployment-set-invalid');
 }
