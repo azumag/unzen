@@ -124,7 +124,7 @@ export async function executeDeploymentPlan(plan, options = {}) {
   const events = [];
   const versionIdentities = [];
   const run = async (args, extra = {}) => {
-    events.push({ command: ['npx', 'wrangler@latest', ...redactArgs(args)], kind: extra.kind ?? 'command' });
+    events.push({ command: ['npx', 'wrangler@latest', ...args], kind: extra.kind ?? 'command' });
     return runner(['npx', 'wrangler@latest', ...args], {
       cwd: PROJECT_ROOT,
       env: { ...env, ...(extra.env ?? {}) },
@@ -149,12 +149,16 @@ export async function executeDeploymentPlan(plan, options = {}) {
   const outputRoot = await mkdtemp(join(tmpdir(), 'unzen-wrangler-output-'));
   try {
     for (const service of plan.services) {
-      for (const secretName of service.secrets) {
-        const value = env[secretName];
-        if (!nonEmpty(value)) throw new Error(`deployment-secret-missing:${secretName}`);
-        await run(['secret', 'put', secretName, '--config', service.configPath], {
-          kind: 'secret-put',
-          stdin: `${value}\n`,
+      if (service.secrets.length > 0) {
+        const secretPayload = {};
+        for (const secretName of service.secrets) {
+          const value = env[secretName];
+          if (!nonEmpty(value)) throw new Error(`deployment-secret-missing:${secretName}`);
+          secretPayload[secretName] = value;
+        }
+        await run(['secret', 'bulk', '--config', service.configPath], {
+          kind: 'secret-bulk',
+          stdin: `${JSON.stringify(secretPayload)}\n`,
         });
       }
       const outputPath = join(outputRoot, `${service.role}.ndjson`);
@@ -228,10 +232,6 @@ export async function runCommand(command, options = {}) {
     if (options.stdin !== undefined) child.stdin.end(options.stdin);
     else child.stdin.end();
   });
-}
-
-function redactArgs(args) {
-  return args.map((value) => SECRET_NAMES.has(value) ? value : value);
 }
 
 function stableJson(value) {
