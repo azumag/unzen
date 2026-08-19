@@ -143,6 +143,13 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
     validateMonitoring(payload, reasons);
     validateControls(payload, readinessPayload, reasons);
 
+    const envelopeCapturedAtMs = Date.parse(options.productionCutoverEvidence.capturedAt);
+    if (
+      !Number.isFinite(envelopeCapturedAtMs) ||
+      envelopeCapturedAtMs !== payload.capturedAtMs ||
+      payload.capturedAtMs < payload.monitoring.endedAtMs
+    ) reasons.push('cutover-capture-timeline-invalid');
+
     const dr = upstream.providerPilotEvidence.disasterRecoveryEvidence;
     if (
       payload.recoveryOwnerId !== dr.ownership.recoveryOwnerId ||
@@ -229,7 +236,9 @@ function validateAuthorization(
     authorization.authorizedAtMs > window.endsAtMs ||
     authorization.expiresAtMs <= authorization.authorizedAtMs ||
     payload.execution.startedAtMs < authorization.authorizedAtMs ||
-    payload.execution.startedAtMs >= authorization.expiresAtMs
+    payload.execution.startedAtMs >= authorization.expiresAtMs ||
+    payload.execution.completedAtMs > authorization.expiresAtMs ||
+    readiness.credentialRotation.nextRotationDueAtMs <= payload.execution.completedAtMs
   ) reasons.push('cutover-authorization-invalid');
 }
 
