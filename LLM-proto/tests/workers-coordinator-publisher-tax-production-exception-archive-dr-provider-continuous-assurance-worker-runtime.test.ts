@@ -148,7 +148,10 @@ describe('publisher tax exception archive DR provider continuous assurance Worke
           throw new Error('engine-crash');
         },
       });
-      await expect(dispatchContinuousAssuranceScheduled(mf, SCHEDULED_AT)).rejects.toThrow();
+      // scheduled() delegates the tick to waitUntil(), so delivery itself resolves
+      // even when the background engine invocation fails. The durable ledger is the
+      // authoritative failure/replay state.
+      await dispatchContinuousAssuranceScheduled(mf, SCHEDULED_AT);
       const interrupted = await readContinuousAssuranceRuntimeLedger(mf, SCHEDULED_AT);
       expect(interrupted).toMatchObject({
         state: 'running',
