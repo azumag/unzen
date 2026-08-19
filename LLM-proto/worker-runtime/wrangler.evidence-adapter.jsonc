@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-evidence-adapter",
+  "main": "./continuous-assurance-evidence-adapter-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE_BUCKET",
+      "bucket_name": "unzen-continuous-assurance-evidence"
+    }
+  ],
+  "services": [
+    {
+      "binding": "INDEPENDENT_VERIFIER",
+      "service": "unzen-llm-continuous-assurance-independent-verifier"
+    }
+  ],
+  "vars": {
+    "EVIDENCE_PRODUCER_NAME": "unzen-continuous-assurance-evidence-adapter",
+    "EVIDENCE_PRODUCER_VERSION": "1.0.0",
+    "EVIDENCE_PRODUCER_COMMIT_SHA": "SET_BY_DEPLOY_PIPELINE",
+    "TRUSTED_VERIFIER_NAME": "unzen-independent-evidence-verifier",
+    "TRUSTED_VERIFIER_VERSION": "1.0.0",
+    "EVIDENCE_DEFAULT_RETENTION_MS": "2592000000"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
