@@ -179,6 +179,51 @@ describe('publisher tax exception archive DR provider steady-state operations ga
     expect(reasons.some((reason) => reason.includes('steady-state-key-rotation'))).toBe(true);
   });
 
+  it('accepts an explicitly evidenced key rotation before the deadline', async () => {
+    const canonical = baselineEvidence();
+    const baselineDue = CYCLE3 + 20_000;
+    const report = upstreamReport(canonical, baselineDue);
+    const c3 = cyclePayload(3);
+    const rotatedAtMs = CYCLE3 + 10_000;
+    const rotatedCycle = {
+      ...c3,
+      observedCredentialSetId: 'cred-2',
+      observedSigningKeyId: 'sign-2',
+      observedEncryptionKeyId: 'enc-2',
+      rotationEvent: {
+        rotationEvidenceId: 'rotation-2',
+        rotatedAtMs,
+        previousCredentialSetId: 'cred-1',
+        previousSigningKeyId: 'sign-1',
+        previousEncryptionKeyId: 'enc-1',
+        newCredentialSetId: 'cred-2',
+        newSigningKeyId: 'sign-2',
+        newEncryptionKeyId: 'enc-2',
+      },
+    };
+    const op = operationsPayload();
+    const rotationCadenceMs = 1_000_000;
+    const rotatedOperations = {
+      ...op,
+      credentialRotation: {
+        rotationCadenceMs,
+        lastRotatedAtMs: rotatedAtMs,
+        nextRotationDueAtMs: rotatedAtMs + rotationCadenceMs,
+        currentCredentialSetId: 'cred-2',
+        currentSigningKeyId: 'sign-2',
+        currentEncryptionKeyId: 'enc-2',
+        rotationEvidenceIds: ['rotation-2'],
+      },
+    };
+    const result = await run({
+      baseline: canonical,
+      report,
+      cycles: [cycleEvidence(1), cycleEvidence(2), cycleEvidence(3, rotatedCycle)],
+      operations: operationsEvidence(rotatedOperations),
+    });
+    expect(result.status).toBe('pass');
+  });
+
   it('requires backup-source DR exercise within cadence', async () => {
     const c3 = cyclePayload(3);
     const noDr = { ...c3, drExercise: undefined };
