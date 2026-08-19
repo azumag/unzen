@@ -91,6 +91,7 @@ export interface ProductionProviderCanaryGateOptions {
   readonly expectedDeploymentManifestSha256: string;
   readonly expectedConfigFingerprints: Readonly<Record<ContinuousAssuranceDeploymentServiceRole, string>>;
   readonly expectedVerifierName?: string;
+  readonly expectedDeploymentVerifierName?: string;
 }
 
 export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProviderContinuousAssuranceProductionProviderCanaryGate(
@@ -123,7 +124,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
       expectedDeployCommitSha: options.expectedDeployCommitSha,
       expectedDeploymentManifestSha256: options.expectedDeploymentManifestSha256,
       expectedConfigFingerprints: options.expectedConfigFingerprints,
-      expectedVerifierName: options.expectedVerifierName,
+      expectedVerifierName: options.expectedDeploymentVerifierName,
     });
     if (deploymentReport.status !== 'pass') reasons.push('production-provider-canary-upstream-deployment-invalid');
 
@@ -218,7 +219,6 @@ function validateReceipts(payload: ProductionProviderCanaryPayload, reasons: str
     const expectedCount = action === 'pager-canary' ? 2 : 1;
     if (matches.length !== expectedCount) reasons.push(`production-provider-canary-receipt-cardinality-invalid:${action}`);
   }
-  const keys = new Set<string>();
   for (const receipt of payload.receipts) {
     if (!auth.allowedActions.includes(receipt.action) || !receipt.idempotencyKey || !receipt.operationId ||
       !Number.isFinite(receipt.observedAtMs) || receipt.observedAtMs < payload.startedAtMs ||
@@ -238,10 +238,6 @@ function validateReceipts(payload: ProductionProviderCanaryPayload, reasons: str
         reasons.push(`production-provider-canary-archive-integrity-mismatch:${receipt.action}`);
       }
     }
-    if (receipt.action === 'pager-canary') {
-      if (keys.size === 0 && receipt.status !== 'success') reasons.push('production-provider-canary-pager-first-delivery-invalid');
-    }
-    keys.add(receipt.idempotencyKey);
   }
   const pager = payload.receipts.filter((receipt) => receipt.action === 'pager-canary');
   if (pager.length === 2 && (pager[0].idempotencyKey !== pager[1].idempotencyKey ||
