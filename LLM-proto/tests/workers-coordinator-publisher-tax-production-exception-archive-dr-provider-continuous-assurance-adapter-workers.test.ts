@@ -43,7 +43,11 @@ async function withRuntime<T>(run: (mf: Miniflare, persistRoot: string, buildRoo
     try {
       return await run(mf, persistRoot, buildRoot);
     } finally {
-      await mf.dispose();
+      try {
+        await mf.dispose();
+      } catch {
+        // Restart-persistence tests may intentionally dispose this instance early.
+      }
     }
   } finally {
     await rm(root, { recursive: true, force: true });
