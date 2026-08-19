@@ -2,6 +2,7 @@ import { Miniflare } from 'miniflare';
 
 export const CONTINUOUS_ASSURANCE_RUNTIME_CRON = '*/5 * * * *';
 export const CONTINUOUS_ASSURANCE_RUNTIME_SCOPE = 'publisher-tax-exception-archive-dr';
+export const CONTINUOUS_ASSURANCE_RUNTIME_SMOKE_COMPATIBILITY_DATE = '2025-01-01';
 
 export interface ContinuousAssuranceRuntimeEngineRequest {
   readonly scope: string;
@@ -76,7 +77,10 @@ export function createContinuousAssuranceWorkerRuntimeMiniflare(
   return new Miniflare({
     modules: true,
     scriptPath,
-    compatibilityDate: '2026-08-20',
+    // The repository-pinned Miniflare/workerd build predates the production
+    // compatibility date. Keep the deploy config current and use this proven
+    // emulator date only for local runtime smoke coverage.
+    compatibilityDate: CONTINUOUS_ASSURANCE_RUNTIME_SMOKE_COMPATIBILITY_DATE,
     compatibilityFlags: ['nodejs_compat'],
     crons: [CONTINUOUS_ASSURANCE_RUNTIME_CRON],
     bindings: {
