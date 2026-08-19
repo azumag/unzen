@@ -4,6 +4,11 @@ Issue #91 adds the contract gate that follows publisher tax production monitorin
 
 > This is still a contract/evidence gate. A passing fixture does not prove that a real tax provider, support team, or publisher notification system performed these operations in production.
 
+Implementation:
+
+- `src/workers-coordinator-publisher-tax-production-exception-operations.ts`
+- `tests/workers-coordinator-publisher-tax-production-exception-operations.test.ts`
+
 ## Position in the gate chain
 
 ```text
