@@ -1,4 +1,4 @@
-# unzen-LLM 計画書 v3.6
+# unzen-LLM 計画書 v3.7
 
 ## 本文書の位置づけ
 
@@ -739,8 +739,9 @@ All-or-Nothing パイプライン:
 32. [Publisher tax filing production exception archive DR provider pilot gate (#126)](./docs/publisher-tax-production-exception-archive-dr-provider-pilot.md) で、provider pilot evidenceを`captured-and-verified`かつ`verified-pilot`以上に限定し、artifact loader / SHA-256 / trusted independent verifier、primary/backup両retrieval、scheduled restore、RTO/RPO、backup age/replication lag、provider/account/storage/replica identity、retention/incident/ownership identity、signed runner isolationを照合する。一回のverified pilotをproduction approvalとは扱わず、次の`publisher-tax-filing-production-exception-archive-dr-provider-production-readiness`へ進む
 33. [Publisher tax filing production exception archive DR provider production-readiness gate (#128)](./docs/publisher-tax-production-exception-archive-dr-provider-production-readiness.md) で、production-readiness evidenceを`captured-and-verified`かつ`production-candidate`以上に限定し、少なくとも3本の独立verified provider run / 2 restore windows、provider/account/storage/replica/archive identity、production restore window、two-person operator approval、monitoring/error budget、credential/signing/encryption key rotation、backup storageを実際に使ったfailover exercise、retention/incident/ownership identity、rollback/emergency-hold controls、signed runner isolationを照合する。readiness report自体は`production-approved`を主張せず、次の`publisher-tax-filing-production-exception-archive-dr-provider-production-cutover`へ進む
 34. [Publisher tax filing production exception archive DR provider production cutover gate (#131)](./docs/publisher-tax-production-exception-archive-dr-provider-production-cutover.md) で、exact production-readiness evidence、production window/change-ticket/two-person approvals/credential-key identityにcutover authorizationを固定し、live provider operation/trace/restore execution、canonical archive ID/digest、post-cutover integrity、RTO/RPO、backup age/replication lag、immediate monitoring、rollback/emergency-hold armed state、retention/ownership/incident/security boundaryを照合する。contract fixtureのpassを実provider cutoverと表現せず、次の`publisher-tax-filing-production-exception-archive-dr-provider-post-cutover-reconciliation`へ進む
-35. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
-36. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
+35. [Publisher tax filing production exception archive DR provider post-cutover reconciliation gate (#133)](./docs/publisher-tax-production-exception-archive-dr-provider-post-cutover-reconciliation.md) で、exact production cutover evidenceを再検証し、cutover完了後からimmediate monitoringを超えるobservation window、provider audit/log、primary/backup両archive再取得とdigest/integrity、alert/incident/control invocation reconciliation、rolling SLO/error budget、credential/key rotation期限、retention/ownership/security boundaryを照合する。contract fixtureのpassを実provider steady-state evidenceとは表現せず、次の`publisher-tax-filing-production-exception-archive-dr-provider-steady-state-operations`へ進む
+36. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
+37. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
 
 ### 7.2 経済性の精緻化
 
@@ -791,10 +792,11 @@ ChromeLanguageModelBackend・descriptor）を削除しました。
 
 ---
 
-**ドキュメントバージョン**: 3.6
+**ドキュメントバージョン**: 3.7
 **作成日**: 2026年2月
 **ステータス**: レビュー済み方針確定版
 **変更履歴**:
+- v3.7: #133 production exception archive DR provider post-cutover reconciliation gateを7.1項へ追加。longer observation、provider audit/log、primary/backup archive再取得、alert/incident/control reconciliation、SLO/error budget、credential/retention/security postureを検証し、次のsteady-state operationsを明示
 - v3.6: #131 production exception archive DR provider production cutover gateを7.1項へ追加。exact readiness binding、bounded authorization/window、live provider operation、archive integrity、DR objectives、immediate monitoring、rollback/emergency-hold、identity/security preservationを検証し、次のpost-cutover reconciliationを明示
 - v3.5: #128 production exception archive DR provider production-readiness gateを7.1項へ追加。3 verified runs / 2 restore windows、production restore window、two-person approval、monitoring/error budget、credential/key rotation、backup failover exerciseを検証し、次のprovider production cutoverを明示
 - v3.4: #126 production exception archive DR provider pilot gateを7.1項へ追加。captured-and-verified / verified-pilot provenance、primary/backup retrieval、scheduled restore、DR objectives、provider/account/storage/replica identityを検証し、次のprovider production-readinessを明示
