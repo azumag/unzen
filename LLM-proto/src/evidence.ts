@@ -633,12 +633,17 @@ function normalizeSha256(value: string): string {
 }
 
 async function sha256Hex(content: ArtifactContent): Promise<string> {
-  const bytes =
+  const source =
     typeof content === 'string'
       ? new TextEncoder().encode(content)
       : content instanceof Uint8Array
         ? content
         : new Uint8Array(content);
+  // Web Crypto's BufferSource typing requires an ArrayBuffer-backed view.
+  // Copy even Uint8Array inputs so SharedArrayBuffer-backed data cannot leak
+  // an ArrayBufferLike type into subtle.digest().
+  const bytes = new Uint8Array(source.byteLength);
+  bytes.set(source);
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
