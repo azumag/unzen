@@ -17,6 +17,12 @@ export type WorkersCoordinatorPublisherTaxProductionRunbookActionKind =
   | 'confirm-duplicate-suppression'
   | 'review-replay';
 
+export interface WorkersCoordinatorPublisherTaxProductionReplayDetection {
+  readonly replayId: string;
+  readonly sourceCallbackIds: readonly string[];
+  readonly detectedAtMs: number;
+}
+
 export interface WorkersCoordinatorPublisherTaxProductionRunbookActionRecord {
   readonly actionId: string;
   readonly eventType: WorkersCoordinatorPublisherTaxProductionExceptionEventType;
@@ -47,7 +53,11 @@ export interface WorkersCoordinatorPublisherTaxProductionPublisherStatusUpdate {
   readonly productionWindowId: string;
   readonly actionIds: readonly string[];
   readonly supportEscalationIds: readonly string[];
-  readonly status: 'exception-open' | 'correction-in-progress' | 'duplicate-suppressed' | 'under-review';
+  readonly status:
+    | 'exception-open'
+    | 'correction-in-progress'
+    | 'duplicate-suppressed'
+    | 'under-review';
   readonly publishedAtMs: number;
 }
 
@@ -63,6 +73,12 @@ export interface WorkersCoordinatorPublisherTaxProductionRollbackEmergencyDecisi
 export interface WorkersCoordinatorPublisherTaxProductionExceptionOperationsEvidence {
   readonly source: 'publisher-tax-filing-production-exception-operations';
   readonly capturedAtMs: number;
+  /**
+   * Monitoring reconciliation currently exposes replay counts but not replay IDs.
+   * The runbook capture records those detections explicitly and validates their
+   * count and callback membership against the upstream reconciliation report.
+   */
+  readonly replayDetections: readonly WorkersCoordinatorPublisherTaxProductionReplayDetection[];
   readonly operatorRunbookActions: readonly WorkersCoordinatorPublisherTaxProductionRunbookActionRecord[];
   readonly supportEscalations: readonly WorkersCoordinatorPublisherTaxProductionSupportEscalationRecord[];
   readonly publisherStatusUpdates: readonly WorkersCoordinatorPublisherTaxProductionPublisherStatusUpdate[];
@@ -86,6 +102,7 @@ export interface WorkersCoordinatorPublisherTaxProductionExceptionOperationsRepo
   readonly status: 'pass' | 'fail';
   readonly previewRunnerUrl: string;
   readonly productionMonitoringReconciliationEvidence: WorkersCoordinatorPublisherTaxProductionMonitoringReconciliationReport;
+  readonly replayDetections: readonly WorkersCoordinatorPublisherTaxProductionReplayDetection[];
   readonly operatorRunbookActions: readonly WorkersCoordinatorPublisherTaxProductionRunbookActionRecord[];
   readonly supportEscalations: readonly WorkersCoordinatorPublisherTaxProductionSupportEscalationRecord[];
   readonly publisherStatusUpdates: readonly WorkersCoordinatorPublisherTaxProductionPublisherStatusUpdate[];
@@ -140,8 +157,13 @@ interface ExceptionActionRequirement {
 export function runWorkersCoordinatorPublisherTaxProductionExceptionOperationsRunbookGate(
   options: WorkersCoordinatorPublisherTaxProductionExceptionOperationsOptions,
 ): WorkersCoordinatorPublisherTaxProductionExceptionOperationsReport {
-  const requirements = deriveExceptionActionRequirements(options.productionMonitoringReconciliationReport);
-  const affectedProviderFilingIds = unique(requirements.flatMap((requirement) => requirement.providerFilingIds));
+  const requirements = deriveExceptionActionRequirements(
+    options.productionMonitoringReconciliationReport,
+    options.exceptionOperationsEvidence,
+  );
+  const affectedProviderFilingIds = unique(
+    requirements.flatMap((requirement) => requirement.providerFilingIds),
+  );
   const approvedWindowReconciliation = reconcileApprovedWindow(
     options.productionMonitoringReconciliationReport,
     options.exceptionOperationsEvidence,
@@ -149,7 +171,8 @@ export function runWorkersCoordinatorPublisherTaxProductionExceptionOperationsRu
   );
   const duplicateFilingSuppressionState = {
     requiredDuplicateFilingSuppressionIds:
-      options.productionMonitoringReconciliationReport.duplicateFilingSuppressionReplay.requiredDuplicateFilingSuppressionIds,
+      options.productionMonitoringReconciliationReport.duplicateFilingSuppressionReplay
+        .requiredDuplicateFilingSuppressionIds,
     preservedDuplicateFilingSuppressionIds:
       options.exceptionOperationsEvidence.preservedDuplicateFilingSuppressionIds,
   };
@@ -171,6 +194,7 @@ export function runWorkersCoordinatorPublisherTaxProductionExceptionOperationsRu
     status: failureReason ? 'fail' : 'pass',
     previewRunnerUrl: options.productionMonitoringReconciliationReport.previewRunnerUrl,
     productionMonitoringReconciliationEvidence: options.productionMonitoringReconciliationReport,
+    replayDetections: options.exceptionOperationsEvidence.replayDetections,
     operatorRunbookActions: options.exceptionOperationsEvidence.operatorRunbookActions,
     supportEscalations: options.exceptionOperationsEvidence.supportEscalations,
     publisherStatusUpdates: options.exceptionOperationsEvidence.publisherStatusUpdates,
@@ -212,12 +236,14 @@ export function runWorkersCoordinatorPublisherTaxProductionExceptionOperationsRu
 
 function deriveExceptionActionRequirements(
   report: WorkersCoordinatorPublisherTaxProductionMonitoringReconciliationReport,
+  evidence: WorkersCoordinatorPublisherTaxProductionExceptionOperationsEvidence,
 ): readonly ExceptionActionRequirement[] {
   const requirements: ExceptionActionRequirement[] = [];
-  const exceptionCallbacks = report.productionProviderCallbacks.filter((callback) =>
-    callback.eventType === 'filing.rejected' ||
-    callback.eventType === 'filing.corrected' ||
-    callback.eventType === 'filing.duplicate_suppressed',
+  const exceptionCallbacks = report.productionProviderCallbacks.filter(
+    (callback) =>
+      callback.eventType === 'filing.rejected' ||
+      callback.eventType === 'filing.corrected' ||
+      callback.eventType === 'filing.duplicate_suppressed',
   );
 
   for (const callback of exceptionCallbacks) {
@@ -238,7 +264,7 @@ function deriveExceptionActionRequirements(
     });
   }
 
-  for (const replay of report.productionMonitoringReconciliationEvidence?.replayAudits ?? []) {
+  for (const replay of evidence.replayDetections) {
     const callbacks = report.productionProviderCallbacks.filter((callback) =>
       replay.sourceCallbackIds.includes(callback.callbackId),
     );
@@ -262,39 +288,74 @@ function deriveExceptionActionRequirements(
   return requirements;
 }
 
-function selectHoldReasons(input: WorkersCoordinatorPublisherTaxProductionExceptionOperationsOptions & {
-  readonly requirements: readonly ExceptionActionRequirement[];
-  readonly affectedProviderFilingIds: readonly string[];
-  readonly approvedWindowReconciliation: WorkersCoordinatorPublisherTaxProductionExceptionOperationsReport['approvedWindowReconciliation'];
-  readonly duplicateFilingSuppressionState: WorkersCoordinatorPublisherTaxProductionExceptionOperationsReport['duplicateFilingSuppressionState'];
-  readonly blockedNonCoordinatorCdnNetworkAttempt: WorkersCoordinatorRunnerNetworkAttempt | null;
-}): readonly string[] {
+function selectHoldReasons(
+  input: WorkersCoordinatorPublisherTaxProductionExceptionOperationsOptions & {
+    readonly requirements: readonly ExceptionActionRequirement[];
+    readonly affectedProviderFilingIds: readonly string[];
+    readonly approvedWindowReconciliation: WorkersCoordinatorPublisherTaxProductionExceptionOperationsReport['approvedWindowReconciliation'];
+    readonly duplicateFilingSuppressionState: WorkersCoordinatorPublisherTaxProductionExceptionOperationsReport['duplicateFilingSuppressionState'];
+    readonly blockedNonCoordinatorCdnNetworkAttempt: WorkersCoordinatorRunnerNetworkAttempt | null;
+  },
+): readonly string[] {
   if (input.productionMonitoringReconciliationReport.status === 'fail') {
-    return [`publisher-tax-production-monitoring-reconciliation-gate-not-clean: ${input.productionMonitoringReconciliationReport.failureReason ?? 'unknown'}`];
+    return [
+      `publisher-tax-production-monitoring-reconciliation-gate-not-clean: ${input.productionMonitoringReconciliationReport.failureReason ?? 'unknown'}`,
+    ];
   }
   if (input.exceptionOperationsEvidence.source !== 'publisher-tax-filing-production-exception-operations') {
     return ['publisher-tax-production-exception-operations-must-use-runbook-evidence'];
   }
 
   const holdReasons: string[] = [];
+  const callbackIds = new Set(
+    input.productionMonitoringReconciliationReport.productionProviderCallbacks.map(
+      (callback) => callback.callbackId,
+    ),
+  );
   const latestUpstreamAtMs = Math.max(
-    ...input.productionMonitoringReconciliationReport.operatorMonitoringRecords.map((record) => record.observedAtMs),
-    ...(input.productionMonitoringReconciliationReport.productionMonitoringReconciliationEvidence?.replayAudits ?? [])
-      .map((replay) => replay.replayedAtMs),
+    ...input.productionMonitoringReconciliationReport.operatorMonitoringRecords.map(
+      (record) => record.observedAtMs,
+    ),
     0,
   );
   if (input.exceptionOperationsEvidence.capturedAtMs < latestUpstreamAtMs) {
     holdReasons.push('publisher-tax-production-exception-operations-captured-before-monitoring-complete');
   }
 
+  if (
+    input.exceptionOperationsEvidence.replayDetections.length !==
+    input.productionMonitoringReconciliationReport.productionMonitoringSummary.replayAuditCount
+  ) {
+    holdReasons.push('publisher-tax-production-exception-replay-detection-count-mismatch');
+  }
+  const replayIds = new Set<string>();
+  for (const replay of input.exceptionOperationsEvidence.replayDetections) {
+    const invalidReplay =
+      replay.replayId.length === 0 ||
+      replayIds.has(replay.replayId) ||
+      replay.sourceCallbackIds.length === 0 ||
+      replay.sourceCallbackIds.some((callbackId) => !callbackIds.has(callbackId)) ||
+      !isPositiveFinite(replay.detectedAtMs) ||
+      replay.detectedAtMs > input.exceptionOperationsEvidence.capturedAtMs;
+    replayIds.add(replay.replayId);
+    if (invalidReplay) {
+      holdReasons.push(
+        `publisher-tax-production-exception-replay-detection-invalid: ${replay.replayId || 'unknown'}`,
+      );
+    }
+  }
+
   for (const requirement of input.requirements) {
-    const matchingActions = input.exceptionOperationsEvidence.operatorRunbookActions.filter((action) =>
-      action.eventType === requirement.eventType &&
-      action.callbackId === requirement.callbackId &&
-      action.replayId === requirement.replayId,
+    const matchingActions = input.exceptionOperationsEvidence.operatorRunbookActions.filter(
+      (action) =>
+        action.eventType === requirement.eventType &&
+        action.callbackId === requirement.callbackId &&
+        action.replayId === requirement.replayId,
     );
     if (matchingActions.length !== 1) {
-      holdReasons.push(`publisher-tax-production-exception-runbook-action-missing-or-duplicate: ${requirement.key}`);
+      holdReasons.push(
+        `publisher-tax-production-exception-runbook-action-missing-or-duplicate: ${requirement.key}`,
+      );
       continue;
     }
     const action = matchingActions[0]!;
@@ -311,8 +372,8 @@ function selectHoldReasons(input: WorkersCoordinatorPublisherTaxProductionExcept
       continue;
     }
 
-    const escalation = input.exceptionOperationsEvidence.supportEscalations.find((entry) =>
-      entry.actionId === action.actionId,
+    const escalation = input.exceptionOperationsEvidence.supportEscalations.find(
+      (entry) => entry.actionId === action.actionId,
     );
     if (
       !escalation ||
@@ -323,12 +384,16 @@ function selectHoldReasons(input: WorkersCoordinatorPublisherTaxProductionExcept
       !containsAll(escalation.productionCallbackIds, requirement.callbackIds) ||
       !containsAll(escalation.providerFilingIds, requirement.providerFilingIds)
     ) {
-      holdReasons.push(`publisher-tax-production-exception-support-escalation-not-traceable: ${requirement.key}`);
+      holdReasons.push(
+        `publisher-tax-production-exception-support-escalation-not-traceable: ${requirement.key}`,
+      );
     }
   }
 
   if (input.approvedWindowReconciliation.missingStatusUpdateProviderFilingIds.length > 0) {
-    holdReasons.push(`publisher-tax-production-exception-publisher-status-update-missing: ${input.approvedWindowReconciliation.missingStatusUpdateProviderFilingIds[0]}`);
+    holdReasons.push(
+      `publisher-tax-production-exception-publisher-status-update-missing: ${input.approvedWindowReconciliation.missingStatusUpdateProviderFilingIds[0]}`,
+    );
   }
 
   for (const providerFilingId of input.affectedProviderFilingIds) {
@@ -336,28 +401,39 @@ function selectHoldReasons(input: WorkersCoordinatorPublisherTaxProductionExcept
       action.providerFilingIds.includes(providerFilingId),
     );
     const relevantEscalationIds = input.exceptionOperationsEvidence.supportEscalations
-      .filter((escalation) => relevantActions.some((action) => action.actionId === escalation.actionId))
+      .filter((escalation) =>
+        relevantActions.some((action) => action.actionId === escalation.actionId),
+      )
       .map((escalation) => escalation.supportEscalationId);
-    const update = input.exceptionOperationsEvidence.publisherStatusUpdates.find((entry) =>
-      entry.providerFilingId === providerFilingId &&
-      entry.productionWindowId === input.approvedWindowReconciliation.approvedProductionWindowId,
+    const update = input.exceptionOperationsEvidence.publisherStatusUpdates.find(
+      (entry) =>
+        entry.providerFilingId === providerFilingId &&
+        entry.productionWindowId === input.approvedWindowReconciliation.approvedProductionWindowId,
     );
     if (
       !update ||
       update.statusUpdateId.length === 0 ||
       !isPositiveFinite(update.publishedAtMs) ||
-      !containsAll(update.actionIds, relevantActions.map((action) => action.actionId)) ||
+      !containsAll(
+        update.actionIds,
+        relevantActions.map((action) => action.actionId),
+      ) ||
       !containsAll(update.supportEscalationIds, relevantEscalationIds)
     ) {
-      holdReasons.push(`publisher-tax-production-exception-publisher-status-update-invalid: ${providerFilingId}`);
+      holdReasons.push(
+        `publisher-tax-production-exception-publisher-status-update-invalid: ${providerFilingId}`,
+      );
     }
   }
 
-  const missingSuppressionId = input.duplicateFilingSuppressionState.requiredDuplicateFilingSuppressionIds.find((id) =>
-    !input.duplicateFilingSuppressionState.preservedDuplicateFilingSuppressionIds.includes(id),
-  );
+  const missingSuppressionId =
+    input.duplicateFilingSuppressionState.requiredDuplicateFilingSuppressionIds.find(
+      (id) => !input.duplicateFilingSuppressionState.preservedDuplicateFilingSuppressionIds.includes(id),
+    );
   if (missingSuppressionId) {
-    holdReasons.push(`publisher-tax-production-exception-duplicate-suppression-not-preserved: ${missingSuppressionId}`);
+    holdReasons.push(
+      `publisher-tax-production-exception-duplicate-suppression-not-preserved: ${missingSuppressionId}`,
+    );
   }
 
   const controls = input.productionMonitoringReconciliationReport.rollbackEmergencyControlsDuringReplay;
@@ -372,24 +448,32 @@ function selectHoldReasons(input: WorkersCoordinatorPublisherTaxProductionExcept
     holdReasons.push('publisher-tax-production-exception-rollback-hold-decision-not-linked');
   }
 
-  const leakedNetworkAttempt = input.exceptionOperationsEvidence.networkAttempts.find((attempt) =>
-    !input.exceptionOperationsEvidence.allowedOrigins.includes(originOf(attempt.url)) && !attempt.blocked,
+  const leakedNetworkAttempt = input.exceptionOperationsEvidence.networkAttempts.find(
+    (attempt) =>
+      !input.exceptionOperationsEvidence.allowedOrigins.includes(originOf(attempt.url)) &&
+      !attempt.blocked,
   );
   if (leakedNetworkAttempt) {
-    holdReasons.push(`publisher-tax-production-exception-non-coordinator-cdn-network-attempt-not-blocked: ${originOf(leakedNetworkAttempt.url)}`);
+    holdReasons.push(
+      `publisher-tax-production-exception-non-coordinator-cdn-network-attempt-not-blocked: ${originOf(leakedNetworkAttempt.url)}`,
+    );
   }
   if (!input.blockedNonCoordinatorCdnNetworkAttempt) {
     holdReasons.push('publisher-tax-production-exception-missing-blocked-non-coordinator-cdn-network-attempt');
   }
-  if (!input.exceptionOperationsEvidence.allowedOrigins.every((origin) =>
-    input.exceptionOperationsEvidence.cspConnectSrc.includes(origin),
-  )) {
+  if (
+    !input.exceptionOperationsEvidence.allowedOrigins.every((origin) =>
+      input.exceptionOperationsEvidence.cspConnectSrc.includes(origin),
+    )
+  ) {
     holdReasons.push('publisher-tax-production-exception-csp-connect-src-missing-coordinator-or-cdn-origin');
   }
-  if (!(
-    input.exceptionOperationsEvidence.sandboxFlags.length === 1 &&
-    input.exceptionOperationsEvidence.sandboxFlags[0] === 'allow-scripts'
-  )) {
+  if (
+    !(
+      input.exceptionOperationsEvidence.sandboxFlags.length === 1 &&
+      input.exceptionOperationsEvidence.sandboxFlags[0] === 'allow-scripts'
+    )
+  ) {
     holdReasons.push('publisher-tax-production-exception-sandbox-must-remain-allow-scripts-only');
   }
   if (
@@ -409,17 +493,18 @@ function reconcileApprovedWindow(
 ): WorkersCoordinatorPublisherTaxProductionExceptionOperationsReport['approvedWindowReconciliation'] {
   const approvedProductionWindowId = report.approvedWindowReconciliation.approvedProductionWindowId;
   const statusUpdatedProviderFilingIds = affectedProviderFilingIds.filter((providerFilingId) =>
-    evidence.publisherStatusUpdates.some((update) =>
-      update.providerFilingId === providerFilingId &&
-      update.productionWindowId === approvedProductionWindowId,
+    evidence.publisherStatusUpdates.some(
+      (update) =>
+        update.providerFilingId === providerFilingId &&
+        update.productionWindowId === approvedProductionWindowId,
     ),
   );
   return {
     approvedProductionWindowId,
     affectedProviderFilingIds,
     statusUpdatedProviderFilingIds,
-    missingStatusUpdateProviderFilingIds: affectedProviderFilingIds.filter((providerFilingId) =>
-      !statusUpdatedProviderFilingIds.includes(providerFilingId),
+    missingStatusUpdateProviderFilingIds: affectedProviderFilingIds.filter(
+      (providerFilingId) => !statusUpdatedProviderFilingIds.includes(providerFilingId),
     ),
   };
 }
@@ -435,9 +520,11 @@ function actionForEventType(
 function selectBlockedNonCoordinatorCdnNetworkAttempt(
   evidence: WorkersCoordinatorPublisherTaxProductionExceptionOperationsEvidence,
 ): WorkersCoordinatorRunnerNetworkAttempt | null {
-  return evidence.networkAttempts.find((attempt) =>
-    !evidence.allowedOrigins.includes(originOf(attempt.url)) && attempt.blocked,
-  ) ?? null;
+  return (
+    evidence.networkAttempts.find(
+      (attempt) => !evidence.allowedOrigins.includes(originOf(attempt.url)) && attempt.blocked,
+    ) ?? null
+  );
 }
 
 function selectBottlenecksToIssue(failureReason: string | undefined): readonly string[] {
@@ -458,6 +545,9 @@ function selectBottlenecksToIssue(failureReason: string | undefined): readonly s
   }
   if (failureReason?.includes('network-attempt') || failureReason?.includes('cross-origin')) {
     return ['publisher-tax-production-exception-security-boundary-hardening'];
+  }
+  if (failureReason?.includes('replay-detection')) {
+    return ['publisher-tax-production-exception-replay-detection-hardening'];
   }
   if (failureReason) {
     return [`publisher-tax-production-exception-operations-failure: ${failureReason}`];
