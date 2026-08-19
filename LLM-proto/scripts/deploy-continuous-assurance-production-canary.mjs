@@ -85,10 +85,16 @@ export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } =
   for (const service of DEPLOYMENT_SERVICES) {
     const configPath = join(PROJECT_ROOT, service.config);
     const raw = await readFile(configPath);
-    const configFingerprintSha256 = sha256Hex(raw);
+    const resolvedVars = Object.fromEntries(
+      Object.entries(service.vars).map(([target, source]) => [target, env[source] ?? `<${source}>`]),
+    );
+    const configFingerprintSha256 = sha256Hex(Buffer.concat([
+      raw,
+      Buffer.from(`\n--unzen-deploy-vars-v1--\n${stableJson(resolvedVars)}`, 'utf8'),
+    ]));
     const vars = {
       CONFIG_FINGERPRINT_SHA256: configFingerprintSha256,
-      ...Object.fromEntries(Object.entries(service.vars).map(([target, source]) => [target, env[source] ?? `<${source}>`])),
+      ...resolvedVars,
     };
     services.push({
       role: service.role,
@@ -101,12 +107,30 @@ export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } =
     });
   }
 
+  const deployCommitSha = env.DEPLOY_COMMIT_SHA ?? '<DEPLOY_COMMIT_SHA>';
+  const deploymentIdentity = {
+    schemaVersion: '1.0.0',
+    bucket: R2_BUCKET,
+    deployCommitSha,
+    services: services.map((service) => ({
+      role: service.role,
+      service: service.service,
+      configFingerprintSha256: service.configFingerprintSha256,
+    })),
+  };
+  const deploymentManifestSha256 = sha256Hex(Buffer.from(stableJson(deploymentIdentity), 'utf8'));
+  const controller = services.find((service) => service.role === 'controller');
+  if (!controller) throw new Error('deployment-controller-missing');
+  controller.vars.DEPLOY_MANIFEST_SHA256 = deploymentManifestSha256;
+
   return {
     schemaVersion: '1.0.0',
     mode,
     bucket: R2_BUCKET,
     accountConfigured: REQUIRED_ACCOUNT_ENV.every((name) => nonEmpty(env[name])),
     requiredEnvironment: mode === 'apply' ? REQUIRED_APPLY_ENV : mode === 'dry-run' ? REQUIRED_ACCOUNT_ENV : [],
+    deployCommitSha,
+    deploymentManifestSha256,
     services,
     secretNames: [...SECRET_NAMES].sort(),
   };
@@ -119,6 +143,8 @@ export function redactedDeploymentManifest(plan) {
     bucket: plan.bucket,
     accountConfigured: plan.accountConfigured,
     requiredEnvironment: plan.requiredEnvironment,
+    deployCommitSha: plan.deployCommitSha,
+    deploymentManifestSha256: plan.deploymentManifestSha256,
     secretNames: plan.secretNames,
     services: plan.services.map((service) => ({
       role: service.role,
@@ -128,7 +154,9 @@ export function redactedDeploymentManifest(plan) {
       requiredSecrets: service.secrets,
       vars: Object.fromEntries(Object.entries(service.vars).map(([name, value]) => [
         name,
-        name === 'CONFIG_FINGERPRINT_SHA256' || name === 'DEPLOY_COMMIT_SHA' ? value : `<${name}>`,
+        name === 'CONFIG_FINGERPRINT_SHA256' || name === 'DEPLOY_COMMIT_SHA' || name === 'DEPLOY_MANIFEST_SHA256'
+          ? value
+          : `<${name}>`,
       ])),
     })),
   };
@@ -138,6 +166,7 @@ export async function executeDeploymentPlan(plan, options = {}) {
   const env = options.env ?? process.env;
   const runner = options.runner ?? runCommand;
   const events = [];
+  const versionIdentities = [];
   const run = async (args, extra = {}) => {
     events.push({ command: ['npx', 'wrangler@latest', ...redactArgs(args)], kind: extra.kind ?? 'command' });
     return runner(['npx', 'wrangler@latest', ...args], {
@@ -147,7 +176,7 @@ export async function executeDeploymentPlan(plan, options = {}) {
     });
   };
 
-  if (plan.mode === 'plan') return { events, manifest: redactedDeploymentManifest(plan) };
+  if (plan.mode === 'plan') return { events, manifest: redactedDeploymentManifest(plan), versionIdentities };
 
   await run(['whoami'], { kind: 'auth-check' });
   for (const service of plan.services) {
@@ -158,7 +187,7 @@ export async function executeDeploymentPlan(plan, options = {}) {
     for (const service of plan.services) {
       await run(deployArgs(service, true), { kind: 'deploy-dry-run' });
     }
-    return { events, manifest: redactedDeploymentManifest(plan) };
+    return { events, manifest: redactedDeploymentManifest(plan), versionIdentities };
   }
 
   const info = await run(['r2', 'bucket', 'info', plan.bucket], { kind: 'r2-info' }).catch((error) => ({ ok: false, error }));
@@ -173,10 +202,18 @@ export async function executeDeploymentPlan(plan, options = {}) {
         stdin: `${value}\n`,
       });
     }
-    await run(deployArgs(service, false), { kind: 'deploy' });
+    const deployed = await run(deployArgs(service, false), { kind: 'deploy' });
+    const versionId = extractVersionId(`${deployed.stdout ?? ''}\n${deployed.stderr ?? ''}`);
+    if (!versionId) throw new Error(`deployment-version-id-missing:${service.role}`);
+    versionIdentities.push({
+      role: service.role,
+      service: service.service,
+      versionId,
+      configFingerprintSha256: service.configFingerprintSha256,
+    });
   }
 
-  return { events, manifest: redactedDeploymentManifest(plan) };
+  return { events, manifest: redactedDeploymentManifest(plan), versionIdentities };
 }
 
 function deployArgs(service, dryRun) {
@@ -215,8 +252,28 @@ export async function runCommand(command, options = {}) {
   });
 }
 
+function extractVersionId(output) {
+  const matches = [
+    /Current\s+Version\s+ID\s*:\s*([A-Za-z0-9-]{8,128})/i,
+    /Version\s+ID\s*:\s*([A-Za-z0-9-]{8,128})/i,
+  ];
+  for (const pattern of matches) {
+    const match = output.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function redactArgs(args) {
   return args.map((value) => SECRET_NAMES.has(value) ? value : value);
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function nonEmpty(value) {
@@ -242,6 +299,7 @@ async function main() {
     status: mode === 'plan' ? 'planned' : mode === 'dry-run' ? 'dry-run-complete' : 'deployment-complete',
     evidenceLevel: mode === 'apply' ? 'deployment-executed-unverified' : 'deployment-plan-only',
     manifest: result.manifest,
+    versionIdentities: result.versionIdentities,
     events: result.events,
   }, null, 2)}\n`);
 }
