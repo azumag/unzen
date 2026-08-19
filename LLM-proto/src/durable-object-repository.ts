@@ -1,16 +1,10 @@
 /**
- * Cloudflare Durable Object storage adapter for the durable Coordinator.
+ * Persistent DurableRepository adapter for Cloudflare Durable Objects.
  *
- * Issue #103 deliberately kept DurableRepository synchronous. SQLite-backed
- * Durable Objects expose a synchronous KV API at `ctx.storage.kv`, which lets
- * us preserve that contract while moving request/lease/checkpoint/result state
- * out of process memory.
- *
- * The adapter is intentionally typed against the small structural surface it
- * needs instead of importing `cloudflare:workers`, so the transport-agnostic
- * LLM prototype remains runnable under Node/Vitest. In a Worker, construct it
- * with `new DurableObjectRepository(this.ctx.storage.kv)` from a SQLite-backed
- * Durable Object.
+ * SQLite-backed Durable Objects expose synchronous KV at `ctx.storage.kv`.
+ * Keeping this adapter structural (rather than importing `cloudflare:workers`)
+ * preserves the Node/Vitest prototype while allowing the production runtime to
+ * pass `this.ctx.storage.kv` directly.
  */
 
 import type {
@@ -31,10 +25,7 @@ import type {
   WorkerRecord,
 } from './durable-types.js';
 
-/**
- * Structural subset of the SQLite-backed Durable Object synchronous KV API.
- * `ctx.storage.kv` satisfies this shape.
- */
+/** Structural subset implemented by SQLite Durable Object `ctx.storage.kv`. */
 export interface DurableObjectSyncKvStorage {
   get<T = unknown>(key: string): T | undefined;
   put<T = unknown>(key: string, value: T): void;
@@ -49,7 +40,7 @@ export interface DurableObjectSyncKvStorage {
   }): Iterable<[string, T]>;
 }
 
-const PREFIX = {
+const P = {
   request: 'request:',
   idempotency: 'idempotency:',
   attempts: 'attempts:',
@@ -62,85 +53,62 @@ const PREFIX = {
   worker: 'worker:',
 } as const;
 
-function part(value: string | number): string {
-  return encodeURIComponent(String(value));
-}
-
-function requestKey(requestId: InferenceRequestId): string {
-  return `${PREFIX.request}${part(requestId)}`;
-}
-
-function idempotencyKey(key: IdempotencyKey): string {
-  return `${PREFIX.idempotency}${part(key)}`;
-}
-
-function attemptsKey(requestId: InferenceRequestId): string {
-  return `${PREFIX.attempts}${part(requestId)}`;
-}
-
-function leaseKey(requestId: InferenceRequestId): string {
-  return `${PREFIX.lease}${part(requestId)}`;
-}
-
-function leaseIndexKey(leaseId: LeaseId): string {
-  return `${PREFIX.leaseIndex}${part(leaseId)}`;
-}
-
-function checkpointPrefix(requestId?: InferenceRequestId): string {
-  return requestId === undefined
-    ? PREFIX.checkpoint
-    : `${PREFIX.checkpoint}${part(requestId)}:`;
-}
-
-function checkpointKey(requestId: InferenceRequestId, segmentIndex: number): string {
-  return `${checkpointPrefix(requestId)}${part(segmentIndex)}`;
-}
-
-function resultKey(requestId: InferenceRequestId): string {
-  return `${PREFIX.result}${part(requestId)}`;
-}
-
-function cancellationKey(requestId: InferenceRequestId): string {
-  return `${PREFIX.cancellation}${part(requestId)}`;
-}
-
-function cursorKey(requestId: InferenceRequestId): string {
-  return `${PREFIX.cursor}${part(requestId)}`;
-}
-
-function workerKey(workerId: WorkerId): string {
-  return `${PREFIX.worker}${part(workerId)}`;
-}
+const part = (value: string | number) => encodeURIComponent(String(value));
+const requestKey = (id: InferenceRequestId) => `${P.request}${part(id)}`;
+const idempotencyStorageKey = (key: IdempotencyKey) => `${P.idempotency}${part(key)}`;
+const attemptsKey = (id: InferenceRequestId) => `${P.attempts}${part(id)}`;
+const leaseKey = (id: InferenceRequestId) => `${P.lease}${part(id)}`;
+const leaseIndexKey = (id: LeaseId) => `${P.leaseIndex}${part(id)}`;
+const checkpointPrefix = (id?: InferenceRequestId) =>
+  id === undefined ? P.checkpoint : `${P.checkpoint}${part(id)}:`;
+const checkpointKey = (id: InferenceRequestId, segment: number) =>
+  `${checkpointPrefix(id)}${part(segment)}`;
+const resultKey = (id: InferenceRequestId) => `${P.result}${part(id)}`;
+const cancellationKey = (id: InferenceRequestId) => `${P.cancellation}${part(id)}`;
+const cursorKey = (id: InferenceRequestId) => `${P.cursor}${part(id)}`;
+const workerKey = (id: WorkerId) => `${P.worker}${part(id)}`;
 
 /**
- * DurableRepository backed by one SQLite Durable Object's synchronous KV
- * storage. The containing Durable Object is the coordination atom; callers
- * should shard by a stable Coordinator key rather than route every workload to
- * one global singleton.
+ * Storage for one Coordinator coordination shard.
  *
- * A small write-through Proxy is used for RequestRecord and WorkerRecord.
- * Existing #103 code historically mutates those records after `get*()` (the
- * in-memory repository returns live references). Durable Object reads return
- * structured-cloned values, so without this compatibility layer those changes
- * would silently disappear on restart. Every top-level mutation is persisted
- * synchronously before control returns to the caller.
+ * Do not route every Unzen request to one global Durable Object. The caller is
+ * responsible for deterministic sharding (for example tenant/model/routing
+ * shard) so all state that must share idempotency and leases reaches the same
+ * object without creating a global bottleneck.
  */
 export class DurableObjectRepository implements DurableRepository {
   constructor(private readonly storage: DurableObjectSyncKvStorage) {}
 
+  /**
+   * Compatibility for the existing #103 contract, which mutates request and
+   * worker records returned by `get*()`/`list*()`.
+   *
+   * Durable Object reads are cloned, unlike InMemoryRepository's live object
+   * references. A naive write-through proxy would also be unsafe: a stage CAS
+   * may update storage after this object was read, then a later error/timing
+   * mutation on the stale object could overwrite the new stage. Therefore each
+   * property write re-reads the latest stored value and merges only that
+   * property before persisting it.
+   */
   private mutableRecord<T extends object>(key: string, value: T | undefined): T | undefined {
     if (value === undefined) return undefined;
     const storage = this.storage;
     return new Proxy(value, {
       set(target, property, next): boolean {
         const ok = Reflect.set(target, property, next);
-        if (ok) storage.put(key, target);
-        return ok;
+        if (!ok) return false;
+        const latest = storage.get<T>(key) ?? target;
+        Reflect.set(latest, property, next);
+        storage.put(key, latest);
+        return true;
       },
       deleteProperty(target, property): boolean {
         const ok = Reflect.deleteProperty(target, property);
-        if (ok) storage.put(key, target);
-        return ok;
+        if (!ok) return false;
+        const latest = storage.get<T>(key) ?? target;
+        Reflect.deleteProperty(latest, property);
+        storage.put(key, latest);
+        return true;
       },
     });
   }
@@ -149,14 +117,13 @@ export class DurableObjectRepository implements DurableRepository {
     return [...this.storage.list<T>({ prefix })].map(([, value]) => value);
   }
 
-  private listMutableValues<T extends object>(prefix: string): T[] {
+  private listMutable<T extends object>(prefix: string): T[] {
     return [...this.storage.list<T>({ prefix })].map(([key, value]) =>
       this.mutableRecord(key, value)!,
     );
   }
 
-  // --- request state ---
-
+  // request state
   createRequest(record: RequestRecord): void {
     this.storage.put(requestKey(record.requestId), record);
   }
@@ -167,7 +134,7 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   listRequests(): readonly RequestRecord[] {
-    return this.listMutableValues<RequestRecord>(PREFIX.request);
+    return this.listMutable<RequestRecord>(P.request);
   }
 
   transitionStage(
@@ -183,22 +150,20 @@ export class DurableObjectRepository implements DurableRepository {
     return true;
   }
 
-  // --- idempotency ---
-
+  // idempotency
   getIdempotencyMapping(key: IdempotencyKey): InferenceRequestId | undefined {
-    return this.storage.get<InferenceRequestId>(idempotencyKey(key));
+    return this.storage.get<InferenceRequestId>(idempotencyStorageKey(key));
   }
 
   putIdempotencyMapping(key: IdempotencyKey, requestId: InferenceRequestId): boolean {
-    const storageKey = idempotencyKey(key);
+    const storageKey = idempotencyStorageKey(key);
     const existing = this.storage.get<InferenceRequestId>(storageKey);
     if (existing !== undefined && existing !== requestId) return false;
     this.storage.put(storageKey, requestId);
     return true;
   }
 
-  // --- attempt history ---
-
+  // attempt history
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void {
     const key = attemptsKey(requestId);
     const attempts = this.storage.get<AttemptRecord[]>(key) ?? [];
@@ -210,11 +175,7 @@ export class DurableObjectRepository implements DurableRepository {
     return this.storage.get<AttemptRecord[]>(attemptsKey(requestId)) ?? [];
   }
 
-  updateAttempt(
-    requestId: InferenceRequestId,
-    attemptId: AttemptId,
-    patch: AttemptPatch,
-  ): void {
+  updateAttempt(requestId: InferenceRequestId, attemptId: AttemptId, patch: AttemptPatch): void {
     const key = attemptsKey(requestId);
     const attempts = this.storage.get<AttemptRecord[]>(key);
     if (!attempts) return;
@@ -226,8 +187,7 @@ export class DurableObjectRepository implements DurableRepository {
     this.storage.put(key, attempts);
   }
 
-  // --- lease ---
-
+  // leases
   putLease(lease: Lease): void {
     const activeKey = leaseKey(lease.requestId);
     const previous = this.storage.get<Lease>(activeKey);
@@ -243,36 +203,31 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   deleteLease(leaseId: LeaseId): void {
-    const indexKey = leaseIndexKey(leaseId);
-    const requestId = this.storage.get<InferenceRequestId>(indexKey);
+    const index = leaseIndexKey(leaseId);
+    const requestId = this.storage.get<InferenceRequestId>(index);
     if (requestId === undefined) return;
     const activeKey = leaseKey(requestId);
-    const lease = this.storage.get<Lease>(activeKey);
-    if (lease?.leaseId === leaseId) this.storage.delete(activeKey);
-    this.storage.delete(indexKey);
+    const active = this.storage.get<Lease>(activeKey);
+    if (active?.leaseId === leaseId) this.storage.delete(activeKey);
+    this.storage.delete(index);
   }
 
   listActiveLeases(): readonly Lease[] {
-    return this.listValues<Lease>(PREFIX.lease);
+    return this.listValues<Lease>(P.lease);
   }
 
-  // --- checkpoint ---
-
+  // checkpoints
   putCheckpoint(envelope: CheckpointEnvelope): CheckpointStoreResult {
     const key = checkpointKey(envelope.requestId, envelope.segmentIndex);
     const existing = this.storage.get<CheckpointEnvelope>(key);
     if (existing) {
-      if (existing.payloadDigest === envelope.payloadDigest) return 'unchanged';
-      return 'conflict';
+      return existing.payloadDigest === envelope.payloadDigest ? 'unchanged' : 'conflict';
     }
     this.storage.put(key, envelope);
     return 'stored';
   }
 
-  getCheckpoint(
-    requestId: InferenceRequestId,
-    segmentIndex: number,
-  ): CheckpointEnvelope | undefined {
+  getCheckpoint(requestId: InferenceRequestId, segmentIndex: number): CheckpointEnvelope | undefined {
     return this.storage.get<CheckpointEnvelope>(checkpointKey(requestId, segmentIndex));
   }
 
@@ -291,14 +246,12 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   allCheckpoints(): readonly CheckpointEnvelope[] {
-    return this.listValues<CheckpointEnvelope>(PREFIX.checkpoint);
+    return this.listValues<CheckpointEnvelope>(P.checkpoint);
   }
 
   collectExpiredCheckpoints(now: number): readonly CheckpointEnvelope[] {
     const expired: CheckpointEnvelope[] = [];
-    for (const [key, envelope] of this.storage.list<CheckpointEnvelope>({
-      prefix: PREFIX.checkpoint,
-    })) {
+    for (const [key, envelope] of this.storage.list<CheckpointEnvelope>({ prefix: P.checkpoint })) {
       if (now >= envelope.createdAt + envelope.ttlMs) {
         expired.push(envelope);
         this.storage.delete(key);
@@ -307,8 +260,7 @@ export class DurableObjectRepository implements DurableRepository {
     return expired;
   }
 
-  // --- completion / result ---
-
+  // completion/result
   getResult(requestId: InferenceRequestId): InferenceResult | undefined {
     return this.storage.get<InferenceResult>(resultKey(requestId));
   }
@@ -320,23 +272,20 @@ export class DurableObjectRepository implements DurableRepository {
   ): CompletionCommit {
     const requestStorageKey = requestKey(requestId);
     const resultStorageKey = resultKey(requestId);
-    const existing = this.storage.get<InferenceResult>(resultStorageKey);
-    if (existing !== undefined) return 'duplicate';
+    if (this.storage.get<InferenceResult>(resultStorageKey) !== undefined) return 'duplicate';
 
     const record = this.storage.get<RequestRecord>(requestStorageKey);
     if (!record || record.stage !== expectedStage) return 'conflict';
 
     record.stage = 'completed';
     record.completedAt = Date.now();
-    // Synchronous SQLite-backed DO KV operations contain no await boundary;
-    // the runtime can commit these writes together before the event completes.
+    // Both operations are synchronous and have no await boundary inside the DO.
     this.storage.put(resultStorageKey, result);
     this.storage.put(requestStorageKey, record);
     return 'committed';
   }
 
-  // --- cancellation ---
-
+  // cancellation
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void {
     this.storage.put(cancellationKey(requestId), record);
   }
@@ -345,8 +294,7 @@ export class DurableObjectRepository implements DurableRepository {
     return this.storage.get<CancellationRecord>(cancellationKey(requestId));
   }
 
-  // --- streaming cursor ---
-
+  // stream cursor
   putStreamCursor(cursor: StreamCursor): void {
     this.storage.put(cursorKey(cursor.requestId), cursor);
   }
@@ -355,8 +303,7 @@ export class DurableObjectRepository implements DurableRepository {
     return this.storage.get<StreamCursor>(cursorKey(requestId));
   }
 
-  // --- worker registration / generation ---
-
+  // worker registration/generation
   putWorker(record: WorkerRecord): void {
     this.storage.put(workerKey(record.workerId), record);
   }
@@ -371,6 +318,6 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   listWorkers(): readonly WorkerRecord[] {
-    return this.listMutableValues<WorkerRecord>(PREFIX.worker);
+    return this.listMutable<WorkerRecord>(P.worker);
   }
 }
