@@ -4,6 +4,7 @@ import {
 } from './workers-coordinator-publisher-tax-production-exception-archive-dr-provider-steady-state-operations.js';
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_COMMIT_PATTERN = /^[a-f0-9]{40,64}$/;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const PRODUCTION_DEPLOYMENT_CANARY_EVIDENCE_KIND =
   'publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary';
@@ -95,6 +96,10 @@ async function verifyArtifact(input: unknown, options: IndependentVerifierOption
   }
   const reason = validateProductionPayload(evidenceKind, runId, payload);
   if (reason) return failed(options, reason, evidenceKind, runId);
+  if (evidenceKind === PRODUCTION_DEPLOYMENT_CANARY_EVIDENCE_KIND) {
+    const bindingReason = validateDeploymentArtifactBinding(bytes, payload, runId);
+    if (bindingReason) return failed(options, bindingReason, evidenceKind, runId);
+  }
   const capturedAtMs = numberValue(payload.capturedAtMs);
   if (capturedAtMs === undefined) return failed(options, 'artifact-capture-timestamp-invalid', evidenceKind, runId);
   const verifiedAt = new Date(capturedAtMs + 1_000).toISOString();
@@ -141,15 +146,23 @@ function validateProductionPayload(evidenceKind: string, runId: string, payload:
   }
   if (evidenceKind === PRODUCTION_DEPLOYMENT_CANARY_EVIDENCE_KIND) {
     if (payload.canaryRunId !== runId) return 'deployment-canary-run-identity-invalid';
+    if (!GIT_COMMIT_PATTERN.test(stringValue(payload.deployCommitSha)) ||
+      !SHA256_PATTERN.test(stringValue(payload.deploymentManifestSha256))) {
+      return 'deployment-canary-deployment-manifest-invalid';
+    }
     if (!Array.isArray(payload.deployments) || payload.deployments.length !== 7) {
       return 'deployment-canary-version-set-invalid';
     }
+    const versionIds = new Set<string>();
     for (const deployment of payload.deployments) {
-      if (!isRecord(deployment) || !stringValue(deployment.service) || stringValue(deployment.versionId).length < 8 ||
+      if (!isRecord(deployment) || !stringValue(deployment.role) || !stringValue(deployment.service) ||
+        stringValue(deployment.versionId).length < 8 ||
         !SHA256_PATTERN.test(stringValue(deployment.configFingerprintSha256)) ||
         !Number.isFinite(Date.parse(stringValue(deployment.versionTimestamp)))) {
         return 'deployment-canary-version-identity-invalid';
       }
+      if (versionIds.has(stringValue(deployment.versionId))) return 'deployment-canary-version-id-duplicate';
+      versionIds.add(stringValue(deployment.versionId));
     }
     if (!isRecord(payload.runtimeResult) || payload.runtimeResult.status !== 'idle' ||
       !isRecord(payload.runtimeResult.runtimeDelivery) || payload.runtimeResult.runtimeDelivery.durableState !== 'completed' ||
@@ -168,6 +181,49 @@ function validateProductionPayload(evidenceKind: string, runId: string, payload:
     return undefined;
   }
   return 'unsupported-evidence-kind';
+}
+
+function validateDeploymentArtifactBinding(
+  bytes: Uint8Array,
+  payload: Record<string, unknown>,
+  runId: string,
+): string | undefined {
+  let record: unknown;
+  try {
+    record = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return 'deployment-canary-artifact-json-invalid';
+  }
+  if (!isRecord(record) || record.schema !== 'unzen-continuous-assurance-production-deployment-canary-v1') {
+    return 'deployment-canary-artifact-schema-invalid';
+  }
+  if (record.canaryRunId !== runId || record.canaryRunId !== payload.canaryRunId ||
+    record.triggerKey !== payload.triggerKey || record.deployCommitSha !== payload.deployCommitSha ||
+    record.deploymentManifestSha256 !== payload.deploymentManifestSha256) {
+    return 'deployment-canary-artifact-identity-mismatch';
+  }
+  if (stableJson(record.deployments) !== stableJson(payload.deployments) ||
+    stableJson(record.runtimeResult) !== stableJson(payload.runtimeResult)) {
+    return 'deployment-canary-artifact-payload-mismatch';
+  }
+  if (!isRecord(record.engineBindings) || !Array.isArray(payload.deployments)) {
+    return 'deployment-canary-artifact-engine-bindings-invalid';
+  }
+  for (const role of ['provider', 'evidence', 'pager']) {
+    const binding = record.engineBindings[role];
+    const deployment = payload.deployments.find((item) => isRecord(item) && item.role === role);
+    if (!isRecord(binding) || !isRecord(deployment) || binding.service !== deployment.service ||
+      binding.versionId !== deployment.versionId || binding.configFingerprintSha256 !== deployment.configFingerprintSha256) {
+      return `deployment-canary-artifact-engine-binding-mismatch:${role}`;
+    }
+  }
+  const negativeChecks = payload.negativeChecks;
+  if (!isRecord(negativeChecks) ||
+    record.badDispatchSecretRejected !== negativeChecks.badDispatchSecretRejected ||
+    record.duplicateCompletedDispatchSuppressed !== negativeChecks.duplicateCompletedDispatchSuppressed) {
+    return 'deployment-canary-artifact-negative-check-mismatch';
+  }
+  return undefined;
 }
 
 function failed(
@@ -232,6 +288,14 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   copy.set(bytes);
   const digest = await crypto.subtle.digest('SHA-256', copy);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function stringValue(value: unknown): string {
