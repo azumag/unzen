@@ -1,0 +1,69 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-production-provider-canary",
+  "main": "./continuous-assurance-production-provider-canary-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": ["23 4 * * *"]
+  },
+  "services": [
+    {
+      "binding": "PRODUCTION_DEPLOYMENT_CANARY",
+      "service": "unzen-llm-continuous-assurance-production-canary"
+    },
+    {
+      "binding": "CONTINUOUS_ASSURANCE_RUNTIME",
+      "service": "unzen-llm-continuous-assurance"
+    },
+    {
+      "binding": "ASSURANCE_ENGINE",
+      "service": "unzen-llm-continuous-assurance-engine"
+    },
+    {
+      "binding": "PROVIDER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-provider-adapter"
+    },
+    {
+      "binding": "EVIDENCE_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-evidence-adapter"
+    },
+    {
+      "binding": "PAGER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-pager-adapter"
+    },
+    {
+      "binding": "INDEPENDENT_VERIFIER",
+      "service": "unzen-llm-continuous-assurance-independent-verifier"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CANARY_EVIDENCE_BUCKET",
+      "bucket_name": "unzen-continuous-assurance-evidence"
+    }
+  ],
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "vars": {
+    "CONTINUOUS_ASSURANCE_SCOPE": "publisher-tax-exception-archive-dr",
+    "PROVIDER_CANARY_ENABLED": "false",
+    "DEPLOYMENT_CANARY_EVIDENCE_KEY": "deployment-canary/latest-envelope.json",
+    "CANARY_PAGER_ROUTE": "SET_BY_DEPLOY_PIPELINE",
+    "CANARY_PAGER_TARGET": "SET_BY_DEPLOY_PIPELINE",
+    "TRUSTED_VERIFIER_NAME": "unzen-independent-evidence-verifier",
+    "CANARY_RETENTION_MS": "2592000000",
+    "DEPLOY_COMMIT_SHA": "SET_BY_DEPLOY_PIPELINE",
+    "CONFIG_FINGERPRINT_SHA256": "SET_BY_DEPLOY_PIPELINE"
+  },
+  "secrets": {
+    "required": ["PROVIDER_CANARY_CONTROLLER_SECRET", "CANARY_DISPATCH_SECRET"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
