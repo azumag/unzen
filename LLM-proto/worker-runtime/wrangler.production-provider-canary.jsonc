@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-production-provider-canary",
+  "main": "./continuous-assurance-production-provider-canary-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "services": [
+    {
+      "binding": "PROVIDER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-provider-adapter"
+    },
+    {
+      "binding": "PAGER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-pager-adapter"
+    },
+    {
+      "binding": "EVIDENCE_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-evidence-adapter"
+    },
+    {
+      "binding": "PROVIDER_CANARY_VERIFIER",
+      "service": "unzen-llm-continuous-assurance-production-provider-canary-verifier"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CANARY_EVIDENCE_BUCKET",
+      "bucket_name": "unzen-continuous-assurance-evidence"
+    }
+  ],
+  "vars": {
+    "DEPLOYMENT_VERIFIER_NAME": "unzen-independent-evidence-verifier",
+    "PROVIDER_CANARY_VERIFIER_NAME": "unzen-production-provider-canary-verifier",
+    "PROVIDER_CANARY_VERIFIER_VERSION": "1.0.0",
+    "PROVIDER_CANARY_CONTROLLER_VERSION": "1.0.0",
+    "EXPECTED_DEPLOY_COMMIT_SHA": "SET_BY_DEPLOY_PIPELINE",
+    "EXPECTED_DEPLOYMENT_MANIFEST_SHA256": "SET_BY_DEPLOY_PIPELINE",
+    "EXPECTED_CONFIG_FINGERPRINTS_JSON": "SET_BY_DEPLOY_PIPELINE",
+    "PROVIDER_CANARY_RETENTION_MS": "2592000000",
+    "PROVIDER_CANARY_ONCALL_ROUTE": "SET_BY_DEPLOY_PIPELINE",
+    "PROVIDER_CANARY_ESCALATION_TARGET": "SET_BY_DEPLOY_PIPELINE"
+  },
+  "secrets": {
+    "required": ["PROVIDER_CANARY_CONTROLLER_SECRET"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
