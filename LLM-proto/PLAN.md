@@ -1,4 +1,4 @@
-# unzen-LLM 計画書 v2.9
+# unzen-LLM 計画書 v3.0
 
 ## 本文書の位置づけ
 
@@ -621,7 +621,7 @@ All-or-Nothing パイプライン:
   リトライ1回込み: 0.007 × 0.007 = 0.005%/セグメント
   8セグメント全体の成功率: 99.96%
 
-保守シナリオ(離脱率 10%/30秒):
+保守ケース(離脱率 10%/30秒):
   4秒あたり離脱率: ~1.4%
   リトライ1回込み: 0.014 × 0.014 = 0.02%/セグメント
   8セグメント全体の成功率: 99.84%
@@ -732,8 +732,9 @@ All-or-Nothing パイプライン:
 25. [Publisher tax filing production callbacks readiness gate](./docs/workers-coordinator-prototype.md) で、cutover approval evidence、production callback IDs、callback signature verification state、approved filing window reconciliation、duplicate-filing suppression、rollback / emergency hold controls、production monitoring reconciliation へ進む promote/hold thresholds を検証する
 26. [Publisher tax filing production monitoring reconciliation gate](./docs/workers-coordinator-prototype.md) で、accepted / rejected / corrected / duplicate-suppressed callback streams、operator monitoring records、publisher monitoring exports、alert traceability、duplicate-filing suppression replay、rollback / emergency hold replay controls、exception operations runbook へ進む promote/hold thresholds を検証する
 27. [Publisher tax filing production exception operations runbook gate (#91)](./docs/publisher-tax-production-exception-operations.md) で、rejected / corrected / duplicate-suppressed / replay-detected eventをoperator runbook actionへ変換し、monitoring alert / production callback / provider filing / approved production windowをsupport escalationへtraceする。affected provider filingごとのpublisher status update、duplicate-filing suppression維持、rollback / emergency-hold decision evidence、signed runner isolationを検証し、次の`publisher-tax-filing-production-exception-resolution-audit`へ進む
-28. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
-29. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
+28. [Publisher tax filing production exception resolution audit gate (#116)](./docs/publisher-tax-production-exception-resolution-audit.md) で、各runbook actionをterminal `resolved`または明示的`carried-forward`へ収束させる。corrected filingのprovider outcome、support escalation resolution、publisher final/carry-forward status、original identity fingerprint、duplicate-filing suppression、rollback/emergency-hold identityを照合し、次の`publisher-tax-filing-production-exception-audit-archive-retention`へ進む
+29. ~~[Chrome Prompt API feasibility harness (#93)] 実ブラウザ計測~~ — **破棄（2026-08-06）**。実ブラウザ計測で、Chrome 150 stable / 153 Canary のいずれもフラグ・エンタープライズポリシー等の特別な設定なしには `window.ai`（Prompt API）が露出しないことを確認したため、Chrome Built-in AI 採用方針（#92/#93/#95/#100）ごと破棄。`browser-harness/`・`chrome-prompt-api-report.ts`・`ChromeLanguageModelBackend`・`browser-built-in-model.ts` は削除済み
+30. [InferenceBackend / WorkerCapability 抽象化 (#94)](./docs/inference-backend-abstraction.md) で、segmented WebGPU・full-model・server-fallbackを同一capability routing inputとして扱う。`WorkerCapability` はversioned + runtime validated、`InferenceEvent` はstreaming/abort/context/prepare/errorを共通イベント化し、full-model backendは`SegmentExecutor`を装わずにregisterできる。旧Worker登録protocolは一時adapterで互換維持し、既存のsegmented route動作は変更しない（`browser-built-in-full-model` kindは抽象化として残るが、Chrome実装は破棄済み）
 
 ### 7.2 経済性の精緻化
 
@@ -784,10 +785,11 @@ ChromeLanguageModelBackend・descriptor）を削除しました。
 
 ---
 
-**ドキュメントバージョン**: 2.9
+**ドキュメントバージョン**: 3.0
 **作成日**: 2026年2月
 **ステータス**: レビュー済み方針確定版
 **変更履歴**:
+- v3.0: #116 production exception resolution audit gateを7.1項へ追加。runbook actionのresolved/carry-forward、corrected filing provider outcome、support/publisher resolution、immutable identity fingerprint、control integrityを検証し、次のexception audit archive/retentionを明示
 - v2.9: #91 production exception operations runbook gateを7.1項へ追加。monitoring exceptionからoperator action / support escalation / publisher status / duplicate suppression / rollback-hold decisionをtraceし、次のexception resolution auditを明示。#103 durability記述をDurableObjectRepository実装後の状態へ更新
 - v2.8: Chrome Built-in AI / Prompt API 採用方針（#92/#93/#95/#100）を破棄。実ブラウザ計測で特別な設定なしにはAPIが露出しないことを確認（7.5項に記録）。関連コード削除済み
 - v2.7: InferenceBackend / `WorkerCapability`抽象化（#94）を7.1項に追加。segmented・full-model・server-fallbackを同一capabilityでroutingする方針と、full-model backendが`SegmentExecutor`を装わないことを明記（詳細は[`docs/inference-backend-abstraction.md`](./docs/inference-backend-abstraction.md)）
