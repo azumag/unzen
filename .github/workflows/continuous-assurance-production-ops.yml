@@ -1,0 +1,112 @@
+name: Continuous Assurance Production Ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Production operation mode
+        required: true
+        type: choice
+        default: plan
+        options:
+          - plan
+          - dry-run
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: continuous-assurance-production-ops
+  cancel-in-progress: false
+
+jobs:
+  production-ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    defaults:
+      run:
+        working-directory: LLM-proto
+    env:
+      DEPLOY_COMMIT_SHA: ${{ github.sha }}
+      PROVIDER_API_BASE_URL: ${{ vars.PROVIDER_API_BASE_URL }}
+      PAGER_API_URL: ${{ vars.PAGER_API_URL }}
+      PROVIDER_CANARY_ONCALL_ROUTE: ${{ vars.PROVIDER_CANARY_ONCALL_ROUTE }}
+      PROVIDER_CANARY_ESCALATION_TARGET: ${{ vars.PROVIDER_CANARY_ESCALATION_TARGET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: LLM-proto/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build redacted plan
+        if: ${{ inputs.mode == 'plan' }}
+        run: node scripts/deploy-continuous-assurance-production-canary.mjs > production-deployment-result.json
+
+      - name: Run authenticated dry-run
+        if: ${{ inputs.mode == 'dry-run' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          node scripts/deploy-continuous-assurance-production-canary.mjs --dry-run > production-deployment-result.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const text = fs.readFileSync('production-deployment-result.json', 'utf8');
+          for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
+            const value = process.env[name];
+            if (value && text.includes(value)) throw new Error(`deployment-result-secret-leak:${name}`);
+          }
+          NODE
+
+      - name: Deploy production services
+        if: ${{ inputs.mode == 'deploy' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROVIDER_API_TOKEN: ${{ secrets.PROVIDER_API_TOKEN }}
+          PAGER_API_TOKEN: ${{ secrets.PAGER_API_TOKEN }}
+          ENGINE_BOOTSTRAP_SECRET: ${{ secrets.ENGINE_BOOTSTRAP_SECRET }}
+          CANARY_DISPATCH_SECRET: ${{ secrets.CANARY_DISPATCH_SECRET }}
+          CANARY_CONTROLLER_SECRET: ${{ secrets.CANARY_CONTROLLER_SECRET }}
+          PROVIDER_CANARY_CONTROLLER_SECRET: ${{ secrets.PROVIDER_CANARY_CONTROLLER_SECRET }}
+        shell: bash
+        run: |
+          node scripts/deploy-continuous-assurance-production-canary.mjs --apply > production-deployment-result.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const text = fs.readFileSync('production-deployment-result.json', 'utf8');
+          const names = [
+            'CLOUDFLARE_API_TOKEN',
+            'CLOUDFLARE_ACCOUNT_ID',
+            'PROVIDER_API_TOKEN',
+            'PAGER_API_TOKEN',
+            'ENGINE_BOOTSTRAP_SECRET',
+            'CANARY_DISPATCH_SECRET',
+            'CANARY_CONTROLLER_SECRET',
+            'PROVIDER_CANARY_CONTROLLER_SECRET',
+          ];
+          for (const name of names) {
+            const value = process.env[name];
+            if (value && text.includes(value)) throw new Error(`deployment-result-secret-leak:${name}`);
+          }
+          NODE
+
+      - name: Upload redacted deployment result
+        if: ${{ hashFiles('LLM-proto/production-deployment-result.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: continuous-assurance-production-${{ inputs.mode }}
+          path: LLM-proto/production-deployment-result.json
+          if-no-files-found: error
+          retention-days: 14

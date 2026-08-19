@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, '..');
 const R2_BUCKET = 'unzen-continuous-assurance-evidence';
 
-export const DEPLOYMENT_SERVICES = Object.freeze([
+export const CORE_DEPLOYMENT_SERVICES = Object.freeze([
   { role: 'verifier', service: 'unzen-llm-continuous-assurance-independent-verifier', config: 'worker-runtime/wrangler.independent-verifier.jsonc', secrets: [], vars: {} },
   { role: 'provider', service: 'unzen-llm-continuous-assurance-provider-adapter', config: 'worker-runtime/wrangler.provider-adapter.jsonc', secrets: ['PROVIDER_API_TOKEN'], vars: { PROVIDER_API_BASE_URL: 'PROVIDER_API_BASE_URL' } },
   { role: 'pager', service: 'unzen-llm-continuous-assurance-pager-adapter', config: 'worker-runtime/wrangler.pager-adapter.jsonc', secrets: ['PAGER_API_TOKEN'], vars: { PAGER_API_URL: 'PAGER_API_URL' } },
@@ -18,6 +18,34 @@ export const DEPLOYMENT_SERVICES = Object.freeze([
   { role: 'engine', service: 'unzen-llm-continuous-assurance-engine', config: 'worker-runtime/wrangler.engine.jsonc', secrets: ['ENGINE_BOOTSTRAP_SECRET', 'CANARY_DISPATCH_SECRET'], vars: {} },
   { role: 'runtime', service: 'unzen-llm-continuous-assurance', config: 'worker-runtime/wrangler.jsonc', secrets: ['CANARY_DISPATCH_SECRET'], vars: {} },
   { role: 'controller', service: 'unzen-llm-continuous-assurance-production-canary', config: 'worker-runtime/wrangler.production-canary.jsonc', secrets: ['CANARY_DISPATCH_SECRET', 'CANARY_CONTROLLER_SECRET'], vars: { DEPLOY_COMMIT_SHA: 'DEPLOY_COMMIT_SHA' } },
+]);
+
+export const PROVIDER_CANARY_DEPLOYMENT_SERVICES = Object.freeze([
+  {
+    role: 'provider-canary-verifier',
+    service: 'unzen-llm-continuous-assurance-production-provider-canary-verifier',
+    config: 'worker-runtime/wrangler.production-provider-canary-verifier.jsonc',
+    secrets: [],
+    vars: {},
+  },
+  {
+    role: 'provider-canary-controller',
+    service: 'unzen-llm-continuous-assurance-production-provider-canary',
+    config: 'worker-runtime/wrangler.production-provider-canary.jsonc',
+    secrets: ['PROVIDER_CANARY_CONTROLLER_SECRET'],
+    vars: {
+      EXPECTED_DEPLOY_COMMIT_SHA: 'DEPLOY_COMMIT_SHA',
+      EXPECTED_DEPLOYMENT_MANIFEST_SHA256: 'EXPECTED_DEPLOYMENT_MANIFEST_SHA256',
+      EXPECTED_CONFIG_FINGERPRINTS_JSON: 'EXPECTED_CONFIG_FINGERPRINTS_JSON',
+      PROVIDER_CANARY_ONCALL_ROUTE: 'PROVIDER_CANARY_ONCALL_ROUTE',
+      PROVIDER_CANARY_ESCALATION_TARGET: 'PROVIDER_CANARY_ESCALATION_TARGET',
+    },
+  },
+]);
+
+export const DEPLOYMENT_SERVICES = Object.freeze([
+  ...CORE_DEPLOYMENT_SERVICES,
+  ...PROVIDER_CANARY_DEPLOYMENT_SERVICES,
 ]);
 
 const REQUIRED_ACCOUNT_ENV = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'];
@@ -31,8 +59,19 @@ const REQUIRED_APPLY_ENV = [
   'ENGINE_BOOTSTRAP_SECRET',
   'CANARY_DISPATCH_SECRET',
   'CANARY_CONTROLLER_SECRET',
+  'PROVIDER_CANARY_CONTROLLER_SECRET',
+  'PROVIDER_CANARY_ONCALL_ROUTE',
+  'PROVIDER_CANARY_ESCALATION_TARGET',
 ];
 const SECRET_NAMES = new Set(DEPLOYMENT_SERVICES.flatMap((service) => service.secrets));
+const VISIBLE_VAR_NAMES = new Set([
+  'CONFIG_FINGERPRINT_SHA256',
+  'DEPLOY_COMMIT_SHA',
+  'DEPLOY_MANIFEST_SHA256',
+  'EXPECTED_DEPLOY_COMMIT_SHA',
+  'EXPECTED_DEPLOYMENT_MANIFEST_SHA256',
+  'EXPECTED_CONFIG_FINGERPRINTS_JSON',
+]);
 
 export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } = {}) {
   if (!['plan', 'dry-run', 'apply'].includes(mode)) throw new Error(`unsupported-deployment-mode:${mode}`);
@@ -40,27 +79,9 @@ export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } =
   const missing = required.filter((name) => !nonEmpty(env[name]));
   if (missing.length > 0) throw new Error(`deployment-input-missing:${missing.join(',')}`);
 
-  const services = [];
-  for (const service of DEPLOYMENT_SERVICES) {
-    const configPath = join(PROJECT_ROOT, service.config);
-    const raw = await readFile(configPath);
-    const resolvedVars = Object.fromEntries(
-      Object.entries(service.vars).map(([target, source]) => [target, env[source] ?? `<${source}>`]),
-    );
-    const configFingerprintSha256 = sha256Hex(Buffer.concat([
-      raw,
-      Buffer.from(`\n--unzen-deploy-vars-v1--\n${stableJson(resolvedVars)}`, 'utf8'),
-    ]));
-    const vars = { CONFIG_FINGERPRINT_SHA256: configFingerprintSha256, ...resolvedVars };
-    services.push({
-      role: service.role,
-      service: service.service,
-      config: service.config,
-      configPath,
-      configFingerprintSha256,
-      secrets: [...service.secrets],
-      vars,
-    });
+  const coreServices = [];
+  for (const service of CORE_DEPLOYMENT_SERVICES) {
+    coreServices.push(await resolveService(service, env));
   }
 
   const deployCommitSha = env.DEPLOY_COMMIT_SHA ?? '<DEPLOY_COMMIT_SHA>';
@@ -68,17 +89,31 @@ export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } =
     schemaVersion: '1.0.0',
     bucket: R2_BUCKET,
     deployCommitSha,
-    services: services.map((service) => ({
+    services: coreServices.map((service) => ({
       role: service.role,
       service: service.service,
       configFingerprintSha256: service.configFingerprintSha256,
     })),
   };
   const deploymentManifestSha256 = sha256Hex(Buffer.from(stableJson(deploymentIdentity), 'utf8'));
-  const controller = services.find((service) => service.role === 'controller');
+  const controller = coreServices.find((service) => service.role === 'controller');
   if (!controller) throw new Error('deployment-controller-missing');
   controller.vars.DEPLOY_MANIFEST_SHA256 = deploymentManifestSha256;
 
+  const expectedConfigFingerprints = Object.fromEntries(
+    coreServices.map((service) => [service.role, service.configFingerprintSha256]),
+  );
+  const derivedEnv = {
+    ...env,
+    EXPECTED_DEPLOYMENT_MANIFEST_SHA256: deploymentManifestSha256,
+    EXPECTED_CONFIG_FINGERPRINTS_JSON: stableJson(expectedConfigFingerprints),
+  };
+  const providerCanaryServices = [];
+  for (const service of PROVIDER_CANARY_DEPLOYMENT_SERVICES) {
+    providerCanaryServices.push(await resolveService(service, derivedEnv));
+  }
+
+  const services = [...coreServices, ...providerCanaryServices];
   return {
     schemaVersion: '1.0.0',
     mode,
@@ -87,8 +122,32 @@ export async function buildDeploymentPlan({ env = process.env, mode = 'plan' } =
     requiredEnvironment: mode === 'apply' ? REQUIRED_APPLY_ENV : mode === 'dry-run' ? REQUIRED_ACCOUNT_ENV : [],
     deployCommitSha,
     deploymentManifestSha256,
+    coreDeploymentRoles: coreServices.map((service) => service.role),
+    expectedConfigFingerprints,
     services,
     secretNames: [...SECRET_NAMES].sort(),
+  };
+}
+
+async function resolveService(service, env) {
+  const configPath = join(PROJECT_ROOT, service.config);
+  const raw = await readFile(configPath);
+  const resolvedVars = Object.fromEntries(
+    Object.entries(service.vars).map(([target, source]) => [target, env[source] ?? `<${source}>`]),
+  );
+  const configFingerprintSha256 = sha256Hex(Buffer.concat([
+    raw,
+    Buffer.from(`\n--unzen-deploy-vars-v1--\n${stableJson(resolvedVars)}`, 'utf8'),
+  ]));
+  const vars = { CONFIG_FINGERPRINT_SHA256: configFingerprintSha256, ...resolvedVars };
+  return {
+    role: service.role,
+    service: service.service,
+    config: service.config,
+    configPath,
+    configFingerprintSha256,
+    secrets: [...service.secrets],
+    vars,
   };
 }
 
@@ -101,6 +160,8 @@ export function redactedDeploymentManifest(plan) {
     requiredEnvironment: plan.requiredEnvironment,
     deployCommitSha: plan.deployCommitSha,
     deploymentManifestSha256: plan.deploymentManifestSha256,
+    coreDeploymentRoles: plan.coreDeploymentRoles,
+    expectedConfigFingerprints: plan.expectedConfigFingerprints,
     secretNames: plan.secretNames,
     services: plan.services.map((service) => ({
       role: service.role,
@@ -110,9 +171,7 @@ export function redactedDeploymentManifest(plan) {
       requiredSecrets: service.secrets,
       vars: Object.fromEntries(Object.entries(service.vars).map(([name, value]) => [
         name,
-        name === 'CONFIG_FINGERPRINT_SHA256' || name === 'DEPLOY_COMMIT_SHA' || name === 'DEPLOY_MANIFEST_SHA256'
-          ? value
-          : `<${name}>`,
+        VISIBLE_VAR_NAMES.has(name) ? value : `<${name}>`,
       ])),
     })),
   };
