@@ -200,6 +200,8 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Tax production exception archive DR provider continuous assurance engine service | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.ts` / `worker-runtime/continuous-assurance-engine-worker.mjs` / `worker-runtime/wrangler.engine.jsonc` | exact verified snapshot、engine journal、atomic snapshot CAS、provider/evidence/pager Service Bindings、replay/single-flightを検証 (#141) |
 | Tax production exception archive DR provider continuous assurance adapters / canary | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-adapters.ts` / `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-independent-verifier.ts` / `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary.ts` | internal provider/evidence/pager adapters、R2 + independent verifier、captured-and-verified adapter canary gateを検証 (#143) |
 | Tax production exception archive DR provider continuous assurance production deployment canary | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary.ts` / `worker-runtime/continuous-assurance-production-canary-worker.mjs` / `scripts/deploy-continuous-assurance-production-canary.mjs` | deployed Worker version/config identity、read-only runtime→DO→engine wiring、R2 artifact、independent verification、redacted deploy planを検証 (#145) |
+| Tax production exception archive DR provider continuous assurance production provider canary | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary.ts` / `worker-runtime/continuous-assurance-production-provider-canary-worker.mjs` | two-person authorization下のhealth/audit/primary+backup retrieval/pager dedupe、R2 artifact、dedicated verifierを検証 (#149) |
+| Tax production exception archive DR provider continuous assurance production operations rollout | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout.ts` | observe-only→maintenance→DR exercise→steady-stateの4 phaseを検証し、clean時は`steady-state-enabled` + operational obligationsでvalidator chainを終了 (#152) |
 
 signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`EvidenceEnvelope`と`validateEvidenceEnvelope()`を経由してのみ証拠を受け付けます。手書きfixtureは`captured-and-verified`へ到達できず、`contract-tested`に留まります。
 
@@ -221,6 +223,8 @@ signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`Evi
 - [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md)
 - [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary.md)
 - [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary.md)
+- [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary.md)
+- [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout.md)
 - [`docs/evidence-readiness.md`](./docs/evidence-readiness.md)
 
 ## 6. テスト実行
@@ -288,12 +292,16 @@ npm run test:workers-publisher-tax-production-exception-archive-dr-provider-cont
 npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine
 npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-adapters
 npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary
+npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary
+npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout
 ```
 
 runtime smokeも確認対象を限定して解釈します。たとえばMiniflare smokeの成功は、30B実モデルがbrowser WebGPUで動くことを証明しません。
 
 ## 7. 現在の重要な修正課題
 
+- [#152](https://github.com/azumag/unzen/issues/152): production exception archive DR provider continuous assurance production operations rollout — exact provider-canary evidence、two-person rollout authorization、4 phase順序/観測窓、phase-specific action allowlist、SLO/error budget、rotation、backup-source DR、incident/control/identityを照合。clean時は`steady-state-enabled`、`bottlenecksToIssue: []`と継続運用obligationを返しvalidator chainを終了
+- [#149](https://github.com/azumag/unzen/issues/149): production exception archive DR provider continuous assurance production provider canary — exact deployment canary evidenceを再検証し、health/audit/primary+backup retrieval/pager dedupeだけをbounded two-person authorizationで実行。R2 artifact + dedicated verifierを要求し、次のproduction operations rolloutへ進む
 - [#145](https://github.com/azumag/unzen/issues/145): production exception archive DR provider continuous assurance production deployment canary — Worker `version_metadata` / config fingerprint、read-only runtime→SQLite DO→engine経路、engine-observed adapter identity、R2 artifact + independent verifier、bad-secret/duplicate/digest/trust negative checks、secret-redacted deploy helperを検証。実Cloudflare/provider canaryをCIのpassとは扱わず、次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary`をbottleneckとして明示
 - [#143](https://github.com/azumag/unzen/issues/143): production exception archive DR provider continuous assurance provider adapter canary — provider/evidence/pager Service Binding先と独立verifier Workerを実装し、provider idempotency、R2 artifact + SHA-256、independent verification、pager dedupe、captured-and-verified / production-candidate canary gate、Miniflare multi-service配線を検証。次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary`をbottleneckとして明示
 - [#141](https://github.com/azumag/unzen/issues/141): production exception archive DR provider continuous assurance engine service — #139 runtimeの`ASSURANCE_ENGINE` Service Binding先を実装し、exact verified snapshot、SQLite engine journal、atomic base-run CAS、provider/evidence/pager adapter境界、artifact loader/independent verifier、bootstrap trust、duplicate/replay/single-flightを検証。次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary`をbottleneckとして明示
@@ -316,6 +324,8 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 - [#92](https://github.com/azumag/unzen/issues/92) / [#93](https://github.com/azumag/unzen/issues/93) / [#95](https://github.com/azumag/unzen/issues/95) / [#100](https://github.com/azumag/unzen/issues/100): Chrome Built-in AI / Prompt API — **破棄**（特別な設定なしにはAPIが露出しないことを実ブラウザ計測で確認。関連コード削除済み）
 
 contract gateが揃っていても、実provider・実tax filing・実browser artifactがcaptured-and-verifiedになるまではproduction-ready systemとは表現しません。
+
+#152のterminal rolloutも同様で、CI fixtureの`steady-state-enabled`は実provider rollout完了を証明しません。実運用への昇格には、各phaseの外部`captured-and-verified` / `production-approved` evidenceが必要です。
 
 ## 8. 既知の制約
 
@@ -358,6 +368,8 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 | [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md) | internal engine service、exact verified snapshot、atomic CAS、adapter Service Bindings、bootstrap/replay/single-flight、次bottleneck | #141 core + Miniflare engine runtime contract |
 | [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary.md) | provider/evidence/pager internal adapters、R2 + independent verifier、captured-and-verified canary gate、次bottleneck | #143 contract + Miniflare multi-service runtime smoke |
 | [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary.md) | deployed version/config identity、read-only runtime/engine wiring、R2 + independent verifier、redacted deployment helper、次bottleneck | #145 deployment-plan + read-only canary contract |
+| [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-provider-canary.md) | bounded production provider/pager canary、two-person authorization、archive integrity、R2 + dedicated verifier、次bottleneck | #149 production-candidate provider canary contract |
+| [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout.md) | 4-phase terminal rollout、phase allowlist、SLO/error budget、rotation/DR、operational obligations | #152 terminal validator contract。clean時は次validatorなし |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 
