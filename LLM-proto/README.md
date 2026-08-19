@@ -197,6 +197,7 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Tax production exception archive DR provider steady-state operations | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-steady-state-operations.ts` | recurring verified cycles、cadence、primary/backup integrity、audit continuity、rolling SLO/error budget、key rotation、DR exercise、evidence retentionを照合 (#135) |
 | Tax production exception archive DR provider continuous assurance automation | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.ts` | deterministic due/idle/overdue orchestration、idempotent provider actions、verified cycle/aggregate capture、operator paging、steady-state gate再評価を実行 (#137) |
 | Tax production exception archive DR provider continuous assurance Worker runtime | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-worker-runtime-smoke.ts` / `worker-runtime/continuous-assurance-worker.mjs` / `worker-runtime/wrangler.jsonc` | Cron→SQLite Durable Objectのdurable ledger、Service Binding、duplicate/replay recoveryをMiniflareで検証 (#139) |
+| Tax production exception archive DR provider continuous assurance engine service | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.ts` / `worker-runtime/continuous-assurance-engine-worker.mjs` / `worker-runtime/wrangler.engine.jsonc` | exact verified snapshot、engine journal、atomic snapshot CAS、provider/evidence/pager Service Bindings、replay/single-flightを検証 (#141) |
 
 signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`EvidenceEnvelope`と`validateEvidenceEnvelope()`を経由してのみ証拠を受け付けます。手書きfixtureは`captured-and-verified`へ到達できず、`contract-tested`に留まります。
 
@@ -215,6 +216,7 @@ signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`Evi
 - [`docs/publisher-tax-production-exception-archive-dr-provider-steady-state-operations.md`](./docs/publisher-tax-production-exception-archive-dr-provider-steady-state-operations.md)
 - [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.md)
 - [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-worker-runtime.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-worker-runtime.md)
+- [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md)
 - [`docs/evidence-readiness.md`](./docs/evidence-readiness.md)
 
 ## 6. テスト実行
@@ -279,12 +281,14 @@ npm run test:workers-load-smoke
 npm run test:workers-deployed-smoke
 npm run test:workers-production-gate
 npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-runtime
+npm run test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine
 ```
 
 runtime smokeも確認対象を限定して解釈します。たとえばMiniflare smokeの成功は、30B実モデルがbrowser WebGPUで動くことを証明しません。
 
 ## 7. 現在の重要な修正課題
 
+- [#141](https://github.com/azumag/unzen/issues/141): production exception archive DR provider continuous assurance engine service — #139 runtimeの`ASSURANCE_ENGINE` Service Binding先を実装し、exact verified snapshot、SQLite engine journal、atomic base-run CAS、provider/evidence/pager adapter境界、artifact loader/independent verifier、bootstrap trust、duplicate/replay/single-flightを検証。次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-provider-adapter-canary`をbottleneckとして明示
 - [#139](https://github.com/azumag/unzen/issues/139): production exception archive DR provider continuous assurance Worker runtime — Cron `scheduled()`をdeterministic SQLite Durable Objectへルーティングし、durable execution ledger、completed duplicate抑止、lease-based replay/concurrency、Service Binding、Miniflare restart persistenceを検証。次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-engine-service-deployment`をbottleneckとして明示
 - [#137](https://github.com/azumag/unzen/issues/137): production exception archive DR provider continuous assurance automation — explicit `nowMs` の1-tick orchestrationでdue/idle/overdueを判定し、provider audit、primary/backup retrieval、key rotation、backup DR exercise、evidence archive/capture、operator pagingをidempotentに実行。最終判定は既存steady-state gateへ戻し、次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-worker-runtime`をbottleneckとして明示
 - [#135](https://github.com/azumag/unzen/issues/135): production exception archive DR provider steady-state operations — 3本以上の独立verified cycle、cadence/overdue、primary/backup archive integrity、audit cursor continuity、rolling SLO/error budget、credential/key rotation、backup-source DR exercise、alert/incident/control review、per-cycle evidence retentionを照合。次の`publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-automation`をbottleneckとして明示
@@ -343,6 +347,7 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 | [`docs/publisher-tax-production-exception-archive-dr-provider-steady-state-operations.md`](./docs/publisher-tax-production-exception-archive-dr-provider-steady-state-operations.md) | recurring verified cycles、schedule/audit continuity、archive integrity、rolling SLO/error budget、key rotation、DR exercises、evidence retention、次bottleneck | #135 steady-state evidence gate |
 | [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.md) | deterministic tick、idempotent provider actions、verified evidence capture、operator paging、steady-state revalidation、次bottleneck | #137 orchestration contract |
 | [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-worker-runtime.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-worker-runtime.md) | Cron scheduled Worker、SQLite Durable Object ledger、Service Binding、duplicate/replay/restart recovery、次bottleneck | #139 Miniflare runtime smoke / deployable config |
+| [`docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md`](./docs/publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-service.md) | internal engine service、exact verified snapshot、atomic CAS、adapter Service Bindings、bootstrap/replay/single-flight、次bottleneck | #141 core + Miniflare engine runtime contract |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 
