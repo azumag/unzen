@@ -261,7 +261,7 @@ describe('continuous assurance engine service core', () => {
       executor: unusedExecutor,
       evidenceValidationOptions: {},
       automationRunner: async () => automationResult('idle'),
-    })).rejects.toThrow('engine-trigger-in-progress');
+    })).rejects.toMatchObject({ code: 'engine-trigger-in-progress' });
 
     const replay = await runWorkersCoordinatorPublisherTaxProductionArchiveDrProviderContinuousAssuranceEngineService({
       request: runtimeRequest({ replayCount: 1 }),
