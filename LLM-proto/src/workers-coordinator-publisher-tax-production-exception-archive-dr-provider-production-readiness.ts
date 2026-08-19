@@ -230,6 +230,7 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
     status: failureReason ? 'fail' as const : 'pass' as const,
     previewRunnerUrl: upstream.previewRunnerUrl,
     providerPilotEvidence: upstream,
+    readinessInputEvidence: options.productionReadinessEvidence,
     readinessEvidenceSummary: {
       validationStatus: readinessValidation.status,
       effectiveEvidenceLevel: readinessValidation.effectiveEvidenceLevel,

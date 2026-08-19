@@ -192,6 +192,7 @@ environment metadata、artifact locator、SHA-256、verifier、freshnessを持�
 | Tax production exception archive disaster recovery operations | `src/workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.ts` | restore cadence、RTO/RPO、backup age/replication lag、incident escalation、provider evidence provenanceを照合 (#123) |
 | Tax production exception archive DR provider pilot | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-pilot.ts` | captured-and-verified provider artifact、primary/backup retrieval、scheduled restore、DR objectivesを照合 (#126) |
 | Tax production exception archive DR provider production readiness | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-production-readiness.ts` | recurring verified runs、production window、two-person approval、error budget、key rotation、failover exerciseを照合 (#128) |
+| Tax production exception archive DR provider production cutover | `src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-production-cutover.ts` | approved window内のlive provider operation、archive integrity、DR objectives、monitoring、rollback/hold controlsを照合 (#131) |
 
 signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`EvidenceEnvelope`と`validateEvidenceEnvelope()`を経由してのみ証拠を受け付けます。手書きfixtureは`captured-and-verified`へ到達できず、`contract-tested`に留まります。
 
@@ -205,6 +206,7 @@ signed runnerのbrowser preview・WebGPU worker pilot・telemetry gateは、`Evi
 - [`docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md`](./docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md)
 - [`docs/publisher-tax-production-exception-archive-dr-provider-pilot.md`](./docs/publisher-tax-production-exception-archive-dr-provider-pilot.md)
 - [`docs/publisher-tax-production-exception-archive-dr-provider-production-readiness.md`](./docs/publisher-tax-production-exception-archive-dr-provider-production-readiness.md)
+- [`docs/publisher-tax-production-exception-archive-dr-provider-production-cutover.md`](./docs/publisher-tax-production-exception-archive-dr-provider-production-cutover.md)
 - [`docs/evidence-readiness.md`](./docs/evidence-readiness.md)
 
 ## 6. テスト実行
@@ -252,6 +254,7 @@ npm run test:workers-publisher-tax-production-exception-archive-restore
 npm run test:workers-publisher-tax-production-exception-archive-dr
 npm run test:workers-publisher-tax-production-exception-archive-dr-provider-pilot
 npm run test:workers-publisher-tax-production-exception-archive-dr-provider-production-readiness
+npm run test:workers-publisher-tax-production-exception-archive-dr-provider-production-cutover
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
@@ -270,6 +273,7 @@ runtime smokeも確認対象を限定して解釈します。たとえばMinifla
 
 ## 7. 現在の重要な修正課題
 
+- [#131](https://github.com/azumag/unzen/issues/131): production exception archive DR provider production cutover — exact readiness run/window/change-ticket/approvalsへauthorizationを固定し、live provider operation、archive integrity、RTO/RPO、immediate monitoring、rollback/emergency-hold、identity preservationを照合。次の`publisher-tax-filing-production-exception-archive-dr-provider-post-cutover-reconciliation`をbottleneckとして明示
 - [#128](https://github.com/azumag/unzen/issues/128): production exception archive DR provider production-readiness — 3本以上の独立verified run・2 restore windows、production restore window、two-person approval、monitoring/error budget、credential/key rotation、backup failover exerciseを照合し、`production-candidate`で停止。次の`publisher-tax-filing-production-exception-archive-dr-provider-production-cutover`をbottleneckとして明示
 - [#126](https://github.com/azumag/unzen/issues/126): production exception archive DR provider pilot — self-reported provider metadataではなくcaptured-and-verified evidenceを必須化し、primary/backup retrieval、scheduled restore、RTO/RPO/freshness、provider/account/storage/replica identityを照合。次の`publisher-tax-filing-production-exception-archive-dr-provider-production-readiness`をbottleneckとして明示
 - [#123](https://github.com/azumag/unzen/issues/123): production exception archive disaster recovery operations — restore cadence、RTO/RPO、backup age/replication lag、recovery ownership、incident escalation、archival-provider evidence provenanceを照合。次の`publisher-tax-filing-production-exception-archive-dr-provider-pilot`をbottleneckとして明示
@@ -318,6 +322,7 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 | [`docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md`](./docs/publisher-tax-production-exception-archive-disaster-recovery-operations.md) | recurring DR cadence、RTO/RPO、backup freshness、incident escalation、provider provenance、次bottleneck | #123 contract gate |
 | [`docs/publisher-tax-production-exception-archive-dr-provider-pilot.md`](./docs/publisher-tax-production-exception-archive-dr-provider-pilot.md) | captured-and-verified provider pilot、primary/backup retrieval、scheduled restore、DR objective再検証、次bottleneck | #126 verified-pilot gate |
 | [`docs/publisher-tax-production-exception-archive-dr-provider-production-readiness.md`](./docs/publisher-tax-production-exception-archive-dr-provider-production-readiness.md) | recurring verified provider runs、production restore window、two-person approval、error budget、credential/key rotation、backup failover exercise、次bottleneck | #128 production-candidate gate |
+| [`docs/publisher-tax-production-exception-archive-dr-provider-production-cutover.md`](./docs/publisher-tax-production-exception-archive-dr-provider-production-cutover.md) | bounded production cutover authorization、live provider operation、archive integrity、DR objectives、monitoring、rollback/hold controls、次bottleneck | #131 production-approved evidence gate |
 | [`SWARM.md`](./SWARM.md) | swarm方式 | 実験的 |
 | [`docs/report-transformers-js-v4.md`](./docs/report-transformers-js-v4.md) | Transformers.js v4調査 | 調査文書 |
 
