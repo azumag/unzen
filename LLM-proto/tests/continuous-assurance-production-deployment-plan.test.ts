@@ -60,7 +60,7 @@ describe('continuous assurance production deployment plan', () => {
     await expect(buildDeploymentPlan({ mode: 'plan', env: {} })).resolves.toMatchObject({ mode: 'plan', accountConfigured: false });
   });
 
-  it('passes secret values only through stdin and records exact Worker version IDs from Wrangler structured output', async () => {
+  it('preflights every service, bulk-provisions secrets through stdin, and records exact Worker version IDs from Wrangler structured output', async () => {
     const env = applyEnv();
     const plan = await buildDeploymentPlan({ mode: 'apply', env });
     const calls: { command: string[]; stdin?: string }[] = [];
@@ -91,9 +91,25 @@ describe('continuous assurance production deployment plan', () => {
       expect(eventText).not.toContain(secret);
       expect(manifestText).not.toContain(secret);
     }
-    const secretCalls = calls.filter((call) => call.command.includes('secret') && call.command.includes('put'));
-    expect(secretCalls).toHaveLength(7);
-    expect(secretCalls.every((call) => typeof call.stdin === 'string' && call.stdin.endsWith('\n'))).toBe(true);
+
+    const preflight = result.events.filter((event: any) => event.kind === 'deploy-preflight');
+    expect(preflight).toHaveLength(7);
+    expect(preflight.every((event: any) => event.command.includes('--dry-run'))).toBe(true);
+    expect(result.events.every((event: any) => !event.command.includes('--keep-vars'))).toBe(true);
+
+    const bulkCalls = calls.filter((call) => call.command.includes('secret') && call.command.includes('bulk'));
+    expect(bulkCalls).toHaveLength(5);
+    const expectedBulkSecretSets = [
+      ['PROVIDER_API_TOKEN'],
+      ['PAGER_API_TOKEN'],
+      ['ENGINE_BOOTSTRAP_SECRET', 'CANARY_DISPATCH_SECRET'],
+      ['CANARY_DISPATCH_SECRET'],
+      ['CANARY_CONTROLLER_SECRET', 'CANARY_DISPATCH_SECRET'],
+    ].map((items) => items.sort());
+    const actualBulkSecretSets = bulkCalls.map((call) => Object.keys(JSON.parse(call.stdin ?? '{}')).sort());
+    expect(actualBulkSecretSets).toEqual(expectedBulkSecretSets);
+    expect(bulkCalls.every((call) => typeof call.stdin === 'string' && call.stdin.endsWith('\n'))).toBe(true);
+
     const deployRoles = result.events.filter((event: any) => event.kind === 'deploy').length;
     expect(deployRoles).toBe(7);
     expect(result.versionIdentities).toHaveLength(7);
