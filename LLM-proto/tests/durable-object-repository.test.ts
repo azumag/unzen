@@ -211,7 +211,7 @@ describe('DurableObjectRepository', () => {
     expect(repo2.getRequest(submission.requestId)).toMatchObject({
       stage: 'failed',
       lastErrorCode: ErrorCode.InvalidInput,
-      lastError: 'invalid prompt',
+      lastError: 'segment 0 failed: invalid prompt',
     });
     expect(repo2.getRequest(submission.requestId)?.completedAt).toBeDefined();
   });
