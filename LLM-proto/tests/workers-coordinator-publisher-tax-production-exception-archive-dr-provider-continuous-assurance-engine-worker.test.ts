@@ -125,6 +125,7 @@ async function withRuntime<T>(run: (mf: Miniflare, evidenceCalls: string[]) => P
 function createMiniflare(buildRoot: string, persistRoot: string, evidenceCalls: string[]): Miniflare {
   return new Miniflare({
     modules: true,
+    modulesRoot: buildRoot,
     modulesRules: [{ type: 'ESModule', include: ['**/*.js'], fallthrough: true }],
     scriptPath: join(buildRoot, 'worker-runtime', 'continuous-assurance-engine-worker.mjs'),
     compatibilityDate: '2025-01-01',
