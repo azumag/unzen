@@ -44,6 +44,17 @@ interface RuntimeStateStub {
   readLedger(triggerKey: string): Promise<ContinuousAssuranceRuntimeLedger | null>;
 }
 
+interface RuntimeStateNamespace {
+  getByName(name: string): RuntimeStateStub;
+}
+
+interface ScheduledWorkerFacade {
+  scheduled(options: {
+    readonly scheduledTime: Date;
+    readonly cron: string;
+  }): Promise<unknown>;
+}
+
 export function continuousAssuranceTriggerKey(
   scope: string,
   cron: string,
@@ -80,7 +91,7 @@ export function createContinuousAssuranceWorkerRuntimeMiniflare(
     },
     durableObjectsPersist: options.durableObjectsPersistRoot,
     serviceBindings: {
-      ASSURANCE_ENGINE: async (request) => {
+      ASSURANCE_ENGINE: async (request: Request) => {
         const payload = await request.json() as ContinuousAssuranceRuntimeEngineRequest;
         try {
           return Response.json(await options.engine(payload));
@@ -99,7 +110,7 @@ export async function dispatchContinuousAssuranceScheduled(
   scheduledTimeMs: number,
   cron = CONTINUOUS_ASSURANCE_RUNTIME_CRON,
 ): Promise<void> {
-  const worker = await mf.getWorker();
+  const worker = await mf.getWorker() as unknown as ScheduledWorkerFacade;
   await worker.scheduled({
     scheduledTime: new Date(scheduledTimeMs),
     cron,
@@ -112,7 +123,9 @@ export async function readContinuousAssuranceRuntimeLedger(
   scope = CONTINUOUS_ASSURANCE_RUNTIME_SCOPE,
   cron = CONTINUOUS_ASSURANCE_RUNTIME_CRON,
 ): Promise<ContinuousAssuranceRuntimeLedger | null> {
-  const namespace = await mf.getDurableObjectNamespace('CONTINUOUS_ASSURANCE_STATE');
-  const stub = namespace.getByName(scope) as unknown as RuntimeStateStub;
+  const namespace = await mf.getDurableObjectNamespace(
+    'CONTINUOUS_ASSURANCE_STATE',
+  ) as unknown as RuntimeStateNamespace;
+  const stub = namespace.getByName(scope);
   return stub.readLedger(continuousAssuranceTriggerKey(scope, cron, scheduledTimeMs));
 }
