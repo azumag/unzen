@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-engine",
+  "main": "./continuous-assurance-engine-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ENGINE_STATE",
+        "class_name": "ContinuousAssuranceEngineState"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ContinuousAssuranceEngineState"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "PROVIDER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-provider-adapter"
+    },
+    {
+      "binding": "EVIDENCE_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-evidence-adapter"
+    },
+    {
+      "binding": "PAGER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-pager-adapter"
+    }
+  ],
+  "vars": {
+    "TRUSTED_EVIDENCE_VERIFIERS_JSON": "[{\"name\":\"unzen-independent-evidence-verifier\"}]"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
