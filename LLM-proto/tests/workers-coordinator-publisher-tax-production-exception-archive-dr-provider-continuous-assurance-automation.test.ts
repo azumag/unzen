@@ -127,13 +127,14 @@ function cycleEvidence(index: 1 | 2 | 3) {
 
 function operationsPayload(): ProviderSteadyStateOperationsPayload {
   const last = cyclePayload(3);
+  const drCadenceMs = DR_DUE - last.drExercise!.completedAtMs;
   return {
     providerName: 'archive-provider', accountId: 'acct-1', primaryStorageId: 'primary-1', backupStorageId: 'backup-1', replicaSiteId: 'replica-site-1', replicaRegion: 'us-west-2', archiveId: 'archive-1', archiveContentDigest: DIGEST,
     baselineReconciliationRunId: 'post-cutover-reconciliation-1', cycleRunIds: ['cycle-1', 'cycle-2', 'cycle-3'],
     schedule: { scheduleId: 'steady-schedule-1', cadenceMs: CADENCE, graceMs: 30_000, lastSuccessfulCycleAtMs: last.completedAtMs, nextDueAtMs: CYCLE4 },
     rollingSlo: { policyId: 'steady-slo-v1', policyVersion: '1.0.0', requiredProviderAvailabilityPct: 99.9, minimumOperationCount: 300, totalOperationCount: 300, totalFailureCount: 0, rtoBreachCount: 0, rpoBreachCount: 0, integrityFailureCount: 0, providerAvailabilityFloorPct: 99.99, allowedFailureBudget: 5, remainingFailureBudget: 5 },
     credentialRotation: { rotationCadenceMs: 3_100_000, lastRotatedAtMs: BASE - 600_000, nextRotationDueAtMs: ROTATION_DUE, currentCredentialSetId: 'cred-1', currentSigningKeyId: 'sign-1', currentEncryptionKeyId: 'enc-1', rotationEvidenceIds: [] },
-    drPolicy: { policyId: 'steady-dr-v1', drillCadenceMs: DR_DUE - (last.drExercise!.completedAtMs), graceMs: 60_000, baselineLastExerciseAtMs: BASE + 500_000, lastExerciseAtMs: last.drExercise!.completedAtMs, nextExerciseDueAtMs: DR_DUE, requiredBackupSourceStorageId: 'backup-1' },
+    drPolicy: { policyId: 'steady-dr-v1', drillCadenceMs: drCadenceMs, graceMs: 60_000, baselineLastExerciseAtMs: last.drExercise!.completedAtMs - drCadenceMs, lastExerciseAtMs: last.drExercise!.completedAtMs, nextExerciseDueAtMs: DR_DUE, requiredBackupSourceStorageId: 'backup-1' },
     evidenceRetention: { policyId: 'steady-evidence-retention-v1', minimumRetentionMs: 1_000_000 }, rollbackControlId: 'rollback-1', emergencyHoldControlId: 'hold-1', baselineIncidentIds: [], recoveryOwnerId: 'owner-1', onCallRoute: 'pager://archive-dr', escalationTarget: 'ops-lead', retentionPolicySnapshot: RETENTION,
     allowedOrigins: ALLOWED, cspConnectSrc: ALLOWED, sandboxFlags: ['allow-scripts'], coop: 'same-origin', coep: 'require-corp', networkAttempts: [{ url: 'https://evil.example/exfiltrate', blocked: true }], capturedAtMs: last.completedAtMs + 15_000,
   };
