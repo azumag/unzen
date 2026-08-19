@@ -2,7 +2,6 @@ import {
   evidenceSupportsReadiness,
   validateEvidenceEnvelope,
   type ArtifactContent,
-  type ArtifactVerificationContext,
   type EvidenceEnvelope,
   type EvidenceValidationOptions,
   type IndependentEvidenceVerification,
@@ -16,7 +15,6 @@ import {
   type ContinuousAssuranceCaptureCycleRequest,
   type ContinuousAssuranceExecutor,
   type ContinuousAssuranceHealthResult,
-  type ContinuousAssurancePageRequest,
   type ContinuousAssuranceProviderAuditResult,
   type ProviderContinuousAssuranceAutomationOptions,
 } from './workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-automation.js';
@@ -84,10 +82,13 @@ export interface ContinuousAssuranceEngineStateRepository {
     readonly request: ContinuousAssuranceEngineRuntimeRequest;
     readonly baseAggregateRunId: string;
   }): Promise<ContinuousAssuranceEngineClaim>;
-  commitSnapshot(input: {
+  completePassExecution(input: {
+    readonly triggerKey: string;
     readonly scope: string;
     readonly expectedAggregateRunId: string;
     readonly snapshot: ContinuousAssuranceEngineSnapshot;
+    readonly result: ContinuousAssuranceAutomationResult;
+    readonly completedAtMs: number;
   }): Promise<boolean>;
   completeExecution(input: {
     readonly triggerKey: string;
@@ -163,7 +164,6 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
       evidenceValidationOptions: options.evidenceValidationOptions,
     });
 
-    let committedAggregateRunId: string | null = null;
     if (result.status === 'pass') {
       if (!result.newAggregateEvidence || !result.finalSteadyStateReport) {
         throw new ContinuousAssuranceEngineServiceError('engine-pass-missing-next-snapshot');
@@ -173,21 +173,24 @@ export async function runWorkersCoordinatorPublisherTaxProductionArchiveDrProvid
         steadyStateOperationsEvidence: result.newAggregateEvidence,
         updatedAtMs: options.request.deliveryAtMs,
       };
-      const committed = await options.repository.commitSnapshot({
+      const committed = await options.repository.completePassExecution({
+        triggerKey: options.request.triggerKey,
         scope: options.request.scope,
         expectedAggregateRunId: baseAggregateRunId,
         snapshot: nextSnapshot,
+        result,
+        completedAtMs: options.request.deliveryAtMs,
       });
       if (!committed) {
         throw new ContinuousAssuranceEngineServiceError('engine-snapshot-cas-conflict');
       }
-      committedAggregateRunId = result.newAggregateEvidence.runId;
+      return result;
     }
 
     await options.repository.completeExecution({
       triggerKey: options.request.triggerKey,
       result,
-      committedAggregateRunId,
+      committedAggregateRunId: null,
       completedAtMs: options.request.deliveryAtMs,
     });
     return result;
