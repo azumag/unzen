@@ -116,7 +116,8 @@ describe('DurableObjectRepository', () => {
       { workerId: worker, tier: WorkerTier.TIER_3, vramMB: 16_384 },
       'connection-a',
     );
-    coordinator1.workerHeartbeat(worker, registration.generation, 123_456);
+    coordinator1.workerHeartbeat(worker, registration.generation);
+    const persistedHeartbeat = repo1.getWorker(worker)!.lastHeartbeat;
 
     const first = coordinator1.submit('hello', { idempotencyKey: 'durable-request-1' });
     await expect(first.result).resolves.toMatchObject({ text: 'persisted' });
@@ -139,7 +140,7 @@ describe('DurableObjectRepository', () => {
     expect(status?.currentSegment).toBe(1);
     expect(status?.attempts).toHaveLength(2);
     expect(coordinator2.getResult(first.requestId)?.text).toBe('persisted');
-    expect(repo2.getWorker(worker)?.lastHeartbeat).toBe(123_456);
+    expect(repo2.getWorker(worker)?.lastHeartbeat).toBe(persistedHeartbeat);
 
     // The persisted idempotency mapping points at the original request and a
     // replay on the fresh instance must not call its executor.
@@ -166,7 +167,7 @@ describe('DurableObjectRepository', () => {
       { workerId: worker, tier: WorkerTier.TIER_3, vramMB: 16_384 },
       'connection-b',
     );
-    coordinator.workerHeartbeat(worker, registration.generation, 10);
+    coordinator.workerHeartbeat(worker, registration.generation);
 
     const loaded = repo1.getWorker(worker)!;
     loaded.currentSegment = 7;
