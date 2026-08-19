@@ -18,7 +18,7 @@ import {
 
 const BASE = Date.parse('2026-08-20T01:00:00.000Z');
 const ARTIFACT = 'verified adapter canary artifact';
-const ARTIFACT_SHA = '1467452b0c6a2e33873fa396c5f26d4ee8fd472803f1b52b2fc31b3530865316';
+const ARTIFACT_SHA = '2f1f4e4d219e802249dec040d500542c4a89a10fd70017298c6ce4c7119198c9';
 const VERIFIER = 'unzen-independent-evidence-verifier';
 
 const requiredActions: readonly ContinuousAssuranceAdapterCanaryAction[] = [
