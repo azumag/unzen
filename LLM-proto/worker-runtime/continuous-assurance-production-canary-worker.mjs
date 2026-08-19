@@ -1,3 +1,5 @@
+import { validateEvidenceEnvelope } from '../src/evidence.ts';
+
 const EVIDENCE_KIND = 'publisher-tax-filing-production-exception-archive-dr-provider-continuous-assurance-production-deployment-canary';
 const SERVICE = 'unzen-llm-continuous-assurance-production-canary';
 const DEFAULT_SCOPE = 'publisher-tax-exception-archive-dr';
@@ -108,17 +110,57 @@ async function verifierCapture(env, body) {
   return attestation;
 }
 
-async function verifyDigestMismatchRejected(env, envelope, artifactContent) {
+async function verifierArtifact(env, envelope, artifactContent, actualSha256) {
   const response = await env.INDEPENDENT_VERIFIER.fetch(new Request('https://verifier.internal/verify/artifact', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       envelope,
-      actualSha256: '0'.repeat(64),
+      actualSha256,
       artifactContent: { kind: 'utf8', content: artifactContent },
     }),
   }));
-  return !response.ok;
+  const result = await response.json();
+  return { ok: response.ok, result };
+}
+
+async function verifyDigestMismatchRejected(env, envelope, artifactContent) {
+  const verification = await verifierArtifact(env, envelope, artifactContent, '0'.repeat(64));
+  return !verification.ok;
+}
+
+async function verifyUntrustedVerifierRejected(artifactContent, artifactSha256, capturedAtMs) {
+  const probeVerification = {
+    verifier: 'untrusted-verifier',
+    version: '0.0.0',
+    verifiedAt: new Date(capturedAtMs + 1_000).toISOString(),
+    result: 'pass',
+  };
+  const probe = {
+    schemaVersion: '1.0.0',
+    evidenceKind: EVIDENCE_KIND,
+    evidenceLevel: 'captured-and-verified',
+    readinessStatus: 'production-candidate',
+    producer: { name: SERVICE, version: '1.0.0', commitSha: '0000000000000000000000000000000000000000' },
+    runId: `untrusted-verifier-probe:${capturedAtMs}`,
+    capturedAt: new Date(capturedAtMs).toISOString(),
+    environment: {
+      runtime: 'cloudflare-workers', runtimeVersion: 'managed', executionSurface: 'production-deployment-canary',
+      os: { name: 'cloudflare-workers', version: 'managed' },
+    },
+    scenario: { feature: 'continuous-assurance-production-deployment', scenario: 'untrusted verifier probe', expectedResult: 'rejected' },
+    artifact: { locator: 'probe://artifact', sha256: artifactSha256, expiresAt: new Date(capturedAtMs + 60_000).toISOString() },
+    verification: probeVerification,
+    redaction: { applied: true, policyVersion: 'production-deployment-canary-v1' },
+    payload: {},
+  };
+  const validation = await validateEvidenceEnvelope(probe, {
+    now: capturedAtMs + 2_000,
+    trustedVerifiers: [{ name: VERIFIER_NAME, version: VERIFIER_VERSION }],
+    loadArtifact: async () => artifactContent,
+    verifyArtifact: async () => probeVerification,
+  });
+  return validation.status === 'invalid' && validation.issues.some((issue) => issue.code === 'untrusted-verifier');
 }
 
 function runtimeResult(value, triggerKey) {
@@ -207,9 +249,6 @@ export async function runProductionDeploymentCanary(input, env) {
   if (!duplicateCompletedDispatchSuppressed) throw new Error('production-canary-duplicate-not-suppressed');
 
   const versionOrConfigMismatchRejected = !metadataValid({ ...deployments[0], configFingerprintSha256: 'invalid' });
-  const untrustedVerifierRejected = VERIFIER_NAME === env.TRUSTED_VERIFIER_NAME;
-  if (!untrustedVerifierRejected) throw new Error('production-canary-trusted-verifier-mismatch');
-
   const completedAtMs = logicalNowMs + 2;
   const record = {
     schema: 'unzen-continuous-assurance-production-deployment-canary-v1',
@@ -223,6 +262,10 @@ export async function runProductionDeploymentCanary(input, env) {
   };
   const artifactContent = canonicalJson(record);
   const artifactSha256 = await sha256Hex(artifactContent);
+  const untrustedVerifierRejected = await verifyUntrustedVerifierRejected(artifactContent, artifactSha256, completedAtMs);
+  if (!untrustedVerifierRejected) throw new Error('production-canary-untrusted-verifier-not-rejected');
+  if (VERIFIER_NAME !== env.TRUSTED_VERIFIER_NAME) throw new Error('production-canary-trusted-verifier-mismatch');
+
   const key = `deployment-canary/${encodeURIComponent(canaryRunId)}/${artifactSha256}.json`;
   await env.CANARY_EVIDENCE_BUCKET.put(key, artifactContent, {
     customMetadata: { sha256: artifactSha256, canaryRunId, triggerKey },
@@ -300,6 +343,20 @@ export async function runProductionDeploymentCanary(input, env) {
     payload,
   };
 
+  const correctArtifactVerification = await verifierArtifact(env, envelope, artifactContent, artifactSha256);
+  if (!correctArtifactVerification.ok || correctArtifactVerification.result?.result !== 'pass') {
+    throw new Error('production-canary-artifact-reverification-failed');
+  }
+  const envelopeValidation = await validateEvidenceEnvelope(envelope, {
+    now: completedAtMs + 2_000,
+    trustedVerifiers: [{ name: VERIFIER_NAME, version: VERIFIER_VERSION }],
+    loadArtifact: async () => artifactContent,
+    verifyArtifact: async () => correctArtifactVerification.result,
+  });
+  if (envelopeValidation.status !== 'valid' || envelopeValidation.effectiveEvidenceLevel !== 'captured-and-verified' ||
+    envelopeValidation.effectiveReadinessStatus !== 'production-candidate') {
+    throw new Error('production-canary-envelope-validation-failed');
+  }
   if (!(await verifyDigestMismatchRejected(env, envelope, artifactContent))) {
     throw new Error('production-canary-digest-mismatch-not-rejected');
   }
