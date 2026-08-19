@@ -77,7 +77,7 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
         failureReason: null,
         runtimeDelivery: {
           durableState: 'completed',
-          replayCount: runtimeCalls === 1 ? 0 : 0,
+          replayCount: 0,
           replayed: runtimeCalls > 1,
           triggerKey: `publisher-tax-exception-archive-dr:${body.cron}:${body.scheduledTimeMs}`,
         },
@@ -99,13 +99,21 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
         });
       }
       if (url.pathname === '/verify/artifact') {
+        if (body.actualSha256 === '0'.repeat(64)) {
+          return Response.json({
+            verifier: VERIFIER,
+            version: '1.0.0',
+            verifiedAt: new Date(0).toISOString(),
+            result: 'fail',
+            reason: 'artifact-digest-mismatch',
+          }, { status: 409 });
+        }
         return Response.json({
           verifier: VERIFIER,
           version: '1.0.0',
-          verifiedAt: new Date(0).toISOString(),
-          result: 'fail',
-          reason: 'artifact-digest-mismatch',
-        }, { status: 409 });
+          verifiedAt: body.envelope.verification.verifiedAt,
+          result: 'pass',
+        });
       }
       return new Response('not found', { status: 404 });
     }),
