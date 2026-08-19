@@ -151,13 +151,13 @@ function validateProductionPayload(evidenceKind: string, runId: string, payload:
         return 'deployment-canary-version-identity-invalid';
       }
     }
-    if (!isRecord(payload.runtimeResult) || payload.runtimeResult.status !== 'pass' ||
+    if (!isRecord(payload.runtimeResult) || payload.runtimeResult.status !== 'idle' ||
       !isRecord(payload.runtimeResult.runtimeDelivery) || payload.runtimeResult.runtimeDelivery.durableState !== 'completed' ||
       numberValue(payload.runtimeResult.runtimeDelivery.replayCount) !== 0 || payload.runtimeResult.runtimeDelivery.replayed !== false ||
-      !stringValue(payload.runtimeResult.cycleId) || !stringValue(payload.runtimeResult.latestCycleRunId) ||
-      !stringValue(payload.runtimeResult.latestAggregateRunId) || !Array.isArray(payload.runtimeResult.actionIdempotencyKeys) ||
-      payload.runtimeResult.actionIdempotencyKeys.length === 0) {
-      return 'deployment-canary-runtime-not-clean';
+      !stringValue(payload.runtimeResult.cycleId) || payload.runtimeResult.latestCycleRunId !== null ||
+      payload.runtimeResult.latestAggregateRunId !== null || !Array.isArray(payload.runtimeResult.actionIdempotencyKeys) ||
+      payload.runtimeResult.actionIdempotencyKeys.length !== 0) {
+      return 'deployment-canary-runtime-not-read-only';
     }
     if (!isRecord(payload.negativeChecks) || !Object.values(payload.negativeChecks).every((value) => value === true)) {
       return 'deployment-canary-negative-check-incomplete';
