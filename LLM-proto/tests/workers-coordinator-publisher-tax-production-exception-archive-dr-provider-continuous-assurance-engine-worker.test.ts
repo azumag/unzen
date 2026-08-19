@@ -211,16 +211,21 @@ async function bootstrap(mf: Miniflare, snapshot = bootstrapSnapshot(), secret =
   });
 }
 
-async function tick(mf: Miniflare, replayCount = 0) {
+async function tick(
+  mf: Miniflare,
+  replayCount = 0,
+  scheduledTimeMs = SCHEDULED_AT,
+  deliveryAtMs = DELIVERY_AT,
+) {
   return mf.dispatchFetch('https://engine.internal/tick', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       scope: SCOPE,
-      triggerKey: `${SCOPE}:${CRON}:${SCHEDULED_AT}`,
+      triggerKey: `${SCOPE}:${CRON}:${scheduledTimeMs}`,
       cron: CRON,
-      scheduledTimeMs: SCHEDULED_AT,
-      deliveryAtMs: DELIVERY_AT,
+      scheduledTimeMs,
+      deliveryAtMs,
       replayCount,
     }),
   });
@@ -268,6 +273,37 @@ describe('continuous assurance engine Worker Miniflare smoke', () => {
       expect(await duplicate.json()).toMatchObject({ status: 'idle' });
       expect(evidenceCalls).toHaveLength(callsAfterFirstTick);
       expect((await readState(mf)).journals).toHaveLength(1);
+    });
+  });
+
+  it('keeps an interrupted trigger single-flight and only accepts a higher replay count', async () => {
+    await withRuntime(async (mf) => {
+      expect((await bootstrap(mf)).status).toBe(200);
+
+      const first = await tick(mf, 0, SCHEDULED_AT, NEXT_DUE);
+      expect(first.status).toBe(503);
+      const interrupted = await readState(mf);
+      expect(interrupted.activeTriggerKey).toBe(`${SCOPE}:${CRON}:${SCHEDULED_AT}`);
+      expect(interrupted.journals).toHaveLength(1);
+      expect(interrupted.journals[0]).toMatchObject({ state: 'interrupted', replayCount: 0 });
+      expect(interrupted.journals[0].firstFailure).toEqual(expect.any(String));
+      const firstFailure = interrupted.journals[0].firstFailure;
+
+      const duplicateReplay = await tick(mf, 0, SCHEDULED_AT, NEXT_DUE + 1);
+      expect(duplicateReplay.status).toBe(409);
+      expect(await duplicateReplay.json()).toMatchObject({ error: 'engine-trigger-in-progress' });
+
+      const otherScheduledAt = SCHEDULED_AT + 300_000;
+      const otherTrigger = await tick(mf, 0, otherScheduledAt, NEXT_DUE + 2);
+      expect(otherTrigger.status).toBe(409);
+      expect(await otherTrigger.json()).toMatchObject({ error: 'engine-scope-busy' });
+
+      const acceptedReplay = await tick(mf, 1, SCHEDULED_AT, NEXT_DUE + 3);
+      expect(acceptedReplay.status).toBe(503);
+      const replayed = await readState(mf);
+      expect(replayed.activeTriggerKey).toBe(`${SCOPE}:${CRON}:${SCHEDULED_AT}`);
+      expect(replayed.journals[0]).toMatchObject({ state: 'interrupted', replayCount: 1 });
+      expect(replayed.journals[0].firstFailure).toBe(firstFailure);
     });
   });
 
