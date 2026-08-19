@@ -5,6 +5,7 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  "preview_urls": false,
   "vars": {
     "VERIFIER_NAME": "unzen-independent-evidence-verifier",
     "VERIFIER_VERSION": "1.0.0"
