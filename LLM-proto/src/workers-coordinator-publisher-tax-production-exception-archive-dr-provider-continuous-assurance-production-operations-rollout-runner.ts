@@ -104,6 +104,8 @@ export interface ProductionOperationsRolloutExecutionOptions
   readonly phaseStartedAtMs: number;
   readonly nowMs: number;
   readonly replayCount: number;
+  readonly minimumProviderAvailabilityPct: number;
+  readonly allowedFailureBudget: number;
   readonly executor: ProductionOperationsRolloutExecutor;
   readonly capture: ProductionOperationsRolloutPhaseCapture;
   readonly phaseEvidenceValidationOptions: EvidenceValidationOptions;
@@ -123,8 +125,13 @@ export async function runProductionOperationsRolloutPhase(
   if (!Number.isInteger(options.replayCount) || options.replayCount < 0) {
     throw new Error('production-rollout-replay-count-invalid');
   }
+  if (!Number.isFinite(options.minimumProviderAvailabilityPct) || options.minimumProviderAvailabilityPct < 0 ||
+    options.minimumProviderAvailabilityPct > 100 || !Number.isInteger(options.allowedFailureBudget) ||
+    options.allowedFailureBudget <= 0) {
+    throw new Error('production-rollout-slo-policy-invalid');
+  }
 
-  await validatePrefix(options);
+  await validatePhasePrefix(options, options.previousPhaseEvidences);
 
   const plan = options.rolloutAuthorization.phasePlan[expectedIndex];
   if (!plan || plan.phase !== options.phase || plan.sequence !== expectedIndex + 1) {
@@ -146,14 +153,19 @@ export async function runProductionOperationsRolloutPhase(
     throw new Error(`production-rollout-action-budget-exceeded:${options.phase}`);
   }
 
-  const receipts: ProductionOperationsRolloutActionReceipt[] = [];
   const idempotency = new Map<ProductionOperationsRolloutAction, string>();
   for (const action of actions) idempotency.set(action, `${runId}:${action}`);
+  const receipts: ProductionOperationsRolloutActionReceipt[] = [];
 
   const healthContext = actionContext(runId, 'operational-health', idempotency.get('provider-health')!, options);
   const health = await options.executor.collectOperationalHealth(healthContext);
-  validateHealthControlBoundary(health, options.rolloutAuthorization);
-  receipts.push(receipt('provider-health', healthContext.idempotencyKey, operationId(health, 'providerHealthOperationId'), options.nowMs));
+  validateHealthBeforeSideEffects(health, options);
+  receipts.push(receipt(
+    'provider-health',
+    healthContext.idempotencyKey,
+    operationId(health, 'providerHealthOperationId'),
+    health.observedAtMs,
+  ));
 
   const auditContext = actionContext(runId, 'provider-audit', idempotency.get('provider-audit')!, options);
   const audit = await options.executor.collectProviderAudit(auditContext);
@@ -265,6 +277,7 @@ export async function runProductionOperationsRolloutPhase(
     throw new Error('production-rollout-steady-state-obligations-required');
   }
 
+  const remainingFailureBudget = options.allowedFailureBudget - health.failureCount;
   const payload: ProductionOperationsRolloutPhasePayload = {
     rolloutId: options.rolloutAuthorization.rolloutId,
     authorizationId: options.rolloutAuthorization.authorizationId,
@@ -296,9 +309,9 @@ export async function runProductionOperationsRolloutPhase(
       rpoBreachCount: health.rpoBreachCount,
       integrityFailureCount: health.integrityFailureCount,
       providerAvailabilityPct: health.providerAvailabilityPct,
-      minimumProviderAvailabilityPct: 99,
-      allowedFailureBudget: Math.max(1, health.failureCount + 1),
-      remainingFailureBudget: 1,
+      minimumProviderAvailabilityPct: options.minimumProviderAvailabilityPct,
+      allowedFailureBudget: options.allowedFailureBudget,
+      remainingFailureBudget,
     },
     alerts: health.alertDispositions.map(({ alertId, severity, status }) => ({ alertId, severity, status })),
     incidents: health.incidentReviews.map(({ incidentId, severity, status }) => ({ incidentId, severity, status })),
@@ -325,15 +338,12 @@ export async function runProductionOperationsRolloutPhase(
   }
 
   const phaseEvidences = [...options.previousPhaseEvidences, envelope];
+  const phaseReport = await validatePhasePrefix(options, phaseEvidences);
   if (options.phase === 'steady-state-enabled') {
-    const terminal = await runWorkersCoordinatorPublisherTaxProductionArchiveDrProviderContinuousAssuranceProductionOperationsRolloutGate({
-      ...gateOptions(options),
-      phaseEvidences,
-    });
-    if (terminal.status !== 'pass' || terminal.decision !== 'steady-state-enabled' || terminal.bottlenecksToIssue.length !== 0) {
-      throw new Error(`production-rollout-terminal-hold:${terminal.failureReason ?? 'unknown'}`);
+    if (phaseReport.status !== 'pass' || phaseReport.decision !== 'steady-state-enabled' || phaseReport.bottlenecksToIssue.length !== 0) {
+      throw new Error(`production-rollout-terminal-hold:${phaseReport.failureReason ?? 'unknown'}`);
     }
-    return { status: 'steady-state-enabled' as const, phaseEvidence: envelope, terminal };
+    return { status: 'steady-state-enabled' as const, phaseEvidence: envelope, terminal: phaseReport };
   }
 
   return {
@@ -358,17 +368,27 @@ export function createProductionOperationsRolloutServiceBindingExecutor(
   };
 }
 
-async function validatePrefix(options: ProductionOperationsRolloutExecutionOptions): Promise<void> {
+async function validatePhasePrefix(
+  options: ProductionOperationsRolloutExecutionOptions,
+  phaseEvidences: readonly EvidenceEnvelope<ProductionOperationsRolloutPhasePayload>[],
+) {
   const report = await runWorkersCoordinatorPublisherTaxProductionArchiveDrProviderContinuousAssuranceProductionOperationsRolloutGate({
     ...gateOptions(options),
-    phaseEvidences: options.previousPhaseEvidences,
+    phaseEvidences,
   });
+  if (phaseEvidences.length === PHASES.length) {
+    if (report.promoteHoldThresholds.holdReasons.length > 0) {
+      throw new Error(`production-rollout-phase-invalid:${report.promoteHoldThresholds.holdReasons[0]}`);
+    }
+    return report;
+  }
   const allowed = new Set<string>(['production-operations-rollout-phase-count-invalid']);
-  for (let index = options.previousPhaseEvidences.length; index < PHASES.length; index += 1) {
+  for (let index = phaseEvidences.length; index < PHASES.length; index += 1) {
     allowed.add(`production-operations-rollout-phase-missing:${PHASES[index]}`);
   }
   const unexpected = report.promoteHoldThresholds.holdReasons.filter((reason) => !allowed.has(reason));
   if (unexpected.length > 0) throw new Error(`production-rollout-prefix-invalid:${unexpected[0]}`);
+  return report;
 }
 
 function gateOptions(options: ProductionOperationsRolloutExecutionOptions): Omit<ProductionOperationsRolloutGateOptions, 'phaseEvidences'> {
@@ -404,14 +424,31 @@ function actionContext(
   };
 }
 
-function validateHealthControlBoundary(
+function validateHealthBeforeSideEffects(
   health: ContinuousAssuranceHealthResult,
-  authorization: ProductionOperationsRolloutAuthorization,
+  options: ProductionOperationsRolloutExecutionOptions,
 ): void {
-  if (health.rollbackControlId !== authorization.rollbackControlId ||
-    health.emergencyHoldControlId !== authorization.emergencyHoldControlId ||
+  if (health.rollbackControlId !== options.rolloutAuthorization.rollbackControlId ||
+    health.emergencyHoldControlId !== options.rolloutAuthorization.emergencyHoldControlId ||
     !health.rollbackArmed || !health.emergencyHoldArmed) {
     throw new Error('production-rollout-control-boundary-invalid');
+  }
+  if (health.providerAvailabilityPct < options.minimumProviderAvailabilityPct ||
+    health.failureCount >= options.allowedFailureBudget || health.rtoBreachCount !== 0 ||
+    health.rpoBreachCount !== 0 || health.integrityFailureCount !== 0) {
+    throw new Error('production-rollout-health-slo-hold');
+  }
+  if (health.alertDispositions.some((alert) => alert.severity === 'critical' && alert.status !== 'resolved')) {
+    throw new Error('production-rollout-critical-alert-hold');
+  }
+  if (health.incidentReviews.some((incident) =>
+    (incident.severity === 'sev1' || incident.severity === 'sev2') && incident.status === 'active')) {
+    throw new Error('production-rollout-major-incident-hold');
+  }
+  if (health.controlInvocations.some((invocation) => invocation.status === 'active' ||
+    (invocation.controlId !== options.rolloutAuthorization.rollbackControlId &&
+      invocation.controlId !== options.rolloutAuthorization.emergencyHoldControlId))) {
+    throw new Error('production-rollout-control-invocation-hold');
   }
 }
 
