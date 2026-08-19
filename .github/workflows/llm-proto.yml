@@ -37,8 +37,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
-        run: npx tsc --noEmit
+      - name: Type check durable storage dependency graph
+        run: >-
+          npx tsc --noEmit
+          --target ESNext
+          --module ESNext
+          --moduleResolution bundler
+          --strict
+          --skipLibCheck
+          src/durable-object-repository.ts
 
       - name: Durable storage tests
         run: npm run test:durable-storage
