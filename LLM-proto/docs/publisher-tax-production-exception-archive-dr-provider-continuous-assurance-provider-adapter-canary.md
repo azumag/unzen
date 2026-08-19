@@ -25,7 +25,7 @@ The production service names are:
 - `unzen-llm-continuous-assurance-pager-adapter`
 - `unzen-llm-continuous-assurance-independent-verifier`
 
-All four Workers are configured with `workers_dev: false` and no public routes. The engine calls the first three through Service Bindings; the evidence adapter calls the verifier through a Service Binding.
+The engine and all four internal Workers are configured with `workers_dev: false`, `preview_urls: false`, and no public routes. The engine calls the first three adapters through Service Bindings; the evidence adapter calls the verifier through a Service Binding.
 
 ## Provider adapter
 
