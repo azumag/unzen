@@ -1,0 +1,61 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unzen-llm-continuous-assurance-production-canary",
+  "main": "./continuous-assurance-production-canary-worker.mjs",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
+  "services": [
+    {
+      "binding": "CONTINUOUS_ASSURANCE_RUNTIME",
+      "service": "unzen-llm-continuous-assurance"
+    },
+    {
+      "binding": "ASSURANCE_ENGINE",
+      "service": "unzen-llm-continuous-assurance-engine"
+    },
+    {
+      "binding": "PROVIDER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-provider-adapter"
+    },
+    {
+      "binding": "EVIDENCE_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-evidence-adapter"
+    },
+    {
+      "binding": "PAGER_ADAPTER",
+      "service": "unzen-llm-continuous-assurance-pager-adapter"
+    },
+    {
+      "binding": "INDEPENDENT_VERIFIER",
+      "service": "unzen-llm-continuous-assurance-independent-verifier"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CANARY_EVIDENCE_BUCKET",
+      "bucket_name": "unzen-continuous-assurance-evidence"
+    }
+  ],
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "vars": {
+    "CONTINUOUS_ASSURANCE_SCOPE": "publisher-tax-exception-archive-dr",
+    "TRUSTED_VERIFIER_NAME": "unzen-independent-evidence-verifier",
+    "CONFIG_FINGERPRINT_SHA256": "SET_BY_DEPLOY_PIPELINE",
+    "DEPLOY_COMMIT_SHA": "SET_BY_DEPLOY_PIPELINE",
+    "CANARY_RETENTION_MS": "2592000000"
+  },
+  "secrets": {
+    "required": ["CANARY_DISPATCH_SECRET", "CANARY_CONTROLLER_SECRET"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
