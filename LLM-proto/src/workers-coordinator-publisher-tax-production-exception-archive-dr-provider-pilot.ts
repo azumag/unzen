@@ -8,7 +8,10 @@ import {
   type ReadinessStatus,
 } from './evidence.js';
 import type { WorkersCoordinatorRunnerNetworkAttempt } from './workers-coordinator-signed-runner-release-gate.js';
-import type { WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsReport } from './workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.js';
+import type {
+  WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsEvidence,
+  WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsReport,
+} from './workers-coordinator-publisher-tax-production-exception-archive-disaster-recovery-operations.js';
 
 export const PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_PILOT_EVIDENCE_KIND =
   'publisher-tax-filing-production-exception-archive-dr-provider-pilot' as const;
@@ -64,6 +67,7 @@ export interface WorkersCoordinatorPublisherTaxProductionArchiveProviderPilotPay
 
 export interface WorkersCoordinatorPublisherTaxProductionArchiveDrProviderPilotOptions {
   readonly disasterRecoveryReport: WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsReport;
+  readonly disasterRecoveryInputEvidence: WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsEvidence;
   readonly providerPilotEvidence: EvidenceEnvelope<WorkersCoordinatorPublisherTaxProductionArchiveProviderPilotPayload>;
   readonly evidenceValidationOptions?: EvidenceValidationOptions;
 }
@@ -178,11 +182,15 @@ function selectHoldReasons(
   blockedAttempt: WorkersCoordinatorRunnerNetworkAttempt | null,
 ): string[] {
   const upstream = options.disasterRecoveryReport;
+  const drInput = options.disasterRecoveryInputEvidence;
   if (upstream.status === 'fail') {
     return [`publisher-tax-production-exception-archive-dr-operations-not-clean: ${upstream.failureReason ?? 'unknown'}`];
   }
 
   const reasons: string[] = [];
+  if (!sameDrInputAndReport(drInput, upstream)) {
+    reasons.push('publisher-tax-production-exception-archive-dr-provider-pilot-upstream-input-mismatch');
+  }
   if (validation.status !== 'valid') {
     reasons.push(`publisher-tax-production-exception-archive-dr-provider-pilot-evidence-${validation.status}`);
   }
@@ -197,25 +205,20 @@ function selectHoldReasons(
     return reasons;
   }
 
-  const upstreamProviderPayload = upstream.restoreDrillEvidence.archiveRetentionEvidence.archivePackage;
-  const upstreamProviderEnvelope = upstream.restoreDrillEvidence.archiveRetentionEvidence.resolutionAuditEvidence;
-  const drProviderPayload = upstream.restoreDrillEvidence.archiveRetentionEvidence.archivePackage;
-  void upstreamProviderEnvelope;
-  void drProviderPayload;
-
   const archive = upstream.restoreDrillEvidence.archiveRetentionEvidence.archivePackage;
+  const drProvider = drInput.providerEvidence.payload;
   const expectedIncidentIds = [...new Set(upstream.incidents.map((incident) => incident.incidentId))].sort();
   const actualIncidentIds = [...new Set(payload.incidentIds)].sort();
 
   if (
-    !payload.providerName ||
-    !payload.accountId ||
-    !payload.primaryStorageId ||
-    !payload.backupStorageId ||
-    !payload.replicaSiteId ||
+    payload.providerName !== drProvider.providerName ||
+    payload.accountId !== drProvider.accountId ||
+    payload.primaryStorageId !== drProvider.primaryStorageId ||
+    payload.backupStorageId !== drProvider.backupStorageId ||
+    payload.replicaSiteId !== drProvider.replicaSiteId ||
     !payload.replicaRegion
   ) {
-    reasons.push('publisher-tax-production-exception-archive-dr-provider-pilot-provider-identity-missing');
+    reasons.push('publisher-tax-production-exception-archive-dr-provider-pilot-provider-identity-mismatch');
   }
   if (payload.archiveId !== archive.archiveId || payload.archiveContentDigest !== archive.contentDigest) {
     reasons.push('publisher-tax-production-exception-archive-dr-provider-pilot-archive-identity-mismatch');
@@ -295,8 +298,21 @@ function selectHoldReasons(
     reasons.push('publisher-tax-production-exception-archive-dr-provider-pilot-cross-origin-isolation-lost');
   }
 
-  void upstreamProviderPayload;
   return reasons;
+}
+
+function sameDrInputAndReport(
+  input: WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsEvidence,
+  report: WorkersCoordinatorPublisherTaxProductionArchiveDisasterRecoveryOperationsReport,
+): boolean {
+  return (
+    input.archiveId === report.drSummary.archiveId &&
+    JSON.stringify(input.schedule) === JSON.stringify(report.schedule) &&
+    JSON.stringify(input.objectives) === JSON.stringify(report.objectives) &&
+    JSON.stringify(input.ownership) === JSON.stringify(report.ownership) &&
+    JSON.stringify(input.incidents) === JSON.stringify(report.incidents) &&
+    JSON.stringify(input.retentionPolicySnapshot) === JSON.stringify(report.retentionPolicySnapshot)
+  );
 }
 
 function validateRetrieval(
