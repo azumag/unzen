@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   DEPLOYMENT_SERVICES,
@@ -59,22 +60,26 @@ describe('continuous assurance production deployment plan', () => {
     await expect(buildDeploymentPlan({ mode: 'plan', env: {} })).resolves.toMatchObject({ mode: 'plan', accountConfigured: false });
   });
 
-  it('passes secret values only through stdin and records exact Worker version IDs from deploy output', async () => {
+  it('passes secret values only through stdin and records exact Worker version IDs from Wrangler structured output', async () => {
     const env = applyEnv();
     const plan = await buildDeploymentPlan({ mode: 'apply', env });
     const calls: { command: string[]; stdin?: string }[] = [];
     let deployIndex = 0;
-    const runner = async (command: string[], options: { stdin?: string }) => {
+    const runner = async (command: string[], options: { stdin?: string; env?: Record<string, string> }) => {
       calls.push({ command, stdin: options.stdin });
       const isDeploy = command.includes('deploy') && !command.includes('--dry-run');
       if (isDeploy) {
+        const service = plan.services[deployIndex];
         deployIndex += 1;
-        return {
-          ok: true,
-          code: 0,
-          stdout: `Current Version ID: version-deployed-${deployIndex}-12345678\n`,
-          stderr: '',
-        };
+        const outputPath = options.env?.WRANGLER_OUTPUT_FILE_PATH;
+        expect(outputPath).toBeTruthy();
+        await writeFile(outputPath!, `${JSON.stringify({
+          type: 'deploy',
+          version: 1,
+          worker_name: service.service,
+          version_id: `version-deployed-${deployIndex}-12345678`,
+          timestamp: new Date().toISOString(),
+        })}\n`, 'utf8');
       }
       return { ok: true, code: 0, stdout: '', stderr: '' };
     };
@@ -98,16 +103,22 @@ describe('continuous assurance production deployment plan', () => {
     expect(result.versionIdentities.every((identity: any) => /^version-deployed-\d+-12345678$/.test(identity.versionId))).toBe(true);
   });
 
-  it('fails closed if Wrangler deploy output does not expose a version ID', async () => {
+  it('fails closed if Wrangler structured deploy output does not expose a version ID', async () => {
     const env = applyEnv();
     const plan = await buildDeploymentPlan({ mode: 'apply', env });
-    const runner = async (command: string[]) => {
+    const runner = async (command: string[], options: { env?: Record<string, string> }) => {
       if (command.includes('deploy') && !command.includes('--dry-run')) {
-        return { ok: true, code: 0, stdout: 'deployment succeeded without identity', stderr: '' };
+        const outputPath = options.env?.WRANGLER_OUTPUT_FILE_PATH;
+        await writeFile(outputPath!, `${JSON.stringify({
+          type: 'deploy',
+          version: 1,
+          worker_name: plan.services[0].service,
+          timestamp: new Date().toISOString(),
+        })}\n`, 'utf8');
       }
       return { ok: true, code: 0, stdout: '', stderr: '' };
     };
     await expect(executeDeploymentPlan(plan, { env, runner }))
-      .rejects.toThrow('deployment-version-id-missing:verifier');
+      .rejects.toThrow(`deployment-version-id-missing:${plan.services[0].service}`);
   });
 });
