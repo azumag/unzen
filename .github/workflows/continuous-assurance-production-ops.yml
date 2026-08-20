@@ -34,6 +34,8 @@ jobs:
       PAGER_API_URL: ${{ vars.PAGER_API_URL }}
       PROVIDER_CANARY_ONCALL_ROUTE: ${{ vars.PROVIDER_CANARY_ONCALL_ROUTE }}
       PROVIDER_CANARY_ESCALATION_TARGET: ${{ vars.PROVIDER_CANARY_ESCALATION_TARGET }}
+      ROLLOUT_ONCALL_ROUTE: ${{ vars.ROLLOUT_ONCALL_ROUTE }}
+      ROLLOUT_ESCALATION_TARGET: ${{ vars.ROLLOUT_ESCALATION_TARGET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,7 +52,11 @@ jobs:
 
       - name: Build redacted plan
         if: ${{ inputs.mode == 'plan' }}
-        run: node scripts/deploy-continuous-assurance-production-canary.mjs > production-deployment-result.json
+        shell: bash
+        run: |
+          node scripts/deploy-continuous-assurance-production-canary.mjs > production-deployment-result.json
+          node scripts/deploy-continuous-assurance-production-rollout.mjs \
+            --base-result production-deployment-result.json > production-rollout-deployment-result.json
 
       - name: Run authenticated dry-run
         if: ${{ inputs.mode == 'dry-run' }}
@@ -60,9 +66,14 @@ jobs:
         shell: bash
         run: |
           node scripts/deploy-continuous-assurance-production-canary.mjs --dry-run > production-deployment-result.json
+          node scripts/deploy-continuous-assurance-production-rollout.mjs --dry-run \
+            --base-result production-deployment-result.json > production-rollout-deployment-result.json
           node <<'NODE'
           const fs = require('node:fs');
-          const text = fs.readFileSync('production-deployment-result.json', 'utf8');
+          const text = [
+            fs.readFileSync('production-deployment-result.json', 'utf8'),
+            fs.readFileSync('production-rollout-deployment-result.json', 'utf8'),
+          ].join('\n');
           for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
             const value = process.env[name];
             if (value && text.includes(value)) throw new Error(`deployment-result-secret-leak:${name}`);
@@ -80,12 +91,18 @@ jobs:
           CANARY_DISPATCH_SECRET: ${{ secrets.CANARY_DISPATCH_SECRET }}
           CANARY_CONTROLLER_SECRET: ${{ secrets.CANARY_CONTROLLER_SECRET }}
           PROVIDER_CANARY_CONTROLLER_SECRET: ${{ secrets.PROVIDER_CANARY_CONTROLLER_SECRET }}
+          ROLLOUT_CONTROLLER_SECRET: ${{ secrets.ROLLOUT_CONTROLLER_SECRET }}
         shell: bash
         run: |
           node scripts/deploy-continuous-assurance-production-canary.mjs --apply > production-deployment-result.json
+          node scripts/deploy-continuous-assurance-production-rollout.mjs --apply \
+            --base-result production-deployment-result.json > production-rollout-deployment-result.json
           node <<'NODE'
           const fs = require('node:fs');
-          const text = fs.readFileSync('production-deployment-result.json', 'utf8');
+          const text = [
+            fs.readFileSync('production-deployment-result.json', 'utf8'),
+            fs.readFileSync('production-rollout-deployment-result.json', 'utf8'),
+          ].join('\n');
           const names = [
             'CLOUDFLARE_API_TOKEN',
             'CLOUDFLARE_ACCOUNT_ID',
@@ -95,6 +112,7 @@ jobs:
             'CANARY_DISPATCH_SECRET',
             'CANARY_CONTROLLER_SECRET',
             'PROVIDER_CANARY_CONTROLLER_SECRET',
+            'ROLLOUT_CONTROLLER_SECRET',
           ];
           for (const name of names) {
             const value = process.env[name];
@@ -102,11 +120,13 @@ jobs:
           }
           NODE
 
-      - name: Upload redacted deployment result
+      - name: Upload redacted deployment results
         if: ${{ hashFiles('LLM-proto/production-deployment-result.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: continuous-assurance-production-${{ inputs.mode }}
-          path: LLM-proto/production-deployment-result.json
+          path: |
+            LLM-proto/production-deployment-result.json
+            LLM-proto/production-rollout-deployment-result.json
           if-no-files-found: error
           retention-days: 14
