@@ -167,11 +167,6 @@ def _last_token_argmax(logits: np.ndarray) -> int:
     return int(np.argmax(logits[0, -1]))
 
 
-def _release_session(session: ort.InferenceSession) -> None:
-    del session
-    gc.collect()
-
-
 def verify_split(
     full_model_path: Path,
     segment0_path: Path,
@@ -194,14 +189,16 @@ def verify_split(
     full_feeds = build_feeds(full_session, token_ids, kv_heads=kv_heads, head_size=head_size)
     full_logits = full_session.run([logits_name], full_feeds)[0]
     del full_feeds
-    _release_session(full_session)
+    del full_session
+    gc.collect()
 
     segment0_session = ort.InferenceSession(str(segment0_path), providers=providers)
     segment0_feeds = build_feeds(segment0_session, token_ids, kv_heads=kv_heads, head_size=head_size)
     boundary_values = segment0_session.run(boundary_names, segment0_feeds)
     boundary = dict(zip(boundary_names, boundary_values, strict=True))
     del segment0_feeds
-    _release_session(segment0_session)
+    del segment0_session
+    gc.collect()
 
     segment1_session = ort.InferenceSession(str(segment1_path), providers=providers)
     segment1_feeds = build_feeds(
@@ -213,7 +210,8 @@ def verify_split(
     )
     split_logits = segment1_session.run([logits_name], segment1_feeds)[0]
     del segment1_feeds
-    _release_session(segment1_session)
+    del segment1_session
+    gc.collect()
 
     comparison = compare_logits(full_logits, split_logits, atol, rtol)
     report: dict[str, object] = {
