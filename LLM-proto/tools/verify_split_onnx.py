@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Run a full ONNX model and its two Unzen segments with identical token IDs.
 
-This is the same-machine correctness gate for issue #165. It intentionally
-accepts token IDs rather than depending on a tokenizer package: the browser
-harness reports the exact IDs it used, and this verifier reuses those IDs to
-compare full-model logits against segment0 -> boundary -> segment1.
+This is the same-machine correctness gate for issue #165. It accepts token IDs
+rather than adding a tokenizer dependency: the browser harness reports the exact
+IDs it used, and this verifier reuses those IDs to compare full-model logits
+against segment0 -> boundary -> segment1.
+
+Sessions are created and released sequentially so the real 1.7 GB q4 source
+model and both split segments are not resident at the same time.
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 from pathlib import Path
 from typing import Sequence
@@ -25,6 +29,12 @@ def _np_dtype(type_name: str) -> np.dtype:
         "tensor(double)": np.dtype(np.float64),
         "tensor(int64)": np.dtype(np.int64),
         "tensor(int32)": np.dtype(np.int32),
+        "tensor(int16)": np.dtype(np.int16),
+        "tensor(int8)": np.dtype(np.int8),
+        "tensor(uint64)": np.dtype(np.uint64),
+        "tensor(uint32)": np.dtype(np.uint32),
+        "tensor(uint16)": np.dtype(np.uint16),
+        "tensor(uint8)": np.dtype(np.uint8),
         "tensor(bool)": np.dtype(np.bool_),
     }
     if type_name not in mapping:
@@ -46,12 +56,14 @@ def _resolve_symbolic_dimension(
     text = str(value or "").lower()
     if "batch" in text:
         return 1
-    if "past" in text:
-        return 0
-    if "num_key_value_heads" in text or ("head" in text and "size" not in text):
+    if "num_key_value_heads" in text:
         return kv_heads
     if "head_size" in text or "head_dim" in text:
         return head_size
+    if "past" in text:
+        return 0
+    if "head" in text and "size" not in text:
+        return kv_heads
     if "sequence" in text or "seq" in text:
         if "past_key_values" in input_name or "past" in input_name:
             return 0
@@ -88,6 +100,13 @@ def _empty_cache_value(
     return np.zeros(shape, dtype=dtype)
 
 
+def _integer_value(node_arg: ort.NodeArg, values: Sequence[int], shape: tuple[int, ...]) -> np.ndarray:
+    dtype = _np_dtype(node_arg.type)
+    if dtype.kind not in ("i", "u"):
+        raise ValueError(f"expected integer input for {node_arg.name}, got {node_arg.type}")
+    return np.asarray(values, dtype=dtype).reshape(shape)
+
+
 def build_feeds(
     session: ort.InferenceSession,
     token_ids: Sequence[int],
@@ -104,11 +123,11 @@ def build_feeds(
         if name in boundary:
             feeds[name] = boundary[name]
         elif name == "input_ids" or name.endswith("/input_ids"):
-            feeds[name] = np.asarray([token_ids], dtype=np.int64)
+            feeds[name] = _integer_value(node_arg, token_ids, (1, sequence_length))
         elif "attention_mask" in name:
-            feeds[name] = np.ones((1, sequence_length), dtype=np.int64)
+            feeds[name] = _integer_value(node_arg, [1] * sequence_length, (1, sequence_length))
         elif "position_ids" in name:
-            feeds[name] = np.arange(sequence_length, dtype=np.int64)[None, :]
+            feeds[name] = _integer_value(node_arg, list(range(sequence_length)), (1, sequence_length))
         elif "past_key_values" in name or name.startswith("past.") or "/past" in name:
             feeds[name] = _empty_cache_value(
                 node_arg,
@@ -148,6 +167,11 @@ def _last_token_argmax(logits: np.ndarray) -> int:
     return int(np.argmax(logits[0, -1]))
 
 
+def _release_session(session: ort.InferenceSession) -> None:
+    del session
+    gc.collect()
+
+
 def verify_split(
     full_model_path: Path,
     segment0_path: Path,
@@ -167,16 +191,19 @@ def verify_split(
     providers = [provider]
 
     full_session = ort.InferenceSession(str(full_model_path), providers=providers)
-    segment0_session = ort.InferenceSession(str(segment0_path), providers=providers)
-    segment1_session = ort.InferenceSession(str(segment1_path), providers=providers)
-
     full_feeds = build_feeds(full_session, token_ids, kv_heads=kv_heads, head_size=head_size)
     full_logits = full_session.run([logits_name], full_feeds)[0]
+    del full_feeds
+    _release_session(full_session)
 
+    segment0_session = ort.InferenceSession(str(segment0_path), providers=providers)
     segment0_feeds = build_feeds(segment0_session, token_ids, kv_heads=kv_heads, head_size=head_size)
     boundary_values = segment0_session.run(boundary_names, segment0_feeds)
     boundary = dict(zip(boundary_names, boundary_values, strict=True))
+    del segment0_feeds
+    _release_session(segment0_session)
 
+    segment1_session = ort.InferenceSession(str(segment1_path), providers=providers)
     segment1_feeds = build_feeds(
         segment1_session,
         token_ids,
@@ -185,6 +212,8 @@ def verify_split(
         head_size=head_size,
     )
     split_logits = segment1_session.run([logits_name], segment1_feeds)[0]
+    del segment1_feeds
+    _release_session(segment1_session)
 
     comparison = compare_logits(full_logits, split_logits, atol, rtol)
     report: dict[str, object] = {
@@ -205,8 +234,13 @@ def verify_split(
         "comparison": comparison,
         "fullTop1TokenId": _last_token_argmax(full_logits),
         "splitTop1TokenId": _last_token_argmax(split_logits),
+        "sequentialSessionLoading": True,
     }
-    report["status"] = "pass" if comparison["matches"] and report["fullTop1TokenId"] == report["splitTop1TokenId"] else "fail"
+    report["status"] = (
+        "pass"
+        if comparison["matches"] and report["fullTop1TokenId"] == report["splitTop1TokenId"]
+        else "fail"
+    )
     return report
 
 
