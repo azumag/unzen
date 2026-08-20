@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unzen real two-browser WebGPU split harness</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; max-width: 70rem; }
+    label { display: block; margin: .5rem 0; }
+    input { width: min(52rem, 95vw); padding: .35rem; }
+    button { padding: .45rem .8rem; margin-right: .5rem; }
+    pre { white-space: pre-wrap; background: #f6f8fa; padding: .75rem; max-height: 38rem; overflow: auto; }
+    .ok { color: #176b2c; }
+    .error { color: #a31515; }
+  </style>
+</head>
+<body>
+  <h1>Unzen real two-browser WebGPU split harness</h1>
+  <p>
+    同じ <code>run</code> ID で2つのブラウザ/プロファイルを開きます。
+    Segment 0 は実 boundary tensors を Coordinator に保存し、Segment 1/standby は Coordinator からのみ取得します。
+  </p>
+  <label>Role <input id="role" readonly></label>
+  <label>Worker ID <input id="worker" readonly></label>
+  <label>Run ID <input id="run" readonly></label>
+  <label>Prompt <input id="prompt" value="The capital of France is"></label>
+  <p><button id="execute">Execute role</button></p>
+  <div id="status"></div>
+  <pre id="log"></pre>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js"></script>
+  <script type="module" src="./runner.js"></script>
+</body>
+</html>
