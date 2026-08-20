@@ -121,6 +121,20 @@ def create_fixture_model(path: Path) -> None:
 
 
 class SplitLlamaOnnxTest(unittest.TestCase):
+    def test_allows_pinned_runtime_default_domain_custom_op(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model_q4.onnx"
+            create_fixture_model(source)
+            model = onnx.load_model(str(source), load_external_data=False)
+            gather = next(node for node in model.graph.node if node.op_type == "Gather")
+            gather.op_type = "SimplifiedLayerNormalization"
+            onnx.save_model(model, str(source))
+
+            manifest = split_model(source, root / "split", hidden_size=4)
+
+            self.assertEqual(manifest["boundary"]["tensorCount"], 2)
+
     def test_repacks_per_segment_external_data_and_matches_full_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

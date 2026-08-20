@@ -17,7 +17,7 @@ from typing import BinaryIO
 import onnx
 from onnx import TensorProto
 
-from split_llama_1b_onnx import sha256_file, split_model
+from split_llama_1b_onnx import check_model_for_runtime, sha256_file, split_model
 
 
 COPY_CHUNK_BYTES = 8 * 1024 * 1024
@@ -118,7 +118,7 @@ def repack_segment_external_data(
             source.close()
 
     onnx.save_model(model, str(model_path))
-    onnx.checker.check_model(str(model_path), full_check=False)
+    check_model_for_runtime(model_path)
     return {
         "location": output_data_name,
         "bytes": output_data_path.stat().st_size,
