@@ -78,24 +78,38 @@ segment 0 -> boundary tensors -> segment 1 -> logits
 
 with the exact same token IDs. It compares the complete logits tensor with
 configurable `atol` / `rtol` and separately requires the final-position top-1
-token ID to match.
+token ID to match. Full, segment-0, and segment-1 ONNX Runtime sessions are
+created sequentially to keep peak memory bounded on the real q4 model.
 
 The tool accepts token IDs instead of adding another tokenizer dependency. Copy
 the IDs reported by the browser harness into `--input-ids`. It creates empty
 KV-cache tensors from ONNX Runtime input metadata using the measured
 Llama-3.2-1B defaults (8 KV heads, head size 64).
 
-### 4. Two-browser Coordinator relay harness
+### 4. Two-browser Coordinator relay + persistent artifact cache
 
 `browser-harness/webgpu-2b-split/serve.mjs` is a local Coordinator and static
 server. It never creates a browser-to-browser route.
 
-`runner-v2.js` uses ONNX Runtime WebGPU and explicitly supplies each segment's
+`runner-v3.js` uses ONNX Runtime WebGPU and explicitly supplies each segment's
 `externalData` entries when creating the session. ONNX Runtime Web requires this
 for models whose tensors live in external files. Each browser therefore mounts
 only its own repacked segment data file.
 
-Open two distinct browser profiles/windows with the same `run` ID:
+Before ONNX Runtime sees an artifact, `artifact-cache.js`:
+
+1. keys the Browser Cache API entry by artifact URL + expected SHA-256;
+2. fetches on a cold miss or reads the persistent cache on a warm hit;
+3. recomputes SHA-256 with Web Crypto;
+4. deletes the cache entry and fails closed on a mismatch;
+5. reports bytes, cache hit/miss, digest verification, and load time.
+
+This makes cold/warm behavior observable without pretending the browser cache
+is a model-execution result. The UI also includes `Clear split artifact cache`
+for repeating a cold run.
+
+Open two distinct Chrome profiles/windows on the same machine with the same
+`run` ID:
 
 ```text
 http://127.0.0.1:8791/?role=segment0&run=trial-1
@@ -120,7 +134,7 @@ rerunning segment 0.
 ## Automated CI gate
 
 The Python test creates a tiny Llama-shaped ONNX fixture with one shared external
-weight file, then performs the same production preparation path:
+weight file, then performs the same preparation path:
 
 1. split the graph;
 2. repack segment-specific external data;
@@ -138,7 +152,7 @@ The Vitest Coordinator test proves:
 - a standby worker can consume the already-stored checkpoint and submit a
   resumed result.
 
-CI also syntax-checks the Node Coordinator and browser runner.
+CI also syntax-checks the Node Coordinator, Cache API helper, and browser runner.
 
 Focused commands:
 
@@ -146,7 +160,8 @@ Focused commands:
 cd LLM-proto
 python3 -m unittest discover -s tools/tests -p 'test_*.py'
 npm test -- --run tests/real-two-browser-coordinator.test.ts
-node --check browser-harness/webgpu-2b-split/runner-v2.js
+node --check browser-harness/webgpu-2b-split/artifact-cache.js
+node --check browser-harness/webgpu-2b-split/runner-v3.js
 ```
 
 ## Real verification procedure
@@ -180,9 +195,8 @@ python3 tools/prepare_real_split.py \
   /absolute/path/to/unzen-split
 ```
 
-This is expected to produce two ONNX graphs plus two independent external weight
-files. Do not proceed if either segment still references the original full data
-file.
+This must produce two ONNX graphs plus two independent external weight files.
+Do not proceed if either segment still references the original full data file.
 
 The command fails before claiming success if:
 
@@ -200,7 +214,9 @@ MODELS_DIR=/absolute/path/to/unzen-split \
   node browser-harness/webgpu-2b-split/serve.mjs
 ```
 
-Open the segment-0 URL once and copy the `input token ids:` line. Then run:
+Open the segment-0 URL once. Tokenization happens before WebGPU session creation,
+so the `input token ids:` line is available even if the first real split session
+fails. Copy those IDs, then run:
 
 ```bash
 python3 tools/verify_split_onnx.py \
@@ -216,13 +232,9 @@ logits tolerance and top-1 token equality.
 
 ### C. Run two distinct WebGPU browser workers
 
-With the same local Coordinator running, open these URLs in two distinct Chrome
-profiles (or on two machines that can reach the Coordinator):
-
-```text
-http://127.0.0.1:8791/?role=segment0&run=trial-1
-http://127.0.0.1:8791/?role=segment1&run=trial-1
-```
+With the same local Coordinator running, open the two localhost URLs above in
+two distinct Chrome profiles. Localhost is intentional: WebGPU requires a secure
+context, and browsers treat localhost as trustworthy for local development.
 
 Click `Execute role` in segment 0, then segment 1.
 
@@ -235,9 +247,15 @@ The segment-1 report must include:
 - `directWorkerNetworking: false`;
 - observed boundary byte count;
 - segment 0 and segment 1 execution time;
+- Cache API cold/warm status and artifact load timing for each segment;
+- verified artifact SHA-256 values;
 - logits shape;
 - top-1 token ID/text;
 - WebGPU adapter metadata.
+
+For warm-cache measurement, use a new `run` ID in the same browser profiles
+without clearing the artifact cache. Use the UI cache-clear button before a
+repeat cold measurement.
 
 ### D. Real worker-loss resume
 
@@ -252,8 +270,9 @@ The segment-1 report must include:
 
 Passing CI proves the split/repack algorithm on an external-data ONNX graph,
 numeric full-vs-split equivalence on that fixture, and Coordinator relay
-semantics. It does **not** claim that the real Llama-3.2-1B q4 model has already
-been split or that two real browsers have executed it.
+semantics. Syntax checks prove the browser harness parses, but CI does **not**
+claim that the real Llama-3.2-1B q4 model has already been split or that two real
+browsers have executed it.
 
 The first real browser report is `self-reported-runtime`. Promotion to
 `captured-and-verified` should reuse the existing `EvidenceEnvelope` only after
