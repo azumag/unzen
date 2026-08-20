@@ -15,6 +15,7 @@ TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+from prepare_real_split import prepare_real_split  # noqa: E402
 from split_llama_1b_onnx import split_model  # noqa: E402
 from verify_split_onnx import verify_split  # noqa: E402
 
@@ -120,27 +121,35 @@ def create_fixture_model(path: Path) -> None:
 
 
 class SplitLlamaOnnxTest(unittest.TestCase):
-    def test_preserves_external_data_and_matches_full_model(self) -> None:
+    def test_repacks_per_segment_external_data_and_matches_full_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "model_q4.onnx"
             create_fixture_model(source)
             output = root / "split"
 
-            manifest = split_model(
+            manifest = prepare_real_split(
                 source,
                 output,
                 split_layer=8,
                 hidden_size=4,
-                external_data_mode="symlink",
             )
 
             self.assertEqual(manifest["kind"], "unzen-real-two-segment-onnx")
+            self.assertEqual(manifest["artifactLayout"], "per-segment-external-data")
             self.assertEqual(manifest["boundary"]["tensorCount"], 2)
             self.assertEqual(manifest["boundary"]["bytesPerToken"], 32)
             boundary_names = [item["name"] for item in manifest["boundary"]["tensors"]]
             self.assertEqual(boundary_names, ["layer7_residual", "layer7_mlp"])
-            self.assertTrue((output / "weights.bin").is_symlink())
+
+            source_weight_bytes = (root / "weights.bin").stat().st_size
+            segment0_data = output / "segment0.onnx_data"
+            segment1_data = output / "segment1.onnx_data"
+            self.assertTrue(segment0_data.is_file())
+            self.assertTrue(segment1_data.is_file())
+            self.assertFalse((output / "weights.bin").exists())
+            self.assertLess(segment0_data.stat().st_size, source_weight_bytes)
+            self.assertLess(segment1_data.stat().st_size, source_weight_bytes)
 
             segment0 = onnx.load_model(str(output / "segment0.onnx"), load_external_data=False)
             segment1 = onnx.load_model(str(output / "segment1.onnx"), load_external_data=False)
@@ -150,14 +159,22 @@ class SplitLlamaOnnxTest(unittest.TestCase):
             self.assertIn("present.8.key", [value.name for value in segment1.graph.output])
             self.assertIn("logits", [value.name for value in segment1.graph.output])
 
-            external_locations = {
+            segment0_locations = {
                 entry.value
-                for model in (segment0, segment1)
-                for initializer in model.graph.initializer
+                for initializer in segment0.graph.initializer
                 for entry in initializer.external_data
                 if entry.key == "location"
             }
-            self.assertEqual(external_locations, {"weights.bin"})
+            segment1_locations = {
+                entry.value
+                for initializer in segment1.graph.initializer
+                for entry in initializer.external_data
+                if entry.key == "location"
+            }
+            self.assertEqual(segment0_locations, {"segment0.onnx_data"})
+            self.assertEqual(segment1_locations, {"segment1.onnx_data"})
+            self.assertEqual(manifest["segments"][0]["externalData"][0]["location"], "segment0.onnx_data")
+            self.assertEqual(manifest["segments"][1]["externalData"][0]["location"], "segment1.onnx_data")
 
             report = verify_split(
                 source,
