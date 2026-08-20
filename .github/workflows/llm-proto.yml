@@ -56,6 +56,14 @@ jobs:
           node --check browser-harness/webgpu-2b-split/artifact-cache.js
           node --check browser-harness/webgpu-2b-split/runner-v3.js
 
+      - name: Probe pinned SmolLM2 P0 graph contract
+        run: |
+          curl --fail --location --retry 3 \
+            --output /tmp/smollm2-135m-model_q4.onnx \
+            'https://huggingface.co/onnx-community/SmolLM2-135M-ONNX/resolve/0d747f789bcf79b9b57a4be7f3277b64c185f8ef/onnx/model_q4.onnx?download=true'
+          echo 'da1d291b342acafd806b284052053902af82c52121c400789bdf8ab1effdb4c8  /tmp/smollm2-135m-model_q4.onnx' | sha256sum -c -
+          python tools/probe_p0_smollm2_graph.py /tmp/smollm2-135m-model_q4.onnx
+
       - name: Test real ONNX split contract
         run: python -m unittest discover -s tools/tests -p 'test_*.py'
 
