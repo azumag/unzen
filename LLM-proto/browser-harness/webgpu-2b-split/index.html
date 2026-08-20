@@ -19,6 +19,7 @@
   <p>
     同じ <code>run</code> ID で2つのブラウザ/プロファイルを開きます。
     Segment 0 は実 boundary tensors を Coordinator に保存し、Segment 1/standby は Coordinator からのみ取得します。
+    各ブラウザは自分のsegment専用external weightsだけをONNX Runtime Webへmountします。
   </p>
   <label>Role <input id="role" readonly></label>
   <label>Worker ID <input id="worker" readonly></label>
@@ -29,6 +30,6 @@
   <pre id="log"></pre>
 
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js"></script>
-  <script type="module" src="./runner.js"></script>
+  <script type="module" src="./runner-v2.js"></script>
 </body>
 </html>
