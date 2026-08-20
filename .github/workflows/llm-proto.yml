@@ -50,6 +50,11 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Syntax check real browser harness
+        run: |
+          node --check browser-harness/webgpu-2b-split/serve.mjs
+          node --check browser-harness/webgpu-2b-split/runner-v2.js
+
       - name: Test real ONNX split contract
         run: python -m unittest discover -s tools/tests -p 'test_*.py'
 
