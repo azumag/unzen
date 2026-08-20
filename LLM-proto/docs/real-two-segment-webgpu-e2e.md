@@ -7,10 +7,10 @@ LLM-proto already has a real single-browser WebGPU measurement for
 contracts. The missing technical-core proof is still the real segmented path:
 
 ```text
-Browser A (layers 0..7)
+Browser A (layers 0..7 + segment-0 weights only)
   -> two measured boundary tensors
   -> Coordinator relay
-  -> Browser B (layers 8..15 + final norm + lm_head)
+  -> Browser B (layers 8..15 + final norm + lm_head + segment-1 weights only)
   -> logits / one continuation token
 ```
 
@@ -20,15 +20,15 @@ workers.
 
 ## What this change automates
 
-The automated part stops immediately before a real 1.7 GB q4 artifact and a
-WebGPU browser are required.
+The automated part stops immediately before the real 1.7 GB q4 source artifact
+and a WebGPU browser are required.
 
 ### 1. Deterministic graph split
 
 `tools/split_llama_1b_onnx.py` loads the source ModelProto with
 `load_external_data=False`, discovers the two tensors produced by layer 7 and
 consumed by layer 8's `input_layernorm`, and extracts two dependency-closed
-subgraphs without loading the large external q4 data into Python memory.
+subgraphs without loading the large q4 tensor payload into Python memory.
 
 The splitter fails closed unless:
 
@@ -36,26 +36,38 @@ The splitter fails closed unless:
 - exactly two inputs to that node are produced by layer 7;
 - exactly one `logits` graph output exists.
 
-External initializer `location` / `offset` / `length` metadata is retained. By
-default the output directory receives symlinks to the original external-data
-file(s), avoiding a second 1.7 GB copy. `--external-data-mode copy` is available
-when symlinks are unsuitable.
+### 2. Per-segment external weight repack
+
+`tools/prepare_real_split.py` wraps the graph splitter and then streams only the
+external-data byte ranges referenced by each segment into its own weight file.
+It rewrites every selected TensorProto `location` / `offset` / `length`, so the
+browser does **not** need to download or mount the original full-model external
+data blob for both workers.
 
 Output:
 
 ```text
-split/
+unzen-split/
   segment0.onnx
+  segment0.onnx_data
   segment1.onnx
+  segment1.onnx_data
   split-manifest.json
-  model_q4.onnx_data -> ../source/model_q4.onnx_data
 ```
 
-The manifest records source/segment SHA-256 values, exact boundary tensor names
-and producer nodes, external-data inventory, graph inputs/outputs, and the
-expected `2 * hiddenSize * 4` float32 boundary bytes per token.
+The manifest records:
 
-### 2. Same-machine correctness verifier
+- source model / source external-data SHA-256;
+- segment graph SHA-256;
+- each segment-specific external-data SHA-256 and byte size;
+- exact boundary tensor names and producer nodes;
+- expected float32 boundary bytes per token;
+- `artifactLayout: "per-segment-external-data"`.
+
+The repacker copies ranges in bounded chunks and does not materialize the full
+1.7 GB source weights in Python memory.
+
+### 3. Same-machine correctness verifier
 
 `tools/verify_split_onnx.py` runs:
 
@@ -68,15 +80,20 @@ with the exact same token IDs. It compares the complete logits tensor with
 configurable `atol` / `rtol` and separately requires the final-position top-1
 token ID to match.
 
-The tool deliberately accepts token IDs rather than adding another tokenizer
-dependency. Copy the IDs reported by the browser harness into `--input-ids`.
-It creates empty KV-cache tensors from ONNX Runtime input metadata and supports
-the measured Llama-3.2-1B defaults (`8` KV heads, head size `64`).
+The tool accepts token IDs instead of adding another tokenizer dependency. Copy
+the IDs reported by the browser harness into `--input-ids`. It creates empty
+KV-cache tensors from ONNX Runtime input metadata using the measured
+Llama-3.2-1B defaults (8 KV heads, head size 64).
 
-### 3. Two-browser Coordinator relay harness
+### 4. Two-browser Coordinator relay harness
 
 `browser-harness/webgpu-2b-split/serve.mjs` is a local Coordinator and static
 server. It never creates a browser-to-browser route.
+
+`runner-v2.js` uses ONNX Runtime WebGPU and explicitly supplies each segment's
+`externalData` entries when creating the session. ONNX Runtime Web requires this
+for models whose tensors live in external files. Each browser therefore mounts
+only its own repacked segment data file.
 
 Open two distinct browser profiles/windows with the same `run` ID:
 
@@ -85,35 +102,43 @@ http://127.0.0.1:8791/?role=segment0&run=trial-1
 http://127.0.0.1:8791/?role=segment1&run=trial-1
 ```
 
-The first browser runs `segment0.onnx` with ONNX Runtime WebGPU, serializes the
-two real boundary tensors, and POSTs them to the Coordinator. The second browser
-polls the Coordinator, reconstructs those tensors, runs `segment1.onnx`, and
-reports the top-1 continuation token.
+The first browser runs `segment0.onnx`, serializes the two real boundary tensors,
+and POSTs them to the Coordinator. The second browser polls the Coordinator,
+reconstructs those tensors, runs `segment1.onnx`, and reports the top-1
+continuation token.
 
-For worker-loss/resume verification, replace the second URL with a standby after
-the checkpoint has been uploaded:
+For worker-loss/resume verification, replace the second worker after the
+checkpoint exists:
 
 ```text
 http://127.0.0.1:8791/?role=standby&run=trial-1&worker=browser-b-standby
 ```
 
-The stored checkpoint remains Coordinator-owned, so the standby can continue
-without rerunning segment 0.
+The checkpoint remains Coordinator-owned, so the standby can continue without
+rerunning segment 0.
 
 ## Automated CI gate
 
-The Python test creates a tiny Llama-shaped ONNX fixture with external weights,
-splits it, verifies the external-data references survive, and uses ONNX Runtime
-to prove that the full-model logits and `segment0 -> segment1` logits are
-numerically identical. It also verifies boundary-contract drift fails closed.
+The Python test creates a tiny Llama-shaped ONNX fixture with one shared external
+weight file, then performs the same production preparation path:
+
+1. split the graph;
+2. repack segment-specific external data;
+3. prove each segment weight file is smaller than the source full weight file;
+4. verify the segment graph locations point only at their own data file;
+5. execute full and split graphs with ONNX Runtime;
+6. require exact logits equality and identical top-1 token;
+7. mutate the layer-8 boundary and prove the splitter fails closed.
 
 The Vitest Coordinator test proves:
 
-- two worker registrations are distinct;
+- distinct worker registration;
 - exactly two boundary tensors are stored and fetched through Coordinator state;
 - direct worker-to-worker networking returns HTTP 403;
 - a standby worker can consume the already-stored checkpoint and submit a
   resumed result.
+
+CI also syntax-checks the Node Coordinator and browser runner.
 
 Focused commands:
 
@@ -121,6 +146,7 @@ Focused commands:
 cd LLM-proto
 python3 -m unittest discover -s tools/tests -p 'test_*.py'
 npm test -- --run tests/real-two-browser-coordinator.test.ts
+node --check browser-harness/webgpu-2b-split/runner-v2.js
 ```
 
 ## Real verification procedure
@@ -140,31 +166,41 @@ the same model measured in the existing single-browser harness:
 Install the local tooling:
 
 ```bash
+cd LLM-proto
 python3 -m venv .venv-real-split
 . .venv-real-split/bin/activate
 pip install -r tools/requirements-real-split.txt
 ```
 
-### A. Split the real q4 graph
+### A. Prepare real browser-ready split artifacts
 
 ```bash
-cd LLM-proto
-python3 tools/split_llama_1b_onnx.py \
+python3 tools/prepare_real_split.py \
   /absolute/path/to/onnx/model_q4.onnx \
   /absolute/path/to/unzen-split
 ```
 
-Expected first stop conditions:
+This is expected to produce two ONNX graphs plus two independent external weight
+files. Do not proceed if either segment still references the original full data
+file.
 
-- if the real layer-8 graph no longer exposes exactly the measured two-tensor
-  boundary, the tool stops and prints the producer/input details;
-- if external-data paths are unsafe or unavailable, it stops before producing a
-  misleading manifest;
-- both output graphs must pass `onnx.checker.check_model()`.
+The command fails before claiming success if:
 
-### B. Same-machine full-vs-split logits
+- the real layer-8 graph no longer exposes the measured two-tensor boundary;
+- an external-data range lacks a safe location or explicit length;
+- a source range cannot be copied completely;
+- either output graph fails ONNX validation.
 
-First run the segment-0 browser once and copy the `input token ids` line, then:
+### B. Obtain exact input IDs and run same-machine full-vs-split logits
+
+Serve the prepared split directory:
+
+```bash
+MODELS_DIR=/absolute/path/to/unzen-split \
+  node browser-harness/webgpu-2b-split/serve.mjs
+```
+
+Open the segment-0 URL once and copy the `input token ids:` line. Then run:
 
 ```bash
 python3 tools/verify_split_onnx.py \
@@ -178,28 +214,30 @@ python3 tools/verify_split_onnx.py \
 This is the first **real verification boundary**. A pass requires both numeric
 logits tolerance and top-1 token equality.
 
-### C. Two distinct browser workers
+### C. Run two distinct WebGPU browser workers
 
-Serve the split directory:
+With the same local Coordinator running, open these URLs in two distinct Chrome
+profiles (or on two machines that can reach the Coordinator):
 
-```bash
-MODELS_DIR=/absolute/path/to/unzen-split \
-  node browser-harness/webgpu-2b-split/serve.mjs
+```text
+http://127.0.0.1:8791/?role=segment0&run=trial-1
+http://127.0.0.1:8791/?role=segment1&run=trial-1
 ```
 
-Open segment 0 and segment 1 in two distinct Chrome profiles (or two physical
-machines that can reach the Coordinator host), using the same `run` ID. Click
-`Execute role` in segment 0, then segment 1.
+Click `Execute role` in segment 0, then segment 1.
 
 The segment-1 report must include:
 
 - two distinct worker IDs;
+- `artifactLayout: "per-segment-external-data"`;
+- segment-specific external-data metadata;
 - `relayOwner: "coordinator"`;
 - `directWorkerNetworking: false`;
-- observed `boundaryBytes`;
+- observed boundary byte count;
 - segment 0 and segment 1 execution time;
 - logits shape;
-- top-1 token ID/text and WebGPU adapter metadata.
+- top-1 token ID/text;
+- WebGPU adapter metadata.
 
 ### D. Real worker-loss resume
 
@@ -212,9 +250,10 @@ The segment-1 report must include:
 
 ## Evidence status
 
-Passing CI proves the splitter, numeric split contract on a synthetic ONNX graph,
-and Coordinator relay semantics. It does **not** claim that Llama-3.2-1B has
-already been split or that two real browsers have executed it.
+Passing CI proves the split/repack algorithm on an external-data ONNX graph,
+numeric full-vs-split equivalence on that fixture, and Coordinator relay
+semantics. It does **not** claim that the real Llama-3.2-1B q4 model has already
+been split or that two real browsers have executed it.
 
 The first real browser report is `self-reported-runtime`. Promotion to
 `captured-and-verified` should reuse the existing `EvidenceEnvelope` only after
