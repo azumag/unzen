@@ -308,6 +308,82 @@ prefill segment 0 then 1 once, then per-token segment 0 -> relay hidden state
   within tolerance (the reference path is measured above).
 
 
+## Split-path browser measurement (2026-08-22)
+
+The first real-browser split-path run used the local Llama-3.2-1B q4 segments.
+It intentionally skipped the full-model reference session with `full=0`, so it
+proves that the split graph executes and generates on WebGPU; it does not prove
+a same-browser split/full quality comparison. The Python split-vs-full check
+from 2026-08-08 remains the recorded quality evidence for these artifacts.
+
+### Low-load run (self-reported)
+
+| Item | Value |
+|---|---|
+| Model | `onnx-community/Llama-3.2-1B-Instruct` q4, layer 7/8 boundary |
+| URL | `/index-split.html?full=0&tokens=1` |
+| Browser / adapter | Codex in-app Chromium, Apple GPU (`metal-3`) |
+| Session load | 273,398 ms |
+| Split execution | 5,419 ms after sessions were ready |
+| Output | `" Paris"` for prompt `The capital of France is` |
+| Relay | 98,304 bytes total / per prefill step |
+| Report status | `ok: true`; `referenceSkipped: true` |
+
+The 273-second load includes reading both ~1.3 GB external-data files and
+WebGPU compilation. It was deliberately a one-token run to keep GPU and memory
+load low. The report is self-reported diagnostic evidence, not yet wrapped in a
+captured-and-verified EvidenceEnvelope.
+
+### Harness commands
+
+```bash
+# Serve harness and trusted model artifacts on loopback only.
+cd LLM-proto/browser-harness/webgpu-2b
+MODELS_DIR=/Volumes/satelite/llm-models/webgpu-models PORT=8788 node serve.mjs
+
+# Open the low-load split-only path:
+# http://127.0.0.1:8788/index-split.html?full=0&tokens=1
+```
+
+### Segment regeneration contract
+
+Use ONNX Runtime's Python package and slice the full q4 graph with explicit
+input/output names. Keep the generated `.onnx` files beside the existing shared
+`model_q4.onnx_data` so their initializers resolve without copying weights.
+
+Segment 0 inputs are `input_ids`, `attention_mask`,
+`past_key_values.{0..7}.key/value`. Its outputs are the two boundary tensors,
+`/model/layers.7/post_attention_layernorm/output_3`,
+`/model/layers.7/mlp/down_proj/MatMul/output_0`, plus
+`present.{0..7}.key/value`.
+
+Segment 1 inputs are those two boundary tensors, `attention_mask`, and
+`past_key_values.{8..15}.key/value`. Its outputs are `logits` plus
+`present.{8..15}.key/value`.
+
+A reproducible script should enumerate the exact names above into two lists and
+call:
+
+```python
+onnx.utils.extract_model(
+    "model_q4.onnx",
+    "segment0.onnx",
+    segment0_inputs,
+    segment0_outputs,
+)
+onnx.utils.extract_model(
+    "model_q4.onnx",
+    "segment1.onnx",
+    segment1_inputs,
+    segment1_outputs,
+)
+```
+
+After generation, compare full-model logits with segment 0 followed by segment
+1 over at least one real prompt before treating the artifacts as usable. Record
+the maximum absolute difference alongside the artifact revisions/hashes.
+
+
 ## Relationship To Existing Designs
 
 - `PLAN.md` remains the reviewed long-term pipeline plan for 30B-class models.
