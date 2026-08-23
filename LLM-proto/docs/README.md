@@ -3,13 +3,15 @@
 ## 最初に読む文書
 
 1. [`../README.md`](../README.md) — 実装トラックと現在の成熟度
-2. [`evidence-readiness.md`](./evidence-readiness.md) — evidence levelとproduction readinessの規約
-3. [`evidence-validation.md`](./evidence-validation.md) — TypeScript validator、trust boundary、利用方法
-4. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
-5. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
-6. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
-7. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
-8. [`../browser-harness/webgpu-2b/`](../browser-harness/webgpu-2b/) — WebGPU 実測harness（transformers.js + WebGPU でモデル実行・計測）
+2. [`real-two-segment-webgpu-e2e.md`](./real-two-segment-webgpu-e2e.md) — **現在のP0 (#165)**。約200MiB/workerを目標に、SmolLM2-135M q4でsame-machine logits比較→2 browser WebGPU→checkpoint resumeまで確認する手順
+3. [`evidence-readiness.md`](./evidence-readiness.md) — evidence levelとproduction readinessの規約
+4. [`evidence-validation.md`](./evidence-validation.md) — TypeScript validator、trust boundary、利用方法
+5. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
+6. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
+7. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
+8. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
+9. [`../browser-harness/webgpu-2b/`](../browser-harness/webgpu-2b/) — 単一ブラウザWebGPU 実測harness（transformers.js + WebGPU）
+10. [`../browser-harness/webgpu-2b-split/`](../browser-harness/webgpu-2b-split/) — #165 の2ブラウザ実segment relay harness（ディレクトリ名はhistorical）
 
 ## 読み方
 
@@ -18,6 +20,8 @@
 - mock・fixture・simulator: contract test
 - runtime自身のreport: runtime observation
 - digestとverifierを持つartifact: verified evidence
+
+現在は #165 の browser-budgeted real segmented / two-browser WebGPU E2E を技術的核心のP0として扱い、Continuous Assurance production deployment #158 はその実測成立までHOLDです。P0成立後の1B scale-upでもartifact target約200MiB / preferred<=256MiB / hard<=1GiBを維持し、必要segment数を増やします。
 
 最新の実装計画は[`../PLAN.md`](../PLAN.md)、証拠モデルの是正はIssue #101を参照してください。
 
