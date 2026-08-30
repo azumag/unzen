@@ -178,18 +178,26 @@ function parseR2Locator(locator: string): string {
   return key;
 }
 
+type RolloutVerifierResponse = {
+  result: string;
+  verifier: string;
+  version: string;
+  verifiedAt: string;
+  readinessStatus?: string;
+};
+
 async function callVerifier(
   binding: ProductionOperationsRolloutVerifierBinding,
   path: string,
   body: unknown,
-): Promise<any> {
+): Promise<RolloutVerifierResponse> {
   const response = await binding.fetch(new Request(`https://rollout-verifier.internal${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   }));
   if (!response.ok) throw new Error(`production-rollout-verifier-http-${response.status}`);
-  return response.json();
+  return (await response.json()) as RolloutVerifierResponse;
 }
 
 function artifactTransport(content: string | Uint8Array | ArrayBuffer): unknown {

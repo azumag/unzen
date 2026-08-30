@@ -66,7 +66,7 @@ const ASYNC_FUNCTION_DESCRIPTION =
 const GENERATOR_FUNCTION_DESCRIPTION =
   'generator function - iterator results are unsupported in sandbox functions';
 const FORBIDDEN_API_NAMES = new Set(FORBIDDEN_API_RULES.map(rule => rule.name));
-const GLOBAL_OBJECT_NAMES = new Set(['globalThis', 'self', 'window']);
+const GLOBAL_OBJECT_NAMES = new Set(['globalThis', 'self', 'window', 'global']);
 
 function staticPropertyName(
   node: ts.PropertyAccessExpression | ts.ElementAccessExpression,

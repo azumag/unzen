@@ -47,6 +47,14 @@ describe('shared identifier validation', () => {
     expect(isValidFunctionName('../calculate')).toBe(false);
   });
 
+  it('rejects prototype-pollution function names', () => {
+    expect(isValidFunctionName('__proto__')).toBe(false);
+    expect(isValidFunctionName('constructor')).toBe(false);
+    expect(isValidFunctionName('prototype')).toBe(false);
+    // Safe names that merely contain those substrings are still allowed
+    expect(isValidFunctionName('my_constructor')).toBe(true);
+  });
+
   it('accepts only canonical lowercase SHA-256 identities', () => {
     const hash = `sha256:${'a'.repeat(64)}`;
     expect(isValidContentHash(hash)).toBe(true);
