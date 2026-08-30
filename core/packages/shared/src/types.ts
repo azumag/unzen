@@ -144,10 +144,16 @@ export const MAX_FUNCTION_PAYLOAD_BYTES = 16 * 1024 * 1024;
  */
 const SAFE_FUNCTION_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,99}$/;
 const SHA256_CONTENT_HASH = /^sha256:[a-f0-9]{64}$/;
+// Block names that could pollute Object prototype even when used as plain-object keys.
+const FORBIDDEN_FUNCTION_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** Whether a function name is safe to use as a manifest key and URL segment. */
 export function isValidFunctionName(value: unknown): value is string {
-  return typeof value === 'string' && SAFE_FUNCTION_NAME.test(value);
+  return (
+    typeof value === 'string' &&
+    SAFE_FUNCTION_NAME.test(value) &&
+    !FORBIDDEN_FUNCTION_NAMES.has(value)
+  );
 }
 
 /** Whether a value is Unzen's canonical lowercase SHA-256 content identity. */

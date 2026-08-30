@@ -30,6 +30,15 @@ const __dirname = dirname(__filename);
 
 const app = new Hono();
 
+// Security headers for all responses (demo is localhost-only but defense-in-depth).
+app.use('*', async (c, next) => {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+});
+
 // Initialize UnzenServer
 // baseUrl is ORIGIN-RELATIVE ('/unzen') so the manifest's codeUrl stays on the
 // same origin/scheme as the page that requested it. A hard-coded

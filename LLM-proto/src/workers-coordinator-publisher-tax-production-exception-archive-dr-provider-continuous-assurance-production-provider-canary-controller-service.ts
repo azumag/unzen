@@ -177,14 +177,22 @@ export async function runProductionProviderCanaryController(
   return envelope;
 }
 
-async function callVerifier(binding: ProductionProviderCanaryVerifierBinding, path: string, body: unknown): Promise<any> {
+type VerifierCaptureResponse = {
+  result: string;
+  verifier: string;
+  version: string;
+  verifiedAt: string;
+  readinessStatus?: string;
+};
+
+async function callVerifier(binding: ProductionProviderCanaryVerifierBinding, path: string, body: unknown): Promise<VerifierCaptureResponse> {
   const response = await binding.fetch(new Request(`https://provider-canary-verifier.internal${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   }));
   if (!response.ok) throw new Error(`production-provider-canary-verifier-http-${response.status}`);
-  return response.json();
+  return (await response.json()) as VerifierCaptureResponse;
 }
 
 async function sha256Hex(value: string): Promise<string> {
