@@ -256,11 +256,15 @@ export class AdaptiveChunkDispatcher {
 
       this.transport.connect(`${this.coordinatorUrl}/adaptive/${requestId}/chunk/${nextSegment}`);
       if (missingArtifacts !== undefined) {
-        // Validate every locator against the transport allowlist before
-        // committing any cache state. If one later component is rejected, the
-        // worker must not retain a partial residency claim from this assignment.
+        // Validate every file locator for every logical bundle before committing
+        // any cache state. If a later component is rejected, the worker must not
+        // retain a partial segment-residency claim.
         for (const artifact of missingArtifacts) {
-          this.transport.connect(artifact.artifactLocator);
+          const locators = artifact.components?.map((component) => component.artifactLocator) ??
+            [artifact.artifactLocator];
+          for (const locator of locators) {
+            this.transport.connect(locator);
+          }
         }
         for (const artifact of missingArtifacts) {
           selected.worker.residentSegments.add(artifact.index);

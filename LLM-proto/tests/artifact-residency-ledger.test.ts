@@ -5,6 +5,7 @@ import {
 } from '../src/artifact-residency-ledger.js';
 import type {
   SegmentArtifact,
+  SegmentArtifactComponent,
   SegmentedModelManifest,
 } from '../src/model-manifest.js';
 import { workerId, type SegmentConfig } from '../src/types.js';
@@ -117,6 +118,65 @@ describe('ArtifactResidencyLedger', () => {
     const ledger = ArtifactResidencyLedger.fromManifest(manifest);
     expect(ledger.segmentCount).toBe(2);
     expect(ledger.totalArtifactBytes).toBe(300);
+  });
+
+  it('copies and freezes component bundles so caller mutation cannot rewrite inventory', () => {
+    const components: SegmentArtifactComponent[] = [
+      {
+        role: 'graph',
+        path: 'segment0.onnx',
+        byteSize: 100,
+        sha256: '1'.repeat(64),
+        contentType: 'application/onnx',
+        artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx',
+      },
+      {
+        role: 'external-data',
+        path: 'segment0.onnx_data',
+        byteSize: 200,
+        sha256: '2'.repeat(64),
+        contentType: 'application/octet-stream',
+        artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx_data',
+      },
+    ];
+    const artifact: SegmentArtifact = {
+      ...makeArtifacts([300])[0],
+      contentType: 'application/vnd.unzen.onnx-segment-bundle',
+      artifactLocator: components[0].artifactLocator,
+      components,
+    };
+    const ledger = new ArtifactResidencyLedger([artifact]);
+
+    components[0].byteSize = 999;
+    components.push({
+      ...components[1],
+      path: 'late-added.bin',
+    });
+
+    const stored = ledger.getArtifact(0);
+    expect(stored.components).toHaveLength(2);
+    expect(stored.components?.[0].byteSize).toBe(100);
+    expect(Object.isFrozen(stored.components)).toBe(true);
+    expect(Object.isFrozen(stored.components?.[0])).toBe(true);
+  });
+
+  it('rejects a directly constructed bundle whose component bytes are inconsistent', () => {
+    const artifact: SegmentArtifact = {
+      ...makeArtifacts([300])[0],
+      contentType: 'application/vnd.unzen.onnx-segment-bundle',
+      components: [
+        {
+          role: 'graph',
+          path: 'segment0.onnx',
+          byteSize: 100,
+          sha256: '1'.repeat(64),
+          contentType: 'application/onnx',
+          artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx',
+        },
+      ],
+    };
+
+    expect(() => new ArtifactResidencyLedger([artifact])).toThrow(/component bytes/);
   });
 
   it('fails closed on duplicate indexes and unsafe byte sizes', () => {
