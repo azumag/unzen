@@ -350,21 +350,22 @@ export class AdaptiveChunkDispatcher {
    * Compute the longest contiguous span that fits this worker from the current
    * segment. Unlike the original prototype, this supports unequal edge shards
    * produced by byte-budget-driven ONNX partitioning.
+   *
+   * Load/stability scaling is applied to the worker's model-wide capacity, not
+   * repeatedly to the shrinking number of remaining segments. Otherwise a 50%
+   * throttle turns a four-segment capacity into chunks 2, 1, 1 instead of the
+   * intended steady two-segment target, adding avoidable checkpoint boundaries.
    */
   private computeTargetChunkLength(worker: AdaptiveWorkerState, startSegment: number): number {
     const availableVramMB = Math.min(
       worker.telemetry.vramFreeMB,
       this.configuredVramLimitMB,
     );
-    let consumedVramMB = 0;
-    let maximumSpanLength = 0;
-    for (let index = startSegment; index < this.options.segments.length; index++) {
-      const nextVramMB = this.options.segments[index].estimatedVramMB;
-      if (consumedVramMB + nextVramMB > availableVramMB) break;
-      consumedVramMB += nextVramMB;
-      maximumSpanLength++;
-    }
-    if (maximumSpanLength < 1) {
+    const currentMaximumSpanLength = this.computeMaximumSpanLength(
+      availableVramMB,
+      startSegment,
+    );
+    if (currentMaximumSpanLength < 1) {
       return 0;
     }
 
@@ -374,9 +375,48 @@ export class AdaptiveChunkDispatcher {
       return 0;
     }
 
-    const chunkLength = Math.floor(maximumSpanLength * loadBudgetScale * stabilityScale);
-    const tierLimit = worker.tier === WorkerTier.TIER_3 ? 1 : maximumSpanLength;
-    return clamp(1, Math.min(maximumSpanLength, tierLimit), chunkLength);
+    const modelMaximumSpanLength = this.computeModelMaximumSpanLength(availableVramMB);
+    const chunkLength = Math.floor(
+      modelMaximumSpanLength * loadBudgetScale * stabilityScale,
+    );
+    const tierLimit = worker.tier === WorkerTier.TIER_3
+      ? 1
+      : modelMaximumSpanLength;
+    return clamp(
+      1,
+      Math.min(currentMaximumSpanLength, tierLimit),
+      chunkLength,
+    );
+  }
+
+  private computeMaximumSpanLength(availableVramMB: number, startSegment: number): number {
+    let consumedVramMB = 0;
+    let maximumSpanLength = 0;
+    for (let index = startSegment; index < this.options.segments.length; index++) {
+      const nextVramMB = this.options.segments[index].estimatedVramMB;
+      if (consumedVramMB + nextVramMB > availableVramMB) break;
+      consumedVramMB += nextVramMB;
+      maximumSpanLength++;
+    }
+    return maximumSpanLength;
+  }
+
+  /** Maximum count of any contiguous segment window that fits the worker. */
+  private computeModelMaximumSpanLength(availableVramMB: number): number {
+    let start = 0;
+    let consumedVramMB = 0;
+    let maximumSpanLength = 0;
+
+    for (let end = 0; end < this.options.segments.length; end++) {
+      consumedVramMB += this.options.segments[end].estimatedVramMB;
+      while (consumedVramMB > availableVramMB && start <= end) {
+        consumedVramMB -= this.options.segments[start].estimatedVramMB;
+        start++;
+      }
+      maximumSpanLength = Math.max(maximumSpanLength, end - start + 1);
+    }
+
+    return maximumSpanLength;
   }
 
   private computeLoadBudgetScale(telemetry: WorkerTelemetry): number {
