@@ -119,7 +119,10 @@ def build_segment_specs(
     """Build contiguous segment contracts for cuts such as ``(8, 12)``."""
 
     total_layers = discover_total_layers(model)
-    if tuple(sorted(cut_layers)) != cut_layers or len(set(cut_layers)) != len(cut_layers):
+    if (
+        tuple(sorted(cut_layers)) != cut_layers
+        or len(set(cut_layers)) != len(cut_layers)
+    ):
         raise ValueError(f"cut layers must be strictly increasing: {cut_layers}")
     if any(layer <= 0 or layer >= total_layers for layer in cut_layers):
         raise ValueError(
@@ -438,6 +441,29 @@ def prepare_budgeted_multi_split(
     if len(specs) != len(estimated_costs):
         raise AssertionError("planner/generator segment count mismatch")
 
+    # Fail before opening any output file if a generated name would overwrite
+    # the source graph or one of its external-data files. This matters when an
+    # operator intentionally reuses the source directory as the output directory.
+    source_artifacts = {source_model_path.resolve()}
+    source_artifacts.update(
+        (source_model_path.parent / str(entry["location"])).resolve()
+        for entry in source_external
+    )
+    generated_artifacts = {
+        path.resolve()
+        for index in range(len(specs))
+        for path in (
+            output_dir / f"segment{index}.onnx",
+            output_dir / f"segment{index}.onnx_data",
+        )
+    }
+    collisions = sorted(source_artifacts & generated_artifacts, key=str)
+    if collisions:
+        raise ValueError(
+            "generated artifact path would overwrite source data: "
+            + ", ".join(str(path) for path in collisions)
+        )
+
     segments: list[dict[str, object]] = []
     for index, (spec, estimated) in enumerate(zip(specs, estimated_costs)):
         segment = extract_submodel(
@@ -457,10 +483,10 @@ def prepare_budgeted_multi_split(
             source_model_path.parent,
             f"segment{index}.onnx_data",
         )
-        # Repacker validates external-data graphs itself; this explicit exact-path
-        # check also covers fully embedded graphs and avoids validating stale
-        # segment files left by an unrelated run.
-        check_model_for_runtime(segment_path)
+        # The repacker validates external-data graphs after rewriting them. A
+        # fully embedded graph bypasses the repacker, so validate that path here.
+        if external is None:
+            check_model_for_runtime(segment_path)
         entry: dict[str, object] = {
             "index": index,
             "path": segment_path.name,
