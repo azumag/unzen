@@ -19,6 +19,7 @@
 
 import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
 import {
+  type Checkpoint,
   type WorkerId,
   type InferenceRequest,
   type InferenceResult,
@@ -29,7 +30,7 @@ import {
 import type { SpanAssignment, SpanResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
-import { SpanRouter, type Route } from './span-router.js';
+import { SpanRouter, type Route, type Span } from './span-router.js';
 import { withTimeout, delay } from './pipeline-utils.js';
 
 /**
@@ -42,7 +43,7 @@ export interface SpanExecutor {
 }
 
 export interface SpanPipelineOptions {
-  /** Maximum retry attempts per span (default: 2). */
+  /** Maximum retry attempts after the initial route (default: 2). */
   readonly maxRetries: number;
   /** Timeout per span execution in ms. Scales with span size. */
   readonly perSegmentTimeoutMs: number;
@@ -78,12 +79,13 @@ export class SpanPipeline {
 
   /**
    * Execute a full inference request using span-based routing.
-   * 1. Compute the optimal route (spans) using SpanRouter
-   * 2. Execute each span sequentially, passing checkpoints between them
-   * 3. Clean up checkpoints on both success and failure
+   *
+   * A durable checkpoint already present for this request is honored on the
+   * first attempt. Later worker failures retain the newest validated checkpoint
+   * and reroute only the unfinished suffix. Checkpoints are deleted only after
+   * final success or terminal failure.
    */
   async run(request: InferenceRequest): Promise<InferenceResult> {
-    // Edge case: no segments to process
     if (this.segments.length === 0) {
       request.status = InferenceStatus.COMPLETED;
       return { requestId: request.id, tokens: [], text: '', totalTimeMs: 0, segmentsCompleted: 0 };
@@ -95,6 +97,7 @@ export class SpanPipeline {
     try {
       return await this.executeWithRoute(request, startTime);
     } catch (error) {
+      request.status = InferenceStatus.FAILED;
       this.checkpointStore.deleteAll(request.id);
       throw error;
     }
@@ -104,6 +107,18 @@ export class SpanPipeline {
     request: InferenceRequest,
     startTime: number,
   ): Promise<InferenceResult> {
+    // A final segment produces output, not a resumable checkpoint. Bounding the
+    // lookup at N-2 prevents malformed/stale final checkpoints from skipping
+    // the output-producing span.
+    let resumeCheckpoint = this.checkpointStore.latest(
+      request.id,
+      this.segments.length - 2,
+    );
+    let resumeSegment = resumeCheckpoint === undefined
+      ? 0
+      : resumeCheckpoint.segmentIndex + 1;
+    request.currentSegment = resumeSegment;
+
     // Router reads workerPool and residency state lazily on every computeRoute()
     // call, so retries exclude disconnected workers and use current cache facts.
     const router = new SpanRouter(
@@ -113,71 +128,76 @@ export class SpanPipeline {
     );
 
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
-      const route = router.computeRoute();
+      const route = router.computeRoute(resumeSegment);
       if (!route || route.length === 0) {
-        // No viable route: wait and retry
         if (attempt < this.options.maxRetries) {
           await delay(this.options.retryDelayMs);
           continue;
         }
-        request.status = InferenceStatus.FAILED;
         throw new SpanPipelineError(
-          'No viable route: insufficient workers to cover all segments',
+          `No viable route for unfinished suffix starting at segment ${resumeSegment}`,
           request.id,
         );
       }
 
       try {
-        return await this.executeRoute(request, route, startTime);
+        return await this.executeRoute(
+          request,
+          route,
+          startTime,
+          resumeCheckpoint,
+        );
       } catch (error) {
-        // Clean up checkpoints from partial execution before retrying. A later
-        // milestone will retain the nearest durable boundary; this prototype
-        // still restarts the route after a failed span.
-        this.checkpointStore.deleteAll(request.id);
         if (attempt >= this.options.maxRetries) {
-          request.status = InferenceStatus.FAILED;
           throw error;
         }
-        // Route failed: retry with a new route (failed workers are already disconnected)
+
+        // A route may have completed one or more spans before a later worker
+        // failed. Keep the newest validated boundary and retry only after it.
+        const latest = this.checkpointStore.latest(
+          request.id,
+          this.segments.length - 2,
+        );
+        if (
+          latest !== undefined &&
+          (resumeCheckpoint === undefined || latest.segmentIndex >= resumeCheckpoint.segmentIndex)
+        ) {
+          resumeCheckpoint = latest;
+          resumeSegment = latest.segmentIndex + 1;
+          request.currentSegment = resumeSegment;
+        }
       }
     }
 
-    // Should not reach here
     throw new SpanPipelineError('Route execution exhausted all retries', request.id);
   }
 
-  /**
-   * Execute a pre-computed route: sequentially process each span,
-   * passing checkpoints between span boundaries.
-   */
+  /** Execute one suffix route, relaying checkpoints only at span boundaries. */
   private async executeRoute(
     request: InferenceRequest,
     route: Route,
     startTime: number,
+    initialCheckpoint: Checkpoint | undefined,
   ): Promise<InferenceResult> {
     for (let i = 0; i < route.length; i++) {
       const span = route[i];
-      const isLastSpan = i === route.length - 1;
-
-      // Get the segments for this span
+      const isFinalSpan = span.endSegment === this.segments.length - 1;
       const spanSegments = this.segments.slice(span.startSegment, span.endSegment + 1);
+      const checkpoint = i === 0
+        ? initialCheckpoint
+        : this.checkpointStore.get(request.id, route[i - 1].endSegment);
 
-      // Get checkpoint from previous span (undefined for first span)
-      const checkpoint = i > 0
-        ? this.checkpointStore.get(request.id, route[i - 1].endSegment)
-        : undefined;
-
+      this.assertInputCheckpoint(request, span, checkpoint);
       const assignment: SpanAssignment = {
         requestId: request.id,
         segments: spanSegments,
         checkpoint,
       };
 
-      // Mark worker as busy. currentSegment tracks the span's start index;
-      // the span's full range is tracked in the route, not in WorkerInfo.
+      // currentSegment tracks the unfinished suffix boundary, while WorkerInfo
+      // tracks the current span's first segment.
+      request.currentSegment = span.startSegment;
       this.workerPool.markBusy(span.workerId, span.startSegment);
-
-      // Timeout scales with span size (more segments = more time needed)
       const spanSize = span.endSegment - span.startSegment + 1;
       const timeoutMs = spanSize * this.options.perSegmentTimeoutMs;
 
@@ -187,6 +207,7 @@ export class SpanPipeline {
           assignment,
           timeoutMs,
         );
+        this.assertSpanResult(request, span, result, isFinalSpan);
 
         this.workerPool.markIdle(span.workerId);
         this.options.artifactResidencyLedger?.markResidentRange(
@@ -195,36 +216,27 @@ export class SpanPipeline {
           span.endSegment,
         );
 
-        // Save checkpoint at span boundary (if not the last span)
-        if (result.checkpoint) {
-          this.checkpointStore.save(result.checkpoint);
+        if (!isFinalSpan) {
+          // assertSpanResult guarantees the checkpoint exists and matches the
+          // completed boundary before it reaches durable storage.
+          this.checkpointStore.save(result.checkpoint!);
+          request.currentSegment = span.endSegment + 1;
+          continue;
         }
 
-        // Last span should produce the final output
-        if (isLastSpan) {
-          if (!result.output) {
-            request.status = InferenceStatus.FAILED;
-            throw new SpanPipelineError(
-              'Final span did not produce output',
-              request.id,
-            );
-          }
-
-          request.status = InferenceStatus.COMPLETED;
-          this.checkpointStore.deleteAll(request.id);
-
-          return {
-            requestId: request.id,
-            tokens: result.output.tokens,
-            text: result.output.text,
-            totalTimeMs: Date.now() - startTime,
-            segmentsCompleted: this.segments.length,
-          };
-        }
+        request.status = InferenceStatus.COMPLETED;
+        request.currentSegment = this.segments.length;
+        this.checkpointStore.deleteAll(request.id);
+        return {
+          requestId: request.id,
+          tokens: result.output!.tokens,
+          text: result.output!.text,
+          totalTimeMs: Date.now() - startTime,
+          segmentsCompleted: this.segments.length,
+        };
       } catch (error) {
-        // A disconnected browser can no longer prove that its Cache API entry
-        // is reachable. Remove its residency observation until a later
-        // heartbeat re-advertises an authoritative cache snapshot.
+        // A disconnected or contract-violating browser can no longer prove that
+        // either its execution result or Cache API entry is trustworthy.
         this.workerPool.markDisconnected(span.workerId);
         this.options.artifactResidencyLedger?.clearWorker(span.workerId);
         throw error;
@@ -232,6 +244,117 @@ export class SpanPipeline {
     }
 
     throw new SpanPipelineError('Route ended without producing output', request.id);
+  }
+
+  private assertInputCheckpoint(
+    request: InferenceRequest,
+    span: Span,
+    checkpoint: Checkpoint | undefined,
+  ): void {
+    if (span.startSegment === 0) {
+      if (checkpoint !== undefined) {
+        throw new SpanPipelineError(
+          'segment 0 must not receive a checkpoint',
+          request.id,
+        );
+      }
+      return;
+    }
+
+    if (checkpoint === undefined) {
+      throw new SpanPipelineError(
+        `missing checkpoint before segment ${span.startSegment}`,
+        request.id,
+      );
+    }
+    if (checkpoint.requestId !== request.id) {
+      throw new SpanPipelineError(
+        `checkpoint request ${checkpoint.requestId} does not match ${request.id}`,
+        request.id,
+      );
+    }
+    if (checkpoint.segmentIndex !== span.startSegment - 1) {
+      throw new SpanPipelineError(
+        `checkpoint segment ${checkpoint.segmentIndex} does not precede ` +
+        `span start ${span.startSegment}`,
+        request.id,
+      );
+    }
+  }
+
+  private assertSpanResult(
+    request: InferenceRequest,
+    span: Span,
+    result: SpanResult,
+    isFinalSpan: boolean,
+  ): void {
+    if (result.requestId !== request.id) {
+      throw new SpanPipelineError(
+        `span result request ${result.requestId} does not match ${request.id}`,
+        request.id,
+      );
+    }
+    if (result.workerId !== span.workerId) {
+      throw new SpanPipelineError(
+        `span result worker ${result.workerId} does not match assigned worker ${span.workerId}`,
+        request.id,
+      );
+    }
+    if (result.startSegment !== span.startSegment || result.endSegment !== span.endSegment) {
+      throw new SpanPipelineError(
+        `span result range ${result.startSegment}..${result.endSegment} does not match ` +
+        `assignment ${span.startSegment}..${span.endSegment}`,
+        request.id,
+      );
+    }
+    if (!Number.isFinite(result.processingTimeMs) || result.processingTimeMs < 0) {
+      throw new SpanPipelineError(
+        `span processingTimeMs must be a non-negative finite number`,
+        request.id,
+      );
+    }
+
+    if (isFinalSpan) {
+      if (result.checkpoint !== undefined) {
+        throw new SpanPipelineError(
+          `final span ${span.startSegment}..${span.endSegment} must not produce a checkpoint`,
+          request.id,
+        );
+      }
+      if (result.output === undefined) {
+        throw new SpanPipelineError(
+          'Final span did not produce output',
+          request.id,
+        );
+      }
+      return;
+    }
+
+    if (result.output !== undefined) {
+      throw new SpanPipelineError(
+        `non-final span ${span.startSegment}..${span.endSegment} must not produce output`,
+        request.id,
+      );
+    }
+    if (result.checkpoint === undefined) {
+      throw new SpanPipelineError(
+        `non-final span ${span.startSegment}..${span.endSegment} did not produce a checkpoint`,
+        request.id,
+      );
+    }
+    if (result.checkpoint.requestId !== request.id) {
+      throw new SpanPipelineError(
+        `checkpoint request ${result.checkpoint.requestId} does not match ${request.id}`,
+        request.id,
+      );
+    }
+    if (result.checkpoint.segmentIndex !== span.endSegment) {
+      throw new SpanPipelineError(
+        `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
+        `span end ${span.endSegment}`,
+        request.id,
+      );
+    }
   }
 
   private executeSpanWithTimeout(
