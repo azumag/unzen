@@ -31,7 +31,7 @@ export interface Span {
   readonly endSegment: number;
 }
 
-/** An ordered list of spans that covers all segments 0..N-1. */
+/** An ordered list of spans that covers one contiguous suffix of the model. */
 export type Route = readonly Span[];
 
 interface RankedWorker {
@@ -65,21 +65,32 @@ export class SpanRouter {
   }
 
   /**
-   * Compute a route that covers all segments [0, N-1]. Returns null if the
-   * currently idle workers cannot cover the remaining model.
+   * Compute a route that covers `[startSegment, N-1]`. Returns null if the
+   * currently idle workers cannot cover that suffix.
    *
-   * Routing is recalculated at every boundary because byte-budgeted ONNX
-   * shards can have unequal VRAM estimates. With an artifact ledger, workers
-   * that already hold a contiguous prefix at the current boundary are ranked
-   * ahead of cold workers; equal-locality candidates retain the stable
-   * tier/capacity ordering used by the original prototype.
+   * A non-zero start is the durable-checkpoint resume path: earlier segments
+   * are already complete and must not be routed again. Routing is recalculated
+   * at every boundary because byte-budgeted ONNX shards can have unequal VRAM
+   * estimates. With an artifact ledger, workers that already hold a contiguous
+   * prefix at the current boundary are ranked ahead of cold workers;
+   * equal-locality candidates retain stable tier/capacity ordering.
    */
-  computeRoute(): Route | null {
-    if (this.segments.length === 0) return [];
+  computeRoute(startSegment = 0): Route | null {
+    if (
+      !Number.isInteger(startSegment) ||
+      startSegment < 0 ||
+      startSegment > this.segments.length
+    ) {
+      throw new Error(
+        `startSegment must be an integer between 0 and ${this.segments.length}; ` +
+        `found ${startSegment}`,
+      );
+    }
+    if (startSegment === this.segments.length) return [];
 
     const route: Span[] = [];
     const usedWorkers = new Set<WorkerId>();
-    let nextSegment = 0;
+    let nextSegment = startSegment;
 
     while (nextSegment < this.segments.length) {
       const candidates = this.rankWorkers(nextSegment, usedWorkers);
