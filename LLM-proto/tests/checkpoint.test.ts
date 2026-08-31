@@ -82,6 +82,38 @@ describe('CheckpointStore', () => {
     expect(store.get(reqId2, 0)).toBe(cp2);
   });
 
+  describe('latest', () => {
+    it('returns the highest completed segment regardless of insertion order', () => {
+      const cp3 = makeCheckpoint(reqId, 3);
+      store.save(cp3);
+      store.save(makeCheckpoint(reqId, 0));
+      store.save(makeCheckpoint(reqId, 2));
+
+      expect(store.latest(reqId)).toBe(cp3);
+    });
+
+    it('can stop at a durable upper boundary', () => {
+      const cp1 = makeCheckpoint(reqId, 1);
+      store.save(cp1);
+      store.save(makeCheckpoint(reqId, 4));
+      store.save(makeCheckpoint(reqId, 2));
+
+      expect(store.latest(reqId, 1)).toBe(cp1);
+      expect(store.latest(reqId, -1)).toBeUndefined();
+    });
+
+    it('does not return another request checkpoint', () => {
+      const other = inferenceRequestId('req-other');
+      store.save(makeCheckpoint(other, 5));
+
+      expect(store.latest(reqId)).toBeUndefined();
+    });
+
+    it('rejects a non-integer upper boundary', () => {
+      expect(() => store.latest(reqId, 1.5)).toThrow(/integer/);
+    });
+  });
+
   describe('deleteAll', () => {
     it('should remove all checkpoints for a request', () => {
       store.save(makeCheckpoint(reqId, 0));
