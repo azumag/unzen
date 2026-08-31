@@ -1,3 +1,4 @@
+import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
 import { workerId, WorkerTier, type SegmentConfig, type WorkerId } from './types.js';
 import { AllowlistedPrototypeTransport } from './two-worker-prototype.js';
 
@@ -31,6 +32,17 @@ export interface DispatchScoreInputs {
   readonly total: number;
 }
 
+export interface ArtifactResidencyAssignmentReport {
+  /** Exact graph + external-data bytes for every segment in this assignment. */
+  readonly totalArtifactBytes: number;
+  /** Exact bytes already resident before this assignment began. */
+  readonly residentArtifactBytesBeforeAssignment: number;
+  /** Exact bytes fetched from the artifact origin for this assignment. */
+  readonly downloadedArtifactBytes: number;
+  /** Segment bundles that were absent before the assignment. */
+  readonly missingSegmentIndexes: readonly number[];
+}
+
 export interface AdaptiveChunkAssignmentReport {
   readonly workerId: WorkerId;
   readonly tier: WorkerTier;
@@ -48,6 +60,8 @@ export interface AdaptiveChunkAssignmentReport {
   readonly checkpointTransferBytes: number;
   readonly coldLoad: boolean;
   readonly rollingConsecutive: boolean;
+  /** Present when a manifest-backed artifact inventory was supplied. */
+  readonly artifactResidency?: ArtifactResidencyAssignmentReport;
 }
 
 export interface AdaptiveDispatcherRunReport {
@@ -84,6 +98,12 @@ interface CandidateScore {
 
 export interface AdaptiveChunkDispatcherOptions {
   readonly segments: readonly SegmentConfig[];
+  /**
+   * Optional exact artifact inventory. When present, cache scoring and transfer
+   * reports use measured graph + external-data bytes, and cached artifacts are
+   * not requested from the CDN again.
+   */
+  readonly artifactResidencyLedger?: ArtifactResidencyLedger;
   readonly transport?: AllowlistedPrototypeTransport;
   readonly coordinatorUrl?: string;
   readonly cdnUrl?: string;
@@ -108,12 +128,26 @@ export class AdaptiveChunkDispatcher {
   private readonly longLivedWorkerMs: number;
   private readonly configuredVramLimitMB: number;
   private readonly checkpointBytes: number;
+  private readonly artifactResidencyLedger?: ArtifactResidencyLedger;
   private assignmentCounter = 0;
   private requestCounter = 0;
 
   constructor(private readonly options: AdaptiveChunkDispatcherOptions) {
     if (options.segments.length === 0) {
       throw new Error('AdaptiveChunkDispatcher requires at least one segment');
+    }
+    for (const [arrayIndex, segment] of options.segments.entries()) {
+      if (segment.index !== arrayIndex) {
+        throw new Error(
+          `AdaptiveChunkDispatcher requires segment indexes 0..n-1; ` +
+          `expected ${arrayIndex}, found ${segment.index}`,
+        );
+      }
+      if (!Number.isFinite(segment.estimatedVramMB) || segment.estimatedVramMB <= 0) {
+        throw new Error(
+          `segment ${segment.index} estimatedVramMB must be a positive finite number`,
+        );
+      }
     }
 
     this.coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
@@ -126,10 +160,14 @@ export class AdaptiveChunkDispatcher {
     this.longLivedWorkerMs = options.longLivedWorkerMs ?? DEFAULT_LONG_LIVED_WORKER_MS;
     this.configuredVramLimitMB = options.configuredVramLimitMB ?? Number.POSITIVE_INFINITY;
     this.checkpointBytes = options.checkpointBytes ?? DEFAULT_CHECKPOINT_BYTES;
+    this.artifactResidencyLedger = options.artifactResidencyLedger;
+    this.artifactResidencyLedger?.assertCompatibleSegments(options.segments);
   }
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     const id = workerId(registration.id);
+    this.validateCacheHits(registration.telemetry.cacheHits);
+    this.artifactResidencyLedger?.synchronizeWorker(id, registration.telemetry.cacheHits);
     this.workers.set(id, {
       id,
       tier: registration.tier,
@@ -145,7 +183,13 @@ export class AdaptiveChunkDispatcher {
       throw new Error(`Unknown adaptive worker: ${worker}`);
     }
 
+    this.validateCacheHits(telemetry.cacheHits);
+    // Validate and atomically replace the ledger entry before mutating the
+    // local worker state. A malformed heartbeat therefore leaves both views
+    // unchanged instead of partially applying its cache inventory.
+    this.artifactResidencyLedger?.synchronizeWorker(worker, telemetry.cacheHits);
     state.telemetry = telemetry;
+    state.residentSegments.clear();
     for (const segment of telemetry.cacheHits) {
       state.residentSegments.add(segment);
     }
@@ -189,23 +233,53 @@ export class AdaptiveChunkDispatcher {
         throw new Error(`No eligible adaptive worker for segment ${nextSegment}`);
       }
 
-      candidates.sort((a, b) => b.scoreInputs.total - a.scoreInputs.total);
+      candidates.sort((left, right) =>
+        right.scoreInputs.total - left.scoreInputs.total ||
+        left.worker.id.localeCompare(right.worker.id),
+      );
       const selected = candidates[0];
       const chunkLength = Math.min(
         selected.targetChunkLength,
         this.options.segments.length - nextSegment,
       );
       const endSegment = nextSegment + chunkLength - 1;
-      const cacheHit = this.allSegmentsResident(selected.worker, nextSegment, endSegment);
+      const missingArtifacts = this.artifactResidencyLedger?.missingArtifacts(
+        selected.worker.id,
+        nextSegment,
+        endSegment,
+      );
+      const cacheHit = missingArtifacts !== undefined
+        ? missingArtifacts.length === 0
+        : this.allSegmentsResident(selected.worker, nextSegment, endSegment);
       const coldLoad = !cacheHit && !selected.rollingConsecutive;
       const checkpointTransferMs = this.estimateCheckpointTransferMs(selected.worker.telemetry);
 
       this.transport.connect(`${this.coordinatorUrl}/adaptive/${requestId}/chunk/${nextSegment}`);
-      for (let segment = nextSegment; segment <= endSegment; segment++) {
-        this.transport.connect(`${this.cdnUrl}/models/proto-2b-q4/seg-${segment}.bin`);
-        selected.worker.residentSegments.add(segment);
+      if (missingArtifacts !== undefined) {
+        // The manifest locator, not a hard-coded model path, is authoritative.
+        // Only missing artifacts reach the CDN transport.
+        for (const artifact of missingArtifacts) {
+          this.transport.connect(artifact.artifactLocator);
+          selected.worker.residentSegments.add(artifact.index);
+          this.artifactResidencyLedger?.markResident(selected.worker.id, artifact.index);
+        }
+      } else {
+        // Legacy prototype path retained for callers that do not yet supply a
+        // validated model manifest and exact artifact inventory.
+        for (let segment = nextSegment; segment <= endSegment; segment++) {
+          this.transport.connect(`${this.cdnUrl}/models/proto-2b-q4/seg-${segment}.bin`);
+          selected.worker.residentSegments.add(segment);
+        }
       }
 
+      const artifactResidency = this.artifactResidencyLedger === undefined
+        ? undefined
+        : this.buildArtifactResidencyReport(
+          selected.worker.id,
+          nextSegment,
+          endSegment,
+          missingArtifacts ?? [],
+        );
       const report: AdaptiveChunkAssignmentReport = {
         workerId: selected.worker.id,
         tier: selected.worker.tier,
@@ -223,6 +297,7 @@ export class AdaptiveChunkDispatcher {
         checkpointTransferBytes: nextSegment === 0 ? 0 : this.checkpointBytes,
         coldLoad,
         rollingConsecutive: selected.rollingConsecutive,
+        artifactResidency,
       };
 
       selected.worker.lastAssignmentOrder = ++this.assignmentCounter;
@@ -247,7 +322,7 @@ export class AdaptiveChunkDispatcher {
     startSegment: number,
     previousAssignment: AdaptiveChunkAssignmentReport | undefined,
   ): CandidateScore | null {
-    const targetChunkLength = this.computeTargetChunkLength(worker);
+    const targetChunkLength = this.computeTargetChunkLength(worker, startSegment);
     if (targetChunkLength < 1) {
       return null;
     }
@@ -271,12 +346,25 @@ export class AdaptiveChunkDispatcher {
     return { worker, targetChunkLength, scoreInputs, rollingConsecutive };
   }
 
-  private computeTargetChunkLength(worker: AdaptiveWorkerState): number {
-    const vramPerSegment = this.options.segments[0].estimatedVramMB;
-    const maxResidentSegments = Math.floor(
-      Math.min(worker.telemetry.vramFreeMB, this.configuredVramLimitMB) / vramPerSegment,
+  /**
+   * Compute the longest contiguous span that fits this worker from the current
+   * segment. Unlike the original prototype, this supports unequal edge shards
+   * produced by byte-budget-driven ONNX partitioning.
+   */
+  private computeTargetChunkLength(worker: AdaptiveWorkerState, startSegment: number): number {
+    const availableVramMB = Math.min(
+      worker.telemetry.vramFreeMB,
+      this.configuredVramLimitMB,
     );
-    if (maxResidentSegments < 1) {
+    let consumedVramMB = 0;
+    let maximumSpanLength = 0;
+    for (let index = startSegment; index < this.options.segments.length; index++) {
+      const nextVramMB = this.options.segments[index].estimatedVramMB;
+      if (consumedVramMB + nextVramMB > availableVramMB) break;
+      consumedVramMB += nextVramMB;
+      maximumSpanLength++;
+    }
+    if (maximumSpanLength < 1) {
       return 0;
     }
 
@@ -286,9 +374,9 @@ export class AdaptiveChunkDispatcher {
       return 0;
     }
 
-    const chunkLength = Math.floor(maxResidentSegments * loadBudgetScale * stabilityScale);
-    const tierLimit = worker.tier === WorkerTier.TIER_3 ? 1 : maxResidentSegments;
-    return clamp(1, Math.min(maxResidentSegments, tierLimit), chunkLength);
+    const chunkLength = Math.floor(maximumSpanLength * loadBudgetScale * stabilityScale);
+    const tierLimit = worker.tier === WorkerTier.TIER_3 ? 1 : maximumSpanLength;
+    return clamp(1, Math.min(maximumSpanLength, tierLimit), chunkLength);
   }
 
   private computeLoadBudgetScale(telemetry: WorkerTelemetry): number {
@@ -328,7 +416,7 @@ export class AdaptiveChunkDispatcher {
       (worker.tier === WorkerTier.TIER_1 ? 10 : worker.tier === WorkerTier.TIER_2 ? 5 : 0) -
       worker.telemetry.failureRate * 50 -
       Math.min(10, worker.telemetry.heartbeatJitterMs / 100);
-    const cacheScore = this.countCachedSegments(worker, startSegment, chunkLength) * 12;
+    const cacheScore = this.computeCacheScore(worker, startSegment, chunkLength);
     const throughputScore = Math.min(25, worker.telemetry.tokensPerSecond);
     const transferAvoidanceScore = Math.min(
       20,
@@ -363,6 +451,25 @@ export class AdaptiveChunkDispatcher {
     };
   }
 
+  private computeCacheScore(
+    worker: AdaptiveWorkerState,
+    startSegment: number,
+    chunkLength: number,
+  ): number {
+    if (this.artifactResidencyLedger === undefined) {
+      return this.countCachedSegments(worker, startSegment, chunkLength) * 12;
+    }
+
+    const endSegment = startSegment + chunkLength - 1;
+    const totalBytes = this.artifactResidencyLedger.artifactBytes(startSegment, endSegment);
+    const residentBytes = this.artifactResidencyLedger.residentArtifactBytes(
+      worker.id,
+      startSegment,
+      endSegment,
+    );
+    return totalBytes === 0 ? 0 : (residentBytes / totalBytes) * chunkLength * 12;
+  }
+
   private canReceiveRollingAssignment(worker: AdaptiveWorkerState): boolean {
     return worker.tier !== WorkerTier.TIER_3 &&
       worker.telemetry.uptimeMs >= this.longLivedWorkerMs &&
@@ -382,7 +489,7 @@ export class AdaptiveChunkDispatcher {
   ): number {
     let count = 0;
     for (let segment = startSegment; segment < startSegment + chunkLength; segment++) {
-      if (worker.residentSegments.has(segment) || worker.telemetry.cacheHits.includes(segment)) {
+      if (this.isSegmentResident(worker, segment)) {
         count++;
       }
     }
@@ -395,11 +502,70 @@ export class AdaptiveChunkDispatcher {
     endSegment: number,
   ): boolean {
     for (let segment = startSegment; segment <= endSegment; segment++) {
-      if (!worker.residentSegments.has(segment) && !worker.telemetry.cacheHits.includes(segment)) {
+      if (!this.isSegmentResident(worker, segment)) {
         return false;
       }
     }
     return true;
+  }
+
+  private isSegmentResident(worker: AdaptiveWorkerState, segmentIndex: number): boolean {
+    if (this.artifactResidencyLedger !== undefined) {
+      return this.artifactResidencyLedger.isResident(worker.id, segmentIndex);
+    }
+    return worker.residentSegments.has(segmentIndex) ||
+      worker.telemetry.cacheHits.includes(segmentIndex);
+  }
+
+  private buildArtifactResidencyReport(
+    worker: WorkerId,
+    startSegment: number,
+    endSegment: number,
+    missingArtifacts: readonly { readonly index: number; readonly byteSize: number }[],
+  ): ArtifactResidencyAssignmentReport {
+    if (this.artifactResidencyLedger === undefined) {
+      throw new Error('artifact residency report requires a ledger');
+    }
+    const totalArtifactBytes = this.artifactResidencyLedger.artifactBytes(
+      startSegment,
+      endSegment,
+    );
+    const downloadedArtifactBytes = missingArtifacts.reduce(
+      (sum, artifact) => sum + artifact.byteSize,
+      0,
+    );
+    // This value describes the state before missing artifacts were marked
+    // resident, so derive it from the immutable assignment total.
+    const residentArtifactBytesBeforeAssignment = totalArtifactBytes - downloadedArtifactBytes;
+    // The worker argument is intentionally retained in the signature so a
+    // future report can include post-assignment worker coverage without
+    // changing call sites. Assert current postcondition now.
+    if (
+      this.artifactResidencyLedger.residentArtifactBytes(worker, startSegment, endSegment) !==
+      totalArtifactBytes
+    ) {
+      throw new Error(`worker ${worker} artifact residency was not committed after assignment`);
+    }
+    return {
+      totalArtifactBytes,
+      residentArtifactBytesBeforeAssignment,
+      downloadedArtifactBytes,
+      missingSegmentIndexes: missingArtifacts.map((artifact) => artifact.index),
+    };
+  }
+
+  private validateCacheHits(cacheHits: readonly number[]): void {
+    for (const segmentIndex of cacheHits) {
+      if (
+        !Number.isInteger(segmentIndex) ||
+        segmentIndex < 0 ||
+        segmentIndex >= this.options.segments.length
+      ) {
+        throw new Error(
+          `cache hit segment ${segmentIndex} is outside 0..${this.options.segments.length - 1}`,
+        );
+      }
+    }
   }
 
   private estimateCheckpointTransferMs(telemetry: WorkerTelemetry): number {
