@@ -1,4 +1,4 @@
-# Artifact residency and span routing
+# Artifact residency, span routing and checkpoint resume
 
 ## Purpose
 
@@ -23,6 +23,8 @@ validated model manifest
   -> browser heartbeat cache snapshot
   -> AdaptiveChunkDispatcher / SpanRouter
   -> SpanPipeline assignment
+  -> validated durable checkpoint
+  -> suffix-only reroute after failure
 ```
 
 The adaptive dispatcher:
@@ -43,6 +45,27 @@ Successful spans are committed to the residency ledger. A disconnected worker's
 cache claim is cleared until a later authoritative heartbeat advertises it
 again.
 
+## Nearest-checkpoint resume
+
+A non-final span is not considered complete until its result contains a
+checkpoint bound to all of the following:
+
+- the active inference request;
+- the assigned worker and exact span range;
+- the span's final segment index.
+
+Only a result that passes those checks reaches `CheckpointStore`. If a later
+browser fails, `SpanPipeline` retains the highest validated non-final checkpoint,
+asks `SpanRouter` to cover only the suffix beginning at the next segment, and
+passes that checkpoint to the replacement worker. Completed prefix spans are not
+re-executed. The same path also resumes from a pre-existing durable checkpoint on
+the first attempt.
+
+Final spans must produce output and must not produce another checkpoint. This
+prevents a stale or malicious final-boundary checkpoint from skipping the only
+span that can return the inference result. Checkpoints are deleted after final
+success or terminal failure, but not between retry attempts.
+
 ## Invariants
 
 - A ledger is model-revision local. Equal segment indexes from different model
@@ -53,18 +76,21 @@ again.
 - Runtime `SegmentConfig` digest, layer range and memory estimate must match the
   artifact inventory before dispatch begins.
 - Unknown cache indexes reject the whole heartbeat update atomically.
+- A durable checkpoint must match the request and exact completed span boundary.
+- A resumed route begins at `checkpoint.segmentIndex + 1` and never includes an
+  already completed prefix segment.
 - Browser workers connect only to the Coordinator and allowlisted artifact
   origin; the routing changes do not introduce browser-to-browser networking.
 
 ## Evidence level and remaining work
 
-The current implementation is `contract-tested`. It proves inventory and
-routing behavior with deterministic fixtures, not a completed 1B browser run.
-Issue #167 still requires:
+The current implementation is `contract-tested`. It proves inventory, routing
+and suffix-resume behavior with deterministic fixtures, not a completed 1B
+browser run. Issue #167 still requires:
 
 - generating the real 1B q4 artifacts and recording actual bytes;
 - full-model versus multi-segment numerical equivalence;
+- importing the generated multi-file segment bundles into the runtime manifest;
 - multi-browser WebGPU execution through the Coordinator;
 - measured cold/warm cache and checkpoint overhead;
-- retry from the nearest durable checkpoint rather than restarting the route;
 - captured runtime evidence with no direct worker-to-worker path.
