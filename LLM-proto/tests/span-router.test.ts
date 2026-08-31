@@ -1,8 +1,39 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { ArtifactResidencyLedger } from '../src/artifact-residency-ledger.js';
+import type { SegmentArtifact } from '../src/model-manifest.js';
 import { SpanRouter } from '../src/span-router.js';
 import { WorkerPool } from '../src/worker-pool.js';
-import { workerId, WorkerTier } from '../src/types.js';
+import { workerId, WorkerTier, type SegmentConfig } from '../src/types.js';
 import { makeSegments } from './test-helpers.js';
+
+function makeManifestBackedSegments(
+  vramBySegment: readonly number[],
+  bytesBySegment: readonly number[] = vramBySegment.map((value) => value * 1024 * 1024),
+): { readonly segments: SegmentConfig[]; readonly artifacts: SegmentArtifact[] } {
+  const artifacts = vramBySegment.map((estimatedMemoryMB, index): SegmentArtifact => ({
+    index,
+    layerStart: index * 4,
+    layerEnd: index * 4 + 3,
+    byteSize: bytesBySegment[index],
+    sha256: (index + 1).toString(16).padStart(64, '0'),
+    contentType: 'application/onnx',
+    artifactLocator: `https://cdn.unzen.local/model/segment-${index}.onnx`,
+    estimatedMemoryMB,
+    memoryBasis: 'measured',
+    compatibleRuntimes: ['onnxruntime-web'],
+    minimumRuntimeVersion: '1.20.0',
+  }));
+  return {
+    artifacts,
+    segments: artifacts.map((artifact) => ({
+      index: artifact.index,
+      layerStart: artifact.layerStart,
+      layerEnd: artifact.layerEnd,
+      modelWeightHash: artifact.sha256,
+      estimatedVramMB: artifact.estimatedMemoryMB,
+    })),
+  };
+}
 
 describe('SpanRouter', () => {
   let pool: WorkerPool;
@@ -182,16 +213,45 @@ describe('SpanRouter', () => {
     }
   });
 
-  it('should throw when segments have non-uniform estimatedVramMB', () => {
-    pool.register({ workerId: workerId('w1'), tier: WorkerTier.TIER_1, vramMB: 16000 });
+  it('supports unequal segment VRAM estimates from byte-budgeted splitting', () => {
+    pool.register({ workerId: workerId('wide'), tier: WorkerTier.TIER_2, vramMB: 4000 });
+    pool.register({ workerId: workerId('edge'), tier: WorkerTier.TIER_2, vramMB: 1000 });
 
-    // Segments with different VRAM requirements
-    const mixedSegments = [
-      { index: 0, layerStart: 0, layerEnd: 7, modelWeightHash: 'h0', estimatedVramMB: 2100 },
-      { index: 1, layerStart: 8, layerEnd: 15, modelWeightHash: 'h1', estimatedVramMB: 3000 },
-    ];
-    const router = new SpanRouter(mixedSegments, pool);
+    const { segments } = makeManifestBackedSegments([1000, 3000, 1000]);
+    const route = new SpanRouter(segments, pool).computeRoute();
 
-    expect(() => router.computeRoute()).toThrow(/uniform estimatedVramMB/);
+    expect(route).toEqual([
+      { workerId: workerId('wide'), startSegment: 0, endSegment: 1 },
+      { workerId: workerId('edge'), startSegment: 2, endSegment: 2 },
+    ]);
+  });
+
+  it('prefers a worker with an adjacent resident artifact prefix and groups it as a span', () => {
+    const cachedVisitor = workerId('cached-visitor');
+    const coldStable = workerId('cold-stable');
+    pool.register({ workerId: coldStable, tier: WorkerTier.TIER_1, vramMB: 4200 });
+    pool.register({ workerId: cachedVisitor, tier: WorkerTier.TIER_3, vramMB: 4200 });
+
+    const { segments, artifacts } = makeManifestBackedSegments(
+      [2100, 2100, 2100, 2100],
+      [100, 200, 300, 400],
+    );
+    const ledger = new ArtifactResidencyLedger(artifacts);
+    ledger.synchronizeWorker(cachedVisitor, [0, 1]);
+
+    const route = new SpanRouter(segments, pool, ledger).computeRoute();
+
+    expect(route).toEqual([
+      { workerId: cachedVisitor, startSegment: 0, endSegment: 1 },
+      { workerId: coldStable, startSegment: 2, endSegment: 3 },
+    ]);
+  });
+
+  it('fails closed when the residency inventory belongs to another segment geometry', () => {
+    const { artifacts } = makeManifestBackedSegments([2100, 2100]);
+    const ledger = new ArtifactResidencyLedger(artifacts);
+    const mismatched = makeSegments(2);
+
+    expect(() => new SpanRouter(mismatched, pool, ledger)).toThrow(/hash does not match/);
   });
 });
