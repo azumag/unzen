@@ -32,7 +32,12 @@ class BudgetedMultiSegmentTest(unittest.TestCase):
     HIDDEN_SIZE = 16
     TOTAL_LAYERS = 4
 
-    def _create_fixture(self, path: Path) -> None:
+    def _create_fixture(
+        self,
+        path: Path,
+        *,
+        external_location: str = "weights.bin",
+    ) -> None:
         """Create a genuinely chained Llama-shaped graph with external weights."""
 
         hidden = self.HIDDEN_SIZE
@@ -164,13 +169,18 @@ class BudgetedMultiSegmentTest(unittest.TestCase):
             str(path),
             save_as_external_data=True,
             all_tensors_to_one_file=True,
-            location="weights.bin",
+            location=external_location,
             size_threshold=0,
         )
 
-    def _load_fixture(self, root: Path) -> tuple[Path, onnx.ModelProto]:
+    def _load_fixture(
+        self,
+        root: Path,
+        *,
+        external_location: str = "weights.bin",
+    ) -> tuple[Path, onnx.ModelProto]:
         source = root / "model_q4.onnx"
-        self._create_fixture(source)
+        self._create_fixture(source, external_location=external_location)
         return source, onnx.load_model(str(source), load_external_data=False)
 
     def _full_cost(self, model: onnx.ModelProto) -> int:
@@ -340,6 +350,23 @@ class BudgetedMultiSegmentTest(unittest.TestCase):
                 manifest["splitPlan"]["maximumGeneratedSegmentBytes"],
                 generated_maximum,
             )
+
+    def test_rejects_generated_path_that_would_overwrite_source_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, _ = self._load_fixture(
+                root,
+                external_location="segment0.onnx_data",
+            )
+            with self.assertRaisesRegex(ValueError, "overwrite source data"):
+                prepare_budgeted_multi_split(
+                    source,
+                    root,
+                    hidden_size=self.HIDDEN_SIZE,
+                    target_bytes=1,
+                    preferred_max_bytes=PREFERRED_MAX_BYTES,
+                    hash_source_external_data=False,
+                )
 
     def test_budget_options_cannot_relax_product_policy(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot relax"):
