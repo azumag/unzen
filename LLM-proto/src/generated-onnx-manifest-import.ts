@@ -10,6 +10,10 @@
  */
 
 import {
+  BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
+  BROWSER_SEGMENT_PREFERRED_MAX_BYTES,
+} from './browser-segment-artifact-budget.js';
+import {
   MODEL_MANIFEST_SCHEMA_VERSION,
   computeModelManifestDigest,
   computeSegmentArtifactBundleDigest,
@@ -127,7 +131,7 @@ export async function importGeneratedOnnxSplitManifest(
       })),
     ];
     const bundleDigest = await computeSegmentArtifactBundleDigest(components);
-    const common: SegmentArtifact = {
+    const runtimeSegment: SegmentArtifact = {
       index: segment.index,
       layerStart: segment.startLayer,
       layerEnd: segment.endLayer - 1,
@@ -144,7 +148,7 @@ export async function importGeneratedOnnxSplitManifest(
         ? {}
         : { measurementConditions: options.measurementConditions }),
     };
-    runtimeSegments.push(common);
+    runtimeSegments.push(runtimeSegment);
   }
 
   const provisional: SegmentedModelManifest = {
@@ -194,6 +198,20 @@ function parseBudget(value: unknown): {
     budget.absoluteMaxBytes,
     '$.browserArtifactBudget.absoluteMaxBytes',
   );
+  // Generated metadata is untrusted input. It may tighten product policy, but
+  // it may never advertise a larger browser allowance than runtime permits.
+  if (requiredMaxBytes > BROWSER_SEGMENT_PREFERRED_MAX_BYTES) {
+    throw new Error(
+      '$.browserArtifactBudget.requiredMaxBytes cannot relax the product preferred ceiling ' +
+      `of ${BROWSER_SEGMENT_PREFERRED_MAX_BYTES} bytes`,
+    );
+  }
+  if (absoluteMaxBytes > BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES) {
+    throw new Error(
+      '$.browserArtifactBudget.absoluteMaxBytes cannot relax the product absolute ceiling ' +
+      `of ${BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES} bytes`,
+    );
+  }
   if (requiredMaxBytes > absoluteMaxBytes) {
     throw new Error(
       '$.browserArtifactBudget.requiredMaxBytes cannot exceed absoluteMaxBytes',
@@ -317,6 +335,9 @@ function normalizeArtifactBaseUrl(
   if (source === 'production' && url.protocol !== 'https:') {
     throw new Error('production artifactBaseUrl must use HTTPS');
   }
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new Error('artifactBaseUrl must not contain credentials');
+  }
   if (url.search.length > 0 || url.hash.length > 0) {
     throw new Error('artifactBaseUrl must not contain a query string or fragment');
   }
@@ -389,7 +410,15 @@ function requireSafeRelativePath(value: unknown, path: string): string {
 }
 
 function isSafeRelativePath(path: string): boolean {
-  if (path.length === 0 || path.startsWith('/') || path.includes('\\')) return false;
+  if (
+    path.length === 0 ||
+    path.startsWith('/') ||
+    path.includes('\\') ||
+    path.includes(':') ||
+    /[\u0000-\u001f\u007f]/.test(path)
+  ) {
+    return false;
+  }
   const parts = path.split('/');
   return parts.every((part) => part.length > 0 && part !== '.' && part !== '..');
 }
