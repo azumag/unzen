@@ -4,8 +4,8 @@
  * Two entry points:
  * - `validateModelManifestShape` - synchronous structural fail-fast checks used
  *   by the Coordinator constructor at startup.
- * - `validateModelManifest` - async full verification that also recomputes the
- *   manifest digest and verifies an optional signature.
+ * - `validateModelManifest` - async full verification that also recomputes
+ *   bundle/manifest digests and verifies an optional signature.
  *
  * Placeholder artifact hashes (`sha256:segment-...`, non-hex values) are
  * REJECTED so a config whose real artifact digests do not match can never
@@ -15,9 +15,11 @@
 import {
   MODEL_MANIFEST_SCHEMA_VERSION,
   computeModelManifestDigest,
+  computeSegmentArtifactBundleDigest,
   parseQuantizationBits,
   verifyModelManifestSignature,
   type ModelManifestSource,
+  type SegmentArtifact,
   type SegmentedModelManifest,
 } from './model-manifest.js';
 
@@ -43,6 +45,17 @@ export type ModelManifestValidationIssueCode =
   | 'invalid-artifact-digest'
   | 'invalid-artifact-content-type'
   | 'invalid-artifact-locator'
+  | 'invalid-artifact-components'
+  | 'invalid-artifact-component-role'
+  | 'invalid-artifact-component-path'
+  | 'duplicate-artifact-component-path'
+  | 'invalid-artifact-component-byte-size'
+  | 'invalid-artifact-component-digest'
+  | 'invalid-artifact-component-content-type'
+  | 'invalid-artifact-component-locator'
+  | 'artifact-component-byte-size-mismatch'
+  | 'artifact-primary-locator-mismatch'
+  | 'artifact-bundle-digest-mismatch'
   | 'invalid-artifact-memory'
   | 'invalid-memory-basis'
   | 'invalid-compatible-runtimes'
@@ -84,6 +97,7 @@ const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const PLACEHOLDER_DIGEST_PATTERN = /^sha256:|segment-|placeholder-/i;
 const QUANTIZATION_PATTERN = /^(?:q|int|fp|bf)[0-9]+$/i;
 const MEMORY_BASIS_VALUES = ['measured', 'budgeted', 'estimated'] as const;
+const COMPONENT_ROLE_VALUES = ['graph', 'external-data'] as const;
 
 /**
  * Synchronous structural validation. This is the fail-fast gate used by the
@@ -146,8 +160,8 @@ export function validateModelManifestShape(
 }
 
 /**
- * Asynchronous full verification: shape checks plus manifest digest
- * recomputation and optional signature verification.
+ * Asynchronous full verification: shape checks plus component-bundle digest,
+ * outer manifest digest and optional signature verification.
  */
 export async function validateModelManifest(
   input: unknown,
@@ -161,6 +175,19 @@ export async function validateModelManifest(
   const manifest = shape.manifest;
   const issues: ModelManifestValidationIssue[] = [...shape.issues];
 
+  for (const [index, artifact] of manifest.segments.entries()) {
+    if (artifact.components === undefined) continue;
+    const recomputedBundle = await computeSegmentArtifactBundleDigest(artifact.components);
+    if (recomputedBundle !== artifact.sha256.toLowerCase()) {
+      issue(
+        issues,
+        'artifact-bundle-digest-mismatch',
+        `$.segments[${index}].sha256`,
+        'logical bundle digest does not match canonical component content descriptors',
+      );
+    }
+  }
+
   const recomputed = await computeModelManifestDigest(manifest);
   if (recomputed !== manifest.manifestDigest.toLowerCase()) {
     issue(
@@ -169,6 +196,9 @@ export async function validateModelManifest(
       '$.manifestDigest',
       'manifest digest does not match the recomputed canonical digest',
     );
+  }
+
+  if (issues.length > 0) {
     return result('invalid', issues, manifest);
   }
 
@@ -201,11 +231,7 @@ export async function validateModelManifest(
   return result('valid', issues, manifest);
 }
 
-/**
- * Fail-fast helper used by the Coordinator constructor. Throws on the first
- * structurally invalid manifest instead of letting a bad config drive an
- * execution plan.
- */
+/** Fail-fast helper used by the Coordinator constructor. */
 export function assertValidModelManifest(
   manifest: SegmentedModelManifest,
   options: ModelManifestValidationOptions = {},
@@ -494,10 +520,15 @@ function validateSegmentArtifact(
 
   if (
     typeof artifact.byteSize !== 'number' ||
-    !Number.isFinite(artifact.byteSize) ||
+    !Number.isSafeInteger(artifact.byteSize) ||
     artifact.byteSize <= 0
   ) {
-    issue(issues, 'invalid-artifact-byte-size', `${path}.byteSize`, 'byteSize must be a positive number');
+    issue(
+      issues,
+      'invalid-artifact-byte-size',
+      `${path}.byteSize`,
+      'byteSize must be a safe positive integer',
+    );
   }
 
   const sha256 = artifact.sha256;
@@ -531,6 +562,8 @@ function validateSegmentArtifact(
     issues,
     'invalid-artifact-locator',
   );
+  validateArtifactComponents(artifact, path, issues);
+
   if (
     typeof artifact.estimatedMemoryMB !== 'number' ||
     !Number.isFinite(artifact.estimatedMemoryMB) ||
@@ -577,6 +610,147 @@ function validateSegmentArtifact(
   );
 }
 
+function validateArtifactComponents(
+  artifact: Record<string, unknown>,
+  path: string,
+  issues: ModelManifestValidationIssue[],
+): void {
+  if (artifact.components === undefined) return;
+  if (!Array.isArray(artifact.components) || artifact.components.length === 0) {
+    issue(
+      issues,
+      'invalid-artifact-components',
+      `${path}.components`,
+      'components must be a non-empty array when present',
+    );
+    return;
+  }
+
+  const componentPaths = new Set<string>();
+  let totalBytes = 0;
+  let graphCount = 0;
+  let graphLocator: string | undefined;
+
+  for (const [index, component] of artifact.components.entries()) {
+    const componentPath = `${path}.components[${index}]`;
+    if (!isRecord(component)) {
+      issue(
+        issues,
+        'invalid-artifact-components',
+        componentPath,
+        'artifact component must be an object',
+      );
+      continue;
+    }
+
+    if (
+      typeof component.role !== 'string' ||
+      !COMPONENT_ROLE_VALUES.includes(component.role as (typeof COMPONENT_ROLE_VALUES)[number])
+    ) {
+      issue(
+        issues,
+        'invalid-artifact-component-role',
+        `${componentPath}.role`,
+        "role must be 'graph' or 'external-data'",
+      );
+    } else if (component.role === 'graph') {
+      graphCount++;
+      if (typeof component.artifactLocator === 'string') {
+        graphLocator = component.artifactLocator;
+      }
+    }
+
+    if (typeof component.path !== 'string' || !isSafeRelativeArtifactPath(component.path)) {
+      issue(
+        issues,
+        'invalid-artifact-component-path',
+        `${componentPath}.path`,
+        'path must be a safe relative POSIX path',
+      );
+    } else if (componentPaths.has(component.path)) {
+      issue(
+        issues,
+        'duplicate-artifact-component-path',
+        `${componentPath}.path`,
+        `duplicate component path ${component.path}`,
+      );
+    } else {
+      componentPaths.add(component.path);
+    }
+
+    if (
+      typeof component.byteSize !== 'number' ||
+      !Number.isSafeInteger(component.byteSize) ||
+      component.byteSize <= 0
+    ) {
+      issue(
+        issues,
+        'invalid-artifact-component-byte-size',
+        `${componentPath}.byteSize`,
+        'component byteSize must be a safe positive integer',
+      );
+    } else {
+      totalBytes += component.byteSize;
+    }
+
+    if (typeof component.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(component.sha256)) {
+      issue(
+        issues,
+        'invalid-artifact-component-digest',
+        `${componentPath}.sha256`,
+        'component sha256 must be a 64-character lowercase hexadecimal digest',
+      );
+    }
+    requiredNonEmptyString(
+      component,
+      'contentType',
+      `${componentPath}.contentType`,
+      issues,
+      'invalid-artifact-component-content-type',
+    );
+    requiredNonEmptyString(
+      component,
+      'artifactLocator',
+      `${componentPath}.artifactLocator`,
+      issues,
+      'invalid-artifact-component-locator',
+    );
+  }
+
+  if (graphCount !== 1) {
+    issue(
+      issues,
+      'invalid-artifact-components',
+      `${path}.components`,
+      `component bundle must contain exactly one graph; found ${graphCount}`,
+    );
+  }
+  if (
+    typeof artifact.byteSize === 'number' &&
+    Number.isSafeInteger(artifact.byteSize) &&
+    totalBytes !== artifact.byteSize
+  ) {
+    issue(
+      issues,
+      'artifact-component-byte-size-mismatch',
+      `${path}.components`,
+      `component bytes total ${totalBytes} does not match artifact byteSize ${artifact.byteSize}`,
+    );
+  }
+  if (
+    graphLocator !== undefined &&
+    typeof artifact.artifactLocator === 'string' &&
+    graphLocator !== artifact.artifactLocator
+  ) {
+    issue(
+      issues,
+      'artifact-primary-locator-mismatch',
+      `${path}.artifactLocator`,
+      'artifactLocator must equal the graph component locator',
+    );
+  }
+}
+
 function validateManifestDigestFormat(
   manifest: Record<string, unknown>,
   issues: ModelManifestValidationIssue[],
@@ -602,6 +776,12 @@ function requiredNonEmptyString(
   if (typeof record[key] !== 'string' || record[key].trim().length === 0) {
     issue(issues, code, path, `${key} must be a non-empty string`);
   }
+}
+
+function isSafeRelativeArtifactPath(path: string): boolean {
+  if (path.length === 0 || path.startsWith('/') || path.includes('\\')) return false;
+  const parts = path.split('/');
+  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..');
 }
 
 function issue(
