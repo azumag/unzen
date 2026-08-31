@@ -100,6 +100,31 @@ describe('AdaptiveChunkDispatcher artifact residency', () => {
     expect(warm.transport.connections).toEqual(['https://coordinator.unzen.local']);
   });
 
+  it('does not commit partial residency when a later artifact locator is rejected', () => {
+    const inventory = makeInventory([100, 200]);
+    const artifacts = [
+      inventory.artifacts[0],
+      {
+        ...inventory.artifacts[1],
+        artifactLocator: 'https://outside.example/models/segment-1.onnx',
+      },
+    ];
+    const ledger = new ArtifactResidencyLedger(artifacts);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: inventory.segments,
+      artifactResidencyLedger: ledger,
+    });
+    const worker = workerId('atomic-worker');
+    dispatcher.registerWorker({
+      id: worker,
+      tier: WorkerTier.TIER_2,
+      telemetry: baseTelemetry,
+    });
+
+    expect(() => dispatcher.run('rejected-origin')).toThrow(/outside prototype allowlist/);
+    expect(ledger.snapshot(worker).residentSegmentIndexes).toEqual([]);
+  });
+
   it('removes stale cache entries when a heartbeat no longer advertises them', () => {
     const { artifacts, segments } = makeInventory([100, 200]);
     const ledger = new ArtifactResidencyLedger(artifacts);
