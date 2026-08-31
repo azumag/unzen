@@ -256,10 +256,13 @@ export class AdaptiveChunkDispatcher {
 
       this.transport.connect(`${this.coordinatorUrl}/adaptive/${requestId}/chunk/${nextSegment}`);
       if (missingArtifacts !== undefined) {
-        // The manifest locator, not a hard-coded model path, is authoritative.
-        // Only missing artifacts reach the CDN transport.
+        // Validate every locator against the transport allowlist before
+        // committing any cache state. If one later component is rejected, the
+        // worker must not retain a partial residency claim from this assignment.
         for (const artifact of missingArtifacts) {
           this.transport.connect(artifact.artifactLocator);
+        }
+        for (const artifact of missingArtifacts) {
           selected.worker.residentSegments.add(artifact.index);
           this.artifactResidencyLedger?.markResident(selected.worker.id, artifact.index);
         }
