@@ -6,16 +6,14 @@
  * optimal path through available spans, minimizing the number of inter-node hops.
  *
  * This module adapts that pattern for browser workers:
- * - A worker with 8GB VRAM can handle 4 segments (4 × 2.1GB) as a single span
- * - Fewer spans = fewer checkpoint transfers = lower total latency
- * - Tier 1/2 workers (more stable) are preferred for larger spans (PLAN.md 4.5.3)
- *
- * The routing algorithm is greedy: sort workers by quality, then assign each the
- * maximum contiguous segment range their VRAM allows. Petals uses Dijkstra for
- * global optimality, but the greedy approach is simpler and sufficient when the
- * Coordinator has full visibility of all workers (unlike Petals' DHT-based discovery).
+ * - a worker receives the longest contiguous span that fits its current VRAM;
+ * - manifest-backed cache residency is preferred so adjacent cached artifacts
+ *   become one SpanPipeline assignment rather than repeated cold downloads;
+ * - fewer spans mean fewer Coordinator checkpoint transfers;
+ * - Tier 1/2 workers remain the fallback priority when cache locality is equal.
  */
 
+import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
 import type { WorkerId, WorkerInfo, SegmentConfig } from './types.js';
 import { WorkerStatus } from './types.js';
 import { WorkerPool } from './worker-pool.js';
@@ -36,94 +34,154 @@ export interface Span {
 /** An ordered list of spans that covers all segments 0..N-1. */
 export type Route = readonly Span[];
 
+interface RankedWorker {
+  readonly worker: WorkerInfo;
+  readonly maxSpan: number;
+  readonly residentPrefixLength: number;
+  readonly residentArtifactBytes: number;
+  readonly missingArtifactBytes: number;
+}
+
 export class SpanRouter {
   constructor(
     private readonly segments: readonly SegmentConfig[],
     private readonly workerPool: WorkerPool,
-  ) {}
+    private readonly artifactResidencyLedger?: ArtifactResidencyLedger,
+  ) {
+    for (const [arrayIndex, segment] of segments.entries()) {
+      if (segment.index !== arrayIndex) {
+        throw new Error(
+          `SpanRouter requires segment indexes 0..n-1; ` +
+          `expected ${arrayIndex}, found ${segment.index}`,
+        );
+      }
+      if (!Number.isFinite(segment.estimatedVramMB) || segment.estimatedVramMB <= 0) {
+        throw new Error(
+          `segment ${segment.index} estimatedVramMB must be a positive finite number`,
+        );
+      }
+    }
+    this.artifactResidencyLedger?.assertCompatibleSegments(segments);
+  }
 
   /**
-   * Compute an optimal route that covers all segments [0, N-1].
-   * Returns null if the available workers cannot cover all segments.
+   * Compute a route that covers all segments [0, N-1]. Returns null if the
+   * currently idle workers cannot cover the remaining model.
    *
-   * Algorithm (Petals-inspired greedy):
-   * 1. Collect idle workers and compute max span capacity for each
-   * 2. Sort by tier (ascending = more stable first), then by capacity (descending)
-   * 3. Greedily assign from the first unassigned segment:
-   *    - Pick the best worker and give it as many contiguous segments as possible
-   *    - Repeat until all segments are covered
-   *
-   * This minimizes checkpoint transfers because each span boundary is one
-   * inter-node hop. Fewer, larger spans = fewer hops = lower latency.
+   * Routing is recalculated at every boundary because byte-budgeted ONNX
+   * shards can have unequal VRAM estimates. With an artifact ledger, workers
+   * that already hold a contiguous prefix at the current boundary are ranked
+   * ahead of cold workers; equal-locality candidates retain the stable
+   * tier/capacity ordering used by the original prototype.
    */
   computeRoute(): Route | null {
     if (this.segments.length === 0) return [];
 
-    // The greedy algorithm assumes all segments have the same VRAM cost.
-    // This holds for transformer blocks of uniform size (PLAN.md 5.1).
-    const vramPerSegment = this.segments[0].estimatedVramMB;
-    for (let i = 1; i < this.segments.length; i++) {
-      if (this.segments[i].estimatedVramMB !== vramPerSegment) {
-        throw new Error(
-          `SpanRouter requires uniform estimatedVramMB: segment 0 has ${vramPerSegment}MB, ` +
-          `segment ${i} has ${this.segments[i].estimatedVramMB}MB`,
-        );
-      }
-    }
-    const candidates = this.rankWorkers(vramPerSegment);
-    if (candidates.length === 0) return null;
-
     const route: Span[] = [];
-    let nextSegment = 0;
-    const totalSegments = this.segments.length;
-    // Track which workers have been assigned to avoid reuse
     const usedWorkers = new Set<WorkerId>();
+    let nextSegment = 0;
 
-    while (nextSegment < totalSegments) {
-      // Find the best unused worker for the remaining segments
-      const worker = candidates.find(
-        (c) => !usedWorkers.has(c.worker.id),
+    while (nextSegment < this.segments.length) {
+      const candidates = this.rankWorkers(nextSegment, usedWorkers);
+      const selected = candidates[0];
+      if (!selected) return null;
+
+      const spanSize = Math.min(
+        selected.maxSpan,
+        this.segments.length - nextSegment,
       );
-      if (!worker) return null; // Not enough workers to cover all segments
-
-      // Assign as many contiguous segments as this worker's VRAM allows
-      const spanSize = Math.min(worker.maxSpan, totalSegments - nextSegment);
       route.push({
-        workerId: worker.worker.id,
+        workerId: selected.worker.id,
         startSegment: nextSegment,
         endSegment: nextSegment + spanSize - 1,
       });
-
-      usedWorkers.add(worker.worker.id);
+      usedWorkers.add(selected.worker.id);
       nextSegment += spanSize;
     }
 
     return route;
   }
 
-  /**
-   * Rank idle workers by suitability for span assignment.
-   * Priority: lower tier > larger span capacity > more VRAM.
-   */
+  /** Rank idle, unused workers for the current segment boundary. */
   private rankWorkers(
-    vramPerSegment: number,
-  ): { worker: WorkerInfo; maxSpan: number }[] {
-    const candidates: { worker: WorkerInfo; maxSpan: number }[] = [];
+    startSegment: number,
+    usedWorkers: ReadonlySet<WorkerId>,
+  ): RankedWorker[] {
+    const candidates: RankedWorker[] = [];
 
     for (const worker of this.workerPool.allWorkers()) {
-      if (worker.status !== WorkerStatus.IDLE) continue;
-      const maxSpan = Math.floor(worker.vramMB / vramPerSegment);
+      if (worker.status !== WorkerStatus.IDLE || usedWorkers.has(worker.id)) continue;
+      const maxSpan = this.computeMaximumSpan(worker, startSegment);
       if (maxSpan < 1) continue;
-      candidates.push({ worker, maxSpan });
+
+      const endSegment = startSegment + maxSpan - 1;
+      const residentPrefixLength = this.artifactResidencyLedger?.residentPrefixLength(
+        worker.id,
+        startSegment,
+        maxSpan,
+      ) ?? 0;
+      const residentArtifactBytes = this.artifactResidencyLedger?.residentArtifactBytes(
+        worker.id,
+        startSegment,
+        endSegment,
+      ) ?? 0;
+      const missingArtifactBytes = this.artifactResidencyLedger?.missingArtifactBytes(
+        worker.id,
+        startSegment,
+        endSegment,
+      ) ?? 0;
+      candidates.push({
+        worker,
+        maxSpan,
+        residentPrefixLength,
+        residentArtifactBytes,
+        missingArtifactBytes,
+      });
     }
 
-    // Sort: tier ascending (Tier 1 first), then maxSpan descending, then VRAM descending
-    candidates.sort((a, b) => {
-      if (a.worker.tier !== b.worker.tier) return a.worker.tier - b.worker.tier;
-      if (a.maxSpan !== b.maxSpan) return b.maxSpan - a.maxSpan;
-      return b.worker.vramMB - a.worker.vramMB;
+    candidates.sort((left, right) => {
+      if (this.artifactResidencyLedger !== undefined) {
+        // Contiguous locality matters first: it is the part that can execute
+        // inside one SpanPipeline assignment without a cold artifact fetch.
+        if (left.residentPrefixLength !== right.residentPrefixLength) {
+          return right.residentPrefixLength - left.residentPrefixLength;
+        }
+        if (left.residentArtifactBytes !== right.residentArtifactBytes) {
+          return right.residentArtifactBytes - left.residentArtifactBytes;
+        }
+        if (left.missingArtifactBytes !== right.missingArtifactBytes) {
+          return left.missingArtifactBytes - right.missingArtifactBytes;
+        }
+      }
+      if (left.worker.tier !== right.worker.tier) {
+        return left.worker.tier - right.worker.tier;
+      }
+      if (left.maxSpan !== right.maxSpan) {
+        return right.maxSpan - left.maxSpan;
+      }
+      if (left.worker.vramMB !== right.worker.vramMB) {
+        return right.worker.vramMB - left.worker.vramMB;
+      }
+      return left.worker.id.localeCompare(right.worker.id);
     });
 
     return candidates;
+  }
+
+  /**
+   * Sum each actual segment estimate until the next artifact would exceed the
+   * worker's VRAM. This replaces the old segment-0 multiplication assumption,
+   * which was unsafe for unequal first/last shards from an automatic splitter.
+   */
+  private computeMaximumSpan(worker: WorkerInfo, startSegment: number): number {
+    let consumedVramMB = 0;
+    let spanLength = 0;
+    for (let index = startSegment; index < this.segments.length; index++) {
+      const nextVramMB = this.segments[index].estimatedVramMB;
+      if (consumedVramMB + nextVramMB > worker.vramMB) break;
+      consumedVramMB += nextVramMB;
+      spanLength++;
+    }
+    return spanLength;
   }
 }

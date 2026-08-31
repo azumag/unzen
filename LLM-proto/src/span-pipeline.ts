@@ -17,6 +17,7 @@
  * them sequentially in GPU memory without serializing intermediate hidden states.
  */
 
+import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
 import {
   type WorkerId,
   type InferenceRequest,
@@ -47,6 +48,12 @@ export interface SpanPipelineOptions {
   readonly perSegmentTimeoutMs: number;
   /** Delay between retry attempts when routing fails (ms). */
   readonly retryDelayMs: number;
+  /**
+   * Optional manifest-backed browser cache inventory. The router prefers
+   * contiguous resident artifacts, and successful execution commits the span
+   * to that worker's residency snapshot.
+   */
+  readonly artifactResidencyLedger?: ArtifactResidencyLedger;
 }
 
 const DEFAULT_OPTIONS: SpanPipelineOptions = {
@@ -66,6 +73,7 @@ export class SpanPipeline {
     options?: Partial<SpanPipelineOptions>,
   ) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.options.artifactResidencyLedger?.assertCompatibleSegments(segments);
   }
 
   /**
@@ -96,9 +104,13 @@ export class SpanPipeline {
     request: InferenceRequest,
     startTime: number,
   ): Promise<InferenceResult> {
-    // Router reads workerPool state lazily on each computeRoute() call,
-    // so workers marked disconnected during retries are automatically excluded.
-    const router = new SpanRouter(this.segments, this.workerPool);
+    // Router reads workerPool and residency state lazily on every computeRoute()
+    // call, so retries exclude disconnected workers and use current cache facts.
+    const router = new SpanRouter(
+      this.segments,
+      this.workerPool,
+      this.options.artifactResidencyLedger,
+    );
 
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
       const route = router.computeRoute();
@@ -118,7 +130,9 @@ export class SpanPipeline {
       try {
         return await this.executeRoute(request, route, startTime);
       } catch (error) {
-        // Clean up checkpoints from partial execution before retrying
+        // Clean up checkpoints from partial execution before retrying. A later
+        // milestone will retain the nearest durable boundary; this prototype
+        // still restarts the route after a failed span.
         this.checkpointStore.deleteAll(request.id);
         if (attempt >= this.options.maxRetries) {
           request.status = InferenceStatus.FAILED;
@@ -175,6 +189,11 @@ export class SpanPipeline {
         );
 
         this.workerPool.markIdle(span.workerId);
+        this.options.artifactResidencyLedger?.markResidentRange(
+          span.workerId,
+          span.startSegment,
+          span.endSegment,
+        );
 
         // Save checkpoint at span boundary (if not the last span)
         if (result.checkpoint) {
@@ -203,8 +222,11 @@ export class SpanPipeline {
           };
         }
       } catch (error) {
-        // Span failed: mark worker as disconnected and let the caller retry with new route
+        // A disconnected browser can no longer prove that its Cache API entry
+        // is reachable. Remove its residency observation until a later
+        // heartbeat re-advertises an authoritative cache snapshot.
         this.workerPool.markDisconnected(span.workerId);
+        this.options.artifactResidencyLedger?.clearWorker(span.workerId);
         throw error;
       }
     }
