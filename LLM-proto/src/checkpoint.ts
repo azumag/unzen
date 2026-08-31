@@ -22,6 +22,12 @@ export class CheckpointStore {
 
   /** Save a checkpoint produced by a completed segment. */
   save(checkpoint: Checkpoint): void {
+    if (!Number.isInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
+      throw new Error(
+        `checkpoint segmentIndex must be a non-negative integer; ` +
+        `found ${checkpoint.segmentIndex}`,
+      );
+    }
     const key = CheckpointStore.key(checkpoint.requestId, checkpoint.segmentIndex);
     this.store.set(key, checkpoint);
   }
@@ -29,6 +35,35 @@ export class CheckpointStore {
   /** Retrieve a specific checkpoint by request and segment index. */
   get(requestId: InferenceRequestId, segmentIndex: number): Checkpoint | undefined {
     return this.store.get(CheckpointStore.key(requestId, segmentIndex));
+  }
+
+  /**
+   * Return the checkpoint at the highest completed segment for one request.
+   *
+   * `atOrBeforeSegmentIndex` lets a caller exclude a final-output segment or
+   * another boundary that is not a valid resume point. A negative bound has no
+   * eligible checkpoint and therefore returns `undefined`.
+   */
+  latest(
+    requestId: InferenceRequestId,
+    atOrBeforeSegmentIndex = Number.MAX_SAFE_INTEGER,
+  ): Checkpoint | undefined {
+    if (!Number.isInteger(atOrBeforeSegmentIndex)) {
+      throw new Error(
+        `atOrBeforeSegmentIndex must be an integer; found ${atOrBeforeSegmentIndex}`,
+      );
+    }
+    if (atOrBeforeSegmentIndex < 0) return undefined;
+
+    let latest: Checkpoint | undefined;
+    for (const checkpoint of this.store.values()) {
+      if (checkpoint.requestId !== requestId) continue;
+      if (checkpoint.segmentIndex > atOrBeforeSegmentIndex) continue;
+      if (!latest || checkpoint.segmentIndex > latest.segmentIndex) {
+        latest = checkpoint;
+      }
+    }
+    return latest;
   }
 
   /** Delete all checkpoints for a completed or failed request. */
