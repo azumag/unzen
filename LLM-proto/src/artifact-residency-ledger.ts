@@ -11,6 +11,7 @@
 import { assertValidModelManifest } from './model-manifest-validator.js';
 import type {
   SegmentArtifact,
+  SegmentArtifactComponent,
   SegmentedModelManifest,
 } from './model-manifest.js';
 import type { SegmentConfig, WorkerId } from './types.js';
@@ -65,11 +66,15 @@ export class ArtifactResidencyLedger {
         throw new Error(`segment ${artifact.index} artifactLocator must be non-empty`);
       }
 
-      // Copy array-valued fields so later caller mutation cannot change the
-      // inventory after workers have already reported cache residency.
+      const components = cloneAndValidateComponents(artifact);
+      // Copy and freeze every array/object that is reachable through the
+      // inventory. A caller may have built a plain mutable object even though
+      // the public TypeScript interface is readonly; telemetry and routing must
+      // never observe those later mutations.
       this.artifactsByIndex.set(artifact.index, Object.freeze({
         ...artifact,
         compatibleRuntimes: Object.freeze([...artifact.compatibleRuntimes]),
+        ...(components === undefined ? {} : { components }),
       }));
     }
 
@@ -314,4 +319,37 @@ export class ArtifactResidencyLedger {
       );
     }
   }
+}
+
+function cloneAndValidateComponents(
+  artifact: SegmentArtifact,
+): readonly SegmentArtifactComponent[] | undefined {
+  if (artifact.components === undefined) {
+    return undefined;
+  }
+  if (artifact.components.length === 0) {
+    throw new Error(`segment ${artifact.index} component bundle must not be empty`);
+  }
+
+  let componentBytes = 0;
+  const copied = artifact.components.map((component, componentIndex) => {
+    if (!Number.isSafeInteger(component.byteSize) || component.byteSize <= 0) {
+      throw new Error(
+        `segment ${artifact.index} component ${componentIndex} byteSize must be a safe positive integer`,
+      );
+    }
+    componentBytes += component.byteSize;
+    if (!Number.isSafeInteger(componentBytes)) {
+      throw new Error(`segment ${artifact.index} component bytes exceed JavaScript safe integer range`);
+    }
+    return Object.freeze({ ...component });
+  });
+
+  if (componentBytes !== artifact.byteSize) {
+    throw new Error(
+      `segment ${artifact.index} component bytes ${componentBytes} ` +
+      `do not match artifact byteSize ${artifact.byteSize}`,
+    );
+  }
+  return Object.freeze(copied);
 }
