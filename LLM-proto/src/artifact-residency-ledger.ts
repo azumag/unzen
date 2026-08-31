@@ -127,14 +127,17 @@ export class ArtifactResidencyLedger {
       if (!segment) {
         throw new Error(`segment config ${index} is missing`);
       }
+      // Check revision identity before geometry. A stale/foreign digest should
+      // never be treated as the same artifact merely because its layer range
+      // happens to overlap the active model.
+      if (segment.modelWeightHash.toLowerCase() !== artifact.sha256) {
+        throw new Error(`segment ${index} hash does not match artifact inventory`);
+      }
       if (segment.layerStart !== artifact.layerStart || segment.layerEnd !== artifact.layerEnd) {
         throw new Error(
           `segment ${index} layer range ${segment.layerStart}..${segment.layerEnd} ` +
           `does not match artifact range ${artifact.layerStart}..${artifact.layerEnd}`,
         );
-      }
-      if (segment.modelWeightHash.toLowerCase() !== artifact.sha256) {
-        throw new Error(`segment ${index} hash does not match artifact inventory`);
       }
       if (segment.estimatedVramMB !== artifact.estimatedMemoryMB) {
         throw new Error(
