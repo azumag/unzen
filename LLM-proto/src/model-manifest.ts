@@ -25,7 +25,21 @@ export type ModelManifestSource = 'production' | 'fixture';
  */
 export type MemoryBasis = 'measured' | 'budgeted' | 'estimated';
 
-/** One contiguous, verifiable model weight shard. */
+export type SegmentArtifactComponentRole = 'graph' | 'external-data';
+
+/** One independently verifiable file inside a logical browser segment bundle. */
+export interface SegmentArtifactComponent {
+  readonly role: SegmentArtifactComponentRole;
+  /** Safe relative path used by ONNX external-data references. */
+  readonly path: string;
+  readonly byteSize: number;
+  /** Exact lowercase hexadecimal SHA-256 of this file's bytes. */
+  readonly sha256: string;
+  readonly contentType: string;
+  readonly artifactLocator: string;
+}
+
+/** One contiguous, verifiable model artifact or logical multi-file bundle. */
 export interface SegmentArtifact {
   /** Stable zero-based segment index (must be unique and cover 0..n-1). */
   readonly index: number;
@@ -33,20 +47,26 @@ export interface SegmentArtifact {
   readonly layerStart: number;
   /** Last transformer layer in this segment (inclusive). */
   readonly layerEnd: number;
-  /** Exact byte size of the artifact file. */
+  /** Exact total bytes fetched for this logical browser cache unit. */
   readonly byteSize: number;
   /**
-   * Exact lowercase hexadecimal SHA-256 of the artifact content.
-   * Placeholder values such as `sha256:segment-0` are rejected by the
-   * validator; only real digests are accepted.
+   * Single-file artifact: exact SHA-256 of the file bytes.
+   * Multi-file artifact: SHA-256 of canonical component content descriptors
+   * (see computeSegmentArtifactBundleDigest). Every component also has its own
+   * file digest, while the outer manifest digest binds deployment locators.
    */
   readonly sha256: string;
-  /** MIME type of the artifact, e.g. 'application/octet-stream'. */
+  /** MIME type of the file or logical bundle. */
   readonly contentType: string;
   /** Optional content encoding, e.g. 'zstd'. */
   readonly encoding?: string;
-  /** CDN artifact locator (unzen-managed origin only). */
+  /** Primary locator. For a component bundle this must identify the ONNX graph. */
   readonly artifactLocator: string;
+  /**
+   * Optional files composing one cache/residency unit. Legacy single-file
+   * manifests omit this field and retain their existing semantics.
+   */
+  readonly components?: readonly SegmentArtifactComponent[];
   /** Estimated peak VRAM (MB) while this segment is resident. */
   readonly estimatedMemoryMB: number;
   /** Basis for the memory estimate (measured / budgeted / estimated). */
@@ -94,7 +114,7 @@ export interface SegmentedModelManifest {
 /**
  * Derive the execution-facing SegmentConfig list from validated manifest
  * artifacts. SegmentConfig geometry now comes exclusively from the manifest
- * (issue #102): layer ranges, VRAM, and weight hashes are artifact facts.
+ * (issue #102): layer ranges, VRAM, and weight/bundle hashes are artifact facts.
  */
 export function segmentConfigsFromManifest(
   manifest: SegmentedModelManifest,
@@ -112,6 +132,41 @@ export function segmentConfigsFromManifest(
 export function parseQuantizationBits(quantization: string): number {
   const match = /^(?:q|int|fp|bf)([0-9]+)$/i.exec(quantization);
   return match ? Number(match[1]) : Number.NaN;
+}
+
+/**
+ * Canonical content-only component descriptors for a logical segment bundle.
+ * Deployment locators are deliberately excluded: publishing identical bytes at
+ * a new CDN URL does not change model-weight identity. The outer manifest
+ * digest still covers all locators and therefore detects routing tampering.
+ */
+export function canonicalSegmentArtifactBundleFields(
+  components: readonly SegmentArtifactComponent[],
+): readonly Record<string, unknown>[] {
+  return [...components]
+    .sort((left, right) =>
+      componentRoleOrder(left.role) - componentRoleOrder(right.role) ||
+      left.path.localeCompare(right.path),
+    )
+    .map((component) => ({
+      role: component.role,
+      path: component.path,
+      byteSize: component.byteSize,
+      sha256: component.sha256,
+      contentType: component.contentType,
+    }));
+}
+
+/** Compute the stable content identity for a multi-file segment bundle. */
+export async function computeSegmentArtifactBundleDigest(
+  components: readonly SegmentArtifactComponent[],
+): Promise<string> {
+  const canonical = JSON.stringify(canonicalSegmentArtifactBundleFields(components));
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(canonical),
+  );
+  return sha256HexFromBuffer(digest);
 }
 
 /**
@@ -168,6 +223,10 @@ export async function verifyModelManifestSignature(
     return true;
   }
   return verify({ digest: manifest.manifestDigest, signature: manifest.signature });
+}
+
+function componentRoleOrder(role: SegmentArtifactComponentRole): number {
+  return role === 'graph' ? 0 : 1;
 }
 
 function sha256HexFromBuffer(buffer: ArrayBuffer): string {
