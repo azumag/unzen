@@ -11,6 +11,12 @@
  * return the cookie issued for the registered worker generation, and final
  * profile-isolation evidence is bound to the identities that actually wrote
  * the run rather than to mutable worker IDs alone.
+ *
+ * A run ID is an immutable execution namespace. The first accepted checkpoint
+ * binds the model manifest, token input, source worker generation and boundary
+ * tensors to a Coordinator-issued checkpoint ID/digest. Results must name that
+ * exact checkpoint; conflicting checkpoint/result writes are rejected rather
+ * than replacing previously captured evidence.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -23,6 +29,7 @@ const DEFAULT_PORT = Number(process.env.PORT ?? 8791);
 const MODELS_DIR = process.env.MODELS_DIR ? resolve(process.env.MODELS_DIR) : undefined;
 const MAX_JSON_BYTES = 16 * 1024 * 1024;
 const PROFILE_PROBE_COOKIE = 'unzen_profile_probe';
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 const TENSOR_TYPE_BYTES = Object.freeze({
   float64: 8,
   float32: 4,
@@ -88,6 +95,17 @@ function safeRunId(raw) {
 function safeWorkerId(raw) {
   if (!/^[A-Za-z0-9._-]{1,128}$/.test(raw)) throw new Error('invalid worker id');
   return raw;
+}
+
+function sha256Json(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function sameNumberArray(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index]);
 }
 
 function decodedBase64ByteLength(value) {
@@ -166,6 +184,37 @@ function validateBoundaryTensors(tensors) {
   return { ok: true, tensorBytes };
 }
 
+function validateCheckpointBinding(body) {
+  if (typeof body.manifestDigest !== 'string' || !SHA256_HEX.test(body.manifestDigest)) {
+    return { ok: false, status: 400, error: 'invalid-checkpoint-binding', reason: 'manifest-digest-required' };
+  }
+  if (!Array.isArray(body.inputTokenIds) || body.inputTokenIds.length === 0
+    || !body.inputTokenIds.every((tokenId) => Number.isSafeInteger(tokenId) && tokenId >= 0)) {
+    return { ok: false, status: 400, error: 'invalid-checkpoint-binding', reason: 'invalid-input-token-ids' };
+  }
+  return { ok: true };
+}
+
+function checkpointDigestFor(body, sourceWorkerIdentity) {
+  return sha256Json({
+    manifestDigest: body.manifestDigest,
+    inputTokenIds: body.inputTokenIds,
+    sourceWorkerIdentity: {
+      workerId: sourceWorkerIdentity.workerId,
+      role: sourceWorkerIdentity.role,
+      generation: sourceWorkerIdentity.generation,
+      profileProbeHash: sourceWorkerIdentity.profileProbeHash,
+    },
+    tensors: body.tensors.map((tensor) => ({
+      name: tensor.name,
+      type: tensor.type,
+      dims: tensor.dims,
+      bytes: tensor.bytes,
+      base64: tensor.base64,
+    })),
+  });
+}
+
 function validateResultPayload(body) {
   if (body.status !== 'pass') {
     return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'status-must-be-pass' };
@@ -194,6 +243,74 @@ function validateResultPayload(body) {
     return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-boundary-bytes' };
   }
   return { ok: true };
+}
+
+function validateResultBinding(body, checkpoint) {
+  if (!checkpoint) {
+    return { ok: false, status: 409, error: 'checkpoint-not-ready-for-result' };
+  }
+  if (body.manifestDigest !== checkpoint.manifestDigest) {
+    return { ok: false, status: 409, error: 'result-manifest-mismatch' };
+  }
+  if (body.checkpointId !== checkpoint.checkpointId) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-checkpoint-id-mismatch',
+      expectedCheckpointId: checkpoint.checkpointId,
+    };
+  }
+  if (body.checkpointDigest !== checkpoint.checkpointDigest) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-checkpoint-digest-mismatch',
+      expectedCheckpointDigest: checkpoint.checkpointDigest,
+    };
+  }
+  if (body.checkpointSourceWorkerGeneration !== checkpoint.sourceWorkerIdentity?.generation) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-checkpoint-generation-mismatch',
+      expectedSourceWorkerGeneration: checkpoint.sourceWorkerIdentity?.generation,
+    };
+  }
+  if (!sameNumberArray(body.inputTokenIds, checkpoint.inputTokenIds)) {
+    return { ok: false, status: 409, error: 'result-input-token-mismatch' };
+  }
+  if (body.boundaryBytes !== checkpoint.tensorBytes) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-boundary-byte-mismatch',
+      expectedBoundaryBytes: checkpoint.tensorBytes,
+    };
+  }
+  return { ok: true };
+}
+
+function resultDigestFor(body, segment1WorkerIdentity) {
+  return sha256Json({
+    checkpointId: body.checkpointId,
+    checkpointDigest: body.checkpointDigest,
+    checkpointSourceWorkerGeneration: body.checkpointSourceWorkerGeneration,
+    manifestDigest: body.manifestDigest,
+    segment0WorkerId: body.segment0WorkerId,
+    segment1WorkerIdentity: {
+      workerId: segment1WorkerIdentity.workerId,
+      role: segment1WorkerIdentity.role,
+      generation: segment1WorkerIdentity.generation,
+      profileProbeHash: segment1WorkerIdentity.profileProbeHash,
+    },
+    inputTokenIds: body.inputTokenIds,
+    boundaryBytes: body.boundaryBytes,
+    top1TokenId: body.top1TokenId,
+    top1Logit: body.top1Logit,
+    logitsShape: body.logitsShape,
+    tokenText: body.tokenText ?? null,
+    resumedFromCheckpoint: body.resumedFromCheckpoint === true,
+  });
 }
 
 function parseCookies(raw) {
@@ -368,6 +485,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           results: state.results.size,
           directWorkerNetworking: false,
           browserProfileIsolationEnforced: true,
+          immutableRunBindings: true,
         });
         return;
       }
@@ -419,17 +537,54 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             json(res, validatedTensors.status, validatedTensors);
             return;
           }
+          const validatedBinding = validateCheckpointBinding(body);
+          if (!validatedBinding.ok) {
+            json(res, validatedBinding.status, validatedBinding);
+            return;
+          }
           const sourceWorkerId = safeWorkerId(String(body.sourceWorkerId ?? ''));
           const sourceIdentity = workerIdentityForRequest(state, req, sourceWorkerId, ['segment0']);
           if (!sourceIdentity.ok) {
             json(res, sourceIdentity.status, sourceIdentity);
             return;
           }
+          const checkpointDigest = checkpointDigestFor(body, sourceIdentity.identity);
+          const existing = state.checkpoints.get(runId);
+          if (existing) {
+            if (existing.checkpointDigest === checkpointDigest) {
+              json(res, 200, {
+                ok: true,
+                idempotent: true,
+                runId,
+                relayOwner: 'coordinator',
+                checkpointId: existing.checkpointId,
+                checkpointDigest: existing.checkpointDigest,
+                manifestDigest: existing.manifestDigest,
+                sourceWorkerGeneration: existing.sourceWorkerIdentity.generation,
+                profileProbeConfirmed: true,
+                tensorBytes: existing.tensorBytes,
+              });
+              return;
+            }
+            json(res, 409, {
+              ok: false,
+              error: 'run-checkpoint-conflict',
+              reason: state.results.has(runId) ? 'completed-run-is-immutable' : 'run-already-bound-to-different-checkpoint',
+              runId,
+              existingCheckpointId: existing.checkpointId,
+              existingCheckpointDigest: existing.checkpointDigest,
+            });
+            return;
+          }
+          const checkpointId = `checkpoint-${randomUUID()}`;
           const record = {
             ...body,
             sourceWorkerId,
             sourceWorkerIdentity: sourceIdentity.identity,
             runId,
+            checkpointId,
+            checkpointDigest,
+            tensorBytes: validatedTensors.tensorBytes,
             relayOwner: 'coordinator',
             directWorkerNetworking: false,
             storedAt: Date.now(),
@@ -437,8 +592,12 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           state.checkpoints.set(runId, record);
           json(res, 201, {
             ok: true,
+            idempotent: false,
             runId,
             relayOwner: 'coordinator',
+            checkpointId,
+            checkpointDigest,
+            manifestDigest: body.manifestDigest,
             sourceWorkerGeneration: sourceIdentity.identity.generation,
             profileProbeConfirmed: true,
             tensorBytes: validatedTensors.tensorBytes,
@@ -477,14 +636,46 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             json(res, validatedResult.status, validatedResult);
             return;
           }
+          const checkpoint = state.checkpoints.get(runId);
+          const validatedBinding = validateResultBinding(body, checkpoint);
+          if (!validatedBinding.ok) {
+            json(res, validatedBinding.status, validatedBinding);
+            return;
+          }
           const isolation = resolveProfileIsolation(state, runId, body, segment1Identity.identity);
           if (!isolation.ok) {
             json(res, isolation.status, isolation);
             return;
           }
+          const resultDigest = resultDigestFor(body, segment1Identity.identity);
+          const existingResult = state.results.get(runId);
+          if (existingResult) {
+            if (existingResult.resultDigest === resultDigest) {
+              json(res, 200, {
+                ok: true,
+                idempotent: true,
+                runId,
+                resultDigest: existingResult.resultDigest,
+                checkpointId: existingResult.checkpointId,
+                checkpointDigest: existingResult.checkpointDigest,
+                profileIsolationConfirmed: true,
+                profileIsolationEvidence: existingResult.profileIsolationEvidence,
+              });
+              return;
+            }
+            json(res, 409, {
+              ok: false,
+              error: 'run-result-conflict',
+              reason: 'completed-run-is-immutable',
+              runId,
+              existingResultDigest: existingResult.resultDigest,
+            });
+            return;
+          }
           const record = {
             ...body,
             runId,
+            resultDigest,
             segment1WorkerIdentity: segment1Identity.identity,
             profileIsolationConfirmed: true,
             profileIsolationEvidence: isolation.evidence,
@@ -493,7 +684,11 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           state.results.set(runId, record);
           json(res, 201, {
             ok: true,
+            idempotent: false,
             runId,
+            resultDigest,
+            checkpointId: checkpoint.checkpointId,
+            checkpointDigest: checkpoint.checkpointDigest,
             profileIsolationConfirmed: true,
             profileIsolationEvidence: isolation.evidence,
           });
@@ -545,6 +740,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(`Unzen real two-browser split harness: http://127.0.0.1:${port}`);
     console.log(`MODELS_DIR=${MODELS_DIR ?? '(not configured)'}`);
     console.log('Browser profile isolation: enforced via Coordinator-issued HttpOnly probe cookie');
+    console.log('Run integrity: run IDs are immutable and results must bind the accepted checkpoint digest');
   }).catch((error) => {
     console.error(error);
     process.exitCode = 1;
