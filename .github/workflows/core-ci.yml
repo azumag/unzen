@@ -26,13 +26,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: core/package-lock.json
 
       - name: Install core dependencies
         working-directory: core
         run: npm ci
+
+      - name: Build core workspaces
+        working-directory: core
+        run: npm run build
 
       - name: Run core Vitest suite
         working-directory: core
