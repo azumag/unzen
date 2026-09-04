@@ -45,6 +45,13 @@ async function registerWorker(
   };
 }
 
+function jsonHeaders(cookie?: string) {
+  return {
+    'Content-Type': 'application/json',
+    ...(cookie ? { Cookie: cookie } : {}),
+  };
+}
+
 const tensors = [
   { name: 'boundary-residual', type: 'float32', dims: [1, 2, 4], bytes: 32, base64: 'AAAA' },
   { name: 'boundary-mlp', type: 'float32', dims: [1, 2, 4], bytes: 32, base64: 'BBBB' },
@@ -61,7 +68,7 @@ describe('real two-browser split Coordinator harness', () => {
 
     const posted = await fetch(`${baseUrl}/api/runs/run-1/checkpoint`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerA.cookie),
       body: JSON.stringify({
         sourceWorkerId: 'browser-a',
         inputTokenIds: [1, 2],
@@ -71,6 +78,8 @@ describe('real two-browser split Coordinator harness', () => {
     expect(posted.status).toBe(201);
     expect(await posted.json()).toMatchObject({
       relayOwner: 'coordinator',
+      profileProbeConfirmed: true,
+      sourceWorkerGeneration: 1,
       tensorBytes: 64,
     });
 
@@ -79,6 +88,11 @@ describe('real two-browser split Coordinator harness', () => {
     expect(await fetched.json()).toMatchObject({
       runId: 'run-1',
       sourceWorkerId: 'browser-a',
+      sourceWorkerIdentity: {
+        workerId: 'browser-a',
+        role: 'segment0',
+        generation: 1,
+      },
       relayOwner: 'coordinator',
       directWorkerNetworking: false,
       tensors,
@@ -86,7 +100,7 @@ describe('real two-browser split Coordinator harness', () => {
     expect(state.checkpoints.size).toBe(1);
   });
 
-  it('accepts a result only when segment workers have distinct browser profile probes', async () => {
+  it('accepts a result only when the actual writes return distinct browser profile probes', async () => {
     const { baseUrl } = await startServer();
     const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
     const registerB = await registerWorker(baseUrl, 'browser-b', 'segment1');
@@ -96,15 +110,16 @@ describe('real two-browser split Coordinator harness', () => {
 
     await fetch(`${baseUrl}/api/runs/profile-ok/checkpoint`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerA.cookie),
       body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
     });
 
     const result = await fetch(`${baseUrl}/api/runs/profile-ok/result`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerB.cookie),
       body: JSON.stringify({
         status: 'pass',
+        segment0WorkerId: 'browser-a',
         segment1WorkerId: 'browser-b',
       }),
     });
@@ -115,9 +130,56 @@ describe('real two-browser split Coordinator harness', () => {
         method: 'coordinator-issued-http-only-cookie',
         confirmed: true,
         sourceWorkerId: 'browser-a',
+        sourceWorkerGeneration: 1,
         segment1WorkerId: 'browser-b',
+        segment1WorkerGeneration: 1,
       },
     });
+  });
+
+  it('rejects missing or mismatched profile cookies on checkpoint and result writes', async () => {
+    const { baseUrl } = await startServer();
+    const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
+    const registerB = await registerWorker(baseUrl, 'browser-b', 'segment1');
+
+    const missingCheckpointCookie = await fetch(`${baseUrl}/api/runs/profile-auth/checkpoint`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
+    });
+    expect(missingCheckpointCookie.status).toBe(409);
+    expect(await missingCheckpointCookie.json()).toMatchObject({ error: 'profile-probe-cookie-required' });
+
+    const wrongCheckpointCookie = await fetch(`${baseUrl}/api/runs/profile-auth/checkpoint`, {
+      method: 'POST',
+      headers: jsonHeaders(registerB.cookie),
+      body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
+    });
+    expect(wrongCheckpointCookie.status).toBe(409);
+    expect(await wrongCheckpointCookie.json()).toMatchObject({ error: 'profile-probe-cookie-mismatch' });
+
+    const checkpoint = await fetch(`${baseUrl}/api/runs/profile-auth/checkpoint`, {
+      method: 'POST',
+      headers: jsonHeaders(registerA.cookie),
+      body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
+    });
+    expect(checkpoint.status).toBe(201);
+
+    const missingResultCookie = await fetch(`${baseUrl}/api/runs/profile-auth/result`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ segment1WorkerId: 'browser-b' }),
+    });
+    expect(missingResultCookie.status).toBe(409);
+    expect(await missingResultCookie.json()).toMatchObject({ error: 'profile-probe-cookie-required' });
+
+    const wrongResultCookie = await fetch(`${baseUrl}/api/runs/profile-auth/result`, {
+      method: 'POST',
+      headers: jsonHeaders(registerA.cookie),
+      body: JSON.stringify({ segment1WorkerId: 'browser-b' }),
+    });
+    expect(wrongResultCookie.status).toBe(409);
+    expect(await wrongResultCookie.json()).toMatchObject({ error: 'profile-probe-cookie-mismatch' });
   });
 
   it('rejects different worker IDs when both tabs share one browser profile cookie', async () => {
@@ -130,15 +192,16 @@ describe('real two-browser split Coordinator harness', () => {
 
     await fetch(`${baseUrl}/api/runs/profile-same/checkpoint`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerA.cookie),
       body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
     });
 
     const result = await fetch(`${baseUrl}/api/runs/profile-same/result`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerB.cookie),
       body: JSON.stringify({
         status: 'pass',
+        segment0WorkerId: 'browser-a',
         segment1WorkerId: 'browser-b',
       }),
     });
@@ -148,6 +211,42 @@ describe('real two-browser split Coordinator harness', () => {
       error: 'profile-isolation-not-proven',
       sourceWorkerId: 'browser-a',
       segment1WorkerId: 'browser-b',
+    });
+  });
+
+  it('keeps a checkpoint bound to the worker generation that actually wrote it', async () => {
+    const { baseUrl } = await startServer();
+    const registerA1 = await registerWorker(baseUrl, 'browser-a', 'segment0');
+    const registerB = await registerWorker(baseUrl, 'browser-b', 'segment1');
+
+    const checkpoint = await fetch(`${baseUrl}/api/runs/profile-generation/checkpoint`, {
+      method: 'POST',
+      headers: jsonHeaders(registerA1.cookie),
+      body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
+    });
+    expect(checkpoint.status).toBe(201);
+
+    const registerA2 = await registerWorker(baseUrl, 'browser-a', 'segment0');
+    expect(registerA2.body.generation).toBe(2);
+    expect(registerA2.body.profileProbeHash).not.toBe(registerA1.body.profileProbeHash);
+
+    const result = await fetch(`${baseUrl}/api/runs/profile-generation/result`, {
+      method: 'POST',
+      headers: jsonHeaders(registerB.cookie),
+      body: JSON.stringify({
+        status: 'pass',
+        segment0WorkerId: 'browser-a',
+        segment1WorkerId: 'browser-b',
+      }),
+    });
+    expect(result.status).toBe(201);
+    expect(await result.json()).toMatchObject({
+      profileIsolationEvidence: {
+        sourceWorkerId: 'browser-a',
+        sourceWorkerGeneration: 1,
+        segment1WorkerId: 'browser-b',
+        segment1WorkerGeneration: 1,
+      },
     });
   });
 
@@ -173,7 +272,7 @@ describe('real two-browser split Coordinator harness', () => {
 
     await fetch(`${baseUrl}/api/runs/resume-1/checkpoint`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerA.cookie),
       body: JSON.stringify({
         sourceWorkerId: 'browser-a',
         tensors: [
@@ -189,9 +288,10 @@ describe('real two-browser split Coordinator harness', () => {
 
     const result = await fetch(`${baseUrl}/api/runs/resume-1/result`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(registerStandby.cookie),
       body: JSON.stringify({
         status: 'pass',
+        segment0WorkerId: 'browser-a',
         segment1WorkerId: 'browser-b-standby',
         resumedFromCheckpoint: true,
       }),

@@ -7,9 +7,10 @@
  *
  * For the real P0, the Coordinator also issues an HttpOnly probe cookie per
  * browser cookie jar. Tabs in the same Chrome profile share that cookie while
- * distinct profiles use distinct cookie jars. A final result is rejected when
- * segment 0 and segment 1 registered with the same probe identity, so
- * "different worker IDs" alone can no longer satisfy profile isolation.
+ * distinct profiles use distinct cookie jars. Checkpoint/result writes must
+ * return the cookie issued for the registered worker generation, and final
+ * profile-isolation evidence is bound to the identities that actually wrote
+ * the run rather than to mutable worker IDs alone.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -86,6 +87,10 @@ function parseCookies(raw) {
   return cookies;
 }
 
+function hashProfileProbeToken(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 function profileProbeForRequest(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   let token = cookies.get(PROFILE_PROBE_COOKIE);
@@ -101,8 +106,52 @@ function profileProbeForRequest(req, res) {
       `${PROFILE_PROBE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`,
     );
   }
-  const hash = createHash('sha256').update(token).digest('hex');
-  return { hash, newlyIssued };
+  return { hash: hashProfileProbeToken(token), newlyIssued };
+}
+
+function profileProbeHashFromRequest(req) {
+  const token = parseCookies(req.headers.cookie).get(PROFILE_PROBE_COOKIE);
+  return token ? hashProfileProbeToken(token) : undefined;
+}
+
+function workerIdentityForRequest(state, req, workerId, allowedRoles) {
+  const worker = state.workers.get(workerId);
+  if (!worker) {
+    return { ok: false, status: 409, error: 'worker-must-register-first', workerId };
+  }
+  if (!allowedRoles.includes(worker.role)) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'worker-role-mismatch',
+      workerId,
+      role: worker.role,
+      expectedRoles: allowedRoles,
+    };
+  }
+  const requestProbeHash = profileProbeHashFromRequest(req);
+  if (!requestProbeHash) {
+    return { ok: false, status: 409, error: 'profile-probe-cookie-required', workerId };
+  }
+  if (requestProbeHash !== worker.profileProbeHash) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'profile-probe-cookie-mismatch',
+      workerId,
+      generation: worker.generation,
+    };
+  }
+  worker.profileProbeConfirmed = true;
+  return {
+    ok: true,
+    identity: {
+      workerId: worker.workerId,
+      role: worker.role,
+      generation: worker.generation,
+      profileProbeHash: worker.profileProbeHash,
+    },
+  };
 }
 
 async function statSafe(path) {
@@ -143,32 +192,32 @@ async function serveFile(urlPath, res) {
   res.end(body);
 }
 
-function resolveProfileIsolation(state, runId, resultBody) {
+function resolveProfileIsolation(state, runId, resultBody, segment1Identity) {
   const checkpoint = state.checkpoints.get(runId);
   if (!checkpoint) {
     return { ok: false, status: 409, error: 'checkpoint-not-ready-for-profile-isolation' };
   }
-  const sourceWorkerId = String(checkpoint.sourceWorkerId ?? '');
-  const segment1WorkerId = String(resultBody.segment1WorkerId ?? '');
-  const sourceWorker = state.workers.get(sourceWorkerId);
-  const segment1Worker = state.workers.get(segment1WorkerId);
-  if (!sourceWorker || !segment1Worker) {
-    return {
-      ok: false,
-      status: 409,
-      error: 'registered-workers-required-for-profile-isolation',
-      sourceWorkerId,
-      segment1WorkerId,
-    };
+  const sourceIdentity = checkpoint.sourceWorkerIdentity;
+  if (!sourceIdentity) {
+    return { ok: false, status: 409, error: 'checkpoint-source-identity-missing' };
   }
-  if (sourceWorker.profileProbeHash === segment1Worker.profileProbeHash) {
+  if (sourceIdentity.profileProbeHash === segment1Identity.profileProbeHash) {
     return {
       ok: false,
       status: 409,
       error: 'profile-isolation-not-proven',
-      reason: 'segment0 and segment1 share the same Coordinator-issued browser profile probe',
-      sourceWorkerId,
-      segment1WorkerId,
+      reason: 'segment0 and segment1 writes used the same Coordinator-issued browser profile probe',
+      sourceWorkerId: sourceIdentity.workerId,
+      segment1WorkerId: segment1Identity.workerId,
+    };
+  }
+  if (String(resultBody.segment0WorkerId ?? sourceIdentity.workerId) !== sourceIdentity.workerId) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-source-worker-mismatch',
+      sourceWorkerId: sourceIdentity.workerId,
+      reportedSourceWorkerId: resultBody.segment0WorkerId,
     };
   }
   return {
@@ -176,10 +225,12 @@ function resolveProfileIsolation(state, runId, resultBody) {
     evidence: {
       method: 'coordinator-issued-http-only-cookie',
       confirmed: true,
-      sourceWorkerId,
-      segment1WorkerId,
-      sourceProfileProbeHash: sourceWorker.profileProbeHash,
-      segment1ProfileProbeHash: segment1Worker.profileProbeHash,
+      sourceWorkerId: sourceIdentity.workerId,
+      sourceWorkerGeneration: sourceIdentity.generation,
+      segment1WorkerId: segment1Identity.workerId,
+      segment1WorkerGeneration: segment1Identity.generation,
+      sourceProfileProbeHash: sourceIdentity.profileProbeHash,
+      segment1ProfileProbeHash: segment1Identity.profileProbeHash,
     },
   };
 }
@@ -209,18 +260,24 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           return;
         }
         const profileProbe = profileProbeForRequest(req, res);
+        const previous = state.workers.get(workerId);
+        const generation = Number(previous?.generation ?? 0) + 1;
         state.workers.set(workerId, {
           workerId,
           role,
+          generation,
           registeredAt: Date.now(),
           adapter: body.adapter ?? null,
           profileProbeHash: profileProbe.hash,
+          profileProbeConfirmed: !profileProbe.newlyIssued,
         });
         json(res, 201, {
           ok: true,
           workerId,
           role,
+          generation,
           profileProbeAssigned: profileProbe.newlyIssued,
+          profileProbeConfirmed: !profileProbe.newlyIssued,
           profileProbeHash: profileProbe.hash,
         });
         return;
@@ -241,13 +298,15 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             return;
           }
           const sourceWorkerId = safeWorkerId(String(body.sourceWorkerId ?? ''));
-          if (!state.workers.has(sourceWorkerId)) {
-            json(res, 409, { ok: false, error: 'source-worker-must-register-first' });
+          const sourceIdentity = workerIdentityForRequest(state, req, sourceWorkerId, ['segment0']);
+          if (!sourceIdentity.ok) {
+            json(res, sourceIdentity.status, sourceIdentity);
             return;
           }
           const record = {
             ...body,
             sourceWorkerId,
+            sourceWorkerIdentity: sourceIdentity.identity,
             runId,
             relayOwner: 'coordinator',
             directWorkerNetworking: false,
@@ -258,6 +317,8 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             ok: true,
             runId,
             relayOwner: 'coordinator',
+            sourceWorkerGeneration: sourceIdentity.identity.generation,
+            profileProbeConfirmed: true,
             tensorBytes: body.tensors.reduce((sum, tensor) => sum + Number(tensor.bytes ?? 0), 0),
           });
           return;
@@ -278,7 +339,18 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
         const runId = safeRunId(resultMatch[1]);
         if (req.method === 'POST') {
           const body = await readJson(req);
-          const isolation = resolveProfileIsolation(state, runId, body);
+          const segment1WorkerId = safeWorkerId(String(body.segment1WorkerId ?? ''));
+          const segment1Identity = workerIdentityForRequest(
+            state,
+            req,
+            segment1WorkerId,
+            ['segment1', 'standby'],
+          );
+          if (!segment1Identity.ok) {
+            json(res, segment1Identity.status, segment1Identity);
+            return;
+          }
+          const isolation = resolveProfileIsolation(state, runId, body, segment1Identity.identity);
           if (!isolation.ok) {
             json(res, isolation.status, isolation);
             return;
@@ -286,6 +358,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           const record = {
             ...body,
             runId,
+            segment1WorkerIdentity: segment1Identity.identity,
             profileIsolationConfirmed: true,
             profileIsolationEvidence: isolation.evidence,
             storedAt: Date.now(),
