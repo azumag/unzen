@@ -60,6 +60,14 @@ LLMトラックではWorker・サイト運営者への報酬が必要という�
     └── tests/
 ```
 
+## CIチェックの範囲
+
+- **Core CI** — `core/**` のsource、tests、Vitest/TypeScript設定、package/lockfileの変更で起動し、`npm test -- --run` によるcore全Vitest suiteと `npm run typecheck` を実行します。
+- **Next.js Runtime E2E** — `core` のランタイム変更とNext.js App Router exampleを対象に、実際のexample build/runtime経路を確認します。Core CIのunit/integration suiteを代替するものではありません。
+- **LLM Proto CI** — `LLM-proto` のTypeScript、contract/smoke test、browser harness等を検証します。
+
+各CIの成功は対応する自動テスト範囲の健全性を示すものであり、実ブラウザ・実GPU・production環境でのreadinessを自動的に証明するものではありません。
+
 ## 主要Issue
 
 - ~~[#92 Chrome Built-in AI（Prompt API / Gemini Nano）をUnzen Workerとして利用する](https://github.com/azumag/unzen/issues/92)~~ — **破棄（2026-08-06）**: 特別な設定なしにはAPIが露出しないため。関連Issue #93/#95/#100も破棄、コード削除済み
