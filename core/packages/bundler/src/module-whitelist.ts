@@ -12,12 +12,7 @@
  * - Wildcard patterns (e.g., 'lodash/*') allow subpath imports
  */
 
-import { builtinModules } from 'node:module';
-
-/** Every runtime built-in and, where supported, its `node:` spelling. */
-const NODE_BUILTINS = new Set(builtinModules.flatMap((name) => (
-  name.startsWith('node:') ? [name] : [name, `node:${name}`]
-)));
+import { isBuiltin } from 'node:module';
 
 /**
  * Default list of allowed npm modules for sandbox functions.
@@ -36,17 +31,19 @@ export const DEFAULT_ALLOWED_MODULES: string[] = [
 ];
 
 /**
- * Check if a module name is a Node.js built-in
+ * Check if a module name is a Node.js built-in.
  *
- * Handles both bare names (e.g., 'fs') and node: prefixed names
- * (e.g., 'node:fs'). The node: prefix was introduced in Node.js 12
- * as an explicit way to import built-in modules.
+ * `module.isBuiltin()` is used instead of deriving aliases from
+ * `builtinModules`: some built-ins (notably `node:test`) are intentionally
+ * available only with the `node:` prefix. Inventing or omitting aliases here
+ * can either block safe npm names or, worse, let a built-in through the
+ * sandbox whitelist.
  *
- * @param name - Module name (e.g., 'fs', 'node:path')
+ * @param name - Module name (e.g., 'fs', 'node:path', 'node:test')
  * @returns true if the module is a Node.js built-in
  */
 export function isNodeBuiltin(name: string): boolean {
-  return NODE_BUILTINS.has(name);
+  return isBuiltin(name);
 }
 
 /**
