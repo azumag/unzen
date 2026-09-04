@@ -364,8 +364,13 @@ async function runSegment1(manifest) {
     body: JSON.stringify(report),
   });
   if (!response.ok) throw new Error(`result upload failed: ${response.status}`);
+  const accepted = await response.json();
+  if (accepted.profileIsolationConfirmed !== true) {
+    throw new Error('Coordinator did not confirm browser profile isolation');
+  }
   log(JSON.stringify(report, null, 2));
-  status(`Split inference complete. next=${JSON.stringify(tokenText)}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}`);
+  log(`Coordinator profile isolation evidence: ${JSON.stringify(accepted.profileIsolationEvidence, null, 2)}`);
+  status(`Split inference complete. next=${JSON.stringify(tokenText)}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}, profile isolation=confirmed`);
 }
 
 async function execute() {
