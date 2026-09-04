@@ -1,0 +1,43 @@
+name: Core CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/core-ci.yml'
+      - 'core/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/core-ci.yml'
+      - 'core/**'
+  workflow_dispatch:
+
+jobs:
+  core-test-and-typecheck:
+    name: Core Vitest + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+
+      - name: Install core dependencies
+        working-directory: core
+        run: npm ci
+
+      - name: Run core Vitest suite
+        working-directory: core
+        run: npm test -- --run
+
+      - name: Run core test typecheck
+        working-directory: core
+        run: npm run typecheck
