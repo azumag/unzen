@@ -14,6 +14,20 @@ The localhost two-browser WebGPU harness treats checkpoint and result payloads a
 
 Malformed, duplicate, truncated, oversized-by-declaration, or shape/byte-inconsistent tensors are rejected before they are stored as Coordinator evidence. The Coordinator computes the accepted `tensorBytes` value from the validated shape/type rather than trusting the client-provided aggregate.
 
+Before Browser B reconstructs the relayed tensors, the runner also requires the two names to match the current split manifest exactly. This keeps a structurally valid but wrong-boundary checkpoint from being consumed as the model's continuation input.
+
+## Browser logits validation
+
+Before a result report is constructed, the browser runner validates the actual logits tensor:
+
+- the output exists and is `float32` or `float64`;
+- the shape is positive rank 3 with batch size 1;
+- `data.length` exactly matches the shape product;
+- every logit is finite, not only the winning value;
+- argmax is computed only after those checks pass.
+
+An empty sequence/vocabulary, truncated tensor, NaN, or positive/negative Infinity therefore fails locally and never reaches the `pass` report path.
+
 ## Final result boundary
 
 `POST /api/runs/:runId/result` only stores a successful result when the browser profile identity checks pass and the result contains a numerically meaningful output:
@@ -26,6 +40,6 @@ Malformed, duplicate, truncated, oversized-by-declaration, or shape/byte-inconsi
 - input token IDs are a non-empty array of non-negative integers;
 - observed boundary bytes are a positive integer.
 
-This means runner failures such as an empty logits sequence or all-NaN logits cannot be persisted as successful evidence: their non-finite top-1 value becomes invalid JSON data (for example `null`) and the Coordinator rejects the result.
+The Coordinator-side checks are a second fail-closed boundary: missing outputs or JSON-normalized non-finite values such as `null` are rejected even if a caller bypasses the normal browser runner.
 
 These checks validate evidence structure and numeric sanity only. They do not upgrade the evidence level, replace full-vs-split numerical comparison, or prove that a WebGPU execution was independently captured and verified.
