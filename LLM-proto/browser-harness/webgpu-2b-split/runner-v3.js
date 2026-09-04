@@ -291,22 +291,55 @@ async function waitForCheckpoint() {
   }
 }
 
+function validateCheckpointBoundaryNames(checkpoint, manifest) {
+  if (!Array.isArray(checkpoint.tensors) || checkpoint.tensors.length !== 2) {
+    throw new Error('Coordinator checkpoint must contain exactly two boundary tensors');
+  }
+  const expectedNames = manifest.boundary.tensors.map((entry) => entry.name);
+  const actualNames = checkpoint.tensors.map((wire) => wire.name);
+  if (new Set(actualNames).size !== actualNames.length) {
+    throw new Error('Coordinator checkpoint contains duplicate boundary tensor names');
+  }
+  const expected = new Set(expectedNames);
+  if (actualNames.some((name) => !expected.has(name)) || expectedNames.some((name) => !actualNames.includes(name))) {
+    throw new Error(`Coordinator checkpoint boundary names do not match manifest: expected=${expectedNames.join(',')}, actual=${actualNames.join(',')}`);
+  }
+}
+
 function argmaxLastLogits(tensor) {
-  const dims = tensor.dims;
-  if (dims.length !== 3 || dims[0] !== 1) throw new Error(`unexpected logits shape: ${dims}`);
-  const sequenceLength = dims[1];
-  const vocab = dims[2];
+  if (!tensor || !Array.isArray(tensor.dims) || !tensor.data) {
+    throw new Error('missing logits tensor output');
+  }
+  if (tensor.type !== 'float32' && tensor.type !== 'float64') {
+    throw new Error(`unsupported logits tensor type: ${tensor.type}`);
+  }
+  const dims = tensor.dims.map(Number);
+  if (dims.length !== 3 || dims[0] !== 1
+    || !dims.every((dimension) => Number.isSafeInteger(dimension) && dimension > 0)) {
+    throw new Error(`unexpected logits shape: ${dims}`);
+  }
+  const [batch, sequenceLength, vocab] = dims;
+  const elementCount = batch * sequenceLength * vocab;
+  if (!Number.isSafeInteger(elementCount) || tensor.data.length !== elementCount) {
+    throw new Error(`logits data length mismatch: shape=${dims}, data=${tensor.data.length}`);
+  }
+  for (let index = 0; index < tensor.data.length; index++) {
+    const value = Number(tensor.data[index]);
+    if (!Number.isFinite(value)) {
+      throw new Error(`non-finite logit at index ${index}`);
+    }
+  }
   const start = (sequenceLength - 1) * vocab;
   let bestIndex = 0;
-  let bestValue = -Infinity;
-  for (let index = 0; index < vocab; index++) {
+  let bestValue = Number(tensor.data[start]);
+  for (let index = 1; index < vocab; index++) {
     const value = Number(tensor.data[start + index]);
     if (value > bestValue) {
       bestValue = value;
       bestIndex = index;
     }
   }
-  return { tokenId: bestIndex, logit: bestValue };
+  return { tokenId: bestIndex, logit: bestValue, elementCount };
 }
 
 async function runSegment1(manifest) {
@@ -315,6 +348,7 @@ async function runSegment1(manifest) {
   if (checkpoint.directWorkerNetworking !== false || checkpoint.relayOwner !== 'coordinator') {
     throw new Error('checkpoint did not come from Coordinator-owned relay');
   }
+  validateCheckpointBoundaryNames(checkpoint, manifest);
   const tokenIds = checkpoint.inputTokenIds.map(Number);
   promptEl.value = checkpoint.prompt;
   log(`received checkpoint from ${checkpoint.sourceWorkerId}; token ids: ${tokenIds.join(',')}`);
@@ -328,6 +362,7 @@ async function runSegment1(manifest) {
   const outputs = await prepared.session.run(feeds, [manifest.logitsOutput]);
   const executionMs = performance.now() - started;
   const logits = outputs[manifest.logitsOutput];
+  if (!logits) throw new Error(`missing logits output: ${manifest.logitsOutput}`);
   const top1 = argmaxLastLogits(logits);
   await prepared.session.release();
   const tokenizer = await AutoTokenizer.from_pretrained(modelId);
@@ -352,6 +387,8 @@ async function runSegment1(manifest) {
     top1Logit: top1.logit,
     tokenText,
     logitsShape: logits.dims,
+    logitsFinite: true,
+    logitsElementCount: top1.elementCount,
     adapter: await adapterInfo(),
     directWorkerNetworking: false,
     relayOwner: 'coordinator',
