@@ -53,9 +53,37 @@ function jsonHeaders(cookie?: string) {
 }
 
 const tensors = [
-  { name: 'boundary-residual', type: 'float32', dims: [1, 2, 4], bytes: 32, base64: 'AAAA' },
-  { name: 'boundary-mlp', type: 'float32', dims: [1, 2, 4], bytes: 32, base64: 'BBBB' },
+  {
+    name: 'boundary-residual',
+    type: 'float32',
+    dims: [1, 2, 4],
+    bytes: 32,
+    base64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+  },
+  {
+    name: 'boundary-mlp',
+    type: 'float32',
+    dims: [1, 2, 4],
+    bytes: 32,
+    base64: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+  },
 ];
+
+function validResult(segment1WorkerId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    status: 'pass',
+    segment0WorkerId: 'browser-a',
+    segment1WorkerId,
+    inputTokenIds: [1, 2],
+    boundaryBytes: 64,
+    top1TokenId: 3,
+    top1Logit: 1.25,
+    logitsShape: [1, 2, 8],
+    directWorkerNetworking: false,
+    relayOwner: 'coordinator',
+    ...overrides,
+  };
+}
 
 describe('real two-browser split Coordinator harness', () => {
   it('relays exactly two boundary tensors through Coordinator storage', async () => {
@@ -117,11 +145,7 @@ describe('real two-browser split Coordinator harness', () => {
     const result = await fetch(`${baseUrl}/api/runs/profile-ok/result`, {
       method: 'POST',
       headers: jsonHeaders(registerB.cookie),
-      body: JSON.stringify({
-        status: 'pass',
-        segment0WorkerId: 'browser-a',
-        segment1WorkerId: 'browser-b',
-      }),
+      body: JSON.stringify(validResult('browser-b')),
     });
     expect(result.status).toBe(201);
     expect(await result.json()).toMatchObject({
@@ -199,11 +223,7 @@ describe('real two-browser split Coordinator harness', () => {
     const result = await fetch(`${baseUrl}/api/runs/profile-same/result`, {
       method: 'POST',
       headers: jsonHeaders(registerB.cookie),
-      body: JSON.stringify({
-        status: 'pass',
-        segment0WorkerId: 'browser-a',
-        segment1WorkerId: 'browser-b',
-      }),
+      body: JSON.stringify(validResult('browser-b')),
     });
     expect(result.status).toBe(409);
     expect(await result.json()).toMatchObject({
@@ -233,11 +253,7 @@ describe('real two-browser split Coordinator harness', () => {
     const result = await fetch(`${baseUrl}/api/runs/profile-generation/result`, {
       method: 'POST',
       headers: jsonHeaders(registerB.cookie),
-      body: JSON.stringify({
-        status: 'pass',
-        segment0WorkerId: 'browser-a',
-        segment1WorkerId: 'browser-b',
-      }),
+      body: JSON.stringify(validResult('browser-b')),
     });
     expect(result.status).toBe(201);
     expect(await result.json()).toMatchObject({
@@ -264,6 +280,67 @@ describe('real two-browser split Coordinator harness', () => {
     expect(malformed.status).toBe(400);
   });
 
+  it('rejects malformed boundary tensor encodings and inconsistent byte counts', async () => {
+    const { baseUrl } = await startServer();
+    const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
+
+    const malformedTensorSets = [
+      [{}, {}],
+      [tensors[0], { ...tensors[1], name: tensors[0].name }],
+      [{ ...tensors[0], bytes: 31 }, tensors[1]],
+      [{ ...tensors[0], dims: [1, 2, 5] }, tensors[1]],
+      [{ ...tensors[0], base64: '!!!!' }, tensors[1]],
+    ];
+
+    for (const [index, malformedTensors] of malformedTensorSets.entries()) {
+      const response = await fetch(`${baseUrl}/api/runs/malformed-${index}/checkpoint`, {
+        method: 'POST',
+        headers: jsonHeaders(registerA.cookie),
+        body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors: malformedTensors }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid-boundary-tensor' });
+    }
+  });
+
+  it('rejects incomplete or numerically invalid pass results', async () => {
+    const { baseUrl } = await startServer();
+    const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
+    const registerB = await registerWorker(baseUrl, 'browser-b', 'segment1');
+
+    const checkpoint = await fetch(`${baseUrl}/api/runs/result-validation/checkpoint`, {
+      method: 'POST',
+      headers: jsonHeaders(registerA.cookie),
+      body: JSON.stringify({ sourceWorkerId: 'browser-a', tensors }),
+    });
+    expect(checkpoint.status).toBe(201);
+
+    const malformedResults = [
+      { status: 'pass', segment0WorkerId: 'browser-a', segment1WorkerId: 'browser-b' },
+      validResult('browser-b', { top1Logit: null }),
+      validResult('browser-b', { top1TokenId: 8 }),
+      validResult('browser-b', { logitsShape: [1, 0, 8] }),
+      validResult('browser-b', { boundaryBytes: 0 }),
+    ];
+
+    for (const malformedResult of malformedResults) {
+      const response = await fetch(`${baseUrl}/api/runs/result-validation/result`, {
+        method: 'POST',
+        headers: jsonHeaders(registerB.cookie),
+        body: JSON.stringify(malformedResult),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid-result-payload' });
+    }
+
+    const valid = await fetch(`${baseUrl}/api/runs/result-validation/result`, {
+      method: 'POST',
+      headers: jsonHeaders(registerB.cookie),
+      body: JSON.stringify(validResult('browser-b')),
+    });
+    expect(valid.status).toBe(201);
+  });
+
   it('allows a standby browser from a distinct profile to consume the same Coordinator checkpoint', async () => {
     const { baseUrl } = await startServer();
     const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
@@ -275,10 +352,7 @@ describe('real two-browser split Coordinator harness', () => {
       headers: jsonHeaders(registerA.cookie),
       body: JSON.stringify({
         sourceWorkerId: 'browser-a',
-        tensors: [
-          { name: 'a', bytes: 16, base64: 'AAAA' },
-          { name: 'b', bytes: 16, base64: 'BBBB' },
-        ],
+        tensors,
       }),
     });
 
@@ -289,12 +363,7 @@ describe('real two-browser split Coordinator harness', () => {
     const result = await fetch(`${baseUrl}/api/runs/resume-1/result`, {
       method: 'POST',
       headers: jsonHeaders(registerStandby.cookie),
-      body: JSON.stringify({
-        status: 'pass',
-        segment0WorkerId: 'browser-a',
-        segment1WorkerId: 'browser-b-standby',
-        resumedFromCheckpoint: true,
-      }),
+      body: JSON.stringify(validResult('browser-b-standby', { resumedFromCheckpoint: true })),
     });
     expect(result.status).toBe(201);
     expect(await fetch(`${baseUrl}/api/runs/resume-1/result`).then((response) => response.json())).toMatchObject({

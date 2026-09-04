@@ -5,6 +5,10 @@ import {
   clearRealSplitArtifactCache,
   loadVerifiedArtifact,
 } from './artifact-cache.js';
+import {
+  argmaxLastLogits,
+  validateCheckpointBoundaryNames,
+} from './runtime-validation.js';
 
 const params = new URLSearchParams(location.search);
 const role = params.get('role') ?? 'segment0';
@@ -291,30 +295,13 @@ async function waitForCheckpoint() {
   }
 }
 
-function argmaxLastLogits(tensor) {
-  const dims = tensor.dims;
-  if (dims.length !== 3 || dims[0] !== 1) throw new Error(`unexpected logits shape: ${dims}`);
-  const sequenceLength = dims[1];
-  const vocab = dims[2];
-  const start = (sequenceLength - 1) * vocab;
-  let bestIndex = 0;
-  let bestValue = -Infinity;
-  for (let index = 0; index < vocab; index++) {
-    const value = Number(tensor.data[start + index]);
-    if (value > bestValue) {
-      bestValue = value;
-      bestIndex = index;
-    }
-  }
-  return { tokenId: bestIndex, logit: bestValue };
-}
-
 async function runSegment1(manifest) {
   status('Waiting for Coordinator checkpoint…');
   const checkpoint = await waitForCheckpoint();
   if (checkpoint.directWorkerNetworking !== false || checkpoint.relayOwner !== 'coordinator') {
     throw new Error('checkpoint did not come from Coordinator-owned relay');
   }
+  validateCheckpointBoundaryNames(checkpoint, manifest);
   const tokenIds = checkpoint.inputTokenIds.map(Number);
   promptEl.value = checkpoint.prompt;
   log(`received checkpoint from ${checkpoint.sourceWorkerId}; token ids: ${tokenIds.join(',')}`);
@@ -328,6 +315,7 @@ async function runSegment1(manifest) {
   const outputs = await prepared.session.run(feeds, [manifest.logitsOutput]);
   const executionMs = performance.now() - started;
   const logits = outputs[manifest.logitsOutput];
+  if (!logits) throw new Error(`missing logits output: ${manifest.logitsOutput}`);
   const top1 = argmaxLastLogits(logits);
   await prepared.session.release();
   const tokenizer = await AutoTokenizer.from_pretrained(modelId);
@@ -352,6 +340,8 @@ async function runSegment1(manifest) {
     top1Logit: top1.logit,
     tokenText,
     logitsShape: logits.dims,
+    logitsFinite: true,
+    logitsElementCount: top1.elementCount,
     adapter: await adapterInfo(),
     directWorkerNetworking: false,
     relayOwner: 'coordinator',

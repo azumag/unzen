@@ -23,6 +23,21 @@ const DEFAULT_PORT = Number(process.env.PORT ?? 8791);
 const MODELS_DIR = process.env.MODELS_DIR ? resolve(process.env.MODELS_DIR) : undefined;
 const MAX_JSON_BYTES = 16 * 1024 * 1024;
 const PROFILE_PROBE_COOKIE = 'unzen_profile_probe';
+const TENSOR_TYPE_BYTES = Object.freeze({
+  float64: 8,
+  float32: 4,
+  float16: 2,
+  int64: 8,
+  int32: 4,
+  int16: 2,
+  int8: 1,
+  uint64: 8,
+  uint32: 4,
+  uint16: 2,
+  uint8: 1,
+  bool: 1,
+});
+const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -73,6 +88,112 @@ function safeRunId(raw) {
 function safeWorkerId(raw) {
   if (!/^[A-Za-z0-9._-]{1,128}$/.test(raw)) throw new Error('invalid worker id');
   return raw;
+}
+
+function decodedBase64ByteLength(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return undefined;
+  if (!CANONICAL_BASE64.test(value)) return undefined;
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
+function validateBoundaryTensors(tensors) {
+  if (!Array.isArray(tensors) || tensors.length !== 2) {
+    return { ok: false, status: 400, error: 'exactly-two-boundary-tensors-required' };
+  }
+  const names = new Set();
+  let tensorBytes = 0;
+  for (const [index, tensor] of tensors.entries()) {
+    if (!tensor || typeof tensor !== 'object' || Array.isArray(tensor)) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'tensor-object-required' };
+    }
+    if (typeof tensor.name !== 'string' || tensor.name.length === 0 || tensor.name.length > 1024) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'invalid-name' };
+    }
+    if (names.has(tensor.name)) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'duplicate-name', name: tensor.name };
+    }
+    names.add(tensor.name);
+    const elementBytes = TENSOR_TYPE_BYTES[tensor.type];
+    if (!elementBytes) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'unsupported-type', type: tensor.type };
+    }
+    if (!Array.isArray(tensor.dims) || tensor.dims.length === 0 || tensor.dims.length > 8) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'invalid-dims' };
+    }
+    let elementCount = 1;
+    for (const dimension of tensor.dims) {
+      if (!Number.isSafeInteger(dimension) || dimension <= 0) {
+        return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'invalid-dimension' };
+      }
+      elementCount *= dimension;
+      if (!Number.isSafeInteger(elementCount)) {
+        return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'tensor-size-overflow' };
+      }
+    }
+    const expectedBytes = elementCount * elementBytes;
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'tensor-size-overflow' };
+    }
+    if (!Number.isSafeInteger(tensor.bytes) || tensor.bytes !== expectedBytes) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'invalid-boundary-tensor',
+        index,
+        reason: 'declared-byte-length-mismatch',
+        declaredBytes: tensor.bytes,
+        expectedBytes,
+      };
+    }
+    const decodedBytes = decodedBase64ByteLength(tensor.base64);
+    if (decodedBytes === undefined) {
+      return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'invalid-base64' };
+    }
+    if (decodedBytes !== expectedBytes) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'invalid-boundary-tensor',
+        index,
+        reason: 'encoded-byte-length-mismatch',
+        decodedBytes,
+        expectedBytes,
+      };
+    }
+    tensorBytes += expectedBytes;
+  }
+  return { ok: true, tensorBytes };
+}
+
+function validateResultPayload(body) {
+  if (body.status !== 'pass') {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'status-must-be-pass' };
+  }
+  if (body.relayOwner !== 'coordinator' || body.directWorkerNetworking !== false) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'relay-semantics-mismatch' };
+  }
+  if (!Array.isArray(body.logitsShape) || body.logitsShape.length !== 3) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-logits-shape' };
+  }
+  if (!body.logitsShape.every((dimension) => Number.isSafeInteger(dimension) && dimension > 0) || body.logitsShape[0] !== 1) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-logits-shape' };
+  }
+  const vocabSize = body.logitsShape[2];
+  if (!Number.isSafeInteger(body.top1TokenId) || body.top1TokenId < 0 || body.top1TokenId >= vocabSize) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'top1-token-out-of-range' };
+  }
+  if (typeof body.top1Logit !== 'number' || !Number.isFinite(body.top1Logit)) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'top1-logit-must-be-finite' };
+  }
+  if (!Array.isArray(body.inputTokenIds) || body.inputTokenIds.length === 0
+    || !body.inputTokenIds.every((tokenId) => Number.isSafeInteger(tokenId) && tokenId >= 0)) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-input-token-ids' };
+  }
+  if (!Number.isSafeInteger(body.boundaryBytes) || body.boundaryBytes <= 0) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-boundary-bytes' };
+  }
+  return { ok: true };
 }
 
 function parseCookies(raw) {
@@ -293,8 +414,9 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
         const runId = safeRunId(checkpointMatch[1]);
         if (req.method === 'POST') {
           const body = await readJson(req);
-          if (!Array.isArray(body.tensors) || body.tensors.length !== 2) {
-            json(res, 400, { ok: false, error: 'exactly two boundary tensors are required' });
+          const validatedTensors = validateBoundaryTensors(body.tensors);
+          if (!validatedTensors.ok) {
+            json(res, validatedTensors.status, validatedTensors);
             return;
           }
           const sourceWorkerId = safeWorkerId(String(body.sourceWorkerId ?? ''));
@@ -319,7 +441,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             relayOwner: 'coordinator',
             sourceWorkerGeneration: sourceIdentity.identity.generation,
             profileProbeConfirmed: true,
-            tensorBytes: body.tensors.reduce((sum, tensor) => sum + Number(tensor.bytes ?? 0), 0),
+            tensorBytes: validatedTensors.tensorBytes,
           });
           return;
         }
@@ -348,6 +470,11 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           );
           if (!segment1Identity.ok) {
             json(res, segment1Identity.status, segment1Identity);
+            return;
+          }
+          const validatedResult = validateResultPayload(body);
+          if (!validatedResult.ok) {
+            json(res, validatedResult.status, validatedResult);
             return;
           }
           const isolation = resolveProfileIsolation(state, runId, body, segment1Identity.identity);
