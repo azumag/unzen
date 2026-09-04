@@ -47,6 +47,14 @@ function modelUrl(relativePath) {
   return new URL(`${root}${clean}`, location.href).href;
 }
 
+function bytesToHex(bytes) {
+  return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Bytes(bytes) {
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+}
+
 async function adapterInfo() {
   try {
     const adapter = await navigator.gpu.requestAdapter();
@@ -74,7 +82,9 @@ async function registerWorker() {
 async function loadManifest() {
   const response = await fetch(modelUrl('split-manifest.json'), { cache: 'no-store' });
   if (!response.ok) throw new Error(`split manifest not found: ${response.status}`);
-  const manifest = await response.json();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const manifestDigest = await sha256Bytes(bytes);
+  const manifest = JSON.parse(new TextDecoder().decode(bytes));
   if (manifest.kind !== 'unzen-real-two-segment-onnx') {
     throw new Error(`unexpected split manifest kind: ${manifest.kind}`);
   }
@@ -84,7 +94,7 @@ async function loadManifest() {
   if (manifest.boundary?.tensorCount !== 2) {
     throw new Error('split manifest must declare exactly two boundary tensors');
   }
-  return manifest;
+  return { manifest, manifestDigest };
 }
 
 function normalizeTokenIds(encoded) {
@@ -248,10 +258,11 @@ async function createWebGpuSession(segment, manifest) {
   };
 }
 
-async function runSegment0(manifest) {
+async function runSegment0(manifest, manifestDigest) {
   const prompt = promptEl.value;
   const { tokenIds } = await tokenize(prompt);
   log(`input token ids: ${tokenIds.join(',')}`);
+  log(`manifest sha256: ${manifestDigest}`);
   const segment = manifest.segments.find((entry) => entry.index === 0);
   if (!segment) throw new Error('segment 0 missing from manifest');
   const prepared = await createWebGpuSession(segment, manifest);
@@ -270,6 +281,7 @@ async function runSegment0(manifest) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       sourceWorkerId: workerId,
+      manifestDigest,
       prompt,
       inputTokenIds: tokenIds,
       segmentExecutionMs: executionMs,
@@ -279,8 +291,12 @@ async function runSegment0(manifest) {
     }),
   });
   if (!response.ok) throw new Error(`checkpoint relay failed: ${response.status}`);
-  log(`Coordinator receipt: ${JSON.stringify(await response.json())}`);
-  status(`Segment 0 complete. cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}`);
+  const receipt = await response.json();
+  if (receipt.manifestDigest !== manifestDigest || !receipt.checkpointId || !receipt.checkpointDigest) {
+    throw new Error('Coordinator checkpoint receipt is not bound to the loaded manifest');
+  }
+  log(`Coordinator receipt: ${JSON.stringify(receipt)}`);
+  status(`Segment 0 complete. checkpoint=${receipt.checkpointId}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}`);
 }
 
 async function waitForCheckpoint() {
@@ -295,16 +311,22 @@ async function waitForCheckpoint() {
   }
 }
 
-async function runSegment1(manifest) {
+async function runSegment1(manifest, manifestDigest) {
   status('Waiting for Coordinator checkpoint…');
   const checkpoint = await waitForCheckpoint();
   if (checkpoint.directWorkerNetworking !== false || checkpoint.relayOwner !== 'coordinator') {
     throw new Error('checkpoint did not come from Coordinator-owned relay');
   }
+  if (checkpoint.manifestDigest !== manifestDigest) {
+    throw new Error(`checkpoint manifest digest mismatch: ${checkpoint.manifestDigest ?? 'missing'} != ${manifestDigest}`);
+  }
+  if (!checkpoint.checkpointId || !checkpoint.checkpointDigest || !Number.isSafeInteger(checkpoint.sourceWorkerIdentity?.generation)) {
+    throw new Error('checkpoint is missing immutable Coordinator binding metadata');
+  }
   validateCheckpointBoundaryNames(checkpoint, manifest);
   const tokenIds = checkpoint.inputTokenIds.map(Number);
   promptEl.value = checkpoint.prompt;
-  log(`received checkpoint from ${checkpoint.sourceWorkerId}; token ids: ${tokenIds.join(',')}`);
+  log(`received checkpoint ${checkpoint.checkpointId} (${checkpoint.checkpointDigest}) from ${checkpoint.sourceWorkerId}; token ids: ${tokenIds.join(',')}`);
   const boundary = new Map(checkpoint.tensors.map((wire) => [wire.name, tensorFromWire(wire)]));
   const segment = manifest.segments.find((entry) => entry.index === 1);
   if (!segment) throw new Error('segment 1 missing from manifest');
@@ -325,6 +347,10 @@ async function runSegment1(manifest) {
     kind: 'unzen-real-two-browser-webgpu-split-run',
     runId,
     status: 'pass',
+    manifestDigest,
+    checkpointId: checkpoint.checkpointId,
+    checkpointDigest: checkpoint.checkpointDigest,
+    checkpointSourceWorkerGeneration: checkpoint.sourceWorkerIdentity.generation,
     segment0WorkerId: checkpoint.sourceWorkerId,
     segment1WorkerId: workerId,
     segment1Role: role,
@@ -358,9 +384,13 @@ async function runSegment1(manifest) {
   if (accepted.profileIsolationConfirmed !== true) {
     throw new Error('Coordinator did not confirm browser profile isolation');
   }
+  if (accepted.checkpointId !== checkpoint.checkpointId || accepted.checkpointDigest !== checkpoint.checkpointDigest) {
+    throw new Error('Coordinator accepted result against a different checkpoint binding');
+  }
   log(JSON.stringify(report, null, 2));
+  log(`Coordinator result digest: ${accepted.resultDigest}`);
   log(`Coordinator profile isolation evidence: ${JSON.stringify(accepted.profileIsolationEvidence, null, 2)}`);
-  status(`Split inference complete. next=${JSON.stringify(tokenText)}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}, profile isolation=confirmed`);
+  status(`Split inference complete. checkpoint=${checkpoint.checkpointId}, next=${JSON.stringify(tokenText)}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}, profile isolation=confirmed`);
 }
 
 async function execute() {
@@ -369,9 +399,9 @@ async function execute() {
   try {
     if (!navigator.gpu) throw new Error('WebGPU is unavailable in this browser');
     await registerWorker();
-    const manifest = await loadManifest();
-    if (role === 'segment0') await runSegment0(manifest);
-    else if (role === 'segment1' || role === 'standby') await runSegment1(manifest);
+    const { manifest, manifestDigest } = await loadManifest();
+    if (role === 'segment0') await runSegment0(manifest, manifestDigest);
+    else if (role === 'segment1' || role === 'standby') await runSegment1(manifest, manifestDigest);
     else throw new Error(`unsupported role in runner: ${role}`);
   } catch (error) {
     console.error(error);
@@ -394,4 +424,4 @@ clearCacheEl?.addEventListener('click', async () => {
     clearCacheEl.disabled = false;
   }
 });
-status('Ready. First run should be cold; repeat with another run ID for warm-cache measurement.');
+status('Ready. Run IDs are immutable; use a new run ID for every fresh cold/warm or retry execution.');
