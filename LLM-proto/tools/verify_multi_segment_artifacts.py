@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 MANIFEST_KIND = "unzen-budgeted-multi-segment-onnx"
+MANIFEST_SCHEMA_VERSION = "1.0.0"
 ARTIFACT_LAYOUT = "per-segment-external-data"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -29,10 +30,17 @@ def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def _non_empty_string(raw: object, *, field: str) -> str:
+    # Manifest identities and paths are immutable JSON strings. Do not coerce
+    # numbers, booleans, or other JSON values into plausible strings: a 64-digit
+    # integer, for example, can otherwise become a syntactically valid digest.
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{field} must be a non-empty string")
+    return raw
+
+
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
-    value = str(raw or "")
-    if not value:
-        raise ValueError(f"{field} must be a non-empty relative path")
+    value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
@@ -50,7 +58,7 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
 
 
 def _canonical_sha256(raw: object, *, field: str) -> str:
-    value = str(raw or "")
+    value = _non_empty_string(raw, field=field)
     if not SHA256_RE.fullmatch(value):
         raise ValueError(f"{field} must be a canonical lowercase SHA-256 digest")
     return value
@@ -102,6 +110,10 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("split manifest must contain a JSON object")
+    if manifest.get("schemaVersion") != MANIFEST_SCHEMA_VERSION:
+        raise ValueError(
+            f"unexpected split manifest schemaVersion: {manifest.get('schemaVersion')!r}"
+        )
     if manifest.get("kind") != MANIFEST_KIND:
         raise ValueError(f"unexpected split manifest kind: {manifest.get('kind')}")
     if manifest.get("artifactLayout") != ARTIFACT_LAYOUT:
@@ -146,8 +158,11 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                 f"segment indices must cover 0..n-1; expected {expected_index}, got {index}"
             )
 
+        graph_location = _non_empty_string(
+            raw_segment.get("path"), field=f"segments[{index}].path"
+        )
         graph_path = _safe_relative_path(
-            root, raw_segment.get("path"), field=f"segments[{index}].path"
+            root, graph_location, field=f"segments[{index}].path"
         )
         if not graph_path.is_file():
             raise FileNotFoundError(f"segment graph not found: {graph_path}")
@@ -173,7 +188,9 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                     f"segments[{index}].externalData[{external_index}] must be an object"
                 )
             field_prefix = f"segments[{index}].externalData[{external_index}]"
-            location = str(raw_entry.get("location") or "")
+            location = _non_empty_string(
+                raw_entry.get("location"), field=f"{field_prefix}.location"
+            )
             external_path = _safe_relative_path(
                 root, location, field=f"{field_prefix}.location"
             )
@@ -221,7 +238,10 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             )
 
         observed_tier = _tier(artifact_bytes, budget)
-        declared_tier = str(raw_segment.get("browserArtifactTier") or "")
+        declared_tier = _non_empty_string(
+            raw_segment.get("browserArtifactTier"),
+            field=f"segments[{index}].browserArtifactTier",
+        )
         if observed_tier != declared_tier:
             raise ValueError(
                 f"segment {index} browserArtifactTier mismatch: "
@@ -242,7 +262,11 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                 f"browserArtifactBudget segment {index} byte count mismatch: "
                 f"declared={budget_artifact_bytes}, observed={artifact_bytes}"
             )
-        if str(raw_budget_entry.get("tier") or "") != observed_tier:
+        budget_tier = _non_empty_string(
+            raw_budget_entry.get("tier"),
+            field=f"browserArtifactBudget.segments[{index}].tier",
+        )
+        if budget_tier != observed_tier:
             raise ValueError(f"browserArtifactBudget segment {index} tier mismatch")
         if artifact_bytes > effective_required_max:
             raise RuntimeError(
@@ -253,7 +277,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         reports.append(
             {
                 "index": index,
-                "path": str(raw_segment["path"]),
+                "path": graph_location,
                 "graphBytes": graph_bytes,
                 "graphSha256": observed_graph_sha,
                 "externalData": external_reports,

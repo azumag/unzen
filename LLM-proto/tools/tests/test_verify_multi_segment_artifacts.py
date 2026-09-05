@@ -172,6 +172,61 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must be a non-negative integer"):
                     verify_artifact_integrity(manifest_path)
 
+    def test_rejects_coercible_manifest_string_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["segments"][0]["path"] = 123
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="segment path number"):
+                with self.assertRaisesRegex(ValueError, "must be a non-empty string"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["segments"][0]["sha256"] = int("1" * 64)
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="segment sha256 number"):
+                with self.assertRaisesRegex(ValueError, "must be a non-empty string"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["segments"][0]["externalData"][0]["location"] = True
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="external-data location boolean"):
+                with self.assertRaisesRegex(ValueError, "must be a non-empty string"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["segments"][0]["browserArtifactTier"] = True
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="segment tier boolean"):
+                with self.assertRaisesRegex(ValueError, "must be a non-empty string"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["browserArtifactBudget"]["segments"][0]["tier"] = 1
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="budget tier number"):
+                with self.assertRaisesRegex(ValueError, "must be a non-empty string"):
+                    verify_artifact_integrity(manifest_path)
+
+    def test_rejects_unknown_manifest_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["schemaVersion"] = "2.0.0"
+            self._save_manifest(manifest_path, manifest)
+
+            with self.assertRaisesRegex(ValueError, "unexpected split manifest schemaVersion"):
+                verify_artifact_integrity(manifest_path)
+
     def test_enforces_stricter_split_plan_budget_against_observed_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
