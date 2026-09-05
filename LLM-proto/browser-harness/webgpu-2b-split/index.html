@@ -11,6 +11,8 @@
     button { padding: .45rem .8rem; margin-right: .5rem; }
     pre { white-space: pre-wrap; background: #f6f8fa; padding: .75rem; max-height: 38rem; overflow: auto; }
     .ok { color: #176b2c; }
+    .pending { color: #7a5200; }
+    .stopped { color: #555; }
     .error { color: #a31515; }
   </style>
 </head>
@@ -21,12 +23,17 @@
     Segment 0 は実 boundary tensors を Coordinator に保存し、Segment 1/standby は Coordinator からのみ取得します。
     各ブラウザは自分のsegment専用external weightsだけをSHA-256検証してBrowser Cache APIへ保存します。
   </p>
+  <p>
+    Segment 1/standby の checkpoint 待機には上限があります（既定120秒、<code>checkpointWaitMs</code>で変更可能）。
+    Stop はfetch/pollを中断します。WebGPU実行中はORT呼び出し自体の強制中断を保証せず、その呼び出しが戻ってsessionを解放するまで「停止要求中」と表示します。
+  </p>
   <label>Role <input id="role" readonly></label>
   <label>Worker ID <input id="worker" readonly></label>
   <label>Run ID <input id="run" readonly></label>
   <label>Prompt <input id="prompt" value="The capital of France is"></label>
   <p>
     <button id="execute">Execute role</button>
+    <button id="stop" type="button" disabled>Stop</button>
     <button id="clear-cache" type="button">Clear split artifact cache</button>
   </p>
   <div id="status"></div>
