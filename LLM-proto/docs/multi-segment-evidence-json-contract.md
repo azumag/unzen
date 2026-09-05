@@ -1,10 +1,29 @@
 # Multi-segment evidence JSON type contract
 
-The #167 host-side capture and post-publication verifiers treat byte/count fields as immutable evidence, not as user-friendly CLI input.
+The #167 host-side capture and post-publication verifiers treat byte/count fields and artifact identity fields as immutable evidence, not as user-friendly CLI input.
 
-The following fields must therefore be JSON integers (`0`, `123`, ...), never floating-point values, booleans, or numeric strings.
+## Exact JSON strings
 
-## Split manifest artifact identity
+The split manifest is an evidence contract, so artifact paths, digests, and tier labels must remain JSON strings. The artifact verifier does not normalize numbers or booleans with `str(...)`.
+
+The following fields must be non-empty JSON strings:
+
+- `split-manifest.segments[].path`
+- `split-manifest.segments[].sha256`
+- `split-manifest.segments[].browserArtifactTier`
+- `split-manifest.segments[].externalData[].location`
+- `split-manifest.segments[].externalData[].sha256`
+- `split-manifest.browserArtifactBudget.segments[].tier`
+
+SHA-256 fields additionally must be canonical lowercase 64-character hexadecimal strings. The split manifest must declare the exact supported `schemaVersion` (`1.0.0`); an unknown schema fails closed rather than being interpreted using the current verifier.
+
+Published capture paths, SHA-256 identities, source external-data locations, and pass/fail statuses are likewise exact JSON string contracts in the bundle/source verifiers. For example, a 64-digit JSON integer is rejected even if converting it with `str(...)` would produce a syntactically valid SHA-256-shaped value.
+
+## Exact JSON integers
+
+The following fields must be JSON integers (`0`, `123`, ...), never floating-point values, booleans, or numeric strings.
+
+### Split manifest artifact identity
 
 - `split-manifest.segments[].index`
 - `split-manifest.segments[].browserArtifactBytes`
@@ -21,7 +40,7 @@ The following fields must therefore be JSON integers (`0`, `123`, ...), never fl
 
 Positive budget/count fields must be greater than zero. Segment indices and measured byte counts may be zero only where the schema already permits zero.
 
-## Published capture artifact identity
+### Published capture artifact identity
 
 - `run-summary.artifacts.segmentCount`
 - `run-summary.artifacts.maximumSegmentArtifactBytes`
@@ -32,15 +51,15 @@ Positive budget/count fields must be greater than zero. Segment indices and meas
 
 These fields are cross-bound against the freshly measured artifact-integrity report and must retain their exact JSON integer type. For example, `2.0` is rejected even though Python would otherwise consider `2.0 == 2` true.
 
-## Source artifact identity
+### Source artifact identity
 
 - `split-manifest.sourceModel.externalData[].bytes`
 - `same-machine-evidence.verification.sourceModel.graphBytes` when present
 - `same-machine-evidence.verification.sourceModel.externalData[].bytes`
 
-The verifiers intentionally do not coerce evidence values with `int(...)`. Coercion can silently normalize malformed evidence; for example, JSON `12.9` becomes Python integer `12`, and the numeric string `"12"` also becomes `12`. Either could then compare equal to a measured 12-byte file and incorrectly pass an integrity audit.
+The verifiers intentionally do not coerce evidence values with `int(...)` or `str(...)`. Coercion can silently normalize malformed evidence; for example, JSON `12.9` becomes Python integer `12`, the numeric string `"12"` also becomes `12`, and an integer can become a plausible path or digest string. Such normalized values could then compare equal to measured filesystem identity and incorrectly pass an integrity audit.
 
-Generated capture artifacts already emit these fields as JSON integers, so valid bundles require no migration. A published bundle containing a float, boolean, or numeric string in one of these identity fields is rejected fail-closed and should be regenerated rather than edited in place.
+Generated capture artifacts already emit these fields with their canonical JSON types, so valid bundles require no migration. A published bundle containing a float, boolean, numeric string, or non-string identity in one of these fields is rejected fail-closed and should be regenerated rather than edited in place.
 
 Run the bundle audit with:
 
