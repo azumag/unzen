@@ -882,7 +882,7 @@ export class DurableCoordinator {
     }
 
     const acknowledged = cancellation.acknowledgedAt !== undefined;
-    const disposition: CancellationDisposition = request.stage === 'cancelled' || existing
+    const disposition: CancellationDisposition = existing
       ? 'already-cancelled'
       : acknowledged
         ? 'cancelled'
