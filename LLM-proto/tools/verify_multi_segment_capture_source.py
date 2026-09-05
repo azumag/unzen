@@ -55,15 +55,13 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
 
 
 def _non_negative_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool):
+    # Evidence byte counts are an immutable JSON contract. Do not coerce floats
+    # or numeric strings with int(): doing so can silently normalize malformed
+    # evidence (for example 12.9 -> 12) and make a tampered document compare
+    # equal to the measured filesystem value.
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         raise ValueError(f"{field} must be a non-negative integer")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{field} must be a non-negative integer") from error
-    if value < 0:
-        raise ValueError(f"{field} must be a non-negative integer")
-    return value
+    return raw
 
 
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
