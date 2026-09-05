@@ -25,18 +25,87 @@ def valid_verification(*, status: str = "pass") -> dict[str, object]:
         "status": status,
         "provider": "CPUExecutionProvider",
         "inputTokenIds": [11, 22],
+        "segmentCount": 2,
+        "cutLayers": [15],
         "artifactIntegrity": {
+            "schemaVersion": "1.0.0",
+            "kind": "unzen-budgeted-multi-segment-artifact-integrity",
             "status": "pass",
             "manifestSha256": "a" * 64,
+            "segmentCount": 2,
+            "effectiveRequiredMaxBytes": 256,
+            "maximumSegmentArtifactBytes": 30,
+            "segments": [
+                {
+                    "index": 0,
+                    "path": "segment0.onnx",
+                    "graphBytes": 10,
+                    "graphSha256": "d" * 64,
+                    "externalData": [
+                        {
+                            "location": "segment0.onnx_data",
+                            "bytes": 20,
+                            "sha256": "e" * 64,
+                        }
+                    ],
+                    "externalBytes": 20,
+                    "artifactBytes": 30,
+                    "tier": "preferred",
+                },
+                {
+                    "index": 1,
+                    "path": "segment1.onnx",
+                    "graphBytes": 12,
+                    "graphSha256": "f" * 64,
+                    "externalData": [
+                        {
+                            "location": "segment1.onnx_data",
+                            "bytes": 18,
+                            "sha256": "1" * 64,
+                        }
+                    ],
+                    "externalBytes": 18,
+                    "artifactBytes": 30,
+                    "tier": "preferred",
+                },
+            ],
         },
         "sourceModel": {
+            "path": "full.onnx",
+            "graphBytes": 50,
             "graphSha256": "b" * 64,
             "externalData": [
-                {"location": "model_q4.onnx_data", "bytes": 123, "sha256": "c" * 64}
+                {
+                    "location": "model_q4.onnx_data",
+                    "bytes": 123,
+                    "sha256": "c" * 64,
+                }
             ],
             "allExternalDataHashed": True,
         },
-        "comparison": {"matches": matches},
+        "boundaries": [
+            {
+                "afterLayer": 14,
+                "beforeLayer": 15,
+                "tensors": [
+                    {
+                        "name": "hidden_state",
+                        "shape": [1, 2, 8],
+                        "dtype": "float32",
+                        "bytes": 64,
+                    }
+                ],
+                "bytes": 64,
+            }
+        ],
+        "boundaryBytes": 64,
+        "comparison": {
+            "matches": matches,
+            "shapeMatch": True,
+            "fullShape": [1, 2, 8],
+            "splitShape": [1, 2, 8],
+            "maxAbsDiff": 0.0,
+        },
         "fullTop1TokenId": 7,
         "splitTop1TokenId": 7 if matches else 8,
         "sequentialSessionLoading": True,
@@ -62,6 +131,34 @@ class CollectMultiSegmentEvidenceTest(unittest.TestCase):
                 )
 
         verify.assert_not_called()
+
+    def test_rejects_invalid_run_parameters_before_provider_or_numerical_work(self) -> None:
+        cases = (
+            ({"token_ids": [11, -1]}, "inputTokenIds\\[1\\]"),
+            ({"token_ids": [11, 22], "kv_heads": 0}, "kvHeads"),
+            ({"token_ids": [11, 22], "head_size": 0}, "headSize"),
+            ({"token_ids": [11, 22], "atol": float("nan")}, "atol"),
+            ({"token_ids": [11, 22], "rtol": -1.0}, "rtol"),
+        )
+        for raw_kwargs, message in cases:
+            kwargs = dict(raw_kwargs)
+            token_ids = kwargs.pop("token_ids")
+            with self.subTest(raw_kwargs=raw_kwargs):
+                with (
+                    patch.object(
+                        evidence_module, "ensure_provider_available"
+                    ) as provider_check,
+                    patch.object(evidence_module, "verify_multi_split") as verify,
+                ):
+                    with self.assertRaisesRegex(ValueError, message):
+                        evidence_module.collect_evidence(
+                            Path("full.onnx"),
+                            Path("split-manifest.json"),
+                            token_ids,
+                            **kwargs,
+                        )
+                provider_check.assert_not_called()
+                verify.assert_not_called()
 
     def test_collects_parameters_runtime_and_verification_digest(self) -> None:
         verification = valid_verification()
@@ -164,6 +261,26 @@ class CollectMultiSegmentEvidenceTest(unittest.TestCase):
         verification = valid_verification()
         verification["inputTokenIds"] = [11, 23]
         with self.assertRaisesRegex(ValueError, "token IDs mismatch"):
+            evidence_module.validate_verification_binding(
+                verification,
+                provider="CPUExecutionProvider",
+                token_ids=[11, 22],
+            )
+
+    def test_rejects_incomplete_artifact_integrity_contract(self) -> None:
+        verification = valid_verification()
+        verification["artifactIntegrity"]["segments"][1]["graphSha256"] = ""
+        with self.assertRaisesRegex(ValueError, "graphSha256"):
+            evidence_module.validate_verification_binding(
+                verification,
+                provider="CPUExecutionProvider",
+                token_ids=[11, 22],
+            )
+
+    def test_rejects_inconsistent_boundary_measurements(self) -> None:
+        verification = valid_verification()
+        verification["boundaries"][0]["bytes"] = 63
+        with self.assertRaisesRegex(ValueError, "does not match tensor byte sum"):
             evidence_module.validate_verification_binding(
                 verification,
                 provider="CPUExecutionProvider",
