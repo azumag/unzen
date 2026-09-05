@@ -21,6 +21,11 @@ browser artifact, requires every generated artifact to remain within the
 preferred 256 MiB ceiling, repacks external data independently per segment and
 writes the measured plan to `split-manifest.json`.
 
+Do not use `--skip-source-external-digest` for numerical evidence. The
+same-machine verifier requires canonical SHA-256 values for every source
+external-data entry and rejects an unhashed source before creating any ONNX
+Runtime session.
+
 ## Run full-vs-multi-segment verification
 
 Use the exact token IDs that will be used for the browser run:
@@ -39,8 +44,8 @@ preflight. No ONNX Runtime session is created until the manifest digest, every
 segment graph digest, external-data digest/byte count and browser-artifact budget
 have been revalidated. It then verifies that `--full-model` has the exact graph
 SHA-256 recorded in `sourceModel` at split time. Source external-data byte counts
-are always checked and their SHA-256 values are checked when the generator
-recorded them (the default real-artifact path hashes them).
+and canonical SHA-256 values are mandatory for every entry and are revalidated
+against the exact files used for the full-model reference run.
 
 This identity binding prevents a passing numerical result from being saved next
 to a preflight report for a different or later-modified artifact set. The final
@@ -72,7 +77,37 @@ bytes, cut layers, full/split logits shapes and maximum absolute difference,
 and the last-token top-1 IDs.
 
 A `status=pass` result requires both `numpy.allclose()` under the configured
-absolute/relative tolerances and identical last-token top-1 IDs. A passing
-same-machine result is automated correctness evidence only; it does not replace
-#167's required real multi-browser WebGPU, Coordinator-relay, cache and latency
-evidence.
+absolute/relative tolerances and identical last-token top-1 IDs.
+
+## Persist a provenance-rich evidence bundle
+
+For the real 1B run, prefer the collector when the result needs to be attached
+to an issue, archived, or compared across machines:
+
+```bash
+python tools/collect_multi_segment_evidence.py \
+  --full-model /absolute/path/to/Llama-3.2-1B-Instruct/onnx/model_q4.onnx \
+  --manifest /absolute/path/to/llama-1b-budget-split/split-manifest.json \
+  --input-ids '128000,2028,374,264,1296' \
+  --kv-heads 8 \
+  --head-size 64 \
+  --output /absolute/path/to/evidence/llama-1b-same-machine-001.json
+```
+
+The collector invokes the same fail-closed numerical verifier and adds the
+parameters that materially affect reproduction (`atol`, `rtol`, KV heads, head
+size and token IDs), Python/numpy/ONNX Runtime versions, platform metadata, the
+requested provider, and the provider list actually available to ONNX Runtime.
+A provider that is not locally available is rejected before numerical
+verification, rather than allowing an evidence envelope to be labelled with an
+unavailable backend.
+
+The embedded numerical report gets its own canonical `verificationSha256`.
+The complete evidence file is published atomically with no-clobber semantics:
+an existing output path is never replaced. The command also prints the SHA-256
+of the exact persisted evidence bytes so the issue comment or external archive
+can bind to that file without adding a mutable sidecar.
+
+A passing same-machine result is automated correctness evidence only; it does
+not replace #167's required real multi-browser WebGPU, Coordinator-relay, cache
+and latency evidence.
