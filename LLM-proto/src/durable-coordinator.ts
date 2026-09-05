@@ -22,8 +22,9 @@
  *   - worker generation: one generation per transport connection; reconnect
  *     revokes the old generation and reclaims its leases; heartbeats never
  *     revive a revoked generation.
- *   - cancellation / timeout: per-request AbortController; cancel and timeout
- *     propagate to the underlying SegmentExecutor and abort its work.
+ *   - cancellation / timeout: cancellation is persisted before execution is
+ *     stopped, so a fresh Coordinator can terminalize the durable request and
+ *     late results cannot commit even when the local AbortController is gone.
  *
  * The legacy Coordinator / Pipeline / WorkerPool / CheckpointStore remain for
  * their existing contract tests; this class is the durable path.
@@ -91,7 +92,7 @@ export interface DurableCoordinatorOptions {
   readonly checkpointTtlMs: number;
   /** Interval of the periodic expired-checkpoint cleanup (default: 60s). */
   readonly checkpointCleanupIntervalMs: number;
-  /** Grace period after which a cancel is force-acknowledged (default: 5000). */
+  /** Operator-visible acknowledgement target; never used to fabricate an ack. */
   readonly cancelAckDeadlineMs: number;
   /** Hard cap on a checkpoint payload (default: 64 MiB). */
   readonly maxCheckpointBytes: number;
@@ -128,7 +129,7 @@ export interface DurableSubmission {
   /** Current request stage. */
   readonly status: () => RequestStage;
   /** Explicit Coordinator-side cancel. */
-  cancel(): void;
+  cancel(): CancellationAck;
 }
 
 /** Observability view of a request (issue #103 deliverable 11 + 12). */
@@ -147,17 +148,31 @@ export interface RequestStatus {
   readonly result?: InferenceResult;
 }
 
+export type CancellationDisposition =
+  | 'cancelled'
+  | 'pending-stop'
+  | 'already-cancelled'
+  | 'already-completed'
+  | 'already-failed';
+
 export interface CancellationAck {
   readonly requestId: InferenceRequestId;
   readonly requestedAt: number;
   readonly deadlineMs: number;
-  /** True when no in-flight work had to be stopped (acknowledged at once). */
+  /**
+   * True only when the Coordinator has durable evidence that no execution
+   * owner still needs to settle. Cross-instance cancellation of an active
+   * lease remains unacknowledged until the owning run observes the durable
+   * cancellation and finishes; we never infer physical stop from lease removal.
+   */
   readonly acknowledged: boolean;
+  readonly disposition: CancellationDisposition;
 }
 
 /** Outcome of validating a pushed/late result at the Coordinator boundary. */
 export type SegmentAcceptance =
   | { readonly kind: 'accepted'; readonly isFinal: boolean; readonly checkpoint?: CheckpointEnvelope; readonly output?: { readonly tokens: readonly number[]; readonly text: string } }
+  | { readonly kind: 'cancelled' }
   | { readonly kind: 'identity-mismatch'; readonly reason: IdentityMismatchReason }
   | { readonly kind: 'checkpoint-rejected'; readonly message: string }
   | { readonly kind: 'checkpoint-conflict' }
@@ -320,7 +335,7 @@ export class DurableCoordinator {
         requestId,
         result: Promise.resolve(stored),
         status: () => 'completed',
-        cancel: () => {},
+        cancel: () => this.cancel(requestId),
       };
     }
     // Terminal-but-resultless, or running on another instance: wait on the repo.
@@ -385,10 +400,20 @@ export class DurableCoordinator {
     const record = this.repo.getRequest(requestId)!;
     for (let segmentIndex = record.currentSegment; segmentIndex < record.totalSegments; segmentIndex++) {
       if (signal.aborted) throw abortError();
+      const durable = this.repo.getRequest(requestId);
+      if (!durable || TERMINAL_STAGES.includes(durable.stage)) return;
+      if (this.repo.getCancellation(requestId)) {
+        this.finalizeStage(requestId, 'cancelled');
+        return;
+      }
       const result = await this.executeSegmentWithRetry(requestId, segmentIndex, signal);
       if (!result) return; // finalized (failed/cancelled) inside
       const current = this.repo.getRequest(requestId)!;
       if (current.stage === 'completed') return; // final commit done by acceptResult
+      if (current.stage === 'cancelled' || this.repo.getCancellation(requestId)) {
+        this.finalizeStage(requestId, 'cancelled');
+        return;
+      }
       // Intermediate segment: advance the streaming cursor and request pointer.
       current.currentSegment = segmentIndex + 1;
       this.repo.putStreamCursor({
@@ -410,7 +435,12 @@ export class DurableCoordinator {
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
       if (signal.aborted) throw abortError();
 
-      const record = this.repo.getRequest(requestId)!;
+      const record = this.repo.getRequest(requestId);
+      if (!record || TERMINAL_STAGES.includes(record.stage)) return null;
+      if (this.repo.getCancellation(requestId)) {
+        this.finalizeStage(requestId, 'cancelled');
+        return null;
+      }
       if (record.stage === 'retry-wait') {
         this.transitionOrThrow(requestId, 'retry-wait', 'queued');
       }
@@ -523,6 +553,10 @@ export class DurableCoordinator {
               this.transitionOrThrow(requestId, 'running', 'queued');
             }
             return result;
+          case 'cancelled':
+            this.updateAttemptOutcome(requestId, attemptId, 'cancelled', ErrorCode.UserCancellation, Date.now());
+            this.finalizeStage(requestId, 'cancelled');
+            return null;
           case 'duplicate':
             // 'duplicate' means the result was already committed; the request
             // is completed and the outer loop will stop on stage === completed.
@@ -581,6 +615,8 @@ export class DurableCoordinator {
         return 'checkpoint slot conflict';
       case 'output-missing':
         return 'final segment produced no output';
+      case 'cancelled':
+        return 'request cancelled';
       default:
         return acceptance.kind;
     }
@@ -597,6 +633,8 @@ export class DurableCoordinator {
         return ErrorCode.ProtocolViolation;
       case 'protocol-violation':
         return ErrorCode.ProtocolViolation;
+      case 'cancelled':
+        return ErrorCode.UserCancellation;
       default:
         return ErrorCode.ProtocolViolation;
     }
@@ -607,15 +645,25 @@ export class DurableCoordinator {
    * active lease exactly, commit the checkpoint / final result.
    */
   async acceptResult(result: ExecutionResult, now = Date.now()): Promise<SegmentAcceptance> {
-    const match = this.leaseManager.match(result.identity, now);
-    if (!match.ok) {
-      this.recordSuppression(result.identity, match.reason, now);
-      return { kind: 'identity-mismatch', reason: match.reason };
-    }
     const record = this.repo.getRequest(result.identity.requestId);
     if (!record) {
       this.recordSuppression(result.identity, 'request-not-found', now);
       return { kind: 'protocol-violation', message: 'request not found' };
+    }
+    // Durable cancellation is checked before lease matching or any result
+    // commit. cancel() may have already invalidated the active lease, and a
+    // missing lease must not turn a legitimate late delivery into a worker
+    // isolation event.
+    if (this.repo.getCancellation(result.identity.requestId) || record.stage === 'cancelled') {
+      this.recordSuppression(result.identity, 'request-cancelled', now);
+      this.finalizeStage(result.identity.requestId, 'cancelled');
+      return { kind: 'cancelled' };
+    }
+
+    const match = this.leaseManager.match(result.identity, now);
+    if (!match.ok) {
+      this.recordSuppression(result.identity, match.reason, now);
+      return { kind: 'identity-mismatch', reason: match.reason };
     }
     const isFinal = result.identity.segmentIndex === record.totalSegments - 1;
 
@@ -684,6 +732,11 @@ export class DurableCoordinator {
     // await, so the expected identity is the same transaction-sized critical
     // section for both in-memory and synchronous Durable Object repositories.
     const commitNow = Math.max(now, Date.now());
+    if (this.repo.getCancellation(result.identity.requestId)) {
+      this.recordSuppression(result.identity, 'post-validation-request-cancelled', commitNow);
+      this.finalizeStage(result.identity.requestId, 'cancelled');
+      return { kind: 'cancelled' };
+    }
     const commitMatch = this.leaseManager.match(result.identity, commitNow);
     if (!commitMatch.ok) {
       this.recordSuppression(result.identity, `post-validation-${commitMatch.reason}`, commitNow);
@@ -728,6 +781,18 @@ export class DurableCoordinator {
 
   /** Record and reclaim a pushed failure; isolation follows the error code. */
   handleWorkerFailure(failure: ExecutionFailure): void {
+    if (this.repo.getCancellation(failure.identity.requestId)) {
+      this.recordSuppression(failure.identity, 'request-cancelled');
+      this.updateAttemptOutcome(
+        failure.identity.requestId,
+        failure.identity.attemptId,
+        'cancelled',
+        ErrorCode.UserCancellation,
+        Date.now(),
+      );
+      this.finalizeStage(failure.identity.requestId, 'cancelled');
+      return;
+    }
     const match = this.leaseManager.match(failure.identity, Date.now());
     if (!match.ok) {
       this.recordSuppression(failure.identity, match.reason);
@@ -741,32 +806,105 @@ export class DurableCoordinator {
   // --- Cancellation ---
 
   /**
-   * Cancel a request: record the cancellation, abort the in-flight work, and
-   * let the executor settle. Acknowledged immediately when no work is running.
+   * Persistently cancel a request. The cancellation marker is written before
+   * aborting local work or invalidating a lease so every Coordinator instance
+   * rejects subsequent dispatch/commit. `acknowledged` means execution stop is
+   * confirmed, not merely that this method could not find a local inFlight map
+   * entry.
    */
   cancel(requestId: InferenceRequestId): CancellationAck {
-    const entry = this.inFlight.get(requestId);
     const requestedAt = Date.now();
     const deadlineMs = this.options.cancelAckDeadlineMs;
+    const request = this.repo.getRequest(requestId);
+    if (!request) {
+      throw new UnzenError(`unknown request ${requestId}`, ErrorCode.RequestNotFound);
+    }
+
+    if (request.stage === 'completed') {
+      return {
+        requestId,
+        requestedAt,
+        deadlineMs,
+        acknowledged: true,
+        disposition: 'already-completed',
+      };
+    }
+    if (request.stage === 'failed') {
+      return {
+        requestId,
+        requestedAt,
+        deadlineMs,
+        acknowledged: true,
+        disposition: 'already-failed',
+      };
+    }
+
+    const entry = this.inFlight.get(requestId);
+    const activeLease = this.repo.getActiveLease(requestId);
+    const existing = this.repo.getCancellation(requestId);
+    const cancellation: CancellationRecord = existing
+      ? { ...existing }
+      : { requestId, requestedAt, deadlineMs };
+
+    // Write the durable barrier first. acceptResult/dispatch paths consult this
+    // marker before lease matching or new assignment issuance.
+    this.repo.putCancellation(requestId, cancellation);
+
     if (entry) {
       entry.cancelKind = 'user';
       entry.controller.abort();
     }
-    const record = this.repo.getCancellation(requestId);
-    const cancellation: CancellationRecord = {
+    if (activeLease) {
+      this.updateAttemptOutcome(
+        requestId,
+        activeLease.attemptId,
+        'cancelled',
+        ErrorCode.UserCancellation,
+        requestedAt,
+      );
+    }
+
+    // `accepted` is normally transient and submit() immediately advances it to
+    // queued. A reconstructed repository can still expose it, so move through
+    // the legal edge before terminalizing rather than adding a special state
+    // machine transition solely for cancellation.
+    if (request.stage === 'accepted') {
+      this.repo.transitionStage(requestId, 'accepted', 'queued');
+    }
+    this.finalizeStage(requestId, 'cancelled');
+
+    // A first cancellation with no local owner and no active lease is already
+    // stopped. If a prior cancellation is still awaiting owner confirmation,
+    // never manufacture an ack merely because its lease was reclaimed earlier.
+    if (!existing && !entry && !activeLease) {
+      cancellation.acknowledgedAt = requestedAt;
+      this.repo.putCancellation(requestId, cancellation);
+    }
+
+    const acknowledged = cancellation.acknowledgedAt !== undefined;
+    const disposition: CancellationDisposition = existing
+      ? 'already-cancelled'
+      : acknowledged
+        ? 'cancelled'
+        : 'pending-stop';
+    return {
       requestId,
-      requestedAt,
-      deadlineMs,
-      acknowledgedAt: entry ? undefined : requestedAt,
+      requestedAt: cancellation.requestedAt,
+      deadlineMs: cancellation.deadlineMs,
+      acknowledged,
+      disposition,
     };
-    if (record?.acknowledgedAt !== undefined) cancellation.acknowledgedAt = record.acknowledgedAt;
-    this.repo.putCancellation(requestId, cancellation);
-    return { requestId, requestedAt, deadlineMs, acknowledged: !entry };
   }
 
   private acknowledgeCancellation(requestId: InferenceRequestId): void {
     const record = this.repo.getCancellation(requestId);
-    if (record && record.acknowledgedAt === undefined) {
+    const request = this.repo.getRequest(requestId);
+    if (
+      record
+      && record.acknowledgedAt === undefined
+      && request?.stage === 'cancelled'
+      && !this.repo.getActiveLease(requestId)
+    ) {
       record.acknowledgedAt = Date.now();
       this.repo.putCancellation(requestId, record);
     }
