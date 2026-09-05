@@ -211,6 +211,26 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
                 ):
                     bundle_module.verify_capture_bundle(capture)
 
+    def test_rejects_coercible_summary_artifact_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, summary, _evidence = self._write_bundle(Path(raw_dir))
+            summary["artifacts"]["segmentCount"] = 2.0
+            (capture / "run-summary.json").write_text(
+                json.dumps(summary) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                bundle_module,
+                "verify_artifact_integrity",
+                return_value=self._integrity(),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "run-summary.artifacts.segmentCount must be a positive integer",
+                ):
+                    bundle_module.verify_capture_bundle(capture)
+
     def test_run_parameter_drift_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             capture, summary, _evidence = self._write_bundle(Path(raw_dir))
