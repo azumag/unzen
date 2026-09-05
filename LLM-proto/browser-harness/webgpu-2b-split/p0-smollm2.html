@@ -7,6 +7,7 @@
   if (!params.has('model')) params.set('model', 'onnx-community/SmolLM2-135M-ONNX');
   if (!params.has('kvHeads')) params.set('kvHeads', '3');
   if (!params.has('headSize')) params.set('headSize', '64');
+  if (!params.has('artifactBudget')) params.set('artifactBudget', 'p0');
   if (!params.has('role')) params.set('role', 'segment0');
   if (!params.has('run')) params.set('run', 'smollm2-p0');
   location.replace('/?' + params.toString());
