@@ -49,10 +49,17 @@ def canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _non_empty_string(raw: object, *, field: str) -> str:
+    # Published evidence is an exact JSON contract. Do not stringify numbers,
+    # booleans, or other JSON values into identities/paths: a 64-digit integer,
+    # for example, could otherwise be accepted as a syntactically valid digest.
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{field} must be a non-empty string")
+    return raw
+
+
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
-    value = str(raw or "")
-    if not value:
-        raise ValueError(f"{field} must be a non-empty relative path")
+    value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
@@ -82,7 +89,7 @@ def _json_object(path: Path, *, field: str) -> dict[str, object]:
 
 
 def _canonical_sha256(raw: object, *, field: str) -> str:
-    value = str(raw or "")
+    value = _non_empty_string(raw, field=field)
     if not SHA256_RE.fullmatch(value):
         raise ValueError(f"{field} must be a canonical lowercase SHA-256 digest")
     return value
@@ -104,10 +111,9 @@ def _require_mapping(raw: object, *, field: str) -> dict[str, object]:
 
 
 def _require_status(raw: object, *, field: str) -> str:
-    value = str(raw or "")
-    if value not in {"pass", "fail"}:
+    if not isinstance(raw, str) or raw not in {"pass", "fail"}:
         raise ValueError(f"{field} must be 'pass' or 'fail'")
-    return value
+    return raw
 
 
 def _require_equal(left: object, right: object, *, field: str) -> None:
