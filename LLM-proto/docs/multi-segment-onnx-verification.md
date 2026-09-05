@@ -102,20 +102,34 @@ A provider that is not locally available is rejected before numerical
 verification, rather than allowing an evidence envelope to be labelled with an
 unavailable backend.
 
+The collector also validates cheap run parameters before asking ONNX Runtime to
+do any work: token IDs must be non-negative integers, KV-head/head-size values
+must be positive integers, and `atol`/`rtol` must be finite non-negative values.
+This makes malformed real-1B capture commands fail immediately rather than after
+artifact hashing or model/session setup.
+
 Before persisting the verifier result, the collector independently checks the
-returned evidence contract: verifier kind, requested provider and token IDs,
-passing artifact-integrity status plus canonical manifest SHA-256, source graph
-SHA-256, hashed source external-data entries, comparison result, top-1 IDs and
-`sequentialSessionLoading=true`. A reported `status` that contradicts the
-comparison/top-1 result is rejected. This keeps the persisted bundle fail-closed
-if a future verifier refactor accidentally drops or misreports one of the fields
-that bind the result to the exact artifacts and invocation.
+returned evidence contract. In addition to verifier schema/kind, requested
+provider/token IDs and status semantics, it now revalidates the complete embedded
+artifact-integrity envelope: segment count/order, graph and external-data
+SHA-256s, measured graph/external/artifact byte accounting, effective budget,
+artifact tier and maximum-segment byte count. It also checks source graph/external
+identity fields, cut-layer cardinality/order, every observed boundary tensor's
+name/shape/dtype/bytes, per-boundary byte sums, total `boundaryBytes`, comparison
+shape semantics, finite `maxAbsDiff`, top-1 IDs and
+`sequentialSessionLoading=true`.
+
+A reported `status` that contradicts comparison/top-1 results, a `matches=true`
+result with incompatible shapes, or a passing integrity envelope that has lost
+its per-segment digest/byte contract is rejected. This keeps the persisted bundle
+fail-closed if a future verifier refactor accidentally drops or misreports fields
+needed to audit the exact artifacts and relay measurements used by the run.
 
 The embedded numerical report gets its own canonical `verificationSha256`.
 The complete evidence file is published atomically with no-clobber semantics:
-an existing output path is never replaced. The CLI now also checks that output
-path before starting the expensive numerical run, so rerunning a real 1B capture
-with the same evidence filename fails immediately instead of consuming inference
+an existing output path is never replaced. The CLI also checks that output path
+before starting the expensive numerical run, so rerunning a real 1B capture with
+the same evidence filename fails immediately instead of consuming inference
 time only to discover the collision at publication.
 
 The command also prints the SHA-256 of the exact persisted evidence bytes so the
