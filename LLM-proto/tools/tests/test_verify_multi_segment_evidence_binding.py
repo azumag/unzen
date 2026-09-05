@@ -111,6 +111,28 @@ class VerifyMultiSegmentEvidenceBindingTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsafe sourceModel.*location"):
                 verify_multi_split(source, manifest_path, [1])
 
+    def test_rejects_unhashed_source_external_data_before_onnx_runtime_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, _segment, manifest_path = self._fixture(root)
+            weights_payload = b"source-external-weights"
+            weights_path = root / "model_q4.onnx_data"
+            weights_path.write_bytes(weights_payload)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["sourceModel"]["externalData"] = [
+                {
+                    "location": weights_path.name,
+                    "bytes": len(weights_payload),
+                }
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "sha256 is required for numerical evidence binding",
+            ):
+                verify_multi_split(source, manifest_path, [1])
+
 
 if __name__ == "__main__":
     unittest.main()
