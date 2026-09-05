@@ -134,6 +134,44 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "browserArtifactBytes mismatch"):
                 verify_artifact_integrity(manifest_path)
 
+    def test_rejects_coercible_manifest_integer_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            external_bytes = manifest["segments"][0]["externalData"][0]["bytes"]
+            manifest["segments"][0]["externalData"][0]["bytes"] = str(external_bytes)
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="externalData.bytes numeric string"):
+                with self.assertRaisesRegex(ValueError, "must be a non-negative integer"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            artifact_bytes = manifest["segments"][0]["browserArtifactBytes"]
+            manifest["segments"][0]["browserArtifactBytes"] = float(artifact_bytes)
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="browserArtifactBytes float"):
+                with self.assertRaisesRegex(ValueError, "must be a non-negative integer"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["browserArtifactBudget"]["requiredMaxBytes"] = 512.0
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="requiredMaxBytes float"):
+                with self.assertRaisesRegex(ValueError, "must be a positive integer"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            manifest = self._load_manifest(manifest_path)
+            manifest["segments"][0]["index"] = 0.0
+            self._save_manifest(manifest_path, manifest)
+            with self.subTest(field="segment index float"):
+                with self.assertRaisesRegex(ValueError, "must be a non-negative integer"):
+                    verify_artifact_integrity(manifest_path)
+
     def test_enforces_stricter_split_plan_budget_against_observed_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

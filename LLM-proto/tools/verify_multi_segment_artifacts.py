@@ -57,27 +57,19 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
 
 
 def _positive_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool):
+    # Manifest byte/count fields are immutable evidence. Never coerce floats,
+    # booleans, or numeric strings with int(): values such as 12.9 or "12" can
+    # otherwise normalize into an integer that happens to equal a measured file
+    # size and incorrectly pass an integrity audit.
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
         raise ValueError(f"{field} must be a positive integer")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{field} must be a positive integer") from error
-    if value <= 0:
-        raise ValueError(f"{field} must be a positive integer")
-    return value
+    return raw
 
 
 def _non_negative_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool):
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         raise ValueError(f"{field} must be a non-negative integer")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{field} must be a non-negative integer") from error
-    if value < 0:
-        raise ValueError(f"{field} must be a non-negative integer")
-    return value
+    return raw
 
 
 def _tier(byte_size: int, budget: dict[str, object]) -> str:

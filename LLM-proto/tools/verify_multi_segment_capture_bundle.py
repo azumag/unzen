@@ -89,15 +89,12 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
 
 
 def _positive_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool):
+    # Published count/byte fields are immutable evidence, not permissive CLI
+    # input. Reject floats, booleans, and numeric strings rather than normalizing
+    # them with int(), because Python equality would otherwise let 2.0 == 2 pass.
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
         raise ValueError(f"{field} must be a positive integer")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{field} must be a positive integer") from error
-    if value <= 0:
-        raise ValueError(f"{field} must be a positive integer")
-    return value
+    return raw
 
 
 def _require_mapping(raw: object, *, field: str) -> dict[str, object]:
@@ -130,15 +127,46 @@ def _bind_artifact_identity(
     if embedded_integrity.get("status") != "pass":
         raise ValueError("evidence.verification.artifactIntegrity must have status='pass'")
 
+    summary_manifest_sha = _canonical_sha256(
+        summary_artifacts.get("manifestSha256"),
+        field="run-summary.artifacts.manifestSha256",
+    )
+    measured_manifest_sha = _canonical_sha256(
+        integrity.get("manifestSha256"),
+        field="measured integrity.manifestSha256",
+    )
+    embedded_manifest_sha = _canonical_sha256(
+        embedded_integrity.get("manifestSha256"),
+        field="evidence.verification.artifactIntegrity.manifestSha256",
+    )
+    _require_equal(
+        summary_manifest_sha,
+        measured_manifest_sha,
+        field="run-summary.artifacts.manifestSha256 vs measured integrity",
+    )
+    _require_equal(
+        measured_manifest_sha,
+        embedded_manifest_sha,
+        field="measured integrity.manifestSha256 vs embedded verification",
+    )
+
     for field in (
-        "manifestSha256",
         "segmentCount",
         "maximumSegmentArtifactBytes",
         "effectiveRequiredMaxBytes",
     ):
-        summary_value = summary_artifacts.get(field)
-        measured_value = integrity.get(field)
-        embedded_value = embedded_integrity.get(field)
+        summary_value = _positive_int(
+            summary_artifacts.get(field),
+            field=f"run-summary.artifacts.{field}",
+        )
+        measured_value = _positive_int(
+            integrity.get(field),
+            field=f"measured integrity.{field}",
+        )
+        embedded_value = _positive_int(
+            embedded_integrity.get(field),
+            field=f"evidence.verification.artifactIntegrity.{field}",
+        )
         _require_equal(
             summary_value,
             measured_value,
