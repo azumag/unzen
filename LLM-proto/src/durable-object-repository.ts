@@ -12,6 +12,8 @@ import type {
   CheckpointStoreResult,
   CompletionCommit,
   DurableRepository,
+  RecoveryOwnership,
+  RecoveryOwnershipClaim,
 } from './durable-repository.js';
 import type { AttemptId, IdempotencyKey, LeaseId } from './ids.js';
 import type { InferenceRequestId, InferenceResult, WorkerId } from './types.js';
@@ -49,6 +51,7 @@ const P = {
   checkpoint: 'checkpoint:',
   result: 'result:',
   cancellation: 'cancellation:',
+  recovery: 'recovery:',
   cursor: 'cursor:',
   worker: 'worker:',
 } as const;
@@ -65,6 +68,7 @@ const checkpointKey = (id: InferenceRequestId, segment: number) =>
   `${checkpointPrefix(id)}${part(segment)}`;
 const resultKey = (id: InferenceRequestId) => `${P.result}${part(id)}`;
 const cancellationKey = (id: InferenceRequestId) => `${P.cancellation}${part(id)}`;
+const recoveryKey = (id: InferenceRequestId) => `${P.recovery}${part(id)}`;
 const cursorKey = (id: InferenceRequestId) => `${P.cursor}${part(id)}`;
 const workerKey = (id: WorkerId) => `${P.worker}${part(id)}`;
 
@@ -292,6 +296,32 @@ export class DurableObjectRepository implements DurableRepository {
 
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined {
     return this.storage.get<CancellationRecord>(cancellationKey(requestId));
+  }
+
+  // recovery ownership
+  getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined {
+    return this.storage.get<RecoveryOwnership>(recoveryKey(requestId));
+  }
+
+  claimRecoveryOwnership(
+    ownership: RecoveryOwnership,
+    now: number,
+  ): RecoveryOwnershipClaim {
+    const key = recoveryKey(ownership.requestId);
+    const existing = this.storage.get<RecoveryOwnership>(key);
+    if (existing && existing.ownerId !== ownership.ownerId && now < existing.expiresAt) {
+      return 'owned-by-peer';
+    }
+    this.storage.put(key, ownership);
+    return existing?.ownerId === ownership.ownerId ? 'renewed' : 'claimed';
+  }
+
+  releaseRecoveryOwnership(requestId: InferenceRequestId, ownerId: string): boolean {
+    const key = recoveryKey(requestId);
+    const existing = this.storage.get<RecoveryOwnership>(key);
+    if (!existing || existing.ownerId !== ownerId) return false;
+    this.storage.delete(key);
+    return true;
   }
 
   // stream cursor
