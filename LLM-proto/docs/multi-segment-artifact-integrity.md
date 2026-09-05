@@ -43,6 +43,14 @@ python tools/verify_multi_segment_onnx.py \
   --input-ids '128000,2028,374,264,1296'
 ```
 
-For issue #167, the preflight is automated/host-side integrity evidence only.
-It does not prove WebGPU execution, distinct browser workers, Coordinator relay,
+The numerical verifier deliberately repeats this integrity preflight immediately
+before creating ONNX Runtime sessions and embeds the resulting report in its own
+JSON. It also binds the full-model reference to `sourceModel.sha256` and checks
+source external-data sizes/digests when present. The standalone preflight remains
+useful as a cheap post-generation or transfer-time gate, while the repeated gate
+prevents a numerical report from silently referring to a stale or different
+artifact set.
+
+For issue #167, these checks are automated/host-side integrity evidence only.
+They do not prove WebGPU execution, distinct browser workers, Coordinator relay,
 cache behavior, or relay latency; those still require real browser evidence.

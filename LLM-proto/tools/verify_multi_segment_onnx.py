@@ -5,12 +5,17 @@ The verifier consumes ``tools/multi_segment_onnx.py`` output directly. Segment
 sessions are created and released one at a time so a 1B-class full model and all
 browser shards are never resident simultaneously. Each intermediate boundary is
 relayed by the exact tensor names recorded in ``split-manifest.json``.
+
+Before creating any ONNX Runtime session, the verifier also repeats the
+stdlib-only artifact-integrity preflight and binds the resulting manifest,
+source-model, graph, and external-data identities into the numerical report.
 """
 
 from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Sequence
@@ -18,6 +23,11 @@ from typing import Sequence
 import numpy as np
 import onnxruntime as ort
 
+from verify_multi_segment_artifacts import (
+    SHA256_RE,
+    sha256_file,
+    verify_artifact_integrity,
+)
 from verify_split_onnx import (
     _last_token_argmax,
     build_feeds,
@@ -30,10 +40,15 @@ MANIFEST_KIND = "unzen-budgeted-multi-segment-onnx"
 ARTIFACT_LAYOUT = "per-segment-external-data"
 
 
-def _safe_relative_path(root: Path, raw: object) -> Path:
+def _safe_relative_path(
+    root: Path,
+    raw: object,
+    *,
+    field: str = "segment path",
+) -> Path:
     value = str(raw or "")
     if not value:
-        raise ValueError("segment path must be a non-empty relative path")
+        raise ValueError(f"{field} must be a non-empty relative path")
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
@@ -42,11 +57,11 @@ def _safe_relative_path(root: Path, raw: object) -> Path:
         or ".." in posix.parts
         or ".." in windows.parts
     ):
-        raise ValueError(f"unsafe segment path in split manifest: {value}")
+        raise ValueError(f"unsafe {field} in split manifest: {value}")
     resolved_root = root.resolve()
     resolved = (root / Path(value)).resolve()
     if resolved != resolved_root and resolved_root not in resolved.parents:
-        raise ValueError(f"segment path escapes split manifest directory: {value}")
+        raise ValueError(f"{field} escapes split manifest directory: {value}")
     return resolved
 
 
@@ -59,6 +74,108 @@ def _string_names(raw: object, *, field: str) -> tuple[str, ...]:
     if len(set(values)) != len(values):
         raise ValueError(f"{field} contains duplicate tensor names")
     return values
+
+
+def _non_negative_int(raw: object, *, field: str) -> int:
+    if isinstance(raw, bool):
+        raise ValueError(f"{field} must be a non-negative integer")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field} must be a non-negative integer") from error
+    if value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def verify_source_model_identity(
+    full_model_path: Path,
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    """Bind the full-model reference to the source identity recorded at split time."""
+
+    if not full_model_path.is_file():
+        raise FileNotFoundError(f"full model not found: {full_model_path}")
+    raw_source = manifest.get("sourceModel")
+    if not isinstance(raw_source, dict):
+        raise ValueError("split manifest sourceModel must be an object")
+
+    expected_graph_sha = str(raw_source.get("sha256") or "")
+    if not SHA256_RE.fullmatch(expected_graph_sha):
+        raise ValueError("sourceModel.sha256 must be a canonical lowercase SHA-256 digest")
+    observed_graph_sha = sha256_file(full_model_path)
+    if observed_graph_sha != expected_graph_sha:
+        raise ValueError(
+            "full-model graph SHA-256 mismatch: "
+            f"expected={expected_graph_sha}, observed={observed_graph_sha}"
+        )
+
+    raw_external = raw_source.get("externalData")
+    if not isinstance(raw_external, list):
+        raise ValueError("sourceModel.externalData must be an array")
+
+    external_reports: list[dict[str, object]] = []
+    seen_locations: set[str] = set()
+    all_external_data_hashed = True
+    for index, raw_entry in enumerate(raw_external):
+        if not isinstance(raw_entry, dict):
+            raise ValueError(f"sourceModel.externalData[{index}] must be an object")
+        field_prefix = f"sourceModel.externalData[{index}]"
+        location = str(raw_entry.get("location") or "")
+        if location in seen_locations:
+            raise ValueError(f"duplicate source external-data location: {location}")
+        seen_locations.add(location)
+        external_path = _safe_relative_path(
+            full_model_path.parent,
+            location,
+            field=f"{field_prefix}.location",
+        )
+        if not external_path.is_file():
+            raise FileNotFoundError(f"source external data not found: {external_path}")
+
+        expected_bytes = _non_negative_int(
+            raw_entry.get("bytes"),
+            field=f"{field_prefix}.bytes",
+        )
+        observed_bytes = external_path.stat().st_size
+        if observed_bytes != expected_bytes:
+            raise ValueError(
+                f"source external-data size mismatch for {location}: "
+                f"expected={expected_bytes}, observed={observed_bytes}"
+            )
+
+        raw_sha = raw_entry.get("sha256")
+        observed_sha: str | None = None
+        if raw_sha is None:
+            all_external_data_hashed = False
+        else:
+            expected_sha = str(raw_sha)
+            if not SHA256_RE.fullmatch(expected_sha):
+                raise ValueError(
+                    f"{field_prefix}.sha256 must be a canonical lowercase SHA-256 digest"
+                )
+            observed_sha = sha256_file(external_path)
+            if observed_sha != expected_sha:
+                raise ValueError(
+                    f"source external-data SHA-256 mismatch for {location}: "
+                    f"expected={expected_sha}, observed={observed_sha}"
+                )
+
+        external_reports.append(
+            {
+                "location": location,
+                "bytes": observed_bytes,
+                "sha256": observed_sha,
+            }
+        )
+
+    return {
+        "path": str(full_model_path),
+        "graphBytes": full_model_path.stat().st_size,
+        "graphSha256": observed_graph_sha,
+        "externalData": external_reports,
+        "allExternalDataHashed": all_external_data_hashed,
+    }
 
 
 def validate_multi_segment_manifest(
@@ -216,7 +333,19 @@ def verify_multi_split(
 ) -> dict[str, object]:
     if not token_ids:
         raise ValueError("at least one token ID is required")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    artifact_integrity = verify_artifact_integrity(manifest_path)
+    manifest_bytes = manifest_path.read_bytes()
+    observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    if observed_manifest_sha != artifact_integrity["manifestSha256"]:
+        raise RuntimeError(
+            "split manifest changed after artifact-integrity preflight: "
+            f"preflight={artifact_integrity['manifestSha256']}, observed={observed_manifest_sha}"
+        )
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("split manifest must contain a JSON object")
+    source_identity = verify_source_model_identity(full_model_path, manifest)
     contract = validate_multi_segment_manifest(manifest, manifest_path.parent)
     segments = contract["segments"]
     boundaries = contract["boundaries"]
@@ -272,12 +401,14 @@ def verify_multi_split(
 
     comparison = compare_logits(full_logits, split_logits, atol, rtol)
     report: dict[str, object] = {
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "1.1.0",
         "kind": "unzen-budgeted-multi-segment-same-machine-verification",
         "provider": provider,
         "inputTokenIds": list(token_ids),
         "segmentCount": len(segments),
         "cutLayers": [int(segment["endLayer"]) for segment in segments[:-1]],
+        "artifactIntegrity": artifact_integrity,
+        "sourceModel": source_identity,
         "boundaries": boundary_reports,
         "boundaryBytes": sum(int(boundary["bytes"]) for boundary in boundary_reports),
         "comparison": comparison,
