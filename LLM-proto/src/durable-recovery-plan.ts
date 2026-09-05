@@ -213,7 +213,7 @@ export function planDurableRequestRecovery(
   const normalizeToQueued = request.stage !== 'queued';
   return {
     kind: 'resume',
-    fromStage: request.stage,
+    fromStage: request.stage as Exclude<RequestStage, 'completed' | 'failed' | 'cancelled'>,
     segmentIndex: request.currentSegment,
     checkpoint,
     reclaimLease: activeLease,
