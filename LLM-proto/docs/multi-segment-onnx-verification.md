@@ -34,11 +34,26 @@ python tools/verify_multi_segment_onnx.py \
   --head-size 64
 ```
 
-The verifier fails before creating an ONNX Runtime session when the manifest is
-not the measured `unzen-budgeted-multi-segment-onnx` format, segment layer spans
-are not contiguous, cut layers disagree with the segment layout, a segment path
-escapes the artifact directory, or a boundary tensor is not both produced by
-the preceding segment and consumed by the following segment.
+The numerical verifier first repeats the stdlib-only artifact-integrity
+preflight. No ONNX Runtime session is created until the manifest digest, every
+segment graph digest, external-data digest/byte count and browser-artifact budget
+have been revalidated. It then verifies that `--full-model` has the exact graph
+SHA-256 recorded in `sourceModel` at split time. Source external-data byte counts
+are always checked and their SHA-256 values are checked when the generator
+recorded them (the default real-artifact path hashes them).
+
+This identity binding prevents a passing numerical result from being saved next
+to a preflight report for a different or later-modified artifact set. The final
+numerical JSON embeds both the complete `artifactIntegrity` report and the
+measured `sourceModel` identity, including the manifest SHA-256 used for that
+same invocation.
+
+The verifier also fails before creating an ONNX Runtime session when the
+manifest is not the measured `unzen-budgeted-multi-segment-onnx` format, segment
+layer spans are not contiguous, cut layers disagree with the segment layout, a
+segment/source external-data path escapes its artifact directory, or a boundary
+tensor is not both produced by the preceding segment and consumed by the
+following segment.
 
 Execution is intentionally sequential:
 
