@@ -2,12 +2,23 @@ import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
 import { workerId, WorkerTier, type SegmentConfig, type WorkerId } from './types.js';
 import { AllowlistedPrototypeTransport } from './two-worker-prototype.js';
 
+export interface CachedArtifactIdentity {
+  readonly segmentIndex: number;
+  readonly sha256: string;
+}
+
 export interface WorkerTelemetry {
   readonly uptimeMs: number;
   readonly vramFreeMB: number;
   readonly gpuBusyRatio: number;
   readonly cpuBusyRatio: number;
   readonly cacheHits: readonly number[];
+  /**
+   * Exact identities for cacheHits when dispatch uses a manifest-backed
+   * ArtifactResidencyLedger. Bare segment indexes are insufficient because a
+   * worker may still hold the same index from an older model revision.
+   */
+  readonly cacheArtifacts?: readonly CachedArtifactIdentity[];
   readonly tokensPerSecond: number;
   readonly checkpointBytesPerSecond: number;
   readonly failureRate: number;
@@ -118,6 +129,7 @@ const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
 const DEFAULT_LOAD_BUDGET_RATIO = 0.03;
 const DEFAULT_LONG_LIVED_WORKER_MS = 30 * 60 * 1000;
 const DEFAULT_CHECKPOINT_BYTES = 4 * 1024 * 1024;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 
 export class AdaptiveChunkDispatcher {
   private readonly workers = new Map<WorkerId, AdaptiveWorkerState>();
@@ -166,14 +178,13 @@ export class AdaptiveChunkDispatcher {
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     const id = workerId(registration.id);
-    this.validateCacheHits(registration.telemetry.cacheHits);
-    this.artifactResidencyLedger?.synchronizeWorker(id, registration.telemetry.cacheHits);
+    const cacheHits = this.validateAndSynchronizeCacheResidency(id, registration.telemetry);
     this.workers.set(id, {
       id,
       tier: registration.tier,
       telemetry: registration.telemetry,
       lastAssignmentOrder: 0,
-      residentSegments: new Set(registration.telemetry.cacheHits),
+      residentSegments: new Set(cacheHits),
     });
   }
 
@@ -183,14 +194,13 @@ export class AdaptiveChunkDispatcher {
       throw new Error(`Unknown adaptive worker: ${worker}`);
     }
 
-    this.validateCacheHits(telemetry.cacheHits);
     // Validate and atomically replace the ledger entry before mutating the
     // local worker state. A malformed heartbeat therefore leaves both views
     // unchanged instead of partially applying its cache inventory.
-    this.artifactResidencyLedger?.synchronizeWorker(worker, telemetry.cacheHits);
+    const cacheHits = this.validateAndSynchronizeCacheResidency(worker, telemetry);
     state.telemetry = telemetry;
     state.residentSegments.clear();
-    for (const segment of telemetry.cacheHits) {
+    for (const segment of cacheHits) {
       state.residentSegments.add(segment);
     }
   }
@@ -291,7 +301,7 @@ export class AdaptiveChunkDispatcher {
         workerId: selected.worker.id,
         tier: selected.worker.tier,
         startSegment: nextSegment,
-        endSegment,
+        endSegment: endSegment,
         selectedChunkLength: chunkLength,
         scoreInputs: selected.scoreInputs,
         loadReadings: {
@@ -599,6 +609,57 @@ export class AdaptiveChunkDispatcher {
       downloadedArtifactBytes,
       missingSegmentIndexes: missingArtifacts.map((artifact) => artifact.index),
     };
+  }
+
+  private validateAndSynchronizeCacheResidency(
+    worker: WorkerId,
+    telemetry: WorkerTelemetry,
+  ): readonly number[] {
+    this.validateCacheHits(telemetry.cacheHits);
+    if (this.artifactResidencyLedger === undefined) {
+      return telemetry.cacheHits;
+    }
+
+    const cacheArtifacts = telemetry.cacheArtifacts ?? [];
+    const cacheHitSet = new Set(telemetry.cacheHits);
+    if (cacheHitSet.size !== telemetry.cacheHits.length) {
+      throw new Error('manifest-backed cacheHits must not contain duplicate segment indexes');
+    }
+    if (cacheArtifacts.length !== telemetry.cacheHits.length) {
+      throw new Error(
+        'manifest-backed cacheHits require one cacheArtifacts identity per segment index',
+      );
+    }
+
+    const identityIndexes = new Set<number>();
+    for (const identity of cacheArtifacts) {
+      this.validateCacheHits([identity.segmentIndex]);
+      if (identityIndexes.has(identity.segmentIndex)) {
+        throw new Error(
+          `manifest-backed cacheArtifacts contains duplicate segment ${identity.segmentIndex}`,
+        );
+      }
+      identityIndexes.add(identity.segmentIndex);
+      if (!cacheHitSet.has(identity.segmentIndex)) {
+        throw new Error(
+          `cache artifact identity for segment ${identity.segmentIndex} is not present in cacheHits`,
+        );
+      }
+      if (!SHA256_HEX_PATTERN.test(identity.sha256)) {
+        throw new Error(
+          `cache artifact identity for segment ${identity.segmentIndex} must use canonical sha256`,
+        );
+      }
+      const expectedSha256 = this.artifactResidencyLedger.getArtifact(identity.segmentIndex).sha256;
+      if (identity.sha256 !== expectedSha256) {
+        throw new Error(
+          `cache artifact identity for segment ${identity.segmentIndex} does not match active manifest`,
+        );
+      }
+    }
+
+    this.artifactResidencyLedger.synchronizeWorker(worker, telemetry.cacheHits);
+    return telemetry.cacheHits;
   }
 
   private validateCacheHits(cacheHits: readonly number[]): void {

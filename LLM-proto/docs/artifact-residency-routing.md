@@ -12,7 +12,11 @@ large model download. Routing therefore needs two different sources of truth:
 
 A heartbeat cache list is an authoritative snapshot. If a browser no longer
 advertises a segment, the Coordinator removes that residency claim instead of
-retaining a stale cache hit indefinitely.
+retaining a stale cache hit indefinitely. For a manifest-backed ledger, each
+advertised cache-hit index must also carry the exact segment bundle SHA-256 in
+`WorkerTelemetry.cacheArtifacts`. Bare indexes are rejected because segment 0
+from an older model revision is not segment 0 of the active manifest even when
+the local cache key or browser UI still calls both entries `0`.
 
 ## Generated ONNX bundle import
 
@@ -50,7 +54,7 @@ generated ONNX graph + external-data manifest
   -> fully validated runtime model manifest
   -> SegmentConfig geometry
   -> ArtifactResidencyLedger
-  -> browser heartbeat cache snapshot
+  -> browser heartbeat cache snapshot + exact bundle digests
   -> AdaptiveChunkDispatcher / SpanRouter
   -> SpanPipeline assignment
   -> validated durable checkpoint
@@ -61,13 +65,21 @@ The adaptive dispatcher:
 
 1. validates that runtime segment hashes, ranges and memory estimates match the
    ledger inventory;
-2. computes capacity by summing each real segment memory estimate, so unequal
+2. validates every manifest-backed heartbeat cache claim against the active
+   segment bundle SHA-256 before it changes residency state;
+3. computes capacity by summing each real segment memory estimate, so unequal
    first/last shards remain safe;
-3. scores cache locality using exact resident bytes rather than only segment
+4. scores cache locality using exact resident bytes rather than only segment
    count;
-4. validates and requests every missing graph/external-data component before it
+5. validates and requests every missing graph/external-data component before it
    commits the logical segment as resident;
-5. reports exact total, already-resident and downloaded artifact bytes.
+6. reports exact total, already-resident and downloaded artifact bytes.
+
+Heartbeat validation is atomic. A missing identity, duplicate index, non-canonical
+SHA-256, or digest from another revision rejects the complete update and leaves
+the previous worker residency snapshot unchanged. The legacy dispatcher path
+without an `ArtifactResidencyLedger` may still use index-only `cacheHits`; those
+indexes are never promoted into a manifest-backed ledger.
 
 `SpanRouter` gives priority to a contiguous resident prefix at the current
 boundary. This lets `SpanPipeline` execute adjacent cached artifacts on one
@@ -101,6 +113,10 @@ success or terminal failure, but not between retry attempts.
 
 - A ledger is model-revision local. Equal segment indexes from different model
   revisions must never share one ledger.
+- Manifest-backed heartbeat residency requires a one-to-one mapping between
+  `cacheHits` indexes and `cacheArtifacts` bundle SHA-256 identities.
+- A stale same-index bundle digest rejects the heartbeat atomically and cannot
+  replace the previous residency snapshot.
 - Segment indexes are contiguous `0..n-1`.
 - Artifact byte sizes are safe positive integers and represent the complete
   browser bundle for that segment, including external weights.
@@ -120,11 +136,13 @@ success or terminal failure, but not between retry attempts.
 ## Evidence level and remaining work
 
 The current implementation is `contract-tested`. It proves generated-manifest
-import, inventory, routing and suffix-resume behavior with deterministic
-fixtures, not a completed 1B browser run. Issue #167 still requires:
+import, exact revision-bound cache inventory, routing, suffix-resume behavior,
+and same-machine full-model versus generated multi-segment numerical equivalence
+with deterministic/real-ONNX fixtures. It is not a completed 1B browser run.
+Issue #167 still requires:
 
 - generating the real 1B q4 artifacts and recording actual bytes and memory;
-- full-model versus multi-segment numerical equivalence;
+- running the existing full-vs-multi verifier against that real 1B artifact set;
 - multi-browser WebGPU execution through the Coordinator;
 - measured cold/warm cache and checkpoint overhead;
 - captured runtime evidence with no direct worker-to-worker path.
