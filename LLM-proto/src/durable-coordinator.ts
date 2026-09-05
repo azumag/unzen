@@ -25,6 +25,9 @@
  *   - cancellation / timeout: cancellation is persisted before execution is
  *     stopped, so a fresh Coordinator can terminalize the durable request and
  *     late results cannot commit even when the local AbortController is gone.
+ *   - restart recovery: persisted non-terminal requests are recovered through
+ *     durable ownership, bounded lease/deadline waits, and the original retry
+ *     budget instead of an unbounded result poll.
  *
  * The legacy Coordinator / Pipeline / WorkerPool / CheckpointStore remain for
  * their existing contract tests; this class is the durable path.
@@ -34,7 +37,7 @@ import { InMemoryRepository } from './durable-repository.js';
 import type { DurableRepository } from './durable-repository.js';
 import { WorkerRegistry } from './worker-registry.js';
 import { LeaseManager } from './lease-manager.js';
-import type { IdentityMatch, IdentityMismatchReason } from './lease-manager.js';
+import type { IdentityMismatchReason } from './lease-manager.js';
 import {
   type SegmentedModelManifest,
   segmentConfigsFromManifest,
@@ -57,12 +60,13 @@ import {
   generateLeaseId,
   idempotencyKey as brandIdempotencyKey,
 } from './ids.js';
-import type { AttemptId, IdempotencyKey } from './ids.js';
+import type { AttemptId } from './ids.js';
 import { WorkerTier, type WorkerId, type InferenceRequestId, type SegmentConfig } from './types.js';
 import type { InferenceResult } from './types.js';
 import { validateCheckpointEnvelope, isCheckpointExpired } from './checkpoint-envelope.js';
 import type { CheckpointEnvelope } from './checkpoint-envelope.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
+import { runDurableRecovery } from './durable-recovery-runner.js';
 import type {
   AttemptRecord,
   AttemptOutcome,
@@ -70,7 +74,6 @@ import type {
   ExecutionAssignment,
   ExecutionFailure,
   ExecutionResult,
-  Lease,
   RequestRecord,
   ResultIdentity,
 } from './durable-types.js';
@@ -96,6 +99,12 @@ export interface DurableCoordinatorOptions {
   readonly cancelAckDeadlineMs: number;
   /** Hard cap on a checkpoint payload (default: 64 MiB). */
   readonly maxCheckpointBytes: number;
+  /** Recovery ownership lifetime while one Coordinator is resuming a request. */
+  readonly recoveryOwnershipTtlMs: number;
+  /** Renewal cadence for a held recovery ownership. */
+  readonly recoveryOwnershipRenewIntervalMs: number;
+  /** Poll cadence while a peer recovery/execution owner is still live. */
+  readonly recoveryPollIntervalMs: number;
   /** Test-only fixture-manifest escape hatch (production never sets this). */
   readonly allowFixtureManifest?: boolean;
 }
@@ -111,6 +120,9 @@ const DEFAULT_OPTIONS: DurableCoordinatorOptions = {
   checkpointCleanupIntervalMs: 60_000,
   cancelAckDeadlineMs: 5_000,
   maxCheckpointBytes: 64 * 1024 * 1024,
+  recoveryOwnershipTtlMs: 15_000,
+  recoveryOwnershipRenewIntervalMs: 5_000,
+  recoveryPollIntervalMs: 50,
 };
 
 /** The executor seam: mirrors the core SandboxExecutor cancel contract. */
@@ -190,7 +202,7 @@ export interface SuppressionRecord {
 
 interface InFlightEntry {
   readonly controller: AbortController;
-  cancelKind: 'user' | 'deadline';
+  cancelKind: 'user' | 'deadline' | 'recovery-ownership';
   resultPromise?: Promise<InferenceResult>;
   cleanup: () => void;
 }
@@ -203,6 +215,7 @@ export class DurableCoordinator {
   private readonly manifest: SegmentedModelManifest;
   private readonly segments: SegmentConfig[];
   private readonly segmentCountValue: number;
+  private readonly recoveryOwnerId = `coordinator-${generateRequestId()}`;
   private readonly inFlight = new Map<InferenceRequestId, InFlightEntry>();
   private readonly suppressions: SuppressionRecord[] = [];
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -242,7 +255,8 @@ export class DurableCoordinator {
       ? brandIdempotencyKey(options.idempotencyKey)
       : undefined;
 
-    // Idempotency: an existing key returns the existing request's status/result.
+    // Idempotency: an existing key is actively recovered if its old process is
+    // gone; it no longer falls back to an unbounded repository poll.
     if (key !== undefined) {
       const existing = this.repo.getIdempotencyMapping(key);
       if (existing !== undefined) return this.submissionForExisting(existing);
@@ -270,7 +284,6 @@ export class DurableCoordinator {
     this.repo.createRequest(record);
     this.repo.transitionStage(requestId, 'accepted', 'queued');
 
-    // Per-request cancellation: user signal + deadline share one controller.
     const controller = new AbortController();
     const entry: InFlightEntry = { controller, cancelKind: 'user', cleanup: () => {} };
     const outerSignal = options.signal;
@@ -292,17 +305,129 @@ export class DurableCoordinator {
     this.inFlight.set(requestId, entry);
 
     const resultPromise = this.runRequest(requestId, controller.signal)
-      .then(() => {
-        const result = this.repo.getResult(requestId);
-        if (result) return result;
-        const current = this.repo.getRequest(requestId);
-        if (current?.stage === 'cancelled') {
-          throw new UnzenCancelledError(`request ${requestId} was cancelled`);
+      .then(() => this.resultOrThrow(requestId))
+      .finally(() => {
+        entry.cleanup();
+        this.inFlight.delete(requestId);
+      });
+    entry.resultPromise = resultPromise;
+
+    return this.submissionHandle(requestId, resultPromise);
+  }
+
+  /**
+   * Explicit startup recovery entry point. A runtime should call this after its
+   * durable repository/worker registry is available. Each returned submission
+   * is independently owned and bounded by persisted lease/deadline state.
+   */
+  recoverPendingRequests(): readonly DurableSubmission[] {
+    return this.repo.listRequests()
+      .filter((record) => !TERMINAL_STAGES.includes(record.stage))
+      .map((record) => this.submissionForExisting(record.requestId));
+  }
+
+  /** Build a submission for a request that already exists (idempotent replay). */
+  private submissionForExisting(requestId: InferenceRequestId): DurableSubmission {
+    const entry = this.inFlight.get(requestId);
+    if (entry?.resultPromise) return this.submissionHandle(requestId, entry.resultPromise);
+
+    const stored = this.repo.getResult(requestId);
+    if (stored) return this.submissionHandle(requestId, Promise.resolve(stored));
+
+    const record = this.repo.getRequest(requestId);
+    if (!record) {
+      return this.submissionHandle(
+        requestId,
+        Promise.reject(new UnzenError('unknown request', ErrorCode.RequestNotFound)),
+      );
+    }
+    if (record.stage === 'cancelled' || record.stage === 'failed') {
+      return this.submissionHandle(requestId, Promise.resolve().then(() => this.resultOrThrow(requestId)));
+    }
+    return this.startRecovery(requestId);
+  }
+
+  private submissionHandle(
+    requestId: InferenceRequestId,
+    result: Promise<InferenceResult>,
+  ): DurableSubmission {
+    return {
+      requestId,
+      result,
+      status: () => this.repo.getRequest(requestId)?.stage ?? 'failed',
+      cancel: () => this.cancel(requestId),
+    };
+  }
+
+  private resultOrThrow(requestId: InferenceRequestId): InferenceResult {
+    const result = this.repo.getResult(requestId);
+    if (result) return result;
+    const current = this.repo.getRequest(requestId);
+    if (!current) throw new UnzenError('unknown request', ErrorCode.RequestNotFound);
+    if (current.stage === 'cancelled') {
+      throw new UnzenCancelledError(`request ${requestId} was cancelled`);
+    }
+    if (current.stage === 'failed') {
+      throw new UnzenError(
+        current.lastError ?? `request ${requestId} failed`,
+        current.lastErrorCode ?? ErrorCode.RuntimeTransient,
+      );
+    }
+    throw new UnzenError(
+      `request ${requestId} recovery ended at non-terminal stage ${current.stage}`,
+      ErrorCode.StateTransitionViolation,
+    );
+  }
+
+  /** Start/reuse one bounded cross-instance recovery operation. */
+  private startRecovery(requestId: InferenceRequestId): DurableSubmission {
+    const existing = this.inFlight.get(requestId);
+    if (existing?.resultPromise) return this.submissionHandle(requestId, existing.resultPromise);
+
+    const controller = new AbortController();
+    const entry: InFlightEntry = { controller, cancelKind: 'user', cleanup: () => {} };
+    this.inFlight.set(requestId, entry);
+
+    const resultPromise = runDurableRecovery(this.repo, requestId, {
+      ownerId: `${this.recoveryOwnerId}:${requestId}`,
+      ownershipTtlMs: this.options.recoveryOwnershipTtlMs,
+      ownershipRenewIntervalMs: this.options.recoveryOwnershipRenewIntervalMs,
+      pollIntervalMs: this.options.recoveryPollIntervalMs,
+      maxRetries: this.options.maxRetries,
+      manifestDigest: this.manifest.manifestDigest,
+      signal: controller.signal,
+      onResume: async (context) => {
+        // context.signal also aborts on recovery-ownership loss. Distinguish
+        // that from cancel()/deadline aborts so a stale recovery instance does
+        // not terminalize a request that a replacement owner may continue.
+        const onResumeAbort = () => {
+          if (!controller.signal.aborted) entry.cancelKind = 'recovery-ownership';
+        };
+        context.signal.addEventListener('abort', onResumeAbort, { once: true });
+
+        let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+        if (context.deadlineAt !== undefined) {
+          const remaining = Math.max(0, context.deadlineAt - Date.now());
+          deadlineTimer = setTimeout(() => {
+            entry.cancelKind = 'deadline';
+            controller.abort();
+          }, remaining);
         }
-        throw new UnzenError(
-          current?.lastError ?? `request ${requestId} failed`,
-          current?.lastErrorCode ?? ErrorCode.RuntimeTransient,
-        );
+        try {
+          await this.runRequest(requestId, context.signal);
+        } finally {
+          if (deadlineTimer) clearTimeout(deadlineTimer);
+          context.signal.removeEventListener('abort', onResumeAbort);
+        }
+      },
+    })
+      .then(() => this.resultOrThrow(requestId))
+      .catch((error) => {
+        const terminal = this.repo.getRequest(requestId);
+        if (terminal && TERMINAL_STAGES.includes(terminal.stage)) {
+          return this.resultOrThrow(requestId);
+        }
+        throw error;
       })
       .finally(() => {
         entry.cleanup();
@@ -310,68 +435,14 @@ export class DurableCoordinator {
       });
     entry.resultPromise = resultPromise;
 
-    return {
-      requestId,
-      result: resultPromise,
-      status: () => this.repo.getRequest(requestId)?.stage ?? 'failed',
-      cancel: () => this.cancel(requestId),
-    };
-  }
-
-  /** Build a submission for a request that already exists (idempotent replay). */
-  private submissionForExisting(requestId: InferenceRequestId): DurableSubmission {
-    const entry = this.inFlight.get(requestId);
-    if (entry?.resultPromise) {
-      return {
-        requestId,
-        result: entry.resultPromise,
-        status: () => this.repo.getRequest(requestId)?.stage ?? 'failed',
-        cancel: () => this.cancel(requestId),
-      };
-    }
-    const stored = this.repo.getResult(requestId);
-    if (stored) {
-      return {
-        requestId,
-        result: Promise.resolve(stored),
-        status: () => 'completed',
-        cancel: () => this.cancel(requestId),
-      };
-    }
-    // Terminal-but-resultless, or running on another instance: wait on the repo.
-    return {
-      requestId,
-      result: this.waitForTerminalResult(requestId),
-      status: () => this.repo.getRequest(requestId)?.stage ?? 'failed',
-      cancel: () => this.cancel(requestId),
-    };
-  }
-
-  /** Poll the repository until a terminal result exists (cross-instance wait). */
-  private waitForTerminalResult(requestId: InferenceRequestId): Promise<InferenceResult> {
-    return new Promise<InferenceResult>((resolve, reject) => {
-      const check = () => {
-        const result = this.repo.getResult(requestId);
-        if (result) return resolve(result);
-        const record = this.repo.getRequest(requestId);
-        if (!record) return reject(new UnzenError('unknown request', ErrorCode.RequestNotFound));
-        if (record.stage === 'cancelled') {
-          return reject(new UnzenCancelledError(`request ${requestId} was cancelled`));
-        }
-        if (record.stage === 'failed') {
-          return reject(new UnzenError(record.lastError ?? 'request failed', record.lastErrorCode ?? ErrorCode.RuntimeTransient));
-        }
-        setTimeout(check, 50);
-      };
-      check();
-    });
+    return this.submissionHandle(requestId, resultPromise);
   }
 
   // --- Request execution (pull model) ---
 
   private async runRequest(requestId: InferenceRequestId, signal: AbortSignal): Promise<void> {
     const record = this.repo.getRequest(requestId);
-    if (record) record.startedAt = Date.now();
+    if (record && record.startedAt === undefined) record.startedAt = Date.now();
     try {
       await this.executeAllSegments(requestId, signal);
       const current = this.repo.getRequest(requestId);
@@ -381,6 +452,11 @@ export class DurableCoordinator {
     } catch (error) {
       const code = classifyError(error);
       const kind = this.inFlight.get(requestId)?.cancelKind ?? 'user';
+      if (code === ErrorCode.UserCancellation && kind === 'recovery-ownership') {
+        // Another recovery owner replaced this one. Do not mutate durable state;
+        // the winning owner must be allowed to continue from it.
+        return;
+      }
       if (code === ErrorCode.UserCancellation && kind === 'deadline') {
         this.finalizeStage(requestId, 'failed', ErrorCode.DeadlineExceeded, 'request deadline exceeded');
       } else if (code === ErrorCode.UserCancellation) {
@@ -407,14 +483,13 @@ export class DurableCoordinator {
         return;
       }
       const result = await this.executeSegmentWithRetry(requestId, segmentIndex, signal);
-      if (!result) return; // finalized (failed/cancelled) inside
+      if (!result) return;
       const current = this.repo.getRequest(requestId)!;
-      if (current.stage === 'completed') return; // final commit done by acceptResult
+      if (current.stage === 'completed') return;
       if (current.stage === 'cancelled' || this.repo.getCancellation(requestId)) {
         this.finalizeStage(requestId, 'cancelled');
         return;
       }
-      // Intermediate segment: advance the streaming cursor and request pointer.
       current.currentSegment = segmentIndex + 1;
       this.repo.putStreamCursor({
         requestId,
@@ -445,9 +520,6 @@ export class DurableCoordinator {
         this.transitionOrThrow(requestId, 'retry-wait', 'queued');
       }
 
-      // Continuation segments must have a valid predecessor checkpoint before
-      // any worker capacity is reserved. Missing/expired/cross-run state is a
-      // terminal integrity failure; never dispatch an undefined checkpoint.
       let previousCheckpoint: CheckpointEnvelope | undefined;
       if (segmentIndex > 0) {
         previousCheckpoint = this.repo.getCheckpoint(requestId, segmentIndex - 1);
@@ -495,7 +567,6 @@ export class DurableCoordinator {
         return null;
       }
 
-      // Issue the lease with the full assignment identity.
       const attemptId = generateAttemptId();
       const leaseId = generateLeaseId();
       const now = Date.now();
@@ -547,8 +618,6 @@ export class DurableCoordinator {
         this.registry.markIdle(worker.workerId, worker.generation);
         switch (acceptance.kind) {
           case 'accepted':
-            // A non-final segment returns the request to the scheduling queue
-            // for its next segment's lease; the final segment stays completed.
             if (!acceptance.isFinal) {
               this.transitionOrThrow(requestId, 'running', 'queued');
             }
@@ -558,8 +627,6 @@ export class DurableCoordinator {
             this.finalizeStage(requestId, 'cancelled');
             return null;
           case 'duplicate':
-            // 'duplicate' means the result was already committed; the request
-            // is completed and the outer loop will stop on stage === completed.
             return result;
           default:
             this.isolateWorker(result.identity);
@@ -574,18 +641,23 @@ export class DurableCoordinator {
         }
       } catch (error) {
         this.registry.markIdle(worker.workerId, worker.generation);
-        if (signal.aborted) throw error; // cancel / deadline handled by runRequest
+        if (signal.aborted) throw error;
 
         const code = classifyError(error);
         this.leaseManager.reclaimByRequest(requestId);
         this.updateAttemptOutcome(requestId, attemptId, 'failed', code, Date.now());
+        const current = this.repo.getRequest(requestId);
 
-        if (retryPolicyFor(code) === RetryPolicy.Retryable && attempt < this.options.maxRetries) {
-          // Isolate unresponsive/transient workers so the retry picks another.
+        // `retryCount` is durable. Recovery never starts a fresh local retry
+        // budget after process restart.
+        if (
+          retryPolicyFor(code) === RetryPolicy.Retryable
+          && current
+          && current.retryCount < this.options.maxRetries
+        ) {
           if (isIsolatable(code)) {
             this.registry.markDisconnected(worker.workerId, worker.generation);
           }
-          const current = this.repo.getRequest(requestId)!;
           current.retryCount += 1;
           this.transitionOrThrow(requestId, 'running', 'retry-wait');
           await delay(this.options.retryDelayMs);
@@ -640,20 +712,12 @@ export class DurableCoordinator {
     }
   }
 
-  /**
-   * Validate a result at the Coordinator boundary and, when it matches the
-   * active lease exactly, commit the checkpoint / final result.
-   */
   async acceptResult(result: ExecutionResult, now = Date.now()): Promise<SegmentAcceptance> {
     const record = this.repo.getRequest(result.identity.requestId);
     if (!record) {
       this.recordSuppression(result.identity, 'request-not-found', now);
       return { kind: 'protocol-violation', message: 'request not found' };
     }
-    // Durable cancellation is checked before lease matching or any result
-    // commit. cancel() may have already invalidated the active lease, and a
-    // missing lease must not turn a legitimate late delivery into a worker
-    // isolation event.
     if (this.repo.getCancellation(result.identity.requestId) || record.stage === 'cancelled') {
       this.recordSuppression(result.identity, 'request-cancelled', now);
       this.finalizeStage(result.identity.requestId, 'cancelled');
@@ -668,9 +732,7 @@ export class DurableCoordinator {
     const isFinal = result.identity.segmentIndex === record.totalSegments - 1;
 
     if (isFinal) {
-      if (!result.output) {
-        return { kind: 'output-missing' };
-      }
+      if (!result.output) return { kind: 'output-missing' };
       const commit = this.repo.commitCompletion(
         result.identity.requestId,
         'running',
@@ -685,8 +747,6 @@ export class DurableCoordinator {
       this.leaseManager.reclaimByRequest(result.identity.requestId);
       if (commit === 'committed') {
         this.updateAttemptOutcome(result.identity.requestId, result.identity.attemptId, 'completed', undefined, now);
-        // The run is over: release its checkpoints so intermediate state never
-        // stays in memory after completion (issue #103 deliverable 10).
         this.repo.deleteCheckpointsForRequest(result.identity.requestId);
         return { kind: 'accepted', isFinal: true, output: result.output };
       }
@@ -698,9 +758,6 @@ export class DurableCoordinator {
       return { kind: 'protocol-violation', message: `completion conflict at stage ${record.stage}` };
     }
 
-    // Intermediate segment: take ownership of the envelope before the async
-    // digest check. The caller can keep or mutate its object after delivery,
-    // but it cannot change the bytes/metadata that this acceptance commits.
     if (!result.checkpoint) {
       this.recordSuppression(result.identity, 'missing-checkpoint', now);
       return { kind: 'protocol-violation', message: 'intermediate segment produced no checkpoint' };
@@ -725,12 +782,6 @@ export class DurableCoordinator {
       return { kind: 'checkpoint-rejected', message: validation.message };
     }
 
-    // The digest check above yields to the event loop. During that window the
-    // request may be cancelled, the worker may reconnect/revoke, the lease may
-    // expire, or a retry may install L2. Revalidate at commit time before any
-    // checkpoint/attempt/lease mutation. From here through reclaim there is no
-    // await, so the expected identity is the same transaction-sized critical
-    // section for both in-memory and synchronous Durable Object repositories.
     const commitNow = Math.max(now, Date.now());
     if (this.repo.getCancellation(result.identity.requestId)) {
       this.recordSuppression(result.identity, 'post-validation-request-cancelled', commitNow);
@@ -763,9 +814,6 @@ export class DurableCoordinator {
     this.updateAttemptOutcome(result.identity.requestId, result.identity.attemptId, 'completed', undefined, commitNow);
     const reclaimed = this.leaseManager.reclaim(result.identity, commitNow);
     if (!reclaimed.ok) {
-      // No asynchronous boundary exists between the post-validation match and
-      // this compare-and-delete. Treat any storage-level identity drift as a
-      // stale delivery and, critically, never delete the replacement lease.
       this.recordSuppression(result.identity, `commit-reclaim-${reclaimed.reason}`, commitNow);
       return { kind: 'identity-mismatch', reason: reclaimed.reason };
     }
@@ -774,12 +822,10 @@ export class DurableCoordinator {
 
   // --- Push-model entry points (worker messages) ---
 
-  /** Validate and commit (or suppress) a pushed segment result. */
   handleWorkerResult(result: ExecutionResult): Promise<SegmentAcceptance> {
     return this.acceptResult(result);
   }
 
-  /** Record and reclaim a pushed failure; isolation follows the error code. */
   handleWorkerFailure(failure: ExecutionFailure): void {
     if (this.repo.getCancellation(failure.identity.requestId)) {
       this.recordSuppression(failure.identity, 'request-cancelled');
@@ -805,13 +851,6 @@ export class DurableCoordinator {
 
   // --- Cancellation ---
 
-  /**
-   * Persistently cancel a request. The cancellation marker is written before
-   * aborting local work or invalidating a lease so every Coordinator instance
-   * rejects subsequent dispatch/commit. `acknowledged` means execution stop is
-   * confirmed, not merely that this method could not find a local inFlight map
-   * entry.
-   */
   cancel(requestId: InferenceRequestId): CancellationAck {
     const requestedAt = Date.now();
     const deadlineMs = this.options.cancelAckDeadlineMs;
@@ -821,22 +860,10 @@ export class DurableCoordinator {
     }
 
     if (request.stage === 'completed') {
-      return {
-        requestId,
-        requestedAt,
-        deadlineMs,
-        acknowledged: true,
-        disposition: 'already-completed',
-      };
+      return { requestId, requestedAt, deadlineMs, acknowledged: true, disposition: 'already-completed' };
     }
     if (request.stage === 'failed') {
-      return {
-        requestId,
-        requestedAt,
-        deadlineMs,
-        acknowledged: true,
-        disposition: 'already-failed',
-      };
+      return { requestId, requestedAt, deadlineMs, acknowledged: true, disposition: 'already-failed' };
     }
 
     const entry = this.inFlight.get(requestId);
@@ -846,8 +873,6 @@ export class DurableCoordinator {
       ? { ...existing }
       : { requestId, requestedAt, deadlineMs };
 
-    // Write the durable barrier first. acceptResult/dispatch paths consult this
-    // marker before lease matching or new assignment issuance.
     this.repo.putCancellation(requestId, cancellation);
 
     if (entry) {
@@ -864,18 +889,11 @@ export class DurableCoordinator {
       );
     }
 
-    // `accepted` is normally transient and submit() immediately advances it to
-    // queued. A reconstructed repository can still expose it, so move through
-    // the legal edge before terminalizing rather than adding a special state
-    // machine transition solely for cancellation.
     if (request.stage === 'accepted') {
       this.repo.transitionStage(requestId, 'accepted', 'queued');
     }
     this.finalizeStage(requestId, 'cancelled');
 
-    // A first cancellation with no local owner and no active lease is already
-    // stopped. If a prior cancellation is still awaiting owner confirmation,
-    // never manufacture an ack merely because its lease was reclaimed earlier.
     if (!existing && !entry && !activeLease) {
       cancellation.acknowledgedAt = requestedAt;
       this.repo.putCancellation(requestId, cancellation);
@@ -912,11 +930,6 @@ export class DurableCoordinator {
 
   // --- Worker management ---
 
-  /**
-   * Register (or re-register) a worker. Capability is validated against the
-   * model manifest; re-registration on a new connection revokes the old
-   * generation and reclaims its leases.
-   */
   registerWorker(
     registration: { readonly workerId: WorkerId; readonly tier: WorkerTier; readonly vramMB: number },
     connectionId: string,
@@ -934,13 +947,11 @@ export class DurableCoordinator {
     return outcome;
   }
 
-  /** Process a heartbeat. Throws structured errors for unknown/stale generations. */
   workerHeartbeat(workerId: WorkerId, generation: string): boolean {
     this.registry.heartbeat(workerId, generation as never);
     return true;
   }
 
-  /** Remove a worker (connection closed): revoke its generation + leases. */
   removeWorker(workerId: WorkerId): void {
     const record = this.registry.get(workerId);
     if (record) {
@@ -951,7 +962,6 @@ export class DurableCoordinator {
 
   // --- Monitors ---
 
-  /** Periodic heartbeat monitoring: disconnect timed-out workers + reclaim leases. */
   startHeartbeatMonitor(): void {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(() => {
@@ -970,7 +980,6 @@ export class DurableCoordinator {
     }
   }
 
-  /** Periodic cleanup so checkpoints never remain in memory forever. */
   startCheckpointCleanup(): void {
     if (this.checkpointCleanupTimer) return;
     this.checkpointCleanupTimer = setInterval(() => {
@@ -1018,7 +1027,6 @@ export class DurableCoordinator {
     return this.registry.get(workerId);
   }
 
-  /** Suppressed (late/duplicate/stale) deliveries, for observability. */
   getSuppressions(requestId: InferenceRequestId): readonly SuppressionRecord[] {
     return this.suppressions.filter((s) => s.requestId === requestId);
   }
@@ -1063,11 +1071,6 @@ export class DurableCoordinator {
     }
   }
 
-  /**
-   * Finalize a request to a terminal stage. Late updates from terminal states
-   * are rejected: a stale completion/cancel that arrives after the request
-   * already terminated never mutates state.
-   */
   private finalizeStage(
     requestId: InferenceRequestId,
     stage: 'cancelled' | 'failed',
@@ -1087,7 +1090,6 @@ export class DurableCoordinator {
     this.leaseManager.reclaimByRequest(requestId);
   }
 
-  /** Quarantine a worker generation after protocol/identity/integrity failure. */
   private isolateWorker(identity: ResultIdentity): void {
     const record = this.registry.getByGeneration(identity.workerGeneration);
     if (record && record.stage !== 'revoked') {
@@ -1107,8 +1109,6 @@ export class DurableCoordinator {
       reason,
       at,
     });
-    // Bound the in-memory observability log so a hostile/long-lived stream of
-    // late results cannot grow it without limit.
     if (this.suppressions.length > 5_000) {
       this.suppressions.splice(0, 2_500);
     }
