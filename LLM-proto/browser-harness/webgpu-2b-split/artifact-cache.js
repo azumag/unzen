@@ -1,4 +1,5 @@
 import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from './artifact-budget.js';
+import { abortError, throwIfAborted } from './execution-lifecycle.js';
 
 const CACHE_NAME = 'unzen-real-split-artifacts-v2';
 
@@ -30,7 +31,12 @@ function parseContentLength(response) {
 
 export async function readResponseBytesBounded(
   response,
-  { maxBytes = BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES, expectedBytes, url = 'artifact' } = {},
+  {
+    maxBytes = BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
+    expectedBytes,
+    url = 'artifact',
+    signal,
+  } = {},
 ) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new Error(`maxBytes must be a non-negative safe integer: ${maxBytes}`);
@@ -38,6 +44,7 @@ export async function readResponseBytesBounded(
   if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0)) {
     throw new Error(`expectedBytes must be a non-negative safe integer: ${expectedBytes}`);
   }
+  throwIfAborted(signal);
   const effectiveMax = expectedBytes === undefined ? maxBytes : Math.min(maxBytes, expectedBytes);
   const contentLength = parseContentLength(response);
   if (contentLength !== undefined && contentLength > effectiveMax) {
@@ -46,6 +53,7 @@ export async function readResponseBytesBounded(
 
   if (!response.body?.getReader) {
     const buffer = await response.arrayBuffer();
+    throwIfAborted(signal);
     if (buffer.byteLength > effectiveMax) {
       throw new Error(`artifact exceeds byte limit for ${url}: ${buffer.byteLength} > ${effectiveMax}`);
     }
@@ -58,9 +66,22 @@ export async function readResponseBytesBounded(
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
+  const onAbort = () => {
+    void reader.cancel('artifact-load-aborted').catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      throwIfAborted(signal);
+      let next;
+      try {
+        next = await reader.read();
+      } catch (error) {
+        if (signal?.aborted) throw abortError();
+        throw error;
+      }
+      throwIfAborted(signal);
+      const { done, value } = next;
       if (done) break;
       const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
       total += chunk.byteLength;
@@ -71,6 +92,7 @@ export async function readResponseBytesBounded(
       chunks.push(chunk);
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     reader.releaseLock?.();
   }
 
@@ -83,6 +105,7 @@ export async function readResponseBytesBounded(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  throwIfAborted(signal);
   return bytes;
 }
 
@@ -95,28 +118,33 @@ export async function readResponseBytesBounded(
 export async function loadVerifiedArtifact(
   url,
   expectedSha256,
-  { maxBytes = BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES, expectedBytes } = {},
+  { maxBytes = BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES, expectedBytes, signal } = {},
 ) {
   if (!expectedSha256 || !/^[0-9a-f]{64}$/i.test(expectedSha256)) {
     throw new Error(`invalid or missing SHA-256 for ${url}`);
   }
   if (!('caches' in globalThis)) throw new Error('Browser Cache API is unavailable');
+  throwIfAborted(signal);
 
   const started = performance.now();
   const cache = await caches.open(CACHE_NAME);
+  throwIfAborted(signal);
   const key = cacheKey(url, expectedSha256.toLowerCase());
   let response = await cache.match(key);
+  throwIfAborted(signal);
   const cacheHit = Boolean(response);
 
   if (!response) {
-    response = await fetch(url, { cache: 'no-store' });
+    response = await fetch(url, { cache: 'no-store', signal });
     if (!response.ok) throw new Error(`artifact fetch failed ${response.status}: ${url}`);
   }
 
   let bytes;
   try {
-    bytes = await readResponseBytesBounded(response, { maxBytes, expectedBytes, url });
+    bytes = await readResponseBytesBounded(response, { maxBytes, expectedBytes, url, signal });
+    throwIfAborted(signal);
     const actualSha256 = await sha256(bytes);
+    throwIfAborted(signal);
     if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
       throw new Error(
         `artifact SHA-256 mismatch for ${url}: expected ${expectedSha256}, got ${actualSha256}`,
@@ -124,12 +152,14 @@ export async function loadVerifiedArtifact(
     }
 
     if (!cacheHit) {
+      throwIfAborted(signal);
       await cache.put(key, new Response(bytes, {
         headers: {
           'Content-Type': response.headers.get('content-type') ?? 'application/octet-stream',
           'Content-Length': String(bytes.byteLength),
         },
       }));
+      throwIfAborted(signal);
     }
 
     return {
