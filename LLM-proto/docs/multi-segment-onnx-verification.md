@@ -102,11 +102,25 @@ A provider that is not locally available is rejected before numerical
 verification, rather than allowing an evidence envelope to be labelled with an
 unavailable backend.
 
+Before persisting the verifier result, the collector independently checks the
+returned evidence contract: verifier kind, requested provider and token IDs,
+passing artifact-integrity status plus canonical manifest SHA-256, source graph
+SHA-256, hashed source external-data entries, comparison result, top-1 IDs and
+`sequentialSessionLoading=true`. A reported `status` that contradicts the
+comparison/top-1 result is rejected. This keeps the persisted bundle fail-closed
+if a future verifier refactor accidentally drops or misreports one of the fields
+that bind the result to the exact artifacts and invocation.
+
 The embedded numerical report gets its own canonical `verificationSha256`.
 The complete evidence file is published atomically with no-clobber semantics:
-an existing output path is never replaced. The command also prints the SHA-256
-of the exact persisted evidence bytes so the issue comment or external archive
-can bind to that file without adding a mutable sidecar.
+an existing output path is never replaced. The CLI now also checks that output
+path before starting the expensive numerical run, so rerunning a real 1B capture
+with the same evidence filename fails immediately instead of consuming inference
+time only to discover the collision at publication.
+
+The command also prints the SHA-256 of the exact persisted evidence bytes so the
+issue comment or external archive can bind to that file without adding a mutable
+sidecar.
 
 A passing same-machine result is automated correctness evidence only; it does
 not replace #167's required real multi-browser WebGPU, Coordinator-relay, cache
