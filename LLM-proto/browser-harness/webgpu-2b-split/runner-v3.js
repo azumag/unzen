@@ -6,6 +6,10 @@ import {
   loadVerifiedArtifact,
 } from './artifact-cache.js';
 import {
+  planSegmentArtifactBudget,
+  verifyActualSegmentArtifactBudget,
+} from './artifact-budget.js';
+import {
   argmaxLastLogits,
   validateCheckpointBoundaryNames,
 } from './runtime-validation.js';
@@ -18,6 +22,7 @@ const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
 const splitRoot = params.get('splitRoot') ?? '/models';
 const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
+const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
 
 const roleEl = document.getElementById('role');
 const workerEl = document.getElementById('worker');
@@ -226,15 +231,33 @@ async function createWebGpuSession(segment, manifest) {
   if (manifest.artifactLayout !== 'per-segment-external-data') {
     throw new Error('refusing to load a non-sharded split manifest in the browser harness');
   }
-  const modelArtifact = await loadVerifiedArtifact(modelUrl(segment.path), segment.sha256);
+
+  const budgetPlan = planSegmentArtifactBudget(segment, artifactBudgetMode);
+  let remainingBytes = budgetPlan.requiredMaxBytes;
+  const modelArtifact = await loadVerifiedArtifact(modelUrl(segment.path), segment.sha256, {
+    maxBytes: Math.min(remainingBytes, budgetPlan.graphDeclaredBytes),
+    expectedBytes: budgetPlan.graphDeclaredBytes,
+  });
+  remainingBytes -= modelArtifact.report.bytes;
+
   const externalArtifacts = [];
   for (const entry of segment.externalData ?? []) {
-    const artifact = await loadVerifiedArtifact(modelUrl(entry.location), entry.sha256);
+    const expectedBytes = Number(entry.bytes);
+    const artifact = await loadVerifiedArtifact(modelUrl(entry.location), entry.sha256, {
+      maxBytes: Math.min(remainingBytes, expectedBytes),
+      expectedBytes,
+    });
+    remainingBytes -= artifact.report.bytes;
     externalArtifacts.push({ entry, artifact });
   }
   if (externalArtifacts.length === 0) {
     throw new Error(`segment ${segment.index} has no external weights`);
   }
+
+  const budget = verifyActualSegmentArtifactBudget(
+    budgetPlan,
+    [modelArtifact.report, ...externalArtifacts.map(({ artifact }) => artifact.report)],
+  );
 
   const createStarted = performance.now();
   ort.env.logLevel = 'warning';
@@ -253,6 +276,7 @@ async function createWebGpuSession(segment, manifest) {
       model: modelArtifact.report,
       externalData: externalArtifacts.map(({ artifact }) => artifact.report),
       allCacheHits: modelArtifact.report.cacheHit && externalArtifacts.every(({ artifact }) => artifact.report.cacheHit),
+      budget,
       sessionCreateMs,
     },
   };
@@ -296,7 +320,7 @@ async function runSegment0(manifest, manifestDigest) {
     throw new Error('Coordinator checkpoint receipt is not bound to the loaded manifest');
   }
   log(`Coordinator receipt: ${JSON.stringify(receipt)}`);
-  status(`Segment 0 complete. checkpoint=${receipt.checkpointId}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}`);
+  status(`Segment 0 complete. checkpoint=${receipt.checkpointId}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}, artifact budget=${prepared.artifactCache.budget.verdict}`);
 }
 
 async function waitForCheckpoint() {
@@ -390,7 +414,7 @@ async function runSegment1(manifest, manifestDigest) {
   log(JSON.stringify(report, null, 2));
   log(`Coordinator result digest: ${accepted.resultDigest}`);
   log(`Coordinator profile isolation evidence: ${JSON.stringify(accepted.profileIsolationEvidence, null, 2)}`);
-  status(`Split inference complete. checkpoint=${checkpoint.checkpointId}, next=${JSON.stringify(tokenText)}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}, profile isolation=confirmed`);
+  status(`Split inference complete. checkpoint=${checkpoint.checkpointId}, next=${JSON.stringify(tokenText)}, cache=${prepared.artifactCache.allCacheHits ? 'warm' : 'cold/mixed'}, artifact budget=${prepared.artifactCache.budget.verdict}, profile isolation=confirmed`);
 }
 
 async function execute() {
