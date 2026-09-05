@@ -32,14 +32,23 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
         }
 
-    @staticmethod
-    def _evidence(*, status: str = "pass") -> dict[str, object]:
+    @classmethod
+    def _evidence(
+        cls,
+        *,
+        status: str = "pass",
+        artifact_integrity: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        integrity = dict(artifact_integrity or cls._integrity())
         return {
             "schemaVersion": "1.0.0",
             "kind": "unzen-budgeted-multi-segment-evidence-bundle",
             "status": status,
             "verificationSha256": "b" * 64,
-            "verification": {"status": status},
+            "verification": {
+                "status": status,
+                "artifactIntegrity": integrity,
+            },
         }
 
     def test_happy_path_publishes_complete_bundle_and_forces_source_hashing(self) -> None:
@@ -140,6 +149,47 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                     )
 
             collect.assert_not_called()
+            self.assertFalse(destination.exists())
+            leftovers = [
+                path
+                for path in root.iterdir()
+                if path.name.startswith(".capture.") and path.name.endswith(".tmp")
+            ]
+            self.assertEqual(leftovers, [])
+
+    def test_artifact_identity_drift_after_preflight_is_rejected_and_cleaned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            destination = root / "capture"
+            drifted = self._integrity()
+            drifted["manifestSha256"] = "c" * 64
+
+            with (
+                patch.object(
+                    capture_module,
+                    "prepare_budgeted_multi_split",
+                    side_effect=self._prepare_fixture,
+                ),
+                patch.object(
+                    capture_module,
+                    "verify_artifact_integrity",
+                    return_value=self._integrity(),
+                ),
+                patch.object(
+                    capture_module,
+                    "collect_evidence",
+                    return_value=self._evidence(artifact_integrity=drifted),
+                ),
+                patch.object(capture_module, "write_evidence") as write,
+            ):
+                with self.assertRaisesRegex(ValueError, "artifact identity drifted"):
+                    capture_module.capture_run(
+                        root / "model_q4.onnx",
+                        destination,
+                        [11],
+                    )
+
+            write.assert_not_called()
             self.assertFalse(destination.exists())
             leftovers = [
                 path
