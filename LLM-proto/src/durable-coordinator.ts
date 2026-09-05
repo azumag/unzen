@@ -650,13 +650,18 @@ export class DurableCoordinator {
       return { kind: 'protocol-violation', message: `completion conflict at stage ${record.stage}` };
     }
 
-    // Intermediate segment: a checkpoint envelope is mandatory and must pass
-    // full integrity + identity validation before it touches the store.
+    // Intermediate segment: take ownership of the envelope before the async
+    // digest check. The caller can keep or mutate its object after delivery,
+    // but it cannot change the bytes/metadata that this acceptance commits.
     if (!result.checkpoint) {
       this.recordSuppression(result.identity, 'missing-checkpoint', now);
       return { kind: 'protocol-violation', message: 'intermediate segment produced no checkpoint' };
     }
-    const validation = await validateCheckpointEnvelope(result.checkpoint, {
+    const checkpoint: CheckpointEnvelope = {
+      ...result.checkpoint,
+      payload: new Uint8Array(result.checkpoint.payload),
+    };
+    const validation = await validateCheckpointEnvelope(checkpoint, {
       requestId: result.identity.requestId,
       segmentIndex: result.identity.segmentIndex,
       workerId: result.identity.workerId,
@@ -671,15 +676,47 @@ export class DurableCoordinator {
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-rejected', message: validation.message };
     }
-    const store = this.repo.putCheckpoint(result.checkpoint);
+
+    // The digest check above yields to the event loop. During that window the
+    // request may be cancelled, the worker may reconnect/revoke, the lease may
+    // expire, or a retry may install L2. Revalidate at commit time before any
+    // checkpoint/attempt/lease mutation. From here through reclaim there is no
+    // await, so the expected identity is the same transaction-sized critical
+    // section for both in-memory and synchronous Durable Object repositories.
+    const commitNow = Math.max(now, Date.now());
+    const commitMatch = this.leaseManager.match(result.identity, commitNow);
+    if (!commitMatch.ok) {
+      this.recordSuppression(result.identity, `post-validation-${commitMatch.reason}`, commitNow);
+      return { kind: 'identity-mismatch', reason: commitMatch.reason };
+    }
+    const currentRecord = this.repo.getRequest(result.identity.requestId);
+    if (!currentRecord || currentRecord.stage !== 'running') {
+      const currentStage = currentRecord?.stage ?? 'missing';
+      this.recordSuppression(result.identity, `post-validation-stage=${currentStage}`, commitNow);
+      return { kind: 'protocol-violation', message: `request no longer running after checkpoint validation (stage=${currentStage})` };
+    }
+    if (isCheckpointExpired(checkpoint, commitNow)) {
+      const message = 'checkpoint TTL expired during validation';
+      this.recordSuppression(result.identity, message, commitNow);
+      return { kind: 'checkpoint-rejected', message };
+    }
+
+    const store = this.repo.putCheckpoint(checkpoint);
     if (store === 'conflict') {
-      this.recordSuppression(result.identity, 'checkpoint-conflict', now);
+      this.recordSuppression(result.identity, 'checkpoint-conflict', commitNow);
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-conflict' };
     }
-    this.updateAttemptOutcome(result.identity.requestId, result.identity.attemptId, 'completed', undefined, now);
-    this.leaseManager.reclaimByRequest(result.identity.requestId);
-    return { kind: 'accepted', isFinal: false, checkpoint: result.checkpoint };
+    this.updateAttemptOutcome(result.identity.requestId, result.identity.attemptId, 'completed', undefined, commitNow);
+    const reclaimed = this.leaseManager.reclaim(result.identity, commitNow);
+    if (!reclaimed.ok) {
+      // No asynchronous boundary exists between the post-validation match and
+      // this compare-and-delete. Treat any storage-level identity drift as a
+      // stale delivery and, critically, never delete the replacement lease.
+      this.recordSuppression(result.identity, `commit-reclaim-${reclaimed.reason}`, commitNow);
+      return { kind: 'identity-mismatch', reason: reclaimed.reason };
+    }
+    return { kind: 'accepted', isFinal: false, checkpoint };
   }
 
   // --- Push-model entry points (worker messages) ---
