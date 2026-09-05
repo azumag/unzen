@@ -47,8 +47,16 @@ def _require_mapping(raw: object, *, field: str) -> dict[str, object]:
     return raw
 
 
+def _non_empty_string(raw: object, *, field: str) -> str:
+    # Identities and paths are immutable JSON strings. Reject values that merely
+    # become plausible after str() coercion (for example a 64-digit integer SHA).
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{field} must be a non-empty string")
+    return raw
+
+
 def _canonical_sha256(raw: object, *, field: str) -> str:
-    value = str(raw or "")
+    value = _non_empty_string(raw, field=field)
     if not SHA256_RE.fullmatch(value):
         raise ValueError(f"{field} must be a canonical lowercase SHA-256 digest")
     return value
@@ -65,9 +73,7 @@ def _non_negative_int(raw: object, *, field: str) -> int:
 
 
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
-    value = str(raw or "")
-    if not value:
-        raise ValueError(f"{field} must be a non-empty relative path")
+    value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
@@ -116,9 +122,10 @@ def _normalized_external_entries(
     for index, raw_entry in enumerate(raw):
         prefix = f"{field}[{index}]"
         entry = _require_mapping(raw_entry, field=prefix)
-        location = str(entry.get("location") or "")
-        if not location:
-            raise ValueError(f"{prefix}.location must be non-empty")
+        location = _non_empty_string(
+            entry.get("location"),
+            field=f"{prefix}.location",
+        )
         # Validate cross-platform path semantics even before a filesystem root is
         # applied. This prevents an embedded report from smuggling an absolute or
         # parent-relative identity that merely differs textually from the manifest.
