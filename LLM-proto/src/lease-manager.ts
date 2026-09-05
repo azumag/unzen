@@ -95,6 +95,18 @@ export class LeaseManager {
     if (lease) this.store.deleteLease(lease.leaseId);
   }
 
+  /**
+   * Reclaim only when the supplied result identity still owns the active lease.
+   * This compare-and-delete form is required after an async boundary: a stale
+   * result must never reclaim a newer retry/reconnect lease for the same request.
+   */
+  reclaim(identity: ResultIdentity, now: number): IdentityMatch {
+    const match = this.match(identity, now);
+    if (!match.ok) return match;
+    this.store.deleteLease(identity.leaseId);
+    return { ok: true };
+  }
+
   /** Reclaim every lease held by a revoked worker generation. */
   reclaimByWorkerGeneration(workerId: WorkerId, generation: WorkerGeneration): void {
     for (const lease of this.store.listActiveLeases()) {
