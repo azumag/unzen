@@ -7,7 +7,8 @@ operation:
 1. generate browser-budgeted ONNX shards with source external-data hashing on;
 2. re-measure the generated artifacts with the stdlib-only integrity preflight;
 3. run the provenance-rich full-vs-multi numerical evidence collector;
-4. publish the split artifacts, evidence JSON, and a compact run summary together.
+4. bind the numerical verifier's artifact identity back to the preflight result;
+5. publish the split artifacts, evidence JSON, and a compact run summary together.
 
 Generation happens in a sibling staging directory. Tooling/preflight failures
 remove the staging directory and leave the requested destination untouched.
@@ -93,6 +94,48 @@ def _require_integrity_pass(report: object) -> dict[str, object]:
     return report
 
 
+def _require_evidence_matches_preflight(
+    evidence: object,
+    integrity: dict[str, object],
+) -> dict[str, object]:
+    """Reject artifact drift between the preflight and numerical verification.
+
+    The numerical collector deliberately reruns the artifact-integrity verifier
+    immediately before ONNX Runtime work. If the generated files or manifest
+    changed after the runner's first preflight, both reports could be internally
+    valid while referring to different artifact sets. Binding the embedded
+    verifier identity back to the first preflight keeps one capture directory a
+    single auditable artifact snapshot instead of silently mixing two snapshots.
+    """
+
+    if not isinstance(evidence, dict):
+        raise ValueError("same-machine evidence must be an object")
+    verification = evidence.get("verification")
+    if not isinstance(verification, dict):
+        raise ValueError("same-machine evidence is missing verification")
+    artifact_integrity = verification.get("artifactIntegrity")
+    if not isinstance(artifact_integrity, dict):
+        raise ValueError(
+            "same-machine evidence verification is missing artifactIntegrity"
+        )
+
+    for field in (
+        "manifestSha256",
+        "segmentCount",
+        "maximumSegmentArtifactBytes",
+        "effectiveRequiredMaxBytes",
+    ):
+        expected = integrity.get(field)
+        observed = artifact_integrity.get(field)
+        if observed != expected:
+            raise ValueError(
+                "artifact identity drifted between preflight and numerical "
+                f"verification: {field} preflight={expected!r}, "
+                f"verification={observed!r}"
+            )
+    return evidence
+
+
 def capture_run(
     full_model_path: Path,
     destination: Path,
@@ -130,15 +173,18 @@ def capture_run(
             verify_artifact_integrity(manifest_path)
         )
 
-        evidence = collect_evidence(
-            full_model_path,
-            manifest_path,
-            token_ids,
-            provider=provider,
-            kv_heads=kv_heads,
-            head_size=head_size,
-            atol=atol,
-            rtol=rtol,
+        evidence = _require_evidence_matches_preflight(
+            collect_evidence(
+                full_model_path,
+                manifest_path,
+                token_ids,
+                provider=provider,
+                kv_heads=kv_heads,
+                head_size=head_size,
+                atol=atol,
+                rtol=rtol,
+            ),
+            integrity,
         )
         status = evidence.get("status")
         if status not in {"pass", "fail"}:

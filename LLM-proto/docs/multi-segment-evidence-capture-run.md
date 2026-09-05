@@ -14,9 +14,10 @@ capture runner は次を固定順序で行う。
 2. source external-data SHA-256 は常に有効化する。skip-digest経路はこのrunnerから利用できない。
 3. `verify_artifact_integrity` で生成物の実byte数・digest・budgetを再測定する。
 4. integrityが `pass` の場合だけ `collect_multi_segment_evidence` 相当の full-vs-multi numerical verification を実行する。
-5. split artifacts、`same-machine-evidence.json`、`run-summary.json` を同じcapture directoryとして公開する。
+5. numerical verifier が内部で再取得した `artifactIntegrity` の manifest SHA-256、segment count、最大artifact bytes、effective budget が、手順3のpreflightと完全一致することを確認する。途中でartifact setが変化した場合は保存せずfail-closeする。
+6. split artifacts、`same-machine-evidence.json`、`run-summary.json` を同じcapture directoryとして公開する。
 
-planner / preflight / verifier の例外では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
+planner / preflight / verifier の例外、または preflight と numerical verifier の artifact identity 不一致では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
 
 ## 実行例
 
@@ -63,7 +64,7 @@ segment数はplanner結果による。`run-summary.json` には少なくとも�
 - embedded verification SHA-256
 - final `pass` / `fail`
 
-summary内部のpathはcapture rootからの相対pathに限定し、staging directoryの一時pathをevidenceへ残さない。
+summary内部のpathはcapture rootからの相対pathに限定し、staging directoryの一時pathをevidenceへ残さない。summaryに記録するartifact identityは、最初のpreflightとnumerical verifier内の再preflightが一致した場合だけ公開される。
 
 ## 判定境界
 
