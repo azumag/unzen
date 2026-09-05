@@ -9,6 +9,8 @@ relayed by the exact tensor names recorded in ``split-manifest.json``.
 Before creating any ONNX Runtime session, the verifier also repeats the
 stdlib-only artifact-integrity preflight and binds the resulting manifest,
 source-model, graph, and external-data identities into the numerical report.
+Source external-data digests are mandatory for numerical evidence; manifests
+created with ``--skip-source-external-digest`` are intentionally rejected.
 """
 
 from __future__ import annotations
@@ -116,7 +118,6 @@ def verify_source_model_identity(
 
     external_reports: list[dict[str, object]] = []
     seen_locations: set[str] = set()
-    all_external_data_hashed = True
     for index, raw_entry in enumerate(raw_external):
         if not isinstance(raw_entry, dict):
             raise ValueError(f"sourceModel.externalData[{index}] must be an object")
@@ -145,21 +146,21 @@ def verify_source_model_identity(
             )
 
         raw_sha = raw_entry.get("sha256")
-        observed_sha: str | None = None
         if raw_sha is None:
-            all_external_data_hashed = False
-        else:
-            expected_sha = str(raw_sha)
-            if not SHA256_RE.fullmatch(expected_sha):
-                raise ValueError(
-                    f"{field_prefix}.sha256 must be a canonical lowercase SHA-256 digest"
-                )
-            observed_sha = sha256_file(external_path)
-            if observed_sha != expected_sha:
-                raise ValueError(
-                    f"source external-data SHA-256 mismatch for {location}: "
-                    f"expected={expected_sha}, observed={observed_sha}"
-                )
+            raise ValueError(
+                f"{field_prefix}.sha256 is required for numerical evidence binding"
+            )
+        expected_sha = str(raw_sha)
+        if not SHA256_RE.fullmatch(expected_sha):
+            raise ValueError(
+                f"{field_prefix}.sha256 must be a canonical lowercase SHA-256 digest"
+            )
+        observed_sha = sha256_file(external_path)
+        if observed_sha != expected_sha:
+            raise ValueError(
+                f"source external-data SHA-256 mismatch for {location}: "
+                f"expected={expected_sha}, observed={observed_sha}"
+            )
 
         external_reports.append(
             {
@@ -174,7 +175,7 @@ def verify_source_model_identity(
         "graphBytes": full_model_path.stat().st_size,
         "graphSha256": observed_graph_sha,
         "externalData": external_reports,
-        "allExternalDataHashed": all_external_data_hashed,
+        "allExternalDataHashed": True,
     }
 
 
