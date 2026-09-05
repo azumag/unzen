@@ -13,6 +13,7 @@
  *   streaming cursor     → streamCursors
  *   completion/result    → results
  *   cancellation state   → cancellations
+ *   recovery ownership   → recoveryOwnerships
  *
  * Every mutating operation is single-key atomic. Completion is committed via
  * compare-and-set (`commitCompletion`): a late or duplicate completion is
@@ -47,6 +48,20 @@ export type CompletionCommit = 'committed' | 'duplicate' | 'conflict';
 
 /** Result of storing a checkpoint envelope into its (request, segment) slot. */
 export type CheckpointStoreResult = 'stored' | 'unchanged' | 'conflict';
+
+/**
+ * Short-lived ownership claim used while a reconstructed Coordinator applies a
+ * durable recovery decision. It is intentionally separate from worker leases:
+ * a recovery owner may exist before any execution worker is selected.
+ */
+export interface RecoveryOwnership {
+  readonly requestId: InferenceRequestId;
+  readonly ownerId: string;
+  readonly claimedAt: number;
+  readonly expiresAt: number;
+}
+
+export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
 export interface AttemptPatch {
@@ -116,6 +131,16 @@ export interface DurableRepository {
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void;
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined;
 
+  // --- recovery ownership ---
+  getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined;
+  /**
+   * Acquire/renew one request's recovery command ownership. A live peer claim
+   * is never overwritten; an expired claim may be replaced atomically.
+   */
+  claimRecoveryOwnership(ownership: RecoveryOwnership, now: number): RecoveryOwnershipClaim;
+  /** Compare-and-delete release. False when another owner currently holds it. */
+  releaseRecoveryOwnership(requestId: InferenceRequestId, ownerId: string): boolean;
+
   // --- streaming cursor ---
   putStreamCursor(cursor: StreamCursor): void;
   getStreamCursor(requestId: InferenceRequestId): StreamCursor | undefined;
@@ -137,6 +162,7 @@ export class InMemoryRepository implements DurableRepository {
   private readonly checkpoints = new Map<string, CheckpointEnvelope>();
   private readonly results = new Map<InferenceRequestId, InferenceResult>();
   private readonly cancellations = new Map<InferenceRequestId, CancellationRecord>();
+  private readonly recoveryOwnerships = new Map<InferenceRequestId, RecoveryOwnership>();
   private readonly streamCursors = new Map<InferenceRequestId, StreamCursor>();
   private readonly workers = new Map<WorkerId, WorkerRecord>();
 
@@ -319,6 +345,31 @@ export class InMemoryRepository implements DurableRepository {
 
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined {
     return this.cancellations.get(requestId);
+  }
+
+  // --- recovery ownership ---
+
+  getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined {
+    return this.recoveryOwnerships.get(requestId);
+  }
+
+  claimRecoveryOwnership(
+    ownership: RecoveryOwnership,
+    now: number,
+  ): RecoveryOwnershipClaim {
+    const existing = this.recoveryOwnerships.get(ownership.requestId);
+    if (existing && existing.ownerId !== ownership.ownerId && now < existing.expiresAt) {
+      return 'owned-by-peer';
+    }
+    this.recoveryOwnerships.set(ownership.requestId, ownership);
+    return existing?.ownerId === ownership.ownerId ? 'renewed' : 'claimed';
+  }
+
+  releaseRecoveryOwnership(requestId: InferenceRequestId, ownerId: string): boolean {
+    const existing = this.recoveryOwnerships.get(requestId);
+    if (!existing || existing.ownerId !== ownerId) return false;
+    this.recoveryOwnerships.delete(requestId);
+    return true;
   }
 
   // --- streaming cursor ---
