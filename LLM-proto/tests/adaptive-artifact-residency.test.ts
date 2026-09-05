@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { AdaptiveChunkDispatcher, type WorkerTelemetry } from '../src/adaptive-chunk-dispatcher.js';
+import {
+  AdaptiveChunkDispatcher,
+  type CachedArtifactIdentity,
+  type WorkerTelemetry,
+} from '../src/adaptive-chunk-dispatcher.js';
 import { ArtifactResidencyLedger } from '../src/artifact-residency-ledger.js';
 import type { SegmentArtifact } from '../src/model-manifest.js';
 import { AllowlistedPrototypeTransport } from '../src/two-worker-prototype.js';
@@ -34,6 +38,13 @@ function makeInventory(
   };
 }
 
+function cacheIdentity(artifact: SegmentArtifact): CachedArtifactIdentity {
+  return {
+    segmentIndex: artifact.index,
+    sha256: artifact.sha256,
+  };
+}
+
 const baseTelemetry: WorkerTelemetry = {
   uptimeMs: 2 * 60 * 60 * 1000,
   vramFreeMB: 8_000,
@@ -62,7 +73,11 @@ describe('AdaptiveChunkDispatcher artifact residency', () => {
     dispatcher.registerWorker({
       id: 'resident-worker',
       tier: WorkerTier.TIER_2,
-      telemetry: { ...baseTelemetry, cacheHits: [0, 1] },
+      telemetry: {
+        ...baseTelemetry,
+        cacheHits: [0, 1],
+        cacheArtifacts: [cacheIdentity(artifacts[0]), cacheIdentity(artifacts[1])],
+      },
     });
 
     const cold = dispatcher.run('artifact-cold');
@@ -136,7 +151,11 @@ describe('AdaptiveChunkDispatcher artifact residency', () => {
     dispatcher.registerWorker({
       id: worker,
       tier: WorkerTier.TIER_2,
-      telemetry: { ...baseTelemetry, cacheHits: [0, 1] },
+      telemetry: {
+        ...baseTelemetry,
+        cacheHits: [0, 1],
+        cacheArtifacts: [cacheIdentity(artifacts[0]), cacheIdentity(artifacts[1])],
+      },
     });
 
     dispatcher.updateHeartbeat(worker, { ...baseTelemetry, cacheHits: [] });
@@ -147,6 +166,59 @@ describe('AdaptiveChunkDispatcher artifact residency', () => {
       residentArtifactBytesBeforeAssignment: 0,
       downloadedArtifactBytes: 300,
       missingSegmentIndexes: [0, 1],
+    });
+  });
+
+  it('requires exact artifact identities for manifest-backed cache hits', () => {
+    const { artifacts, segments } = makeInventory([100, 200]);
+    const ledger = new ArtifactResidencyLedger(artifacts);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments,
+      artifactResidencyLedger: ledger,
+    });
+
+    expect(() => dispatcher.registerWorker({
+      id: 'unbound-cache-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: { ...baseTelemetry, cacheHits: [0] },
+    })).toThrow(/one cacheArtifacts identity per segment index/);
+
+    expect(ledger.snapshot(workerId('unbound-cache-worker')).residentSegmentIndexes).toEqual([]);
+  });
+
+  it('rejects a stale same-index digest without replacing the previous residency snapshot', () => {
+    const { artifacts, segments } = makeInventory([100, 200]);
+    const ledger = new ArtifactResidencyLedger(artifacts);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments,
+      artifactResidencyLedger: ledger,
+    });
+    const worker = workerId('revision-bound-worker');
+    dispatcher.registerWorker({
+      id: worker,
+      tier: WorkerTier.TIER_2,
+      telemetry: {
+        ...baseTelemetry,
+        cacheHits: [0],
+        cacheArtifacts: [cacheIdentity(artifacts[0])],
+      },
+    });
+
+    expect(() => dispatcher.updateHeartbeat(worker, {
+      ...baseTelemetry,
+      cacheHits: [0, 1],
+      cacheArtifacts: [
+        cacheIdentity(artifacts[0]),
+        { segmentIndex: 1, sha256: 'f'.repeat(64) },
+      ],
+    })).toThrow(/does not match active manifest/);
+
+    expect(ledger.snapshot(worker).residentSegmentIndexes).toEqual([0]);
+    const report = dispatcher.run('stale-revision-rejected');
+    expect(report.assignments[0].artifactResidency).toMatchObject({
+      residentArtifactBytesBeforeAssignment: 100,
+      downloadedArtifactBytes: 200,
+      missingSegmentIndexes: [1],
     });
   });
 
