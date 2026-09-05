@@ -4,11 +4,12 @@
 This command intentionally performs the real 1B host-side path in one bounded
 operation:
 
-1. generate browser-budgeted ONNX shards with source external-data hashing on;
-2. re-measure the generated artifacts with the stdlib-only integrity preflight;
-3. run the provenance-rich full-vs-multi numerical evidence collector;
-4. bind the numerical verifier's artifact identity back to the preflight result;
-5. publish the split artifacts, evidence JSON, and a compact run summary together.
+1. bind the source ONNX graph before generation begins;
+2. generate browser-budgeted ONNX shards with source external-data hashing on;
+3. re-measure the generated artifacts with the stdlib-only integrity preflight;
+4. run the provenance-rich full-vs-multi numerical evidence collector;
+5. bind the numerical verifier's artifact identity back to the preflight result;
+6. publish the split artifacts, evidence JSON, and a compact run summary together.
 
 Generation happens in a sibling staging directory. Tooling/preflight failures
 remove the staging directory and leave the requested destination untouched.
@@ -32,6 +33,7 @@ from typing import Sequence
 
 from collect_multi_segment_evidence import collect_evidence, write_evidence
 from multi_segment_onnx import PREFERRED_MAX_BYTES, prepare_budgeted_multi_split
+from split_llama_1b_onnx import sha256_file
 from verify_multi_segment_artifacts import verify_artifact_integrity
 from verify_split_onnx import parse_token_ids
 
@@ -64,6 +66,46 @@ def _make_staging_dir(destination: Path) -> Path:
         except FileExistsError:
             continue
         return candidate
+
+
+def _require_source_graph_snapshot(
+    source_model_path: Path,
+    manifest_path: Path,
+    initial_sha256: str,
+) -> str:
+    """Reject source graph drift that occurred while shards were generated.
+
+    ``prepare_budgeted_multi_split`` loads the source graph near the beginning of
+    a potentially long 1B shard generation, while its manifest records the graph
+    digest near the end. Without an independent pre-generation digest, a graph
+    replaced during generation could leave the generated segments based on the
+    old in-memory graph while ``sourceModel.sha256`` names the new file. Bind the
+    capture to the exact graph bytes observed before generation and recheck the
+    file before any preflight or ONNX Runtime numerical work.
+    """
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read generated split manifest: {manifest_path}") from error
+    if not isinstance(manifest, dict):
+        raise ValueError("generated split manifest must be an object")
+    source_model = manifest.get("sourceModel")
+    if not isinstance(source_model, dict):
+        raise ValueError("generated split manifest is missing sourceModel")
+    recorded_sha256 = source_model.get("sha256")
+    if recorded_sha256 != initial_sha256:
+        raise RuntimeError(
+            "source model graph drifted during split generation: "
+            f"initial={initial_sha256}, manifest={recorded_sha256!r}"
+        )
+    current_sha256 = sha256_file(source_model_path)
+    if current_sha256 != initial_sha256:
+        raise RuntimeError(
+            "source model graph drifted during split generation: "
+            f"initial={initial_sha256}, current={current_sha256}"
+        )
+    return initial_sha256
 
 
 def _require_integrity_pass(report: object) -> dict[str, object]:
@@ -153,6 +195,11 @@ def capture_run(
     """Generate, preflight, verify, and publish one complete capture bundle."""
 
     output_root = ensure_destination_available(destination)
+    # The source graph is small relative to the external q4 weights, so hashing
+    # it once before generation is cheap and closes a real TOCTOU gap: the shard
+    # generator keeps an in-memory ModelProto while generation may run for a long
+    # time on the 1B artifact.
+    source_graph_sha256 = sha256_file(full_model_path)
     staging = _make_staging_dir(output_root)
     published = False
     try:
@@ -169,6 +216,11 @@ def capture_run(
         )
 
         manifest_path = split_dir / "split-manifest.json"
+        _require_source_graph_snapshot(
+            full_model_path,
+            manifest_path,
+            source_graph_sha256,
+        )
         integrity = _require_integrity_pass(
             verify_artifact_integrity(manifest_path)
         )
@@ -208,6 +260,9 @@ def capture_run(
                 "headSize": head_size,
                 "atol": atol,
                 "rtol": rtol,
+            },
+            "sourceModel": {
+                "graphSha256": source_graph_sha256,
             },
             "artifacts": {
                 "manifest": "split/split-manifest.json",
@@ -284,6 +339,7 @@ def main() -> int:
             {
                 "status": summary["status"],
                 "outputDir": str(output_dir),
+                "sourceGraphSha256": summary["sourceModel"]["graphSha256"],
                 "manifestSha256": summary["artifacts"]["manifestSha256"],
                 "evidenceSha256": summary["evidence"]["sha256"],
             },

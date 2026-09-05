@@ -6,18 +6,20 @@ Issue #167 の実 `Llama-3.2-1B-Instruct` q4 host-side evidence を、split生�
 
 ## 目的
 
-実1B evidenceでは、途中の shard を別runのmanifestへ差し替えたり、source external-data hashing を誤って省略したり、preflight前後で別artifact setを使ったりしないことが重要になる。
+実1B evidenceでは、途中の shard を別runのmanifestへ差し替えたり、source external-data hashing を誤って省略したり、preflight前後で別artifact setを使ったりしないことが重要になる。1B shard生成は長時間になり得るため、生成開始後に入力ONNX graph自体が置き換わり、in-memory graphとmanifest上のsource identityが別snapshotになることも許容しない。
 
 capture runner は次を固定順序で行う。
 
-1. `prepare_budgeted_multi_split` で browser-budgeted shard を staging directory に生成する。
-2. source external-data SHA-256 は常に有効化する。skip-digest経路はこのrunnerから利用できない。
-3. `verify_artifact_integrity` で生成物の実byte数・digest・budgetを再測定する。
-4. integrityが `pass` の場合だけ `collect_multi_segment_evidence` 相当の full-vs-multi numerical verification を実行する。
-5. numerical verifier が内部で再取得した `artifactIntegrity` の manifest SHA-256、segment count、最大artifact bytes、effective budget が、手順3のpreflightと完全一致することを確認する。途中でartifact setが変化した場合は保存せずfail-closeする。
-6. split artifacts、`same-machine-evidence.json`、`run-summary.json` を同じcapture directoryとして公開する。
+1. shard生成前に source ONNX graph の SHA-256 を取得し、runの入力snapshotを固定する。
+2. `prepare_budgeted_multi_split` で browser-budgeted shard を staging directory に生成する。
+3. source external-data SHA-256 は常に有効化する。skip-digest経路はこのrunnerから利用できない。
+4. 生成manifestの `sourceModel.sha256` と現在のsource graph SHA-256が手順1のdigestに一致することを確認する。生成中にsource graphが変化していれば、この時点でfail-closeし、artifact preflightやONNX Runtimeへ進まない。
+5. `verify_artifact_integrity` で生成物の実byte数・digest・budgetを再測定する。
+6. integrityが `pass` の場合だけ `collect_multi_segment_evidence` 相当の full-vs-multi numerical verification を実行する。
+7. numerical verifier が内部で再取得した `artifactIntegrity` の manifest SHA-256、segment count、最大artifact bytes、effective budget が、手順5のpreflightと完全一致することを確認する。途中でartifact setが変化した場合は保存せずfail-closeする。
+8. split artifacts、`same-machine-evidence.json`、`run-summary.json` を同じcapture directoryとして公開する。
 
-planner / preflight / verifier の例外、または preflight と numerical verifier の artifact identity 不一致では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
+planner / source graph snapshot check / preflight / verifier の例外、または preflight と numerical verifier の artifact identity 不一致では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
 
 ## 実行例
 
@@ -56,6 +58,7 @@ llama-1b-capture-001/
 segment数はplanner結果による。`run-summary.json` には少なくとも以下を保存する。
 
 - capture parameters
+- source graph SHA-256（shard生成前に固定した入力snapshot）
 - manifest SHA-256
 - segment count
 - measured maximum segment artifact bytes
@@ -64,7 +67,7 @@ segment数はplanner結果による。`run-summary.json` には少なくとも�
 - embedded verification SHA-256
 - final `pass` / `fail`
 
-summary内部のpathはcapture rootからの相対pathに限定し、staging directoryの一時pathをevidenceへ残さない。summaryに記録するartifact identityは、最初のpreflightとnumerical verifier内の再preflightが一致した場合だけ公開される。
+summary内部のpathはcapture rootからの相対pathに限定し、staging directoryの一時pathをevidenceへ残さない。summaryに記録するsource graph identityは生成前・生成manifest・生成直後の再hashが一致した場合だけ公開され、artifact identityは最初のpreflightとnumerical verifier内の再preflightが一致した場合だけ公開される。
 
 ## 判定境界
 

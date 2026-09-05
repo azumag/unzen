@@ -16,10 +16,24 @@ import capture_multi_segment_evidence_run as capture_module  # noqa: E402
 
 
 class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
-    def _prepare_fixture(self, _source: Path, output: Path, **_kwargs: object) -> dict[str, object]:
+    @staticmethod
+    def _source(root: Path) -> Path:
+        source = root / "model_q4.onnx"
+        source.write_bytes(b"model")
+        return source
+
+    def _prepare_fixture(self, source: Path, output: Path, **_kwargs: object) -> dict[str, object]:
         output.mkdir(parents=True, exist_ok=True)
         (output / "segment0.onnx").write_bytes(b"segment")
-        (output / "split-manifest.json").write_text("{}\n", encoding="utf-8")
+        manifest = {
+            "sourceModel": {
+                "sha256": capture_module.sha256_file(source),
+            }
+        }
+        (output / "split-manifest.json").write_text(
+            json.dumps(manifest) + "\n",
+            encoding="utf-8",
+        )
         return {"kind": "fixture"}
 
     @staticmethod
@@ -55,8 +69,8 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             destination = root / "capture"
-            source = root / "model_q4.onnx"
-            source.write_bytes(b"model")
+            source = self._source(root)
+            source_sha256 = capture_module.sha256_file(source)
 
             with (
                 patch.object(
@@ -93,6 +107,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             persisted = json.loads(
                 (destination / "run-summary.json").read_text(encoding="utf-8")
             )
+            self.assertEqual(persisted["sourceModel"]["graphSha256"], source_sha256)
             self.assertEqual(persisted["artifacts"]["manifestSha256"], "a" * 64)
             self.assertEqual(persisted["artifacts"]["segmentCount"], 1)
             self.assertEqual(persisted["evidence"]["verificationSha256"], "b" * 64)
@@ -128,6 +143,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             destination = root / "capture"
+            source = self._source(root)
             with (
                 patch.object(
                     capture_module,
@@ -143,7 +159,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "did not pass"):
                     capture_module.capture_run(
-                        root / "model_q4.onnx",
+                        source,
                         destination,
                         [11],
                     )
@@ -157,10 +173,52 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             ]
             self.assertEqual(leftovers, [])
 
+    def test_source_graph_drift_during_generation_is_rejected_before_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            destination = root / "capture"
+            source = self._source(root)
+
+            def prepare_and_mutate(
+                source_path: Path,
+                output: Path,
+                **kwargs: object,
+            ) -> dict[str, object]:
+                result = self._prepare_fixture(source_path, output, **kwargs)
+                source_path.write_bytes(b"mutated-model")
+                return result
+
+            with (
+                patch.object(
+                    capture_module,
+                    "prepare_budgeted_multi_split",
+                    side_effect=prepare_and_mutate,
+                ),
+                patch.object(capture_module, "verify_artifact_integrity") as preflight,
+                patch.object(capture_module, "collect_evidence") as collect,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "source model graph drifted"):
+                    capture_module.capture_run(
+                        source,
+                        destination,
+                        [11],
+                    )
+
+            preflight.assert_not_called()
+            collect.assert_not_called()
+            self.assertFalse(destination.exists())
+            leftovers = [
+                path
+                for path in root.iterdir()
+                if path.name.startswith(".capture.") and path.name.endswith(".tmp")
+            ]
+            self.assertEqual(leftovers, [])
+
     def test_artifact_identity_drift_after_preflight_is_rejected_and_cleaned(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             destination = root / "capture"
+            source = self._source(root)
             drifted = self._integrity()
             drifted["manifestSha256"] = "c" * 64
 
@@ -184,7 +242,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "artifact identity drifted"):
                     capture_module.capture_run(
-                        root / "model_q4.onnx",
+                        source,
                         destination,
                         [11],
                     )
@@ -202,6 +260,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             destination = root / "capture"
+            source = self._source(root)
             with (
                 patch.object(
                     capture_module,
@@ -220,7 +279,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 ),
             ):
                 summary = capture_module.capture_run(
-                    root / "model_q4.onnx",
+                    source,
                     destination,
                     [11],
                 )
