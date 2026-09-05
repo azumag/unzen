@@ -9,7 +9,7 @@
  *     DurableRepository with explicit storage boundaries; a fresh instance can
  *     restore state and continue after a process restart.
  *   - idempotency: the API caller's idempotency key is stored; a duplicate
- *     submission returns the existing status/result and never double-executes.
+ *     submission returns the existing request instead of double-executing.
  *   - state machine: accepted → queued → leased → running → completed (plus
  *     cancelled / retry-wait → queued / failed) with validated transitions;
  *     late updates from terminal states are rejected.
@@ -415,6 +415,46 @@ export class DurableCoordinator {
         this.transitionOrThrow(requestId, 'retry-wait', 'queued');
       }
 
+      // Continuation segments must have a valid predecessor checkpoint before
+      // any worker capacity is reserved. Missing/expired/cross-run state is a
+      // terminal integrity failure; never dispatch an undefined checkpoint.
+      let previousCheckpoint: CheckpointEnvelope | undefined;
+      if (segmentIndex > 0) {
+        previousCheckpoint = this.repo.getCheckpoint(requestId, segmentIndex - 1);
+        if (!previousCheckpoint) {
+          this.finalizeStage(
+            requestId,
+            'failed',
+            ErrorCode.CheckpointIntegrityMismatch,
+            `checkpoint for segment ${segmentIndex - 1} missing before resume`,
+          );
+          return null;
+        }
+        if (
+          previousCheckpoint.requestId !== requestId
+          || previousCheckpoint.segmentIndex !== segmentIndex - 1
+          || previousCheckpoint.modelManifestDigest !== this.manifest.manifestDigest
+        ) {
+          this.finalizeStage(
+            requestId,
+            'failed',
+            ErrorCode.CheckpointIntegrityMismatch,
+            `checkpoint identity mismatch for segment ${segmentIndex - 1} before resume`,
+          );
+          return null;
+        }
+        if (isCheckpointExpired(previousCheckpoint, Date.now())) {
+          this.repo.deleteCheckpoint(requestId, segmentIndex - 1);
+          this.finalizeStage(
+            requestId,
+            'failed',
+            ErrorCode.CheckpointIntegrityMismatch,
+            `checkpoint for segment ${segmentIndex - 1} expired before resume`,
+          );
+          return null;
+        }
+      }
+
       const worker = this.registry.getAvailableWorker(segment.estimatedVramMB);
       if (!worker) {
         if (attempt < this.options.maxRetries) {
@@ -453,16 +493,6 @@ export class DurableCoordinator {
       this.transitionOrThrow(requestId, 'queued', 'leased');
       this.transitionOrThrow(requestId, 'leased', 'running');
       this.registry.markBusy(worker.workerId, worker.generation, segmentIndex);
-
-      // Previous segment's checkpoint (envelope) is the resume input.
-      const previousCheckpoint = segmentIndex > 0
-        ? this.repo.getCheckpoint(requestId, segmentIndex - 1)
-        : undefined;
-      if (previousCheckpoint && isCheckpointExpired(previousCheckpoint, Date.now())) {
-        this.repo.deleteCheckpoint(requestId, segmentIndex - 1);
-        this.finalizeStage(requestId, 'failed', ErrorCode.CheckpointIntegrityMismatch, `checkpoint for segment ${segmentIndex - 1} expired before resume`);
-        return null;
-      }
 
       const assignment: ExecutionAssignment = {
         requestId,
