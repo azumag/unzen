@@ -115,8 +115,10 @@ The browser runner:
 - never opens a browser-to-browser path;
 - allows a standby browser to reuse the existing Coordinator checkpoint.
 
-Use `p0-smollm2.html` as the entrypoint so the correct model ID, KV-head count
-and head size are set automatically.
+Use `p0-smollm2.html` as the entrypoint. It unconditionally pins the P0 model ID,
+KV-head count, head size, and `artifactBudget=p0`; query-string overrides for
+those evidence-defining parameters are ignored. Operator-specific role, run ID,
+and split root remain configurable.
 
 ## Automated CI gate
 

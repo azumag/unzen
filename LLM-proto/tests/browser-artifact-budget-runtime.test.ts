@@ -60,6 +60,25 @@ describe('browser runtime artifact budget', () => {
       /does not match manifest/,
     );
   });
+
+  it('rejects coercible non-numeric JSON byte declarations', () => {
+    expect(() => planSegmentArtifactBudget({
+      index: 0,
+      browserArtifactBytes: '10',
+      externalData: [{ bytes: 4 }],
+    }, 'p0')).toThrow(/browserArtifactBytes must be a non-negative safe integer/);
+
+    expect(() => planSegmentArtifactBudget({
+      index: 0,
+      browserArtifactBytes: 10,
+      externalData: [{ bytes: '4' }],
+    }, 'p0')).toThrow(/externalData\[0\]\.bytes must be a non-negative safe integer/);
+
+    const plan = planSegmentArtifactBudget(segment(10, 4), 'p0');
+    expect(() => verifyActualSegmentArtifactBudget(plan, [{ bytes: 6 }, { bytes: '4' }])).toThrow(
+      /artifact report\[1\]\.bytes must be a non-negative safe integer/,
+    );
+  });
 });
 
 describe('bounded browser artifact stream reads', () => {

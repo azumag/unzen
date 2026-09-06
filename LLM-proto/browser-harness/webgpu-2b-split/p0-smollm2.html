@@ -4,10 +4,12 @@
 <p>Preparing the browser-budgeted SmolLM2-135M WebGPU P0…</p>
 <script>
   const params = new URLSearchParams(location.search);
-  if (!params.has('model')) params.set('model', 'onnx-community/SmolLM2-135M-ONNX');
-  if (!params.has('kvHeads')) params.set('kvHeads', '3');
-  if (!params.has('headSize')) params.set('headSize', '64');
-  if (!params.has('artifactBudget')) params.set('artifactBudget', 'p0');
+  // These parameters define the P0 evidence contract and must not be relaxed by
+  // query-string overrides. Operator-specific role/run/splitRoot remain configurable.
+  params.set('model', 'onnx-community/SmolLM2-135M-ONNX');
+  params.set('kvHeads', '3');
+  params.set('headSize', '64');
+  params.set('artifactBudget', 'p0');
   if (!params.has('role')) params.set('role', 'segment0');
   if (!params.has('run')) params.set('run', 'smollm2-p0');
   location.replace('/?' + params.toString());
