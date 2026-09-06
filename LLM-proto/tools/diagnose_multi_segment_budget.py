@@ -12,6 +12,7 @@ from onnx import TensorProto
 
 from multi_segment_onnx import (
     BrowserArtifactBudgetError,
+    _external_initializer_bytes,
     _external_range,
     _select_partition,
     build_segment_spec,
@@ -92,6 +93,28 @@ def _partition_report(
     }
 
 
+def _external_initializer_rows(
+    segment: onnx.ModelProto,
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for initializer in segment.graph.initializer:
+        if initializer.data_location != TensorProto.EXTERNAL:
+            continue
+        location, offset, length = _external_range(initializer)
+        rows.append(
+            {
+                "name": initializer.name,
+                "location": location,
+                "offset": offset,
+                "bytes": length,
+            }
+        )
+    rows.sort(key=lambda item: (-int(item["bytes"]), str(item["name"])))
+    return rows[:limit]
+
+
 def _initializer_rows(
     model: onnx.ModelProto,
     *,
@@ -114,21 +137,153 @@ def _initializer_rows(
         hidden_size=hidden_size,
         graph_name=f"unzen-budget-diagnostic-{start_layer}-{end_layer - 1}",
     )
-    rows: list[dict[str, object]] = []
-    for initializer in segment.graph.initializer:
-        if initializer.data_location != TensorProto.EXTERNAL:
-            continue
-        location, offset, length = _external_range(initializer)
-        rows.append(
-            {
-                "name": initializer.name,
-                "location": location,
-                "offset": offset,
-                "bytes": length,
-            }
+    return _external_initializer_rows(segment, limit=limit)
+
+
+def _producer_map(model: onnx.ModelProto) -> dict[str, onnx.NodeProto]:
+    return {
+        output: node
+        for node in model.graph.node
+        for output in node.output
+        if output
+    }
+
+
+def _unique_named_node(model: onnx.ModelProto, marker: str) -> onnx.NodeProto:
+    matches = [
+        node for node in model.graph.node if marker in node.name.lstrip("/")
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected exactly one node matching {marker!r}; "
+            f"found {len(matches)}: {[node.name for node in matches]}"
         )
-    rows.sort(key=lambda item: (-int(item["bytes"]), str(item["name"])))
-    return rows[:limit]
+    return matches[0]
+
+
+def _stage_budget_report(
+    segment: onnx.ModelProto,
+    *,
+    stage_kind: str,
+    output_names: tuple[str, ...],
+    extra_input_names: tuple[str, ...],
+    top_initializers: int,
+) -> dict[str, object]:
+    graph_bytes = len(segment.SerializeToString())
+    external_bytes = _external_initializer_bytes(segment)
+    artifact_bytes = graph_bytes + external_bytes
+    return {
+        "stageKind": stage_kind,
+        "outputNames": list(output_names),
+        "extraInputNames": list(extra_input_names),
+        "estimatedGraphBytes": graph_bytes,
+        "externalDataBytes": external_bytes,
+        "estimatedArtifactBytes": artifact_bytes,
+        "estimatedTierFeasibility": {
+            tier: artifact_bytes <= limit_bytes
+            for tier, limit_bytes in TIER_LIMITS
+        },
+        "topExternalInitializers": _external_initializer_rows(
+            segment,
+            limit=top_initializers,
+        ),
+    }
+
+
+def _endpoint_isolation_report(
+    model: onnx.ModelProto,
+    *,
+    total_layers: int,
+    hidden_size: int,
+    top_initializers: int,
+) -> dict[str, object]:
+    """Estimate edge-only stages without selecting a runtime decomposition."""
+
+    try:
+        producers = _producer_map(model)
+        initializer_names = {value.name for value in model.graph.initializer}
+
+        first_norm = _unique_named_node(
+            model,
+            "model/layers.0/input_layernorm",
+        )
+        prefix_outputs = tuple(
+            input_name
+            for input_name in first_norm.input
+            if input_name not in initializer_names
+            and input_name in producers
+            and "model/layers." not in producers[input_name].name.lstrip("/")
+        )
+        if len(prefix_outputs) != 1:
+            raise ValueError(
+                "expected one pre-decoder activation feeding layer 0; "
+                f"found {list(prefix_outputs)}"
+            )
+
+        final_norm = _unique_named_node(
+            model,
+            f"model/layers.{total_layers}/final_norm_layernorm",
+        )
+        last_layer_marker = f"model/layers.{total_layers - 1}/"
+        postfix_inputs = tuple(
+            input_name
+            for input_name in final_norm.input
+            if input_name in producers
+            and last_layer_marker in producers[input_name].name.lstrip("/")
+        )
+        if not postfix_inputs:
+            raise ValueError("final norm has no decoder-owned boundary inputs")
+
+        logits_names = tuple(
+            output.name
+            for output in model.graph.output
+            if output.name == "logits" or output.name.endswith("/logits")
+        )
+        if len(logits_names) != 1:
+            raise ValueError(
+                f"expected exactly one logits output; found {list(logits_names)}"
+            )
+
+        prefix = extract_submodel(
+            model,
+            output_names=prefix_outputs,
+            hidden_size=hidden_size,
+            graph_name="unzen-budget-diagnostic-embedding-prefix",
+        )
+        postfix = extract_submodel(
+            model,
+            output_names=logits_names,
+            extra_input_names=postfix_inputs,
+            hidden_size=hidden_size,
+            graph_name="unzen-budget-diagnostic-logits-postfix",
+        )
+    except ValueError as error:
+        return {
+            "available": False,
+            "decisionStatus": "diagnostic-only",
+            "error": str(error),
+        }
+
+    return {
+        "available": True,
+        "decisionStatus": "diagnostic-only",
+        "stages": [
+            _stage_budget_report(
+                prefix,
+                stage_kind="embedding-prefix",
+                output_names=prefix_outputs,
+                extra_input_names=(),
+                top_initializers=top_initializers,
+            ),
+            _stage_budget_report(
+                postfix,
+                stage_kind="logits-postfix",
+                output_names=logits_names,
+                extra_input_names=postfix_inputs,
+                top_initializers=top_initializers,
+            ),
+        ],
+    }
 
 
 def diagnose_model(
@@ -202,6 +357,12 @@ def diagnose_model(
         "partitions": partitions,
         "singleLayerSpans": single_layers,
         "worstSingleLayerSpans": worst_layers,
+        "endpointIsolationCandidates": _endpoint_isolation_report(
+            model,
+            total_layers=total_layers,
+            hidden_size=hidden_size,
+            top_initializers=top_initializers,
+        ),
     }
 
 

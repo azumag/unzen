@@ -36,6 +36,21 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
                 {"layer": 15, "topExternalInitializers": [initializer]},
                 {"layer": 0, "topExternalInitializers": [initializer]},
             ],
+            "endpointIsolationCandidates": {
+                "available": True,
+                "decisionStatus": "diagnostic-only",
+                "stages": [
+                    {
+                        "stageKind": stage_kind,
+                        "estimatedArtifactBytes": estimated_bytes,
+                        "estimatedTierFeasibility": probe_module.EXPECTED_ENDPOINT_STAGE_TIERS,
+                        "topExternalInitializers": [initializer],
+                    }
+                    for stage_kind, estimated_bytes in (
+                        probe_module.EXPECTED_ENDPOINT_STAGE_ARTIFACTS.items()
+                    )
+                ],
+            },
         }
 
     def test_accepts_pinned_blocker_shape(self) -> None:
@@ -50,6 +65,16 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
         report = self._report()
         report["partitions"][2]["minimumAchievableMaximumBytes"] -= 1
         with self.assertRaisesRegex(RuntimeError, "absolute minimum achievable maximum"):
+            probe_module.validate_report(report)
+
+    def test_rejects_endpoint_isolation_budget_drift(self) -> None:
+        report = self._report()
+        report["endpointIsolationCandidates"]["stages"][0]["estimatedTierFeasibility"] = {
+            "preferred": False,
+            "normal": False,
+            "absolute": False,
+        }
+        with self.assertRaisesRegex(RuntimeError, "embedding-prefix policy tiers"):
             probe_module.validate_report(report)
 
 

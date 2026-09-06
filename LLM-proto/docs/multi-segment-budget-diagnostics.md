@@ -40,3 +40,16 @@ For the pinned real 1B artifact, the command currently reports `minimumAchievabl
 ## CI regression probe
 
 `LLM Proto` CI downloads only the pinned 149 KiB ONNX graph (not the 1.7 GB external weight file) and runs `probe_llama_1b_budget_blocker.py`. Because the graph contains the external-data ranges, the probe can reproduce the exact layer-span estimates and reject drift in the source graph digest, 16-layer contract, hard-policy infeasibility, endpoint singleton sizes, or tied-embedding byte count without paying the bandwidth/storage cost of the full weights.
+
+## Endpoint-isolation candidate estimate
+
+The same graph-only diagnostic now reports `endpointIsolationCandidates` when it can identify a pre-decoder embedding activation and the final decoder-to-logits boundary. This is deliberately **diagnostic-only**: it does not change the split manifest, browser runtime, dispatcher, or the policy ceilings.
+
+For the pinned real Llama-3.2-1B q4 graph, the two edge-only dependency closures are estimated as:
+
+- `embedding-prefix`: `1,050,673,652` bytes total (`1,050,673,152` external bytes);
+- `logits-postfix`: `1,050,682,706` bytes total (`1,050,681,344` external bytes).
+
+Both are above the 256 MiB preferred and 512 MiB normal tiers, but below the 1 GiB hard ceiling. The estimate therefore narrows #223: endpoint isolation can remove the current hard-ceiling violation without relaxing the hard policy, but it would still require an explicitly exceptional edge-stage contract if selected. No such runtime/manifest decision is made by this diagnostic.
+
+`probe_llama_1b_budget_blocker.py` pins these graph-only candidate sizes and their estimated tier classification in CI. If upstream graph structure changes so the endpoint closure is no longer discoverable, or either candidate crosses the 1 GiB ceiling, the probe fails rather than silently treating the old observation as current.
