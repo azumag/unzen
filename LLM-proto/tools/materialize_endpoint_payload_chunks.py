@@ -30,6 +30,13 @@ EXPECTED_SOURCE_BYTES = 1_692_672_000
 EXPECTED_SOURCE_SHA256 = (
     "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
 )
+EXPECTED_ROWS = 128_256
+EXPECTED_ROW_BYTES = 8_192
+EXPECTED_SOURCE_OFFSET_BYTES = 0
+EXPECTED_STAGE_TIER_PAYLOAD_COUNTS = {
+    "embedding-prefix": {"preferred": 4, "normal": 2, "absolute": 1},
+    "logits-postfix": {"preferred": 4, "normal": 2, "absolute": 1},
+}
 
 
 def _required_dict(value: object, *, field: str) -> dict[str, object]:
@@ -56,13 +63,43 @@ def _required_str(value: object, *, field: str) -> str:
     return value
 
 
+def _expected_pinned_source_payload_chunks(*, stage_kind: str, tier: str) -> list[dict[str, object]]:
+    """Return the only source-byte blueprint accepted for the pinned graph contract."""
+
+    stage_tiers = EXPECTED_STAGE_TIER_PAYLOAD_COUNTS.get(stage_kind)
+    if stage_tiers is None or tier not in stage_tiers:
+        raise RuntimeError(f"unsupported pinned diagnostic stage/tier: {stage_kind}/{tier}")
+    payload_count = stage_tiers[tier]
+    smaller_rows, larger_chunk_count = divmod(EXPECTED_ROWS, payload_count)
+    row_cursor = 0
+    chunks: list[dict[str, object]] = []
+    for chunk_index in range(payload_count):
+        row_count = smaller_rows + (1 if chunk_index < larger_chunk_count else 0)
+        source_offset = EXPECTED_SOURCE_OFFSET_BYTES + row_cursor * EXPECTED_ROW_BYTES
+        payload_bytes = row_count * EXPECTED_ROW_BYTES
+        chunks.append(
+            {
+                "chunkIndex": chunk_index,
+                "startRow": row_cursor,
+                "endRowExclusive": row_cursor + row_count,
+                "rowCount": row_count,
+                "sourceLocation": EXPECTED_SOURCE_LOCATION,
+                "sourceOffsetBytes": source_offset,
+                "sourceEndOffsetBytesExclusive": source_offset + payload_bytes,
+                "payloadBytes": payload_bytes,
+            }
+        )
+        row_cursor += row_count
+    return chunks
+
+
 def chunks_from_probe_report(
     report: dict[str, object],
     *,
     stage_kind: str,
     tier: str,
 ) -> list[dict[str, object]]:
-    """Extract one diagnostic chunk blueprint and reject non-diagnostic reports."""
+    """Extract one exact pinned diagnostic chunk blueprint from a probe report."""
 
     source_identity_from_probe_report(report)
     envelopes = _required_dict(report.get("endpointChunkEnvelope"), field="endpointChunkEnvelope")
@@ -71,11 +108,22 @@ def chunks_from_probe_report(
     selected = _required_dict(tiers.get(tier), field=f"endpointChunkEnvelope.{stage_kind}.tiers.{tier}")
     if selected.get("feasible") is not True:
         raise RuntimeError(f"selected diagnostic tier is not feasible: {stage_kind}/{tier}")
-    chunks = _required_list(
-        selected.get("balancedSourcePayloadChunks"),
-        field=f"endpointChunkEnvelope.{stage_kind}.tiers.{tier}.balancedSourcePayloadChunks",
-    )
-    return [_required_dict(item, field=f"chunk[{index}]") for index, item in enumerate(chunks)]
+    chunks = [
+        _required_dict(item, field=f"chunk[{index}]")
+        for index, item in enumerate(
+            _required_list(
+                selected.get("balancedSourcePayloadChunks"),
+                field=f"endpointChunkEnvelope.{stage_kind}.tiers.{tier}.balancedSourcePayloadChunks",
+            )
+        )
+    ]
+    expected_chunks = _expected_pinned_source_payload_chunks(stage_kind=stage_kind, tier=tier)
+    if chunks != expected_chunks:
+        raise RuntimeError(
+            "probe report balancedSourcePayloadChunks does not match the pinned deterministic blueprint: "
+            f"{stage_kind}/{tier}"
+        )
+    return chunks
 
 
 def source_identity_from_probe_report(report: dict[str, object]) -> dict[str, object]:

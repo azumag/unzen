@@ -204,12 +204,9 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), b"keep")
 
     def test_extracts_only_feasible_diagnostic_blueprint(self) -> None:
-        chunks = probe_module._balanced_source_payload_chunks(
-            rows=4,
-            row_bytes=2,
-            payload_count=2,
-            location=materializer.EXPECTED_SOURCE_LOCATION,
-            source_offset_bytes=0,
+        chunks = materializer._expected_pinned_source_payload_chunks(
+            stage_kind="embedding-prefix",
+            tier="preferred",
         )
         report = {
             "kind": materializer.EXPECTED_PROBE_KIND,
@@ -254,6 +251,30 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "pinned external-data identity mismatch"):
             materializer.chunks_from_probe_report(
                 tampered,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
+
+        tampered_chunks = json.loads(json.dumps(report))
+        first, second = tampered_chunks["endpointChunkEnvelope"]["embedding-prefix"]["tiers"][
+            "preferred"
+        ]["balancedSourcePayloadChunks"][:2]
+        first["endRowExclusive"] += 1
+        first["rowCount"] += 1
+        first["sourceEndOffsetBytesExclusive"] += materializer.EXPECTED_ROW_BYTES
+        first["payloadBytes"] += materializer.EXPECTED_ROW_BYTES
+        second["startRow"] += 1
+        second["rowCount"] -= 1
+        second["sourceOffsetBytes"] += materializer.EXPECTED_ROW_BYTES
+        second["payloadBytes"] -= materializer.EXPECTED_ROW_BYTES
+        materializer.validate_source_payload_chunks(
+            tampered_chunks["endpointChunkEnvelope"]["embedding-prefix"]["tiers"]["preferred"][
+                "balancedSourcePayloadChunks"
+            ]
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not match the pinned deterministic blueprint"):
+            materializer.chunks_from_probe_report(
+                tampered_chunks,
                 stage_kind="embedding-prefix",
                 tier="preferred",
             )
