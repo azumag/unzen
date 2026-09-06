@@ -161,6 +161,10 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
         self.assertEqual(postfix["externalDataBytes"], 108)
         self.assertTrue(prefix["estimatedTierFeasibility"]["preferred"])
         self.assertTrue(postfix["estimatedTierFeasibility"]["absolute"])
+        self.assertEqual(prefix["smallestPassingTier"], "preferred")
+        self.assertGreater(prefix["estimatedTierMarginBytes"]["preferred"], 0)
+        self.assertEqual(postfix["smallestPassingTier"], "preferred")
+        self.assertGreater(postfix["estimatedTierMarginBytes"]["absolute"], 0)
         self.assertEqual(
             prefix["topExternalInitializers"][0]["name"],
             "model.embed_tokens.weight",
@@ -169,6 +173,33 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
             postfix["extraInputNames"],
             ["boundary_a", "boundary_b"],
         )
+
+    def test_stage_budget_report_surfaces_no_passing_tier(self) -> None:
+        segment = helper.make_model(
+            helper.make_graph(
+                [],
+                "oversized-stage",
+                [],
+                [],
+                initializer=[
+                    self._external_initializer(
+                        "oversized.weight",
+                        diagnostic_module.ABSOLUTE_MAX_BYTES + 1,
+                    )
+                ],
+            )
+        )
+        report = diagnostic_module._stage_budget_report(
+            segment,
+            stage_kind="oversized",
+            output_names=(),
+            extra_input_names=(),
+            top_initializers=1,
+        )
+
+        self.assertIsNone(report["smallestPassingTier"])
+        self.assertFalse(report["estimatedTierFeasibility"]["absolute"])
+        self.assertLess(report["estimatedTierMarginBytes"]["absolute"], 0)
 
     def test_endpoint_isolation_unavailable_is_nonfatal(self) -> None:
         model = helper.make_model(helper.make_graph([], "empty", [], []))

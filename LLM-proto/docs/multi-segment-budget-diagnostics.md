@@ -52,4 +52,6 @@ For the pinned real Llama-3.2-1B q4 graph, the two edge-only dependency closures
 
 Both are above the 256 MiB preferred and 512 MiB normal tiers, but below the 1 GiB hard ceiling. The estimate therefore narrows #223: endpoint isolation can remove the current hard-ceiling violation without relaxing the hard policy, but it would still require an explicitly exceptional edge-stage contract if selected. No such runtime/manifest decision is made by this diagnostic.
 
+The diagnostic also reports `estimatedTierMarginBytes` (tier limit minus estimated artifact bytes) and `smallestPassingTier` for each candidate. For the pinned graph, `embedding-prefix` has 23,068,172 bytes of estimated hard-ceiling headroom and `logits-postfix` has 23,059,118 bytes; both report `smallestPassingTier: absolute`. Negative preferred/normal margins make the exceptional nature explicit without changing any policy threshold. These are graph-only estimates, not a substitute for materialized artifact measurements.
+
 `probe_llama_1b_budget_blocker.py` pins these graph-only candidate sizes and their estimated tier classification in CI. If upstream graph structure changes so the endpoint closure is no longer discoverable, or either candidate crosses the 1 GiB ceiling, the probe fails rather than silently treating the old observation as current.

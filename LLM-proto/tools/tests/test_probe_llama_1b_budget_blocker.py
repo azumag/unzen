@@ -44,6 +44,10 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
                         "stageKind": stage_kind,
                         "estimatedArtifactBytes": estimated_bytes,
                         "estimatedTierFeasibility": probe_module.EXPECTED_ENDPOINT_STAGE_TIERS,
+                        "estimatedTierMarginBytes": (
+                            probe_module.EXPECTED_ENDPOINT_STAGE_MARGINS[stage_kind]
+                        ),
+                        "smallestPassingTier": "absolute",
                         "topExternalInitializers": [initializer],
                     }
                     for stage_kind, estimated_bytes in (
