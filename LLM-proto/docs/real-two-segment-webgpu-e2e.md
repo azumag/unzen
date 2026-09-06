@@ -25,20 +25,87 @@ ceiling.
 
 ## Current status
 
-PR #166 completed the real P0 on 2026-08-24 at
-`self-reported-runtime` evidence level:
+The real P0 was first completed on 2026-08-24 at `self-reported-runtime`
+evidence level. After the later runtime/provenance hardening through PR #227, the
+full procedure was rerun on 2026-09-06 against `main@50e036dd3245bed207502bc448e821922d21bb0d`:
 
-- full and split logits matched exactly for the recorded input;
-- two isolated Chrome profiles executed distinct WebGPU segments;
-- both browser artifacts were about 149 MB;
-- the Coordinator relayed the real 23,040-byte boundary;
-- direct worker networking was rejected;
-- cold/warm cache behavior and standby resume were measured.
+- the pinned source graph/external-data identities were revalidated and fresh
+  browser-ready shards were regenerated;
+- full and split logits matched exactly for input IDs
+  `504,3575,282,4649,314` (`maxAbsDiff=0.0`, top-1 `260`);
+- two Chrome 152 processes with separate `--user-data-dir` profile roots ran
+  segment 0 and segment 1 on Apple Metal WebGPU;
+- the Coordinator accepted distinct HttpOnly profile probes and reported
+  `profileIsolationConfirmed=true`;
+- both browser artifacts remained in the preferred tier at about 149 MB;
+- the Coordinator relayed the real 23,040-byte boundary and direct worker
+  networking returned HTTP 403;
+- a fresh-profile cold run, same-profile warm-cache run, and standby continuation
+  all completed with `status=pass`.
 
-This proves the architecture strongly enough to begin #167, but it is not
-`captured-and-verified` production evidence. The P0 prerequisite listed by #158
-is satisfied; #158 still requires actual Cloudflare/provider credentials,
-operator approvals and externally captured deployment/canary/rollout evidence.
+The latest-main rerun closes the remaining runtime handoff in #168 and proves the
+P0 architecture strongly enough for #167. It remains `self-reported-runtime`,
+not `captured-and-verified` or production-ready evidence. #158 is independently
+blocked by the production cold-start design issue #190 and its own external
+credentials/approval/evidence requirements.
+
+### Latest-main runtime evidence (2026-09-06)
+
+Environment:
+
+- macOS 26.6.1, Mac mini Apple M4 / 16 GB
+- Chrome 152.0.7977.83, two separate headless Chrome profile roots
+- browser adapter: `apple` / `metal-3` / `isFallbackAdapter=false`
+- ONNX Runtime Web 1.22.0
+- source revision: `onnx-community/SmolLM2-135M-ONNX` @
+  `0d747f789bcf79b9b57a4be7f3277b64c185f8ef`
+
+Pinned/rebuilt artifacts:
+
+- source graph SHA-256:
+  `da1d291b342acafd806b284052053902af82c52121c400789bdf8ab1effdb4c8`
+- source external data: `181839104` bytes, SHA-256
+  `89625d22026f0ccba8ba6007b18818647a28c4fc39c392101f0408f089e63c21`
+- segment 0: `148728011` bytes, preferred tier
+- segment 1: `148732576` bytes, preferred tier
+
+Same-machine CPU reference gate:
+
+- logits shapes: `[1,5,49152]` / `[1,5,49152]`
+- `maxAbsDiff=0.0`
+- full top-1 = split top-1 = `260`
+- boundary: 2 x `[1,5,576]` float32 = `23040` bytes
+
+Cold profile-isolated run `latest-main-cold-20260906`:
+
+- result: `status=pass`
+- manifest digest:
+  `682046e90d042723a872696954cb76d954013de10896b61bce8ff16a0c6eeeb3`
+- result digest:
+  `24d15c55d8ac2268a79624a42bb02ff6de7d6fd1c5629b92964139ab651469b8`
+- segment 0: cache miss, session create `758.1 ms`, execution `201.8 ms`
+- segment 1: cache miss, session create `820.4 ms`, execution `368.5 ms`
+- top-1: `260` (`" the"`)
+- relay owner: `coordinator`; direct worker networking: `false`
+- profile isolation method: `coordinator-issued-http-only-cookie`; confirmed
+- source/segment-1 profile probe hashes were distinct
+
+Warm run `latest-main-warm-20260906` reused the same two profile roots:
+
+- both segment artifact sets: `allCacheHits=true`
+- segment 0: session create `175.2 ms`, execution `67.2 ms`
+- segment 1: session create `333.0 ms`, execution `75.0 ms`
+- boundary remained `23040` bytes; top-1 remained `260`
+- `profileIsolationConfirmed=true`
+
+Standby run `latest-main-standby-20260906`:
+
+- segment 0 stored one Coordinator checkpoint
+- no primary segment-1 execution was started for this run
+- role `standby` reused that exact checkpoint and completed segment 1
+- segment 0 / standby execution: `72.5 ms` / `51.3 ms`
+- `relayOwner=coordinator`, `directWorkerNetworking=false`
+- top-1 remained `260`, `profileIsolationConfirmed=true`
 
 ## P0 model
 
