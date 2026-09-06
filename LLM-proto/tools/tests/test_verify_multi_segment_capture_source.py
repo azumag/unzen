@@ -88,6 +88,7 @@ class VerifyMultiSegmentCaptureSourceTest(unittest.TestCase):
             "runSummarySha256": source_module.sha256_file(summary),
             "manifestSha256": source_module.sha256_file(manifest),
             "evidenceSha256": source_module.sha256_file(evidence),
+            "verificationSha256": "f" * 64,
             "sourceGraphSha256": source_module.sha256_file(model),
         }
 
@@ -103,6 +104,11 @@ class VerifyMultiSegmentCaptureSourceTest(unittest.TestCase):
                 report = source_module.verify_capture_source(capture, model)
 
             self.assertEqual(report["status"], "pass")
+            bundle = self._bundle_report(capture, model)
+            self.assertEqual(report["runSummarySha256"], bundle["runSummarySha256"])
+            self.assertEqual(report["manifestSha256"], bundle["manifestSha256"])
+            self.assertEqual(report["evidenceSha256"], bundle["evidenceSha256"])
+            self.assertEqual(report["verificationSha256"], bundle["verificationSha256"])
             self.assertEqual(report["sourceGraphBytes"], model.stat().st_size)
             self.assertEqual(report["sourceExternalDataCount"], 1)
             self.assertEqual(report["sourceExternalDataBytes"], weights.stat().st_size)
@@ -168,7 +174,7 @@ class VerifyMultiSegmentCaptureSourceTest(unittest.TestCase):
 
             def mutating_hasher(path: Path) -> str:
                 digest = real_hasher(path)
-                if path == weights:
+                if path.resolve() == weights.resolve():
                     path.write_bytes(path.read_bytes() + b"!")
                 return digest
 

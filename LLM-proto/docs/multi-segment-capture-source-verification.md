@@ -22,7 +22,10 @@ python tools/verify_multi_segment_capture_source.py \
   "kind": "unzen-budgeted-multi-segment-capture-source-verification",
   "status": "pass",
   "captureStatus": "pass",
+  "runSummarySha256": "...",
   "manifestSha256": "...",
+  "evidenceSha256": "...",
+  "verificationSha256": "...",
   "sourceGraphBytes": 0,
   "sourceGraphSha256": "...",
   "sourceExternalDataCount": 1,
@@ -39,7 +42,7 @@ python tools/verify_multi_segment_capture_source.py \
 
 ## 検証内容
 
-verifier は最初に既存の capture bundle verifier を再実行し、`run-summary.json`、`same-machine-evidence.json`、split manifest、generated segments が同一snapshotとして整合していることを要求する。その直後、control files を再hashして bundle verifier 実行後の差し替えも拒否する。
+verifier は最初に既存の capture bundle verifier を再実行し、`run-summary.json`、`same-machine-evidence.json`、split manifest、generated segments が同一snapshotとして整合していることを要求する。その直後、control files を再hashして bundle verifier 実行後の差し替えも拒否する。成功reportには、その内部bundle監査で実測した `runSummarySha256` / `manifestSha256` / `evidenceSha256` / `verificationSha256` を引き継ぐため、上位のcomplete auditはsource rebind中にも同一のpublished snapshotが維持されたことを照合できる。
 
 次に caller 指定の full model graph を再hashし、split manifest の `sourceModel.sha256`、capture bundle の `sourceGraphSha256`、embedded numerical verification の `sourceModel.graphSha256` と一致することを確認する。
 

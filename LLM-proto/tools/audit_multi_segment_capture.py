@@ -68,19 +68,23 @@ def audit_capture(
     source = source_verifier(capture, full_model)
     _require_pass(source.get("status"), field="source verification")
 
-    first_manifest = _canonical_sha256(
-        first_bundle.get("manifestSha256"),
-        field="bundle.manifestSha256",
-    )
-    source_manifest = _canonical_sha256(
-        source.get("manifestSha256"),
-        field="source.manifestSha256",
-    )
-    _require_equal(
-        first_manifest,
-        source_manifest,
-        field="manifest SHA-256",
-    )
+    snapshot_digests: dict[str, str] = {}
+    for key, label in (
+        ("runSummarySha256", "run-summary SHA-256"),
+        ("manifestSha256", "manifest SHA-256"),
+        ("evidenceSha256", "evidence SHA-256"),
+        ("verificationSha256", "verification SHA-256"),
+    ):
+        first_digest = _canonical_sha256(
+            first_bundle.get(key),
+            field=f"bundle.{key}",
+        )
+        source_digest = _canonical_sha256(
+            source.get(key),
+            field=f"source.{key}",
+        )
+        _require_equal(first_digest, source_digest, field=label)
+        snapshot_digests[key] = first_digest
 
     first_source_graph = _canonical_sha256(
         first_bundle.get("sourceGraphSha256"),
@@ -107,7 +111,7 @@ def audit_capture(
         "kind": REPORT_KIND,
         "status": "pass",
         "captureStatus": source.get("captureStatus"),
-        "manifestSha256": source_manifest,
+        "manifestSha256": snapshot_digests["manifestSha256"],
         "sourceGraphSha256": source_graph,
         "sourceGraphBytes": source.get("sourceGraphBytes"),
         "sourceExternalDataCount": source.get("sourceExternalDataCount"),
@@ -116,9 +120,9 @@ def audit_capture(
         "segmentCount": first_bundle.get("segmentCount"),
         "maximumSegmentArtifactBytes": first_bundle.get("maximumSegmentArtifactBytes"),
         "effectiveRequiredMaxBytes": first_bundle.get("effectiveRequiredMaxBytes"),
-        "runSummarySha256": first_bundle.get("runSummarySha256"),
-        "evidenceSha256": first_bundle.get("evidenceSha256"),
-        "verificationSha256": first_bundle.get("verificationSha256"),
+        "runSummarySha256": snapshot_digests["runSummarySha256"],
+        "evidenceSha256": snapshot_digests["evidenceSha256"],
+        "verificationSha256": snapshot_digests["verificationSha256"],
     }
 
 

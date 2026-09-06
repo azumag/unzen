@@ -134,7 +134,9 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
             self.assertEqual(report["manifestSha256"], "a" * 64)
             self.assertEqual(report["segmentCount"], 2)
             self.assertEqual(report["sourceGraphSha256"], "c" * 64)
-            verify.assert_called_once_with(capture / "split" / "split-manifest.json")
+            verify.assert_called_once_with(
+                (capture / "split" / "split-manifest.json").resolve()
+            )
 
     def test_tampered_evidence_file_is_rejected_by_summary_digest(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
