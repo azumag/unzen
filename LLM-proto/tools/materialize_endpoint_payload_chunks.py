@@ -69,6 +69,36 @@ def chunks_from_probe_report(
     return [_required_dict(item, field=f"chunk[{index}]") for index, item in enumerate(chunks)]
 
 
+def source_identity_from_probe_report(report: dict[str, object]) -> dict[str, object]:
+    """Extract the pinned external-data identity required for materialization."""
+
+    identity = _required_dict(
+        report.get("pinnedSourceExternalDataIdentity"),
+        field="pinnedSourceExternalDataIdentity",
+    )
+    location = _required_str(identity.get("location"), field="pinnedSourceExternalDataIdentity.location")
+    source_bytes = _required_int(identity.get("bytes"), field="pinnedSourceExternalDataIdentity.bytes")
+    sha256 = _required_str(identity.get("sha256"), field="pinnedSourceExternalDataIdentity.sha256").lower()
+    if source_bytes <= 0:
+        raise RuntimeError("pinned source external-data bytes must be positive")
+    if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
+        raise RuntimeError("pinned source external-data sha256 must be 64 lowercase hex characters")
+    return {"location": location, "bytes": source_bytes, "sha256": sha256}
+
+
+def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
+    if buffer_bytes <= 0:
+        raise ValueError("buffer_bytes must be positive")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            block = stream.read(buffer_bytes)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def validate_source_payload_chunks(
     chunks: Iterable[dict[str, object]],
 ) -> tuple[list[dict[str, object]], str, int, int]:
@@ -196,6 +226,8 @@ def materialize_source_payload_chunks(
     chunks: Iterable[dict[str, object]],
     *,
     buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
+    expected_source_bytes: int | None = None,
+    expected_source_sha256: str | None = None,
 ) -> dict[str, object]:
     """Copy validated source ranges and return a diagnostic measurement report."""
 
@@ -210,9 +242,20 @@ def materialize_source_payload_chunks(
         )
 
     source_bytes = source_path.stat().st_size
+    if expected_source_bytes is not None and source_bytes != expected_source_bytes:
+        raise RuntimeError(
+            "source external-data byte size does not match pinned identity: "
+            f"expected={expected_source_bytes}, observed={source_bytes}"
+        )
     if coverage_end > source_bytes:
         raise RuntimeError(
             f"chunk blueprint exceeds source file size: end={coverage_end}, sourceBytes={source_bytes}"
+        )
+    source_sha256 = sha256_file(source_path, buffer_bytes=buffer_bytes)
+    if expected_source_sha256 is not None and source_sha256 != expected_source_sha256.lower():
+        raise RuntimeError(
+            "source external-data SHA-256 does not match pinned identity: "
+            f"expected={expected_source_sha256.lower()}, observed={source_sha256}"
         )
 
     destinations = [output_dir / f"payload-{index:04d}.bin" for index in range(len(normalized))]
@@ -269,6 +312,7 @@ def materialize_source_payload_chunks(
         "source": {
             "path": str(source_path),
             "bytes": source_bytes,
+            "sha256": source_sha256,
             "blueprintLocation": source_location,
             "coverageStartBytes": coverage_start,
             "coverageEndBytesExclusive": coverage_end,
@@ -317,6 +361,12 @@ def main() -> int:
     if not isinstance(report, dict):
         raise RuntimeError("probe report root must be an object")
     chunks = chunks_from_probe_report(report, stage_kind=args.stage, tier=args.tier)
+    source_identity = source_identity_from_probe_report(report)
+    chunk_locations = {chunk.get("sourceLocation") for chunk in chunks}
+    if chunk_locations != {source_identity["location"]}:
+        raise RuntimeError(
+            "chunk blueprint sourceLocation does not match pinned source external-data identity"
+        )
     if args.report_out is not None:
         _validate_report_output_path(
             args.report_out,
@@ -328,6 +378,8 @@ def main() -> int:
         args.source_external_data,
         args.output_dir,
         chunks,
+        expected_source_bytes=_required_int(source_identity["bytes"], field="source identity bytes"),
+        expected_source_sha256=_required_str(source_identity["sha256"], field="source identity sha256"),
     )
     rendered = json.dumps(materialization, indent=2, ensure_ascii=False) + "\n"
     if args.report_out is not None:

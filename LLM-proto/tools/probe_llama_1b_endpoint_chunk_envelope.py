@@ -11,7 +11,7 @@ from diagnose_multi_segment_budget import TIER_LIMITS, diagnose_model
 
 
 REPORT_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
-REPORT_SCHEMA_VERSION = "1.1.0"
+REPORT_SCHEMA_VERSION = "1.2.0"
 EXPECTED_GRAPH_SHA256 = (
     "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46"
 )
@@ -20,6 +20,10 @@ EXPECTED_ROW_BYTES = 8_192
 EXPECTED_LARGEST_RANGE_BYTES = 1_050_673_152
 EXPECTED_SOURCE_LOCATION = "model_q4.onnx_data"
 EXPECTED_SOURCE_OFFSET_BYTES = 0
+EXPECTED_SOURCE_DATA_BYTES = 1_692_672_000
+EXPECTED_SOURCE_DATA_SHA256 = (
+    "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+)
 EXPECTED_STAGE_ENVELOPES = {
     "embedding-prefix": {
         "sourceStageResidualBytes": 500,
@@ -338,6 +342,11 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
         "kind": REPORT_KIND,
         "status": "pass",
         "sourceGraphSha256": EXPECTED_GRAPH_SHA256,
+        "pinnedSourceExternalDataIdentity": {
+            "location": EXPECTED_SOURCE_LOCATION,
+            "bytes": EXPECTED_SOURCE_DATA_BYTES,
+            "sha256": EXPECTED_SOURCE_DATA_SHA256,
+        },
         "decisionStatus": "diagnostic-only",
         "endpointChunkEnvelope": observed_envelopes,
         "conclusion": (

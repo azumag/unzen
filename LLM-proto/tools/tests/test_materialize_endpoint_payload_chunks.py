@@ -32,7 +32,8 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "weights.bin"
-            source.write_bytes(prefix + payload + suffix)
+            source_bytes = prefix + payload + suffix
+            source.write_bytes(source_bytes)
             output_dir = root / "chunks"
 
             report = materializer.materialize_source_payload_chunks(
@@ -59,6 +60,7 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                 [item["sha256"] for item in report["payloads"]],
                 [hashlib.sha256(output).hexdigest() for output in outputs],
             )
+            self.assertEqual(report["source"]["sha256"], hashlib.sha256(source_bytes).hexdigest())
             self.assertEqual(report["source"]["coverageStartBytes"], len(prefix))
             self.assertEqual(
                 report["source"]["coverageEndBytesExclusive"],
@@ -123,6 +125,40 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
 
             self.assertFalse(output_dir.exists())
 
+    def test_rejects_pinned_source_identity_mismatch_before_writing(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4,
+            row_bytes=2,
+            payload_count=2,
+            location="weights.bin",
+            source_offset_bytes=0,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+
+            with self.assertRaisesRegex(RuntimeError, "byte size does not match pinned identity"):
+                materializer.materialize_source_payload_chunks(
+                    source,
+                    output_dir,
+                    chunks,
+                    expected_source_bytes=9,
+                )
+            self.assertFalse(output_dir.exists())
+
+            with self.assertRaisesRegex(RuntimeError, "SHA-256 does not match pinned identity"):
+                materializer.materialize_source_payload_chunks(
+                    source,
+                    output_dir,
+                    chunks,
+                    expected_source_bytes=8,
+                    expected_source_sha256="0" * 64,
+                )
+            self.assertFalse(output_dir.exists())
+
     def test_refuses_to_overwrite_existing_payload(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=4,
@@ -177,6 +213,11 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
         )
         report = {
             "decisionStatus": "diagnostic-only",
+            "pinnedSourceExternalDataIdentity": {
+                "location": "weights.bin",
+                "bytes": 8,
+                "sha256": "A" * 64,
+            },
             "endpointChunkEnvelope": {
                 "embedding-prefix": {
                     "tiers": {
@@ -196,6 +237,10 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
         )
 
         self.assertEqual(observed, chunks)
+        self.assertEqual(
+            materializer.source_identity_from_probe_report(report),
+            {"location": "weights.bin", "bytes": 8, "sha256": "a" * 64},
+        )
         report["decisionStatus"] = "approved"
         with self.assertRaisesRegex(RuntimeError, "diagnostic-only"):
             materializer.chunks_from_probe_report(
