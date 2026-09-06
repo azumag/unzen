@@ -22,12 +22,19 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
         largest_range_bytes: int,
         rows: int,
         row_bytes: int,
+        source_location: str = "weights.bin",
+        source_offset_bytes: int = 0,
     ) -> dict[str, object]:
         return {
             "estimatedGraphBytes": graph_bytes,
             "externalDataLayout": {
                 "uniqueExternalBytes": unique_external_bytes,
                 "largestRangeBytes": largest_range_bytes,
+                "largestRange": {
+                    "location": source_location,
+                    "offset": source_offset_bytes,
+                    "bytes": largest_range_bytes,
+                },
                 "firstAxisPayloadChunkLowerBound": {
                     "available": True,
                     "rows": rows,
@@ -44,6 +51,7 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
             largest_range_bytes=100,
             rows=10,
             row_bytes=10,
+            source_offset_bytes=100,
         )
 
         with patch.object(probe_module, "TIER_LIMITS", (("tiny", 55),)):
@@ -58,6 +66,51 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
         self.assertEqual(tier["balancedMaximumPayloadBytes"], 30)
         self.assertEqual(tier["conservativeMaximumArtifactBytes"], 50)
         self.assertEqual(tier["remainingHeadroomBytes"], 5)
+        self.assertEqual(
+            tier["balancedSourcePayloadChunks"],
+            [
+                {
+                    "chunkIndex": 0,
+                    "startRow": 0,
+                    "endRowExclusive": 3,
+                    "rowCount": 3,
+                    "sourceLocation": "weights.bin",
+                    "sourceOffsetBytes": 100,
+                    "sourceEndOffsetBytesExclusive": 130,
+                    "payloadBytes": 30,
+                },
+                {
+                    "chunkIndex": 1,
+                    "startRow": 3,
+                    "endRowExclusive": 6,
+                    "rowCount": 3,
+                    "sourceLocation": "weights.bin",
+                    "sourceOffsetBytes": 130,
+                    "sourceEndOffsetBytesExclusive": 160,
+                    "payloadBytes": 30,
+                },
+                {
+                    "chunkIndex": 2,
+                    "startRow": 6,
+                    "endRowExclusive": 8,
+                    "rowCount": 2,
+                    "sourceLocation": "weights.bin",
+                    "sourceOffsetBytes": 160,
+                    "sourceEndOffsetBytesExclusive": 180,
+                    "payloadBytes": 20,
+                },
+                {
+                    "chunkIndex": 3,
+                    "startRow": 8,
+                    "endRowExclusive": 10,
+                    "rowCount": 2,
+                    "sourceLocation": "weights.bin",
+                    "sourceOffsetBytes": 180,
+                    "sourceEndOffsetBytesExclusive": 200,
+                    "payloadBytes": 20,
+                },
+            ],
+        )
 
     def test_co_located_residual_fails_when_no_row_can_fit(self) -> None:
         stage = self._stage(
@@ -89,6 +142,11 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
                     "externalDataLayout": {
                         "uniqueExternalBytes": probe_module.EXPECTED_LARGEST_RANGE_BYTES,
                         "largestRangeBytes": probe_module.EXPECTED_LARGEST_RANGE_BYTES,
+                        "largestRange": {
+                            "location": probe_module.EXPECTED_SOURCE_LOCATION,
+                            "offset": probe_module.EXPECTED_SOURCE_OFFSET_BYTES,
+                            "bytes": probe_module.EXPECTED_LARGEST_RANGE_BYTES,
+                        },
                         "firstAxisPayloadChunkLowerBound": {
                             "available": True,
                             "rows": probe_module.EXPECTED_ROWS,
@@ -105,6 +163,7 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
 
         result = probe_module.validate_report(report)
 
+        self.assertEqual(result["schemaVersion"], "1.1.0")
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["decisionStatus"], "diagnostic-only")
         preferred = result["endpointChunkEnvelope"]["logits-postfix"]["tiers"][
@@ -112,6 +171,14 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
         ]
         self.assertEqual(preferred["minimumPayloadCount"], 4)
         self.assertEqual(preferred["remainingHeadroomBytes"], 5_757_614)
+        chunks = preferred["balancedSourcePayloadChunks"]
+        self.assertEqual(len(chunks), 4)
+        self.assertEqual([item["rowCount"] for item in chunks], [32_064] * 4)
+        self.assertEqual(chunks[0]["sourceOffsetBytes"], 0)
+        self.assertEqual(
+            chunks[-1]["sourceEndOffsetBytesExclusive"],
+            probe_module.EXPECTED_LARGEST_RANGE_BYTES,
+        )
 
     def test_validate_report_rejects_graph_identity_drift(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "source graph SHA-256"):

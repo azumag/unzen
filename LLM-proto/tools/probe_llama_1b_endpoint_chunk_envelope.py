@@ -11,13 +11,15 @@ from diagnose_multi_segment_budget import TIER_LIMITS, diagnose_model
 
 
 REPORT_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
-REPORT_SCHEMA_VERSION = "1.0.0"
+REPORT_SCHEMA_VERSION = "1.1.0"
 EXPECTED_GRAPH_SHA256 = (
     "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46"
 )
 EXPECTED_ROWS = 128_256
 EXPECTED_ROW_BYTES = 8_192
 EXPECTED_LARGEST_RANGE_BYTES = 1_050_673_152
+EXPECTED_SOURCE_LOCATION = "model_q4.onnx_data"
+EXPECTED_SOURCE_OFFSET_BYTES = 0
 EXPECTED_STAGE_ENVELOPES = {
     "embedding-prefix": {
         "sourceStageResidualBytes": 500,
@@ -98,6 +100,56 @@ def _required_int(value: object, *, field: str) -> int:
     return value
 
 
+def _required_str(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"{field} must be a non-empty string")
+    return value
+
+
+def _balanced_source_payload_chunks(
+    *,
+    rows: int,
+    row_bytes: int,
+    payload_count: int,
+    location: str,
+    source_offset_bytes: int,
+) -> list[dict[str, object]]:
+    """Build a deterministic row-balanced source-byte blueprint without materializing it."""
+
+    if rows <= 0 or row_bytes <= 0 or payload_count <= 0:
+        raise RuntimeError("rows, rowBytes, and payloadCount must be positive")
+    if payload_count > rows:
+        raise RuntimeError("payloadCount cannot exceed row count")
+    if source_offset_bytes < 0:
+        raise RuntimeError("source offset cannot be negative")
+
+    smaller_rows, larger_chunk_count = divmod(rows, payload_count)
+    row_cursor = 0
+    chunks: list[dict[str, object]] = []
+    for chunk_index in range(payload_count):
+        row_count = smaller_rows + (1 if chunk_index < larger_chunk_count else 0)
+        relative_offset_bytes = row_cursor * row_bytes
+        payload_bytes = row_count * row_bytes
+        source_start = source_offset_bytes + relative_offset_bytes
+        chunks.append(
+            {
+                "chunkIndex": chunk_index,
+                "startRow": row_cursor,
+                "endRowExclusive": row_cursor + row_count,
+                "rowCount": row_count,
+                "sourceLocation": location,
+                "sourceOffsetBytes": source_start,
+                "sourceEndOffsetBytesExclusive": source_start + payload_bytes,
+                "payloadBytes": payload_bytes,
+            }
+        )
+        row_cursor += row_count
+
+    if row_cursor != rows:
+        raise RuntimeError("balanced source payload blueprint did not cover all rows")
+    return chunks
+
+
 def _co_located_residual_envelope(stage: dict[str, object]) -> dict[str, object]:
     """Bound artifacts if all existing non-largest bytes live with the largest chunk."""
 
@@ -109,6 +161,20 @@ def _co_located_residual_envelope(stage: dict[str, object]) -> dict[str, object]
     largest_range_bytes = _required_int(
         layout.get("largestRangeBytes"), field="largestRangeBytes"
     )
+    largest_range = _required_dict(layout.get("largestRange"), field="largestRange")
+    source_location = _required_str(
+        largest_range.get("location"), field="largestRange.location"
+    )
+    source_offset_bytes = _required_int(
+        largest_range.get("offset"), field="largestRange.offset"
+    )
+    source_range_bytes = _required_int(
+        largest_range.get("bytes"), field="largestRange.bytes"
+    )
+    if source_offset_bytes < 0:
+        raise RuntimeError("largest external range offset cannot be negative")
+    if source_range_bytes != largest_range_bytes:
+        raise RuntimeError("largest external range bytes do not match layout summary")
     lower_bound = _required_dict(
         layout.get("firstAxisPayloadChunkLowerBound"),
         field="firstAxisPayloadChunkLowerBound",
@@ -153,6 +219,13 @@ def _co_located_residual_envelope(stage: dict[str, object]) -> dict[str, object]
             "balancedMaximumPayloadBytes": balanced_payload_bytes,
             "conservativeMaximumArtifactBytes": maximum_artifact_bytes,
             "remainingHeadroomBytes": headroom_bytes,
+            "balancedSourcePayloadChunks": _balanced_source_payload_chunks(
+                rows=rows,
+                row_bytes=row_bytes,
+                payload_count=minimum_count,
+                location=source_location,
+                source_offset_bytes=source_offset_bytes,
+            ),
             "feasible": headroom_bytes >= 0,
         }
 
@@ -166,6 +239,8 @@ def _co_located_residual_envelope(stage: dict[str, object]) -> dict[str, object]
         "rows": rows,
         "rowBytes": row_bytes,
         "largestRangeBytes": largest_range_bytes,
+        "sourceLocation": source_location,
+        "sourceOffsetBytes": source_offset_bytes,
         "sourceStageResidualBytes": residual_bytes,
         "tiers": tiers,
     }
@@ -216,6 +291,16 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
             field=f"{stage_kind} largest range bytes",
         )
         _require_equal(
+            envelope.get("sourceLocation"),
+            EXPECTED_SOURCE_LOCATION,
+            field=f"{stage_kind} source location",
+        )
+        _require_equal(
+            envelope.get("sourceOffsetBytes"),
+            EXPECTED_SOURCE_OFFSET_BYTES,
+            field=f"{stage_kind} source offset",
+        )
+        _require_equal(
             envelope.get("sourceStageResidualBytes"),
             expected["sourceStageResidualBytes"],
             field=f"{stage_kind} source-stage residual bytes",
@@ -231,6 +316,18 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
                     expected_value,
                     field=f"{stage_kind}.{tier}.{field}",
                 )
+            expected_chunks = _balanced_source_payload_chunks(
+                rows=EXPECTED_ROWS,
+                row_bytes=EXPECTED_ROW_BYTES,
+                payload_count=int(expected_tier["minimumPayloadCount"]),
+                location=EXPECTED_SOURCE_LOCATION,
+                source_offset_bytes=EXPECTED_SOURCE_OFFSET_BYTES,
+            )
+            _require_equal(
+                observed_tier.get("balancedSourcePayloadChunks"),
+                expected_chunks,
+                field=f"{stage_kind}.{tier}.balancedSourcePayloadChunks",
+            )
             _require_equal(
                 observed_tier.get("feasible"), True, field=f"{stage_kind}.{tier}.feasible"
             )
