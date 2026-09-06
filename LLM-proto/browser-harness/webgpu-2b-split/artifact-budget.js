@@ -2,11 +2,14 @@ export const BROWSER_SEGMENT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024;
 export const BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES = 1024 * 1024 * 1024;
 
 function safeBytes(value, label) {
-  const bytes = Number(value);
-  if (!Number.isSafeInteger(bytes) || bytes < 0) {
-    throw new Error(`${label} must be a non-negative safe integer: ${value}`);
+  // Manifest byte counts are an exact JSON contract. Reject numeric strings,
+  // booleans, and other coercible values rather than normalizing them with
+  // Number(), so runtime budget decisions cannot silently accept malformed
+  // manifests.
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer: ${String(value)}`);
   }
-  return bytes;
+  return value;
 }
 
 export function planSegmentArtifactBudget(segment, mode = 'absolute') {
