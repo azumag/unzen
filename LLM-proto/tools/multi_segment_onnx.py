@@ -37,6 +37,54 @@ class SegmentSpec:
 SpanCost = Callable[[int, int], int]
 
 
+class BrowserArtifactBudgetError(RuntimeError):
+    """Structured fail-close result for an infeasible browser shard budget."""
+
+    def __init__(
+        self,
+        *,
+        required_max_bytes: int,
+        minimum_achievable_maximum_bytes: int,
+        oversized_single_layer_spans: tuple[tuple[int, int], ...],
+    ) -> None:
+        self.required_max_bytes = required_max_bytes
+        self.minimum_achievable_maximum_bytes = minimum_achievable_maximum_bytes
+        self.oversized_single_layer_spans = oversized_single_layer_spans
+        singleton_preview = ", ".join(
+            f"[{layer},{layer + 1})={cost}"
+            for layer, cost in oversized_single_layer_spans[:8]
+        )
+        if len(oversized_single_layer_spans) > 8:
+            singleton_preview += (
+                f", ... (+{len(oversized_single_layer_spans) - 8} more)"
+            )
+        singleton_detail = (
+            f"; single-layer spans over budget: {singleton_preview}"
+            if singleton_preview
+            else ""
+        )
+        super().__init__(
+            f"no contiguous partition keeps every shard <= {required_max_bytes} bytes; "
+            f"minimum achievable maximum is {minimum_achievable_maximum_bytes} bytes"
+            f"{singleton_detail}; "
+            "the model violates the configured browser artifact policy"
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "requiredMaxBytes": self.required_max_bytes,
+            "minimumAchievableMaximumBytes": self.minimum_achievable_maximum_bytes,
+            "oversizedSingleLayerSpans": [
+                {
+                    "startLayer": layer,
+                    "endLayer": layer + 1,
+                    "estimatedBytes": cost,
+                }
+                for layer, cost in self.oversized_single_layer_spans
+            ],
+        }
+
+
 def discover_total_layers(model: onnx.ModelProto) -> int:
     """Infer the contiguous decoder-layer count from present key/value outputs."""
 
@@ -282,27 +330,15 @@ def _select_partition(
     if chosen_count is None or chosen_ceiling is None:
         if minimum_achievable_ceiling is None:
             raise AssertionError("partitioner produced no complete partition")
-        oversized_singletons = [
+        oversized_singletons = tuple(
             (layer, costs[(layer, layer + 1)])
             for layer in range(total_layers)
             if costs[(layer, layer + 1)] > required_max_bytes
-        ]
-        singleton_preview = ", ".join(
-            f"[{layer},{layer + 1})={cost}"
-            for layer, cost in oversized_singletons[:8]
         )
-        if len(oversized_singletons) > 8:
-            singleton_preview += f", ... (+{len(oversized_singletons) - 8} more)"
-        singleton_detail = (
-            f"; single-layer spans over budget: {singleton_preview}"
-            if singleton_preview
-            else ""
-        )
-        raise RuntimeError(
-            f"no contiguous partition keeps every shard <= {required_max_bytes} bytes; "
-            f"minimum achievable maximum is {minimum_achievable_ceiling} bytes"
-            f"{singleton_detail}; "
-            "the model violates the configured browser artifact policy"
+        raise BrowserArtifactBudgetError(
+            required_max_bytes=required_max_bytes,
+            minimum_achievable_maximum_bytes=minimum_achievable_ceiling,
+            oversized_single_layer_spans=oversized_singletons,
         )
 
     # With the minimax ceiling fixed, deviation is additive, so retaining the

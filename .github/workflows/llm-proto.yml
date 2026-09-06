@@ -64,6 +64,14 @@ jobs:
           echo 'da1d291b342acafd806b284052053902af82c52121c400789bdf8ab1effdb4c8  /tmp/smollm2-135m-model_q4.onnx' | sha256sum -c -
           python tools/probe_p0_smollm2_graph.py /tmp/smollm2-135m-model_q4.onnx
 
+      - name: Probe pinned Llama 1B browser-budget blocker
+        run: |
+          curl --fail --location --retry 3 \
+            --output /tmp/llama-3.2-1b-model_q4.onnx \
+            'https://huggingface.co/onnx-community/Llama-3.2-1B-Instruct/resolve/14007543b6dc92de88daf96a9aa85d2f95ace6ef/onnx/model_q4.onnx?download=true'
+          echo 'a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46  /tmp/llama-3.2-1b-model_q4.onnx' | sha256sum -c -
+          python tools/probe_llama_1b_budget_blocker.py /tmp/llama-3.2-1b-model_q4.onnx
+
       - name: Test real ONNX split contract
         run: python -m unittest discover -s tools/tests -p 'test_*.py'
 

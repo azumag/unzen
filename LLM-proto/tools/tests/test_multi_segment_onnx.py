@@ -15,6 +15,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 from multi_segment_onnx import (  # noqa: E402
+    BrowserArtifactBudgetError,
     _external_initializer_bytes,
     _select_partition,
     _validate_budget_options,
@@ -306,16 +307,26 @@ class BudgetedMultiSegmentTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(
-            RuntimeError,
+            BrowserArtifactBudgetError,
             r"minimum achievable maximum is 9 bytes; "
             r"single-layer spans over budget: \[1,2\)=9",
-        ):
+        ) as raised:
             _select_partition(
                 total_layers=3,
                 target_bytes=5,
                 required_max_bytes=5,
                 span_cost=lambda start, end: costs[(start, end)],
             )
+        self.assertEqual(
+            raised.exception.as_dict(),
+            {
+                "requiredMaxBytes": 5,
+                "minimumAchievableMaximumBytes": 9,
+                "oversizedSingleLayerSpans": [
+                    {"startLayer": 1, "endLayer": 2, "estimatedBytes": 9}
+                ],
+            },
+        )
 
     def test_generates_and_repacks_independent_shards(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
