@@ -88,6 +88,21 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
 
             self.assertFalse(output_dir.exists())
 
+    def test_rejects_inconsistent_row_byte_width(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4,
+            row_bytes=2,
+            payload_count=2,
+            location="weights.bin",
+            source_offset_bytes=0,
+        )
+        chunks[1] = dict(chunks[1])
+        chunks[1]["sourceEndOffsetBytesExclusive"] = 9
+        chunks[1]["payloadBytes"] = 5
+
+        with self.assertRaisesRegex(RuntimeError, "row byte width must remain constant"):
+            materializer.validate_source_payload_chunks(chunks)
+
     def test_rejects_truncated_source_before_writing(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=4,
@@ -131,6 +146,26 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
 
             self.assertEqual(existing.read_bytes(), b"keep")
             self.assertFalse((output_dir / "payload-0001.bin").exists())
+
+    def test_copy_exact_range_never_unlinks_a_preexisting_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_path = root / "weights.bin"
+            source_path.write_bytes(b"01234567")
+            destination = root / "payload.bin"
+            destination.write_bytes(b"keep")
+
+            with source_path.open("rb") as source:
+                with self.assertRaises(FileExistsError):
+                    materializer._copy_exact_range(
+                        source,
+                        destination,
+                        source_offset=0,
+                        payload_bytes=4,
+                        buffer_bytes=2,
+                    )
+
+            self.assertEqual(destination.read_bytes(), b"keep")
 
     def test_extracts_only_feasible_diagnostic_blueprint(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
@@ -180,6 +215,16 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "unsafe source location"):
             materializer.validate_source_payload_chunks(chunks)
+
+        windows_style = probe_module._balanced_source_payload_chunks(
+            rows=2,
+            row_bytes=2,
+            payload_count=1,
+            location="..\\weights.bin",
+            source_offset_bytes=0,
+        )
+        with self.assertRaisesRegex(RuntimeError, "unsafe source location"):
+            materializer.validate_source_payload_chunks(windows_style)
 
 
 if __name__ == "__main__":
