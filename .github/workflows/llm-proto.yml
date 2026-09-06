@@ -54,6 +54,7 @@ jobs:
         run: |
           node --check browser-harness/webgpu-2b-split/serve.mjs
           node --check browser-harness/webgpu-2b-split/artifact-cache.js
+          node --check browser-harness/webgpu-2b-split/p0-manifest-contract.js
           node --check browser-harness/webgpu-2b-split/runner-v3.js
 
       - name: Probe pinned SmolLM2 P0 graph contract

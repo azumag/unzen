@@ -14,6 +14,11 @@ import {
   validateCheckpointBoundaryNames,
 } from './runtime-validation.js';
 import {
+  SMOLLM2_P0_CONTRACT,
+  validateSmolLm2P0Manifest,
+  validateSmolLm2P0RuntimeParameters,
+} from './p0-manifest-contract.js';
+import {
   CheckpointWaitTimeoutError,
   ownSession,
   throwIfAborted,
@@ -30,6 +35,10 @@ const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
 const checkpointWaitMs = Number(params.get('checkpointWaitMs') ?? 120_000);
+
+if (artifactBudgetMode === 'p0') {
+  validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });
+}
 
 if (!Number.isFinite(checkpointWaitMs) || checkpointWaitMs <= 0) {
   throw new Error(`checkpointWaitMs must be a positive number: ${params.get('checkpointWaitMs')}`);
@@ -119,6 +128,10 @@ async function loadManifest(signal) {
   if (manifest.boundary?.tensorCount !== 2) {
     throw new Error('split manifest must declare exactly two boundary tensors');
   }
+  if (artifactBudgetMode === 'p0') {
+    const p0Contract = validateSmolLm2P0Manifest(manifest);
+    log(`P0 manifest provenance: ${p0Contract.modelId}@${p0Contract.modelRevision}, source=${p0Contract.sourceGraphSha256}`);
+  }
   return { manifest, manifestDigest };
 }
 
@@ -130,9 +143,16 @@ function normalizeTokenIds(encoded) {
   return values.map((value) => Number(value));
 }
 
+async function loadTokenizer() {
+  const options = artifactBudgetMode === 'p0'
+    ? { revision: SMOLLM2_P0_CONTRACT.modelRevision }
+    : {};
+  return AutoTokenizer.from_pretrained(modelId, options);
+}
+
 async function tokenize(prompt, signal) {
   throwIfAborted(signal);
-  const tokenizer = await AutoTokenizer.from_pretrained(modelId);
+  const tokenizer = await loadTokenizer();
   throwIfAborted(signal);
   const encoded = await tokenizer(prompt, { add_special_tokens: true });
   throwIfAborted(signal);
@@ -407,7 +427,7 @@ async function runSegment1(manifest, manifestDigest, signal) {
     const top1 = argmaxLastLogits(logits);
     await prepared.sessionOwner.release();
     throwIfAborted(signal);
-    const tokenizer = await AutoTokenizer.from_pretrained(modelId);
+    const tokenizer = await loadTokenizer();
     throwIfAborted(signal);
     const tokenText = tokenizer.decode([top1.tokenId]);
     const report = {

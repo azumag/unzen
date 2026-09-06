@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+const runner = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/runner-v3.js', import.meta.url),
+  'utf8',
+);
+
 const html = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/p0-smollm2.html', import.meta.url),
   'utf8',
@@ -16,6 +21,13 @@ describe('SmolLM2 browser P0 redirect contract', () => {
     for (const parameter of ['model', 'kvHeads', 'headSize', 'artifactBudget']) {
       expect(html).not.toContain(`if (!params.has('${parameter}'))`);
     }
+  });
+
+  it('pins the tokenizer to the same repository revision in P0 mode', () => {
+    expect(runner).toContain("revision: SMOLLM2_P0_CONTRACT.modelRevision");
+    expect(runner).toContain("artifactBudgetMode === 'p0'");
+    expect(runner).toContain('validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });');
+    expect(runner).toContain('const tokenizer = await loadTokenizer();');
   });
 
   it('keeps operator-specific run and worker-role parameters configurable', () => {
