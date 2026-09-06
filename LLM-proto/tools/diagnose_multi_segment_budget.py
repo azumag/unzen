@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 from pathlib import Path
 
@@ -35,6 +36,17 @@ TIER_LIMITS = (
     ("normal", NORMAL_MAX_BYTES),
     ("absolute", ABSOLUTE_MAX_BYTES),
 )
+
+
+@dataclass(frozen=True)
+class EndpointIsolationCandidate:
+    """One diagnostic-only edge-stage subgraph candidate."""
+
+    stage_kind: str
+    model: onnx.ModelProto
+    output_names: tuple[str, ...]
+    extra_input_names: tuple[str, ...]
+
 
 
 def _span_costs(
@@ -190,6 +202,92 @@ def _stage_budget_report(
     }
 
 
+def build_endpoint_isolation_candidates(
+    model: onnx.ModelProto,
+    *,
+    total_layers: int,
+    hidden_size: int,
+) -> tuple[EndpointIsolationCandidate, ...]:
+    """Extract diagnostic-only prefix/postfix candidates from a decoder graph.
+
+    This helper deliberately does not define a runtime or manifest contract. It
+    only makes the graph decomposition used by budget diagnostics reusable by
+    offline materialization/measurement tools.
+    """
+
+    producers = _producer_map(model)
+    initializer_names = {value.name for value in model.graph.initializer}
+
+    first_norm = _unique_named_node(
+        model,
+        "model/layers.0/input_layernorm",
+    )
+    prefix_outputs = tuple(
+        input_name
+        for input_name in first_norm.input
+        if input_name not in initializer_names
+        and input_name in producers
+        and "model/layers." not in producers[input_name].name.lstrip("/")
+    )
+    if len(prefix_outputs) != 1:
+        raise ValueError(
+            "expected one pre-decoder activation feeding layer 0; "
+            f"found {list(prefix_outputs)}"
+        )
+
+    final_norm = _unique_named_node(
+        model,
+        f"model/layers.{total_layers}/final_norm_layernorm",
+    )
+    last_layer_marker = f"model/layers.{total_layers - 1}/"
+    postfix_inputs = tuple(
+        input_name
+        for input_name in final_norm.input
+        if input_name in producers
+        and last_layer_marker in producers[input_name].name.lstrip("/")
+    )
+    if not postfix_inputs:
+        raise ValueError("final norm has no decoder-owned boundary inputs")
+
+    logits_names = tuple(
+        output.name
+        for output in model.graph.output
+        if output.name == "logits" or output.name.endswith("/logits")
+    )
+    if len(logits_names) != 1:
+        raise ValueError(
+            f"expected exactly one logits output; found {list(logits_names)}"
+        )
+
+    prefix = extract_submodel(
+        model,
+        output_names=prefix_outputs,
+        hidden_size=hidden_size,
+        graph_name="unzen-budget-diagnostic-embedding-prefix",
+    )
+    postfix = extract_submodel(
+        model,
+        output_names=logits_names,
+        extra_input_names=postfix_inputs,
+        hidden_size=hidden_size,
+        graph_name="unzen-budget-diagnostic-logits-postfix",
+    )
+    return (
+        EndpointIsolationCandidate(
+            stage_kind="embedding-prefix",
+            model=prefix,
+            output_names=prefix_outputs,
+            extra_input_names=(),
+        ),
+        EndpointIsolationCandidate(
+            stage_kind="logits-postfix",
+            model=postfix,
+            output_names=logits_names,
+            extra_input_names=postfix_inputs,
+        ),
+    )
+
+
 def _endpoint_isolation_report(
     model: onnx.ModelProto,
     *,
@@ -200,62 +298,10 @@ def _endpoint_isolation_report(
     """Estimate edge-only stages without selecting a runtime decomposition."""
 
     try:
-        producers = _producer_map(model)
-        initializer_names = {value.name for value in model.graph.initializer}
-
-        first_norm = _unique_named_node(
+        candidates = build_endpoint_isolation_candidates(
             model,
-            "model/layers.0/input_layernorm",
-        )
-        prefix_outputs = tuple(
-            input_name
-            for input_name in first_norm.input
-            if input_name not in initializer_names
-            and input_name in producers
-            and "model/layers." not in producers[input_name].name.lstrip("/")
-        )
-        if len(prefix_outputs) != 1:
-            raise ValueError(
-                "expected one pre-decoder activation feeding layer 0; "
-                f"found {list(prefix_outputs)}"
-            )
-
-        final_norm = _unique_named_node(
-            model,
-            f"model/layers.{total_layers}/final_norm_layernorm",
-        )
-        last_layer_marker = f"model/layers.{total_layers - 1}/"
-        postfix_inputs = tuple(
-            input_name
-            for input_name in final_norm.input
-            if input_name in producers
-            and last_layer_marker in producers[input_name].name.lstrip("/")
-        )
-        if not postfix_inputs:
-            raise ValueError("final norm has no decoder-owned boundary inputs")
-
-        logits_names = tuple(
-            output.name
-            for output in model.graph.output
-            if output.name == "logits" or output.name.endswith("/logits")
-        )
-        if len(logits_names) != 1:
-            raise ValueError(
-                f"expected exactly one logits output; found {list(logits_names)}"
-            )
-
-        prefix = extract_submodel(
-            model,
-            output_names=prefix_outputs,
+            total_layers=total_layers,
             hidden_size=hidden_size,
-            graph_name="unzen-budget-diagnostic-embedding-prefix",
-        )
-        postfix = extract_submodel(
-            model,
-            output_names=logits_names,
-            extra_input_names=postfix_inputs,
-            hidden_size=hidden_size,
-            graph_name="unzen-budget-diagnostic-logits-postfix",
         )
     except ValueError as error:
         return {
@@ -269,19 +315,13 @@ def _endpoint_isolation_report(
         "decisionStatus": "diagnostic-only",
         "stages": [
             _stage_budget_report(
-                prefix,
-                stage_kind="embedding-prefix",
-                output_names=prefix_outputs,
-                extra_input_names=(),
+                candidate.model,
+                stage_kind=candidate.stage_kind,
+                output_names=candidate.output_names,
+                extra_input_names=candidate.extra_input_names,
                 top_initializers=top_initializers,
-            ),
-            _stage_budget_report(
-                postfix,
-                stage_kind="logits-postfix",
-                output_names=logits_names,
-                extra_input_names=postfix_inputs,
-                top_initializers=top_initializers,
-            ),
+            )
+            for candidate in candidates
         ],
     }
 
