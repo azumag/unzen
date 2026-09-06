@@ -193,6 +193,29 @@ function exactBindingMatches(bindings, direct) {
   });
 }
 
+function engineSnapshotNotReadyError(state) {
+  const error = new Error('production-canary-engine-snapshot-not-ready');
+  error.coldStartBlocker = state?.currentRunId === null &&
+    state?.snapshotUpdatedAtMs === null && state?.nextDueAtMs === null;
+  return error;
+}
+
+export function productionCanaryFailurePayload(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === 'production-canary-engine-snapshot-not-ready' && error?.coldStartBlocker === true) {
+    return {
+      error: message,
+      blocker: {
+        issue: 190,
+        kind: 'cold-start-bootstrap-cycle',
+        status: 'design-decision-required',
+        requiredState: 'engine snapshot with finite snapshotUpdatedAtMs and nextDueAtMs',
+      },
+    };
+  }
+  return { error: message };
+}
+
 export async function runProductionDeploymentCanary(input, env) {
   const scope = env.CONTINUOUS_ASSURANCE_SCOPE || DEFAULT_SCOPE;
   const canaryScheduledTimeMs = Number(input.scheduledTimeMs);
@@ -220,7 +243,7 @@ export async function runProductionDeploymentCanary(input, env) {
 
   const state = await readEngineState(env, scope);
   if (!Number.isFinite(state.nextDueAtMs) || !Number.isFinite(state.snapshotUpdatedAtMs)) {
-    throw new Error('production-canary-engine-snapshot-not-ready');
+    throw engineSnapshotNotReadyError(state);
   }
   const latestIdleAtMs = state.nextDueAtMs - 1;
   const logicalNowMs = Math.max(state.snapshotUpdatedAtMs, Math.min(Date.now(), latestIdleAtMs));
@@ -396,7 +419,7 @@ export default {
       try {
         return Response.json(await runProductionDeploymentCanary(await request.json(), env));
       } catch (error) {
-        return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 503 });
+        return Response.json(productionCanaryFailurePayload(error), { status: 503 });
       }
     }
     return new Response('not found', { status: 404 });

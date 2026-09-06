@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { runProductionDeploymentCanary } from '../worker-runtime/continuous-assurance-production-canary-worker.mjs';
+import {
+  productionCanaryFailurePayload,
+  runProductionDeploymentCanary,
+} from '../worker-runtime/continuous-assurance-production-canary-worker.mjs';
 
 const NOW = Date.now();
 const CONFIG_SHA = 'a'.repeat(64);
@@ -197,6 +200,92 @@ describe('continuous assurance production deployment canary controller', () => {
     const { env } = makeEnv({ CONTINUOUS_ASSURANCE_RUNTIME: permissiveRuntime });
     await expect(runProductionDeploymentCanary({ scheduledTimeMs: NOW }, env as any))
       .rejects.toThrow('production-canary-bad-secret-not-rejected');
+  });
+
+  it('reports the known cold-start blocker without weakening the snapshot gate', async () => {
+    const base = makeEnv();
+    const coldEngine = binding(async (request: Request) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/__meta') return Response.json(base.metas.engine);
+      if (url.pathname === '/__canary/state') {
+        return Response.json({
+          scope: 'publisher-tax-exception-archive-dr',
+          currentRunId: null,
+          snapshotUpdatedAtMs: null,
+          nextDueAtMs: null,
+        });
+      }
+      if (url.pathname === '/__canary/bindings') {
+        return Response.json({
+          provider: base.metas.provider,
+          evidence: base.metas.evidence,
+          pager: base.metas.pager,
+        });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    const { env } = makeEnv({ ASSURANCE_ENGINE: coldEngine });
+
+    let failure: unknown;
+    try {
+      await runProductionDeploymentCanary({ scheduledTimeMs: NOW }, env as any);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe('production-canary-engine-snapshot-not-ready');
+    expect(productionCanaryFailurePayload(failure)).toEqual({
+      error: 'production-canary-engine-snapshot-not-ready',
+      blocker: {
+        issue: 190,
+        kind: 'cold-start-bootstrap-cycle',
+        status: 'design-decision-required',
+        requiredState: 'engine snapshot with finite snapshotUpdatedAtMs and nextDueAtMs',
+      },
+    });
+  });
+
+  it('keeps unrelated production-canary failures free of cold-start blocker metadata', () => {
+    expect(productionCanaryFailurePayload(new Error('production-canary-deployment-manifest-invalid')))
+      .toEqual({ error: 'production-canary-deployment-manifest-invalid' });
+  });
+
+  it('does not misclassify a malformed existing engine snapshot as cold-start', async () => {
+    const base = makeEnv();
+    const malformedEngine = binding(async (request: Request) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/__meta') return Response.json(base.metas.engine);
+      if (url.pathname === '/__canary/state') {
+        return Response.json({
+          scope: 'publisher-tax-exception-archive-dr',
+          currentRunId: 'steady-state-current',
+          snapshotUpdatedAtMs: NOW - 5_000,
+          nextDueAtMs: null,
+        });
+      }
+      if (url.pathname === '/__canary/bindings') {
+        return Response.json({
+          provider: base.metas.provider,
+          evidence: base.metas.evidence,
+          pager: base.metas.pager,
+        });
+      }
+      return new Response('not found', { status: 404 });
+    });
+    const { env } = makeEnv({ ASSURANCE_ENGINE: malformedEngine });
+
+    let failure: unknown;
+    try {
+      await runProductionDeploymentCanary({ scheduledTimeMs: NOW }, env as any);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe('production-canary-engine-snapshot-not-ready');
+    expect(productionCanaryFailurePayload(failure))
+      .toEqual({ error: 'production-canary-engine-snapshot-not-ready' });
   });
 
   it('fails closed when deploy commit or deployment manifest identity is absent', async () => {
