@@ -166,6 +166,10 @@ Repository CI, unit tests, a fake deployment runner, Miniflare, and Wrangler `--
 
 Even running the deployment helper with `--apply` is only `deployment-executed-unverified` unless the deployed controller subsequently produces a genuine `captured-and-verified` deployment-canary artifact with real Worker version metadata, exact deployment manifest binding, and independent verification.
 
+### Cold-start diagnostic
+
+A production account whose assurance-engine Durable Object has never been bootstrapped still fails closed with HTTP 503 and `error=production-canary-engine-snapshot-not-ready`. The response now also includes non-secret machine-readable blocker metadata pointing at #190 (`kind=cold-start-bootstrap-cycle`, `status=design-decision-required`) and states the exact engine state required by the existing canary gate. This is diagnostic only: it does not seed an engine snapshot, relax the deployment canary, or choose a genesis strategy.
+
 No actual Cloudflare deployment or external provider call is performed by repository CI.
 
 ## Focused validation
