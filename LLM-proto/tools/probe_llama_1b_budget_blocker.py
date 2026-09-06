@@ -46,6 +46,43 @@ EXPECTED_ENDPOINT_STAGE_MARGINS = {
         "absolute": 23_059_118,
     },
 }
+EXPECTED_ENDPOINT_CHUNK_LOWER_BOUND = {
+    "available": True,
+    "decisionStatus": "diagnostic-only",
+    "axis": 0,
+    "shape": [128_256, 2048],
+    "rows": 128_256,
+    "rowBytes": 8192,
+    "rangeBytes": 1_050_673_152,
+    "tierPayloadLowerBounds": {
+        "preferred": {
+            "payloadLimitBytes": 268_435_456,
+            "maximumWholeRowsPerPayload": 32_768,
+            "minimumPayloadCount": 4,
+            "balancedMaximumRows": 32_064,
+            "balancedMaximumPayloadBytes": 262_668_288,
+            "balancedPayloadHeadroomBytes": 5_767_168,
+        },
+        "normal": {
+            "payloadLimitBytes": 536_870_912,
+            "maximumWholeRowsPerPayload": 65_536,
+            "minimumPayloadCount": 2,
+            "balancedMaximumRows": 64_128,
+            "balancedMaximumPayloadBytes": 525_336_576,
+            "balancedPayloadHeadroomBytes": 11_534_336,
+        },
+        "absolute": {
+            "payloadLimitBytes": 1_073_741_824,
+            "maximumWholeRowsPerPayload": 131_072,
+            "minimumPayloadCount": 1,
+            "balancedMaximumRows": 128_256,
+            "balancedMaximumPayloadBytes": 1_050_673_152,
+            "balancedPayloadHeadroomBytes": 23_068_672,
+        },
+    },
+    "note": "payload-only lower bound; graph/manifest/runtime overhead is excluded",
+}
+
 EXPECTED_ENDPOINT_RANGE_LAYOUTS = {
     "embedding-prefix": {
         "uniqueRangeCount": 1,
@@ -63,6 +100,7 @@ EXPECTED_ENDPOINT_RANGE_LAYOUTS = {
             "normal": False,
             "absolute": True,
         },
+        "firstAxisPayloadChunkLowerBound": EXPECTED_ENDPOINT_CHUNK_LOWER_BOUND,
     },
     "logits-postfix": {
         "uniqueRangeCount": 2,
@@ -80,6 +118,7 @@ EXPECTED_ENDPOINT_RANGE_LAYOUTS = {
             "normal": False,
             "absolute": True,
         },
+        "firstAxisPayloadChunkLowerBound": EXPECTED_ENDPOINT_CHUNK_LOWER_BOUND,
     },
 }
 
@@ -227,6 +266,7 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
             "estimatedTierFeasibility": EXPECTED_ENDPOINT_STAGE_TIERS,
             "estimatedTierMarginBytes": EXPECTED_ENDPOINT_STAGE_MARGINS,
             "existingExternalDataRangeLayout": EXPECTED_ENDPOINT_RANGE_LAYOUTS,
+            "firstAxisPayloadChunkLowerBound": EXPECTED_ENDPOINT_CHUNK_LOWER_BOUND,
             "smallestPassingTier": "absolute",
         },
     }
