@@ -159,6 +159,18 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
         postfix = stages["logits-postfix"]
         self.assertEqual(prefix["externalDataBytes"], 100)
         self.assertEqual(postfix["externalDataBytes"], 108)
+        self.assertEqual(prefix["externalDataLayout"]["uniqueRangeCount"], 1)
+        self.assertEqual(prefix["externalDataLayout"]["uniqueLocationCount"], 1)
+        self.assertEqual(prefix["externalDataLayout"]["largestRangeBytes"], 100)
+        self.assertEqual(
+            prefix["externalDataLayout"]["largestRange"]["initializerNames"],
+            ["model.embed_tokens.weight"],
+        )
+        self.assertTrue(
+            prefix["externalDataLayout"]["existingRangeTierFeasibility"]["preferred"]
+        )
+        self.assertEqual(postfix["externalDataLayout"]["uniqueRangeCount"], 2)
+        self.assertEqual(postfix["externalDataLayout"]["uniqueExternalBytes"], 108)
         self.assertTrue(prefix["estimatedTierFeasibility"]["preferred"])
         self.assertTrue(postfix["estimatedTierFeasibility"]["absolute"])
         self.assertEqual(prefix["smallestPassingTier"], "preferred")
@@ -172,6 +184,29 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
         self.assertEqual(
             postfix["extraInputNames"],
             ["boundary_a", "boundary_b"],
+        )
+
+    def test_external_data_layout_deduplicates_aliased_ranges(self) -> None:
+        segment = helper.make_model(
+            helper.make_graph(
+                [],
+                "aliased-ranges",
+                [],
+                [],
+                initializer=[
+                    self._external_initializer("weight.a", 100),
+                    self._external_initializer("weight.b", 100),
+                ],
+            )
+        )
+
+        layout = diagnostic_module._external_data_layout(segment)
+
+        self.assertEqual(layout["uniqueRangeCount"], 1)
+        self.assertEqual(layout["uniqueExternalBytes"], 100)
+        self.assertEqual(
+            layout["largestRange"]["initializerNames"],
+            ["weight.a", "weight.b"],
         )
 
     def test_stage_budget_report_surfaces_no_passing_tier(self) -> None:
@@ -200,6 +235,13 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
         self.assertIsNone(report["smallestPassingTier"])
         self.assertFalse(report["estimatedTierFeasibility"]["absolute"])
         self.assertLess(report["estimatedTierMarginBytes"]["absolute"], 0)
+        self.assertFalse(
+            report["externalDataLayout"]["existingRangeTierFeasibility"]["absolute"]
+        )
+        self.assertEqual(
+            report["externalDataLayout"]["largestRangeBytes"],
+            diagnostic_module.ABSOLUTE_MAX_BYTES + 1,
+        )
 
     def test_endpoint_isolation_unavailable_is_nonfatal(self) -> None:
         model = helper.make_model(helper.make_graph([], "empty", [], []))
