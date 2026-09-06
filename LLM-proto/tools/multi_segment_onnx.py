@@ -250,6 +250,7 @@ def _select_partition(
     previous_minimax: dict[int, int] = {0: 0}
     chosen_count: int | None = None
     chosen_ceiling: int | None = None
+    minimum_achievable_ceiling: int | None = None
 
     for segment_count in range(1, total_layers + 1):
         current_minimax: dict[int, int] = {}
@@ -266,15 +267,41 @@ def _select_partition(
                 current_minimax[end] = best
 
         final_ceiling = current_minimax.get(total_layers)
-        if final_ceiling is not None and final_ceiling <= required_max_bytes:
-            chosen_count = segment_count
-            chosen_ceiling = final_ceiling
-            break
+        if final_ceiling is not None:
+            if (
+                minimum_achievable_ceiling is None
+                or final_ceiling < minimum_achievable_ceiling
+            ):
+                minimum_achievable_ceiling = final_ceiling
+            if final_ceiling <= required_max_bytes:
+                chosen_count = segment_count
+                chosen_ceiling = final_ceiling
+                break
         previous_minimax = current_minimax
 
     if chosen_count is None or chosen_ceiling is None:
+        if minimum_achievable_ceiling is None:
+            raise AssertionError("partitioner produced no complete partition")
+        oversized_singletons = [
+            (layer, costs[(layer, layer + 1)])
+            for layer in range(total_layers)
+            if costs[(layer, layer + 1)] > required_max_bytes
+        ]
+        singleton_preview = ", ".join(
+            f"[{layer},{layer + 1})={cost}"
+            for layer, cost in oversized_singletons[:8]
+        )
+        if len(oversized_singletons) > 8:
+            singleton_preview += f", ... (+{len(oversized_singletons) - 8} more)"
+        singleton_detail = (
+            f"; single-layer spans over budget: {singleton_preview}"
+            if singleton_preview
+            else ""
+        )
         raise RuntimeError(
             f"no contiguous partition keeps every shard <= {required_max_bytes} bytes; "
+            f"minimum achievable maximum is {minimum_achievable_ceiling} bytes"
+            f"{singleton_detail}; "
             "the model violates the configured browser artifact policy"
         )
 

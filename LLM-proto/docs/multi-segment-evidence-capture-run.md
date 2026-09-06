@@ -21,6 +21,8 @@ capture runner は次を固定順序で行う。
 
 planner / source graph snapshot check / preflight / verifier の例外、または preflight と numerical verifier の artifact identity 不一致では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
 
+plannerがbudget内のpartitionを作れない場合、errorには全segment-countを探索した `minimum achievable maximum` と、要求上限を超えるsingle-layer span（最大8件）を含める。これにより「cut数を増やせば解決する」のか、endpoint等の最小span自体がbudgetを超えていてgraph/artifact設計の変更が必要なのかを、artifact生成前に区別できる。
+
 ## 実行例
 
 `LLM-proto` から実行する。
