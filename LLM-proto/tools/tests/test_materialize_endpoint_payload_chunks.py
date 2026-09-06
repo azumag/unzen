@@ -97,8 +97,8 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             source_offset_bytes=0,
         )
         chunks[1] = dict(chunks[1])
-        chunks[1]["sourceEndOffsetBytesExclusive"] = 9
-        chunks[1]["payloadBytes"] = 5
+        chunks[1]["sourceEndOffsetBytesExclusive"] = 10
+        chunks[1]["payloadBytes"] = 6
 
         with self.assertRaisesRegex(RuntimeError, "row byte width must remain constant"):
             materializer.validate_source_payload_chunks(chunks)
