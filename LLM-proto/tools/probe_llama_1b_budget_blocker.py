@@ -24,6 +24,15 @@ EXPECTED_OVERSIZED_SINGLETONS = [
 EXPECTED_ENDPOINT_INITIALIZER = "model.embed_tokens.weight"
 EXPECTED_ENDPOINT_INITIALIZER_BYTES = 1_050_673_152
 EXPECTED_TIERS = ("preferred", "normal", "absolute")
+EXPECTED_ENDPOINT_STAGE_ARTIFACTS = {
+    "embedding-prefix": 1_050_673_652,
+    "logits-postfix": 1_050_682_706,
+}
+EXPECTED_ENDPOINT_STAGE_TIERS = {
+    "preferred": False,
+    "normal": False,
+    "absolute": True,
+}
 
 
 def _require_equal(observed: object, expected: object, *, field: str) -> None:
@@ -94,6 +103,49 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
             field=f"layer {layer} top initializer bytes",
         )
 
+    endpoint = report.get("endpointIsolationCandidates")
+    if not isinstance(endpoint, dict):
+        raise RuntimeError("diagnostic endpointIsolationCandidates must be an object")
+    _require_equal(endpoint.get("available"), True, field="endpoint isolation availability")
+    _require_equal(
+        endpoint.get("decisionStatus"),
+        "diagnostic-only",
+        field="endpoint isolation decision status",
+    )
+    stages = endpoint.get("stages")
+    if not isinstance(stages, list):
+        raise RuntimeError("endpoint isolation stages must be an array")
+    by_kind = {
+        item.get("stageKind"): item
+        for item in stages
+        if isinstance(item, dict) and isinstance(item.get("stageKind"), str)
+    }
+    _require_equal(
+        set(by_kind),
+        set(EXPECTED_ENDPOINT_STAGE_ARTIFACTS),
+        field="endpoint isolation stage kinds",
+    )
+    for stage_kind, expected_bytes in EXPECTED_ENDPOINT_STAGE_ARTIFACTS.items():
+        stage = by_kind[stage_kind]
+        _require_equal(
+            stage.get("estimatedArtifactBytes"),
+            expected_bytes,
+            field=f"{stage_kind} estimated artifact bytes",
+        )
+        _require_equal(
+            stage.get("estimatedTierFeasibility"),
+            EXPECTED_ENDPOINT_STAGE_TIERS,
+            field=f"{stage_kind} policy tiers",
+        )
+        rows = stage.get("topExternalInitializers")
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            raise RuntimeError(f"{stage_kind} must report a top external initializer")
+        _require_equal(
+            rows[0].get("name"),
+            EXPECTED_ENDPOINT_INITIALIZER,
+            field=f"{stage_kind} top initializer name",
+        )
+
     return {
         "schemaVersion": REPORT_SCHEMA_VERSION,
         "kind": REPORT_KIND,
@@ -105,6 +157,10 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
         "endpointInitializer": {
             "name": EXPECTED_ENDPOINT_INITIALIZER,
             "bytes": EXPECTED_ENDPOINT_INITIALIZER_BYTES,
+        },
+        "endpointIsolationCandidates": {
+            "estimatedArtifactBytes": EXPECTED_ENDPOINT_STAGE_ARTIFACTS,
+            "estimatedTierFeasibility": EXPECTED_ENDPOINT_STAGE_TIERS,
         },
     }
 
