@@ -204,6 +204,32 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                 tier="preferred",
             )
 
+    def test_report_output_cannot_collide_with_payload_or_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+
+            with self.assertRaisesRegex(RuntimeError, "must not collide with a materialized payload"):
+                materializer._validate_report_output_path(
+                    output_dir / "payload-0000.bin",
+                    source_path=source,
+                    output_dir=output_dir,
+                    payload_count=2,
+                )
+
+            existing_report = root / "report.json"
+            existing_report.write_text("keep", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                materializer._validate_report_output_path(
+                    existing_report,
+                    source_path=source,
+                    output_dir=output_dir,
+                    payload_count=2,
+                )
+            self.assertEqual(existing_report.read_text(encoding="utf-8"), "keep")
+
     def test_rejects_unsafe_blueprint_location(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=2,

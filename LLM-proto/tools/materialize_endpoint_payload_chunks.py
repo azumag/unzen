@@ -202,11 +202,11 @@ def materialize_source_payload_chunks(
     normalized, source_location, coverage_start, coverage_end = validate_source_payload_chunks(chunks)
     if not source_path.is_file():
         raise FileNotFoundError(f"source external-data file not found: {source_path}")
-    if PurePosixPath(source_location.replace("\\", "/")).name != source_path.name:
+    blueprint_name = PurePosixPath(source_location.replace("\\", "/")).name
+    if blueprint_name != source_path.name:
         raise RuntimeError(
             "source file basename does not match blueprint sourceLocation: "
-            f"expected={PurePosixPath(source_location.replace(chr(92), '/')).name!r}, "
-            f"observed={source_path.name!r}"
+            f"expected={blueprint_name!r}, observed={source_path.name!r}"
         )
 
     source_bytes = source_path.stat().st_size
@@ -283,6 +283,26 @@ def materialize_source_payload_chunks(
     }
 
 
+def _validate_report_output_path(
+    report_out: Path,
+    *,
+    source_path: Path,
+    output_dir: Path,
+    payload_count: int,
+) -> None:
+    if report_out.exists() or report_out.is_symlink():
+        raise FileExistsError(f"refusing to overwrite existing report: {report_out}")
+    target = report_out.resolve()
+    payload_targets = {
+        (output_dir / f"payload-{index:04d}.bin").resolve()
+        for index in range(payload_count)
+    }
+    if target in payload_targets:
+        raise RuntimeError("report output must not collide with a materialized payload path")
+    if target == source_path.resolve():
+        raise RuntimeError("report output must not collide with the source external-data file")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_external_data", type=Path)
@@ -297,6 +317,13 @@ def main() -> int:
     if not isinstance(report, dict):
         raise RuntimeError("probe report root must be an object")
     chunks = chunks_from_probe_report(report, stage_kind=args.stage, tier=args.tier)
+    if args.report_out is not None:
+        _validate_report_output_path(
+            args.report_out,
+            source_path=args.source_external_data,
+            output_dir=args.output_dir,
+            payload_count=len(chunks),
+        )
     materialization = materialize_source_payload_chunks(
         args.source_external_data,
         args.output_dir,
@@ -304,7 +331,9 @@ def main() -> int:
     )
     rendered = json.dumps(materialization, indent=2, ensure_ascii=False) + "\n"
     if args.report_out is not None:
-        args.report_out.write_text(rendered, encoding="utf-8")
+        args.report_out.parent.mkdir(parents=True, exist_ok=True)
+        with args.report_out.open("x", encoding="utf-8") as stream:
+            stream.write(rendered)
     print(rendered, end="")
     return 0
 
