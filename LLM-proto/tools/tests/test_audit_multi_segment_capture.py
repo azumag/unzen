@@ -36,6 +36,9 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
             "status": "pass",
             "captureStatus": "pass",
             "manifestSha256": "a" * 64,
+            "runSummarySha256": "c" * 64,
+            "evidenceSha256": "d" * 64,
+            "verificationSha256": "e" * 64,
             "sourceGraphSha256": "b" * 64,
             "sourceGraphBytes": 1234,
             "sourceExternalDataCount": 1,
@@ -109,6 +112,33 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
                     manifestSha256="9" * 64
                 ),
             )
+
+    def test_control_file_snapshot_drift_between_audits_is_rejected(self) -> None:
+        cases = (
+            ("runSummarySha256", "run-summary SHA-256", "7" * 64),
+            ("evidenceSha256", "evidence SHA-256", "6" * 64),
+            ("verificationSha256", "verification SHA-256", "5" * 64),
+        )
+        for key, label, changed_digest in cases:
+            with self.subTest(key=key):
+                def source(
+                    _capture: Path,
+                    _full_model: Path,
+                    changed_key: str = key,
+                    digest: str = changed_digest,
+                ) -> dict[str, object]:
+                    return self._source(**{changed_key: digest})
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    f"{label} changed during complete audit",
+                ):
+                    audit_module.audit_capture(
+                        Path("capture"),
+                        Path("model.onnx"),
+                        bundle_verifier=lambda _capture: self._bundle(),
+                        source_verifier=source,
+                    )
 
     def test_source_graph_drift_between_audits_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "source graph SHA-256 changed during complete audit"):

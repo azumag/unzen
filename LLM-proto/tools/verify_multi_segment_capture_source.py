@@ -176,6 +176,26 @@ def verify_capture_source(
     if bundle.get("status") != "pass":
         raise RuntimeError("published capture bundle verification did not pass")
 
+    # Preserve the exact control-file snapshot measured by this verifier's own
+    # bundle audit. Callers such as the complete audit can then prove that they
+    # observed the same published evidence before and during source rebinding.
+    bundle_run_summary_sha = _canonical_sha256(
+        bundle.get("runSummarySha256"),
+        field="bundle.runSummarySha256",
+    )
+    bundle_manifest_sha = _canonical_sha256(
+        bundle.get("manifestSha256"),
+        field="bundle.manifestSha256",
+    )
+    bundle_evidence_sha = _canonical_sha256(
+        bundle.get("evidenceSha256"),
+        field="bundle.evidenceSha256",
+    )
+    bundle_verification_sha = _canonical_sha256(
+        bundle.get("verificationSha256"),
+        field="bundle.verificationSha256",
+    )
+
     summary_path = root / "run-summary.json"
     summary = _json_object(summary_path, field="run summary")
     summary_artifacts = _require_mapping(
@@ -201,26 +221,17 @@ def verify_capture_source(
     # files before trusting paths/identity from them so a concurrent replacement
     # cannot splice a new manifest/evidence file into this source audit.
     _require_equal(
-        _canonical_sha256(
-            bundle.get("runSummarySha256"),
-            field="bundle.runSummarySha256",
-        ),
+        bundle_run_summary_sha,
         sha256_file(summary_path),
         field="bundle run-summary snapshot",
     )
     _require_equal(
-        _canonical_sha256(
-            bundle.get("manifestSha256"),
-            field="bundle.manifestSha256",
-        ),
+        bundle_manifest_sha,
         sha256_file(manifest_path),
         field="bundle manifest snapshot",
     )
     _require_equal(
-        _canonical_sha256(
-            bundle.get("evidenceSha256"),
-            field="bundle.evidenceSha256",
-        ),
+        bundle_evidence_sha,
         sha256_file(evidence_path),
         field="bundle evidence snapshot",
     )
@@ -323,7 +334,10 @@ def verify_capture_source(
         "kind": REPORT_KIND,
         "status": "pass",
         "captureStatus": bundle.get("captureStatus"),
-        "manifestSha256": bundle["manifestSha256"],
+        "runSummarySha256": bundle_run_summary_sha,
+        "manifestSha256": bundle_manifest_sha,
+        "evidenceSha256": bundle_evidence_sha,
+        "verificationSha256": bundle_verification_sha,
         "sourceGraphBytes": graph_bytes,
         "sourceGraphSha256": observed_graph_sha,
         "sourceExternalDataCount": len(observed_external),
