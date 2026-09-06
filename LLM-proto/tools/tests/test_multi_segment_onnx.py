@@ -283,13 +283,39 @@ class BudgetedMultiSegmentTest(unittest.TestCase):
     def test_fails_closed_when_no_partition_meets_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _, model = self._load_fixture(Path(tmp))
-            with self.assertRaisesRegex(RuntimeError, "no contiguous partition"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"no contiguous partition.*minimum achievable maximum is \d+ bytes.*"
+                r"single-layer spans over budget",
+            ):
                 plan_layer_spans(
                     model,
                     hidden_size=self.HIDDEN_SIZE,
                     target_bytes=1,
                     required_max_bytes=1,
                 )
+
+    def test_partition_failure_reports_exact_budget_floor(self) -> None:
+        costs = {
+            (0, 1): 4,
+            (1, 2): 9,
+            (2, 3): 4,
+            (0, 2): 15,
+            (1, 3): 15,
+            (0, 3): 20,
+        }
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"minimum achievable maximum is 9 bytes; "
+            r"single-layer spans over budget: \[1,2\)=9",
+        ):
+            _select_partition(
+                total_layers=3,
+                target_bytes=5,
+                required_max_bytes=5,
+                span_cost=lambda start, end: costs[(start, end)],
+            )
 
     def test_generates_and_repacks_independent_shards(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
