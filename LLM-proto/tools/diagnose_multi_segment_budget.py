@@ -115,6 +115,47 @@ def _external_initializer_rows(
     return rows[:limit]
 
 
+def _external_data_layout(segment: onnx.ModelProto) -> dict[str, object]:
+    """Summarize the existing external-data range layout without choosing a split."""
+
+    references: dict[tuple[str, int, int], list[str]] = {}
+    for initializer in segment.graph.initializer:
+        if initializer.data_location != TensorProto.EXTERNAL:
+            continue
+        identity = _external_range(initializer)
+        references.setdefault(identity, []).append(initializer.name)
+
+    ranges = [
+        {
+            "location": location,
+            "offset": offset,
+            "bytes": length,
+            "initializerNames": sorted(names),
+        }
+        for (location, offset, length), names in references.items()
+    ]
+    ranges.sort(
+        key=lambda item: (
+            -int(item["bytes"]),
+            str(item["location"]),
+            int(item["offset"]),
+        )
+    )
+    largest = ranges[0] if ranges else None
+    largest_bytes = int(largest["bytes"]) if largest is not None else 0
+    return {
+        "uniqueRangeCount": len(ranges),
+        "uniqueLocationCount": len({str(item["location"]) for item in ranges}),
+        "uniqueExternalBytes": sum(int(item["bytes"]) for item in ranges),
+        "largestRangeBytes": largest_bytes,
+        "largestRange": largest,
+        "existingRangeTierFeasibility": {
+            tier: largest_bytes <= limit_bytes
+            for tier, limit_bytes in TIER_LIMITS
+        },
+    }
+
+
 def _initializer_rows(
     model: onnx.ModelProto,
     *,
@@ -190,6 +231,7 @@ def _stage_budget_report(
         "extraInputNames": list(extra_input_names),
         "estimatedGraphBytes": graph_bytes,
         "externalDataBytes": external_bytes,
+        "externalDataLayout": _external_data_layout(segment),
         "estimatedArtifactBytes": artifact_bytes,
         "estimatedTierFeasibility": tier_feasibility,
         "estimatedTierMarginBytes": tier_margins,

@@ -46,6 +46,42 @@ EXPECTED_ENDPOINT_STAGE_MARGINS = {
         "absolute": 23_059_118,
     },
 }
+EXPECTED_ENDPOINT_RANGE_LAYOUTS = {
+    "embedding-prefix": {
+        "uniqueRangeCount": 1,
+        "uniqueLocationCount": 1,
+        "uniqueExternalBytes": 1_050_673_152,
+        "largestRangeBytes": 1_050_673_152,
+        "largestRange": {
+            "location": "model_q4.onnx_data",
+            "offset": 0,
+            "bytes": 1_050_673_152,
+            "initializerNames": ["model.embed_tokens.weight"],
+        },
+        "existingRangeTierFeasibility": {
+            "preferred": False,
+            "normal": False,
+            "absolute": True,
+        },
+    },
+    "logits-postfix": {
+        "uniqueRangeCount": 2,
+        "uniqueLocationCount": 1,
+        "uniqueExternalBytes": 1_050_681_344,
+        "largestRangeBytes": 1_050_673_152,
+        "largestRange": {
+            "location": "model_q4.onnx_data",
+            "offset": 0,
+            "bytes": 1_050_673_152,
+            "initializerNames": ["model.embed_tokens.weight"],
+        },
+        "existingRangeTierFeasibility": {
+            "preferred": False,
+            "normal": False,
+            "absolute": True,
+        },
+    },
+}
 
 
 def _require_equal(observed: object, expected: object, *, field: str) -> None:
@@ -160,6 +196,11 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
             "absolute",
             field=f"{stage_kind} smallest passing tier",
         )
+        _require_equal(
+            stage.get("externalDataLayout"),
+            EXPECTED_ENDPOINT_RANGE_LAYOUTS[stage_kind],
+            field=f"{stage_kind} external-data range layout",
+        )
         rows = stage.get("topExternalInitializers")
         if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
             raise RuntimeError(f"{stage_kind} must report a top external initializer")
@@ -185,6 +226,7 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
             "estimatedArtifactBytes": EXPECTED_ENDPOINT_STAGE_ARTIFACTS,
             "estimatedTierFeasibility": EXPECTED_ENDPOINT_STAGE_TIERS,
             "estimatedTierMarginBytes": EXPECTED_ENDPOINT_STAGE_MARGINS,
+            "existingExternalDataRangeLayout": EXPECTED_ENDPOINT_RANGE_LAYOUTS,
             "smallestPassingTier": "absolute",
         },
     }

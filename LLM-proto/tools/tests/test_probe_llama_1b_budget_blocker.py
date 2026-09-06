@@ -47,6 +47,9 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
                         "estimatedTierMarginBytes": dict(
                             probe_module.EXPECTED_ENDPOINT_STAGE_MARGINS[stage_kind]
                         ),
+                        "externalDataLayout": probe_module.EXPECTED_ENDPOINT_RANGE_LAYOUTS[
+                            stage_kind
+                        ],
                         "smallestPassingTier": "absolute",
                         "topExternalInitializers": [initializer],
                     }
@@ -77,6 +80,15 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
             "estimatedTierMarginBytes"
         ]["absolute"] -= 1
         with self.assertRaisesRegex(RuntimeError, "embedding-prefix policy tier margins"):
+            probe_module.validate_report(report)
+
+    def test_rejects_endpoint_external_range_layout_drift(self) -> None:
+        report = self._report()
+        report["endpointIsolationCandidates"]["stages"][0]["externalDataLayout"] = {
+            **probe_module.EXPECTED_ENDPOINT_RANGE_LAYOUTS["embedding-prefix"],
+            "uniqueRangeCount": 2,
+        }
+        with self.assertRaisesRegex(RuntimeError, "embedding-prefix external-data range layout"):
             probe_module.validate_report(report)
 
     def test_rejects_endpoint_isolation_budget_drift(self) -> None:
