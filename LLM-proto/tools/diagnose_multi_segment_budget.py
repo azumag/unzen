@@ -172,6 +172,18 @@ def _stage_budget_report(
     graph_bytes = len(segment.SerializeToString())
     external_bytes = _external_initializer_bytes(segment)
     artifact_bytes = graph_bytes + external_bytes
+    tier_feasibility = {
+        tier: artifact_bytes <= limit_bytes
+        for tier, limit_bytes in TIER_LIMITS
+    }
+    tier_margins = {
+        tier: limit_bytes - artifact_bytes
+        for tier, limit_bytes in TIER_LIMITS
+    }
+    smallest_passing_tier = next(
+        (tier for tier, _limit_bytes in TIER_LIMITS if tier_feasibility[tier]),
+        None,
+    )
     return {
         "stageKind": stage_kind,
         "outputNames": list(output_names),
@@ -179,10 +191,9 @@ def _stage_budget_report(
         "estimatedGraphBytes": graph_bytes,
         "externalDataBytes": external_bytes,
         "estimatedArtifactBytes": artifact_bytes,
-        "estimatedTierFeasibility": {
-            tier: artifact_bytes <= limit_bytes
-            for tier, limit_bytes in TIER_LIMITS
-        },
+        "estimatedTierFeasibility": tier_feasibility,
+        "estimatedTierMarginBytes": tier_margins,
+        "smallestPassingTier": smallest_passing_tier,
         "topExternalInitializers": _external_initializer_rows(
             segment,
             limit=top_initializers,

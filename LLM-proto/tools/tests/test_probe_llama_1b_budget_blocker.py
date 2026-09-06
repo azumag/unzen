@@ -44,6 +44,10 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
                         "stageKind": stage_kind,
                         "estimatedArtifactBytes": estimated_bytes,
                         "estimatedTierFeasibility": probe_module.EXPECTED_ENDPOINT_STAGE_TIERS,
+                        "estimatedTierMarginBytes": dict(
+                            probe_module.EXPECTED_ENDPOINT_STAGE_MARGINS[stage_kind]
+                        ),
+                        "smallestPassingTier": "absolute",
                         "topExternalInitializers": [initializer],
                     }
                     for stage_kind, estimated_bytes in (
@@ -65,6 +69,14 @@ class ProbeLlama1BBudgetBlockerTest(unittest.TestCase):
         report = self._report()
         report["partitions"][2]["minimumAchievableMaximumBytes"] -= 1
         with self.assertRaisesRegex(RuntimeError, "absolute minimum achievable maximum"):
+            probe_module.validate_report(report)
+
+    def test_rejects_endpoint_isolation_margin_drift(self) -> None:
+        report = self._report()
+        report["endpointIsolationCandidates"]["stages"][0][
+            "estimatedTierMarginBytes"
+        ]["absolute"] -= 1
+        with self.assertRaisesRegex(RuntimeError, "embedding-prefix policy tier margins"):
             probe_module.validate_report(report)
 
     def test_rejects_endpoint_isolation_budget_drift(self) -> None:

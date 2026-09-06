@@ -34,6 +34,19 @@ EXPECTED_ENDPOINT_STAGE_TIERS = {
     "absolute": True,
 }
 
+EXPECTED_ENDPOINT_STAGE_MARGINS = {
+    "embedding-prefix": {
+        "preferred": -782_238_196,
+        "normal": -513_802_740,
+        "absolute": 23_068_172,
+    },
+    "logits-postfix": {
+        "preferred": -782_247_250,
+        "normal": -513_811_794,
+        "absolute": 23_059_118,
+    },
+}
+
 
 def _require_equal(observed: object, expected: object, *, field: str) -> None:
     if observed != expected:
@@ -137,6 +150,16 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
             EXPECTED_ENDPOINT_STAGE_TIERS,
             field=f"{stage_kind} policy tiers",
         )
+        _require_equal(
+            stage.get("estimatedTierMarginBytes"),
+            EXPECTED_ENDPOINT_STAGE_MARGINS[stage_kind],
+            field=f"{stage_kind} policy tier margins",
+        )
+        _require_equal(
+            stage.get("smallestPassingTier"),
+            "absolute",
+            field=f"{stage_kind} smallest passing tier",
+        )
         rows = stage.get("topExternalInitializers")
         if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
             raise RuntimeError(f"{stage_kind} must report a top external initializer")
@@ -161,6 +184,8 @@ def validate_report(report: dict[str, object]) -> dict[str, object]:
         "endpointIsolationCandidates": {
             "estimatedArtifactBytes": EXPECTED_ENDPOINT_STAGE_ARTIFACTS,
             "estimatedTierFeasibility": EXPECTED_ENDPOINT_STAGE_TIERS,
+            "estimatedTierMarginBytes": EXPECTED_ENDPOINT_STAGE_MARGINS,
+            "smallestPassingTier": "absolute",
         },
     }
 
