@@ -208,15 +208,19 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             rows=4,
             row_bytes=2,
             payload_count=2,
-            location="weights.bin",
+            location=materializer.EXPECTED_SOURCE_LOCATION,
             source_offset_bytes=0,
         )
         report = {
+            "kind": materializer.EXPECTED_PROBE_KIND,
+            "schemaVersion": materializer.EXPECTED_PROBE_SCHEMA_VERSION,
+            "status": "pass",
             "decisionStatus": "diagnostic-only",
+            "sourceGraphSha256": materializer.EXPECTED_SOURCE_GRAPH_SHA256,
             "pinnedSourceExternalDataIdentity": {
-                "location": "weights.bin",
-                "bytes": 8,
-                "sha256": "A" * 64,
+                "location": materializer.EXPECTED_SOURCE_LOCATION,
+                "bytes": materializer.EXPECTED_SOURCE_BYTES,
+                "sha256": materializer.EXPECTED_SOURCE_SHA256.upper(),
             },
             "endpointChunkEnvelope": {
                 "embedding-prefix": {
@@ -239,10 +243,23 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
         self.assertEqual(observed, chunks)
         self.assertEqual(
             materializer.source_identity_from_probe_report(report),
-            {"location": "weights.bin", "bytes": 8, "sha256": "a" * 64},
+            {
+                "location": materializer.EXPECTED_SOURCE_LOCATION,
+                "bytes": materializer.EXPECTED_SOURCE_BYTES,
+                "sha256": materializer.EXPECTED_SOURCE_SHA256,
+            },
         )
+        tampered = json.loads(json.dumps(report))
+        tampered["pinnedSourceExternalDataIdentity"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, "pinned external-data identity mismatch"):
+            materializer.chunks_from_probe_report(
+                tampered,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
+
         report["decisionStatus"] = "approved"
-        with self.assertRaisesRegex(RuntimeError, "diagnostic-only"):
+        with self.assertRaisesRegex(RuntimeError, "decisionStatus"):
             materializer.chunks_from_probe_report(
                 report,
                 stage_kind="embedding-prefix",

@@ -20,6 +20,16 @@ from typing import BinaryIO, Iterable
 REPORT_KIND = "unzen-endpoint-source-payload-materialization"
 REPORT_SCHEMA_VERSION = "1.0.0"
 DEFAULT_COPY_BUFFER_BYTES = 8 * 1024 * 1024
+EXPECTED_PROBE_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
+EXPECTED_PROBE_SCHEMA_VERSION = "1.2.0"
+EXPECTED_SOURCE_GRAPH_SHA256 = (
+    "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46"
+)
+EXPECTED_SOURCE_LOCATION = "model_q4.onnx_data"
+EXPECTED_SOURCE_BYTES = 1_692_672_000
+EXPECTED_SOURCE_SHA256 = (
+    "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+)
 
 
 def _required_dict(value: object, *, field: str) -> dict[str, object]:
@@ -54,8 +64,7 @@ def chunks_from_probe_report(
 ) -> list[dict[str, object]]:
     """Extract one diagnostic chunk blueprint and reject non-diagnostic reports."""
 
-    if report.get("decisionStatus") != "diagnostic-only":
-        raise RuntimeError("probe report must remain decisionStatus=diagnostic-only")
+    source_identity_from_probe_report(report)
     envelopes = _required_dict(report.get("endpointChunkEnvelope"), field="endpointChunkEnvelope")
     stage = _required_dict(envelopes.get(stage_kind), field=f"endpointChunkEnvelope.{stage_kind}")
     tiers = _required_dict(stage.get("tiers"), field=f"endpointChunkEnvelope.{stage_kind}.tiers")
@@ -70,20 +79,49 @@ def chunks_from_probe_report(
 
 
 def source_identity_from_probe_report(report: dict[str, object]) -> dict[str, object]:
-    """Extract the pinned external-data identity required for materialization."""
+    """Validate the pinned probe contract and return its external-data identity."""
+
+    expected_scalars = {
+        "kind": EXPECTED_PROBE_KIND,
+        "schemaVersion": EXPECTED_PROBE_SCHEMA_VERSION,
+        "status": "pass",
+        "decisionStatus": "diagnostic-only",
+        "sourceGraphSha256": EXPECTED_SOURCE_GRAPH_SHA256,
+    }
+    for field, expected in expected_scalars.items():
+        observed = report.get(field)
+        if observed != expected:
+            raise RuntimeError(
+                f"probe report identity mismatch for {field}: "
+                f"expected={expected!r}, observed={observed!r}"
+            )
 
     identity = _required_dict(
         report.get("pinnedSourceExternalDataIdentity"),
         field="pinnedSourceExternalDataIdentity",
     )
-    location = _required_str(identity.get("location"), field="pinnedSourceExternalDataIdentity.location")
-    source_bytes = _required_int(identity.get("bytes"), field="pinnedSourceExternalDataIdentity.bytes")
-    sha256 = _required_str(identity.get("sha256"), field="pinnedSourceExternalDataIdentity.sha256").lower()
-    if source_bytes <= 0:
-        raise RuntimeError("pinned source external-data bytes must be positive")
-    if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
-        raise RuntimeError("pinned source external-data sha256 must be 64 lowercase hex characters")
-    return {"location": location, "bytes": source_bytes, "sha256": sha256}
+    observed_identity = {
+        "location": _required_str(
+            identity.get("location"), field="pinnedSourceExternalDataIdentity.location"
+        ),
+        "bytes": _required_int(
+            identity.get("bytes"), field="pinnedSourceExternalDataIdentity.bytes"
+        ),
+        "sha256": _required_str(
+            identity.get("sha256"), field="pinnedSourceExternalDataIdentity.sha256"
+        ).lower(),
+    }
+    expected_identity: dict[str, object] = {
+        "location": EXPECTED_SOURCE_LOCATION,
+        "bytes": EXPECTED_SOURCE_BYTES,
+        "sha256": EXPECTED_SOURCE_SHA256,
+    }
+    if observed_identity != expected_identity:
+        raise RuntimeError(
+            "probe report pinned external-data identity mismatch: "
+            f"expected={expected_identity!r}, observed={observed_identity!r}"
+        )
+    return observed_identity
 
 
 def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
