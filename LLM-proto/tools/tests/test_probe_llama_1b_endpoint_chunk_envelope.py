@@ -163,9 +163,17 @@ class ProbeLlama1BEndpointChunkEnvelopeTest(unittest.TestCase):
 
         result = probe_module.validate_report(report)
 
-        self.assertEqual(result["schemaVersion"], "1.1.0")
+        self.assertEqual(result["schemaVersion"], "1.2.0")
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["decisionStatus"], "diagnostic-only")
+        self.assertEqual(
+            result["pinnedSourceExternalDataIdentity"],
+            {
+                "location": probe_module.EXPECTED_SOURCE_LOCATION,
+                "bytes": probe_module.EXPECTED_SOURCE_DATA_BYTES,
+                "sha256": probe_module.EXPECTED_SOURCE_DATA_SHA256,
+            },
+        )
         preferred = result["endpointChunkEnvelope"]["logits-postfix"]["tiers"][
             "preferred"
         ]

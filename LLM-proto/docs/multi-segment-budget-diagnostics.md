@@ -69,3 +69,27 @@ For the pinned graph, the existing non-chunked source-stage residual is only 500
 This is stronger evidence than the raw payload lower bound because it accounts for every byte already present in the graph-only endpoint closure, while still stopping short of an artifact/runtime decision. The remaining roughly 5.75 MiB preferred-tier headroom is the budget available to any yet-unimplemented chunk packaging metadata and loader/cache representation; a future materialized design must measure those bytes rather than assume they are free.
 
 The probe also emits `balancedSourcePayloadChunks`: a deterministic **source-byte blueprint** for the minimum balanced row split at each tier. This still does not create artifacts or define a runtime contract; it only fixes which bytes of the pinned upstream initializer would belong to each candidate payload if vocabulary-row chunking were later selected. For the preferred tier, the pinned `[128256, 2048]` embedding divides evenly into four 32,064-row payloads of 262,668,288 bytes each. Their source offsets in `model_q4.onnx_data` are `0`, `262668288`, `525336576`, and `788004864`, ending exactly at byte `1050673152`. CI rejects drift in the source location, offset, row geometry, or these contiguous byte ranges, so a future materializer can consume a stable diagnostic blueprint rather than rediscovering chunk boundaries.
+
+## Diagnostic source-payload materialization
+
+`materialize_endpoint_payload_chunks.py` can now turn one of those blueprints into exact raw byte slices when the pinned external-data file is available locally. This closes the gap between graph-only range arithmetic and an actual byte-for-byte materialization experiment without deciding that the slices are browser artifacts or execution stages.
+
+```bash
+python tools/probe_llama_1b_endpoint_chunk_envelope.py \
+  /absolute/path/to/model_q4.onnx \
+  > /tmp/endpoint-chunk-envelope.json
+
+python tools/materialize_endpoint_payload_chunks.py \
+  /absolute/path/to/model_q4.onnx_data \
+  /tmp/endpoint-chunk-envelope.json \
+  /tmp/unzen-endpoint-payloads \
+  --stage embedding-prefix \
+  --tier preferred \
+  --report-out /tmp/unzen-endpoint-payload-materialization.json
+```
+
+The probe report also carries the pinned external-data identity (`model_q4.onnx_data`, 1,692,672,000 bytes, SHA-256 `07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647`). Before writing any payload, the CLI requires the blueprint location to match that identity, verifies the local source byte size, and streams the complete source once to verify its SHA-256. This prevents a different file with the same basename from being presented as materialization evidence for the pinned model.
+
+The materializer also validates that row coverage and source byte ranges are contiguous, rejects unsafe source locations and truncated source files, refuses to overwrite existing payloads or reports, streams each output range with bounded memory, and records the actual byte count and SHA-256 of every emitted slice. Any partial files created by the current run are removed if materialization fails without deleting pre-existing files. Unit tests use a tiny synthetic external-data file; CI still does not download the 1.7 GB pinned weight file, so the real full-file identity check remains a local evidence step when that file is already available.
+
+The emitted `unzen-endpoint-source-payload-materialization` report is explicitly `decisionStatus=diagnostic-only`. The payload filenames and report are measurement scaffolding only. They do not establish a browser cache format, manifest schema, loader behavior, endpoint execution semantics, or approval of vocabulary-axis chunking. Those remain the explicit design decision in #223.
