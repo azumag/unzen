@@ -209,6 +209,51 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
             ["weight.a", "weight.b"],
         )
 
+    def test_first_axis_payload_chunk_lower_bound_quantifies_vocab_split_floor(self) -> None:
+        tensor = self._external_initializer("model.embed_tokens.weight", 1_050_673_152)
+        del tensor.dims[:]
+        tensor.dims.extend([128_256, 2048])
+        segment = helper.make_model(
+            helper.make_graph([], "chunk-floor", [], [], initializer=[tensor])
+        )
+
+        floor = diagnostic_module._external_data_layout(segment)[
+            "firstAxisPayloadChunkLowerBound"
+        ]
+        self.assertTrue(floor["available"])
+        self.assertEqual(floor["decisionStatus"], "diagnostic-only")
+        self.assertEqual(floor["shape"], [128_256, 2048])
+        self.assertEqual(floor["rowBytes"], 8192)
+        preferred = floor["tierPayloadLowerBounds"]["preferred"]
+        normal = floor["tierPayloadLowerBounds"]["normal"]
+        absolute = floor["tierPayloadLowerBounds"]["absolute"]
+        self.assertEqual(preferred["minimumPayloadCount"], 4)
+        self.assertEqual(preferred["balancedMaximumRows"], 32_064)
+        self.assertEqual(preferred["balancedMaximumPayloadBytes"], 262_668_288)
+        self.assertEqual(preferred["balancedPayloadHeadroomBytes"], 5_767_168)
+        self.assertEqual(normal["minimumPayloadCount"], 2)
+        self.assertEqual(normal["balancedMaximumPayloadBytes"], 525_336_576)
+        self.assertEqual(absolute["minimumPayloadCount"], 1)
+        self.assertEqual(absolute["balancedMaximumPayloadBytes"], 1_050_673_152)
+        self.assertIn("payload-only lower bound", floor["note"])
+
+    def test_first_axis_payload_chunk_lower_bound_rejects_shape_alias_ambiguity(self) -> None:
+        first = self._external_initializer("weight.a", 100)
+        del first.dims[:]
+        first.dims.extend([10, 10])
+        second = self._external_initializer("weight.b", 100)
+        del second.dims[:]
+        second.dims.extend([20, 5])
+        segment = helper.make_model(
+            helper.make_graph([], "ambiguous-alias", [], [], initializer=[first, second])
+        )
+
+        floor = diagnostic_module._external_data_layout(segment)[
+            "firstAxisPayloadChunkLowerBound"
+        ]
+        self.assertFalse(floor["available"])
+        self.assertEqual(floor["reason"], "aliased-initializer-shapes-differ")
+
     def test_stage_budget_report_surfaces_no_passing_tier(self) -> None:
         segment = helper.make_model(
             helper.make_graph(

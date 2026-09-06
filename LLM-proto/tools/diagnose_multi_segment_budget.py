@@ -115,6 +115,68 @@ def _external_initializer_rows(
     return rows[:limit]
 
 
+def _first_axis_payload_chunk_lower_bound(
+    segment: onnx.ModelProto,
+    largest_range: dict[str, object] | None,
+) -> dict[str, object]:
+    """Estimate a row-aligned payload-only chunk floor without selecting a format."""
+
+    if largest_range is None:
+        return {"available": False, "reason": "no-external-range"}
+    names = largest_range.get("initializerNames")
+    if not isinstance(names, list) or not names:
+        return {"available": False, "reason": "largest-range-has-no-initializer"}
+
+    by_name = {value.name: value for value in segment.graph.initializer}
+    initializers = [by_name.get(str(name)) for name in names]
+    if any(value is None for value in initializers):
+        return {"available": False, "reason": "largest-range-initializer-missing"}
+    shapes = {tuple(int(dim) for dim in value.dims) for value in initializers if value}
+    if len(shapes) != 1:
+        return {"available": False, "reason": "aliased-initializer-shapes-differ"}
+    shape = next(iter(shapes))
+    if not shape or shape[0] <= 0:
+        return {"available": False, "reason": "first-axis-is-not-positive"}
+
+    rows = shape[0]
+    length = int(largest_range["bytes"])
+    if length <= 0 or length % rows != 0:
+        return {"available": False, "reason": "range-bytes-not-row-aligned"}
+    row_bytes = length // rows
+    tiers: dict[str, object] = {}
+    for tier, limit_bytes in TIER_LIMITS:
+        max_rows = limit_bytes // row_bytes
+        if max_rows <= 0:
+            tiers[tier] = {
+                "payloadLimitBytes": limit_bytes,
+                "minimumPayloadCount": None,
+                "reason": "one-row-exceeds-tier",
+            }
+            continue
+        minimum_count = (rows + max_rows - 1) // max_rows
+        balanced_rows = (rows + minimum_count - 1) // minimum_count
+        balanced_bytes = balanced_rows * row_bytes
+        tiers[tier] = {
+            "payloadLimitBytes": limit_bytes,
+            "maximumWholeRowsPerPayload": max_rows,
+            "minimumPayloadCount": minimum_count,
+            "balancedMaximumRows": balanced_rows,
+            "balancedMaximumPayloadBytes": balanced_bytes,
+            "balancedPayloadHeadroomBytes": limit_bytes - balanced_bytes,
+        }
+    return {
+        "available": True,
+        "decisionStatus": "diagnostic-only",
+        "axis": 0,
+        "shape": list(shape),
+        "rows": rows,
+        "rowBytes": row_bytes,
+        "rangeBytes": length,
+        "tierPayloadLowerBounds": tiers,
+        "note": "payload-only lower bound; graph/manifest/runtime overhead is excluded",
+    }
+
+
 def _external_data_layout(segment: onnx.ModelProto) -> dict[str, object]:
     """Summarize the existing external-data range layout without choosing a split."""
 
@@ -153,6 +215,9 @@ def _external_data_layout(segment: onnx.ModelProto) -> dict[str, object]:
             tier: largest_bytes <= limit_bytes
             for tier, limit_bytes in TIER_LIMITS
         },
+        "firstAxisPayloadChunkLowerBound": _first_axis_payload_chunk_lower_bound(
+            segment, largest
+        ),
     }
 
 
