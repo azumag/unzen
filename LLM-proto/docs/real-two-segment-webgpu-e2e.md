@@ -149,6 +149,7 @@ Keep model files outside git. With the Hugging Face CLI, for example:
 hf download onnx-community/SmolLM2-135M-ONNX \
   onnx/model_q4.onnx \
   onnx/model_q4.onnx_data \
+  --revision 0d747f789bcf79b9b57a4be7f3277b64c185f8ef \
   --local-dir /absolute/path/to/smollm2-135m
 ```
 
@@ -173,15 +174,27 @@ python3 tools/prepare_browser_p0.py \
   /absolute/path/to/smollm2-p0-split
 ```
 
+`prepare_browser_p0.py` fails closed unless `model_q4.onnx` is exactly the pinned
+revision graph (`sha256=da1d291b342acafd806b284052053902af82c52121c400789bdf8ab1effdb4c8`).
+The normal P0 path also requires the pinned `model_q4.onnx_data` identity
+(`181839104` bytes, `sha256=89625d22026f0ccba8ba6007b18818647a28c4fc39c392101f0408f089e63c21`).
+This prevents a different Llama-shaped graph or weight blob from being labeled as P0 evidence.
+
 The manifest must show:
 
 - `modelProfile.modelId = onnx-community/SmolLM2-135M-ONNX`
+- `modelProfile.revision = 0d747f789bcf79b9b57a4be7f3277b64c185f8ef`
+- `sourceModel.sha256 = da1d291b342acafd806b284052053902af82c52121c400789bdf8ab1effdb4c8`
+- `sourceModel.externalData[0].bytes = 181839104`
+- `sourceModel.externalData[0].sha256 = 89625d22026f0ccba8ba6007b18818647a28c4fc39c392101f0408f089e63c21`
 - `browserArtifactBudget.requiredTier = preferred`
 - every `browserArtifactBudget.segments[].tier = preferred`
 - every segment `browserArtifactBytes <= 268435456`
 - `artifactLayout = per-segment-external-data`
 
-Do not continue if the budget gate fails.
+Do not continue if the provenance or budget gate fails. The browser P0 runner
+re-validates the same model ID, revision, source graph digest, geometry, boundary
+contract, and preferred-budget metadata before loading segment artifacts.
 
 ### 3. Start the local Coordinator
 

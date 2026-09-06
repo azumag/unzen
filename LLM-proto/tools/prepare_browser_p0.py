@@ -13,12 +13,18 @@ split/repack implementation from prepare_real_split.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
 from prepare_real_split import prepare_real_split
 
 MODEL_ID = "onnx-community/SmolLM2-135M-ONNX"
+MODEL_REVISION = "0d747f789bcf79b9b57a4be7f3277b64c185f8ef"
+SOURCE_GRAPH_SHA256 = "da1d291b342acafd806b284052053902af82c52121c400789bdf8ab1effdb4c8"
+SOURCE_EXTERNAL_DATA_LOCATION = "model_q4.onnx_data"
+SOURCE_EXTERNAL_DATA_BYTES = 181_839_104
+SOURCE_EXTERNAL_DATA_SHA256 = "89625d22026f0ccba8ba6007b18818647a28c4fc39c392101f0408f089e63c21"
 MODEL_CLASS = "SmolLM2-135M"
 TOTAL_LAYERS = 30
 SPLIT_LAYER = 15
@@ -36,6 +42,47 @@ TIER_LIMITS = {
     "normal": NORMAL_MAX_BYTES,
     "absolute": ABSOLUTE_MAX_BYTES,
 }
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_pinned_source_graph(source_model_path: Path) -> str:
+    if not source_model_path.is_file():
+        raise FileNotFoundError(f"P0 source graph not found: {source_model_path}")
+    observed = sha256_file(source_model_path)
+    if observed != SOURCE_GRAPH_SHA256:
+        raise RuntimeError(
+            "SmolLM2 P0 source graph does not match the pinned artifact: "
+            f"revision={MODEL_REVISION}, expected={SOURCE_GRAPH_SHA256}, observed={observed}"
+        )
+    return observed
+
+
+def verify_pinned_source_external_data(manifest: dict[str, object]) -> None:
+    source_model = manifest.get("sourceModel")
+    if not isinstance(source_model, dict):
+        raise RuntimeError("generated P0 manifest is missing sourceModel")
+    entries = source_model.get("externalData")
+    if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+        raise RuntimeError("SmolLM2 P0 source must declare exactly one external-data file")
+    entry = entries[0]
+    expected = {
+        "location": SOURCE_EXTERNAL_DATA_LOCATION,
+        "bytes": SOURCE_EXTERNAL_DATA_BYTES,
+        "sha256": SOURCE_EXTERNAL_DATA_SHA256,
+    }
+    observed = {key: entry.get(key) for key in expected}
+    if observed != expected:
+        raise RuntimeError(
+            "SmolLM2 P0 source external data does not match the pinned artifact: "
+            f"revision={MODEL_REVISION}, expected={expected}, observed={observed}"
+        )
 
 
 def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
@@ -116,6 +163,7 @@ def prepare_browser_p0(
     require_tier: str = "preferred",
     hash_source_external_data: bool = True,
 ) -> dict[str, object]:
+    source_graph_sha256 = verify_pinned_source_graph(source_model_path)
     manifest = prepare_real_split(
         source_model_path,
         output_dir,
@@ -123,8 +171,13 @@ def prepare_browser_p0(
         hidden_size=HIDDEN_SIZE,
         hash_source_external_data=hash_source_external_data,
     )
+    if manifest.get("sourceModel", {}).get("sha256") != source_graph_sha256:
+        raise RuntimeError("generated manifest sourceModel.sha256 drifted from the pinned P0 source graph")
+    if hash_source_external_data:
+        verify_pinned_source_external_data(manifest)
     manifest["modelProfile"] = {
         "modelId": MODEL_ID,
+        "revision": MODEL_REVISION,
         "modelClass": MODEL_CLASS,
         "quantization": "q4",
         "totalLayers": TOTAL_LAYERS,
@@ -154,7 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-source-external-digest",
         action="store_true",
-        help="Skip hashing the source full weight blob; generated shard hashes remain mandatory",
+        help=(
+            "Exploratory only: skip source external-data provenance hashing. "
+            "The browser P0 runner rejects manifests without the pinned source digest."
+        ),
     )
     return parser
 
