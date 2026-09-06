@@ -26,6 +26,7 @@ describe('SmolLM2 browser P0 redirect contract', () => {
   it('pins the tokenizer to the same repository revision in P0 mode', () => {
     expect(runner).toContain("revision: SMOLLM2_P0_CONTRACT.modelRevision");
     expect(runner).toContain("artifactBudgetMode === 'p0'");
+    expect(runner).toContain('validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });');
     expect(runner).toContain('const tokenizer = await loadTokenizer();');
   });
 

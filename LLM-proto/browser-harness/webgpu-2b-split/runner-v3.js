@@ -16,6 +16,7 @@ import {
 import {
   SMOLLM2_P0_CONTRACT,
   validateSmolLm2P0Manifest,
+  validateSmolLm2P0RuntimeParameters,
 } from './p0-manifest-contract.js';
 import {
   CheckpointWaitTimeoutError,
@@ -34,6 +35,10 @@ const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
 const checkpointWaitMs = Number(params.get('checkpointWaitMs') ?? 120_000);
+
+if (artifactBudgetMode === 'p0') {
+  validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });
+}
 
 if (!Number.isFinite(checkpointWaitMs) || checkpointWaitMs <= 0) {
   throw new Error(`checkpointWaitMs must be a positive number: ${params.get('checkpointWaitMs')}`);

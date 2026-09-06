@@ -51,6 +51,19 @@ function canonicalSha256(value, field) {
   return value;
 }
 
+export function validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize }) {
+  const contract = SMOLLM2_P0_CONTRACT;
+  exact(modelId, contract.modelId, 'runtime.modelId');
+  exact(kvHeads, contract.kvHeads, 'runtime.kvHeads');
+  exact(headSize, contract.headSize, 'runtime.headSize');
+  return {
+    status: 'pass',
+    modelId: contract.modelId,
+    kvHeads: contract.kvHeads,
+    headSize: contract.headSize,
+  };
+}
+
 export function validateSmolLm2P0Manifest(manifest) {
   const contract = SMOLLM2_P0_CONTRACT;
   const root = objectField(manifest, 'root');

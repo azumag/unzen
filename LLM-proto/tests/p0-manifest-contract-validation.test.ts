@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SMOLLM2_P0_CONTRACT,
   validateSmolLm2P0Manifest,
+  validateSmolLm2P0RuntimeParameters,
 } from '../browser-harness/webgpu-2b-split/p0-manifest-contract.js';
 
 function validManifest() {
@@ -63,6 +64,25 @@ function validManifest() {
 }
 
 describe('SmolLM2 P0 manifest provenance contract', () => {
+  it('requires P0 execution parameters to match the pinned model geometry', () => {
+    expect(validateSmolLm2P0RuntimeParameters({
+      modelId: SMOLLM2_P0_CONTRACT.modelId,
+      kvHeads: SMOLLM2_P0_CONTRACT.kvHeads,
+      headSize: SMOLLM2_P0_CONTRACT.headSize,
+    })).toMatchObject({ status: 'pass' });
+
+    expect(() => validateSmolLm2P0RuntimeParameters({
+      modelId: 'onnx-community/Llama-3.2-1B-Instruct',
+      kvHeads: SMOLLM2_P0_CONTRACT.kvHeads,
+      headSize: SMOLLM2_P0_CONTRACT.headSize,
+    })).toThrow(/runtime\.modelId mismatch/);
+    expect(() => validateSmolLm2P0RuntimeParameters({
+      modelId: SMOLLM2_P0_CONTRACT.modelId,
+      kvHeads: 8,
+      headSize: SMOLLM2_P0_CONTRACT.headSize,
+    })).toThrow(/runtime\.kvHeads mismatch/);
+  });
+
   it('accepts the pinned source, geometry and preferred-budget contract', () => {
     expect(validateSmolLm2P0Manifest(validManifest())).toEqual({
       status: 'pass',
