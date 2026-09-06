@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Iterable
 
 
@@ -80,6 +80,7 @@ def validate_source_payload_chunks(
 
     expected_row = 0
     expected_source_offset: int | None = None
+    expected_row_bytes: int | None = None
     source_location: str | None = None
     coverage_start: int | None = None
 
@@ -104,7 +105,7 @@ def validate_source_payload_chunks(
             chunk.get("payloadBytes"), field=f"chunk[{expected_index}].payloadBytes"
         )
 
-        location_path = Path(location)
+        location_path = PurePosixPath(location.replace("\\", "/"))
         if location_path.is_absolute() or ".." in location_path.parts:
             raise RuntimeError(f"unsafe source location in chunk blueprint: {location}")
         if chunk_index != expected_index:
@@ -121,6 +122,18 @@ def validate_source_payload_chunks(
             raise RuntimeError(f"invalid source byte range in chunk[{expected_index}]")
         if payload_bytes != source_end - source_offset:
             raise RuntimeError(f"payloadBytes does not match source byte range in chunk[{expected_index}]")
+        if payload_bytes % row_count != 0:
+            raise RuntimeError(f"payloadBytes is not divisible by rowCount in chunk[{expected_index}]")
+        row_bytes = payload_bytes // row_count
+        if row_bytes <= 0:
+            raise RuntimeError(f"row byte width must be positive in chunk[{expected_index}]")
+        if expected_row_bytes is None:
+            expected_row_bytes = row_bytes
+        elif row_bytes != expected_row_bytes:
+            raise RuntimeError(
+                "row byte width must remain constant across chunks: "
+                f"expected={expected_row_bytes}, observed={row_bytes}"
+            )
 
         if source_location is None:
             source_location = location
@@ -158,8 +171,9 @@ def _copy_exact_range(
     digest = hashlib.sha256()
     remaining = payload_bytes
     source.seek(source_offset)
+    output = destination.open("xb")
     try:
-        with destination.open("xb") as output:
+        with output:
             while remaining:
                 block = source.read(min(buffer_bytes, remaining))
                 if not block:
@@ -188,10 +202,11 @@ def materialize_source_payload_chunks(
     normalized, source_location, coverage_start, coverage_end = validate_source_payload_chunks(chunks)
     if not source_path.is_file():
         raise FileNotFoundError(f"source external-data file not found: {source_path}")
-    if Path(source_location).name != source_path.name:
+    if PurePosixPath(source_location.replace("\\", "/")).name != source_path.name:
         raise RuntimeError(
             "source file basename does not match blueprint sourceLocation: "
-            f"expected={Path(source_location).name!r}, observed={source_path.name!r}"
+            f"expected={PurePosixPath(source_location.replace(chr(92), '/')).name!r}, "
+            f"observed={source_path.name!r}"
         )
 
     source_bytes = source_path.stat().st_size
@@ -207,6 +222,7 @@ def materialize_source_payload_chunks(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     materialized: list[dict[str, object]] = []
+    created_destinations: list[Path] = []
     total_payload_bytes = 0
     with source_path.open("rb") as source:
         try:
@@ -220,6 +236,7 @@ def materialize_source_payload_chunks(
                     payload_bytes=payload_bytes,
                     buffer_bytes=buffer_bytes,
                 )
+                created_destinations.append(destination)
                 actual_bytes = destination.stat().st_size
                 if actual_bytes != payload_bytes:
                     raise RuntimeError(
@@ -240,7 +257,7 @@ def materialize_source_payload_chunks(
                     }
                 )
         except Exception:
-            for destination in destinations:
+            for destination in created_destinations:
                 destination.unlink(missing_ok=True)
             raise
 
