@@ -11,7 +11,7 @@ The comparison exists to support the pre-decision S0 feasibility work discussed 
 - source weight rows/bytes,
 - balanced physical payload candidates,
 - balanced execution row views,
-- the mapping from each execution view to physical payload byte ranges.
+- the exact mapping from each execution view to physical-payload byte offsets and pinned source-byte offsets.
 
 It intentionally does not define a manifest, Cache API layout, ORT external-data binding, worker assignment, GPU buffer, or runtime stage.
 
@@ -31,17 +31,44 @@ The candidate probe compares balanced `4`, `5`, and `8` physical payloads while 
 
 ## Expected candidate geometry
 
-| physical payloads | max physical bytes | max physical MiB | relation to 200 MiB target | 8 execution tiles | max physical payloads touched by one tile |
-|---:|---:|---:|---:|---|---:|
-| 4 | 262,668,288 | 250.5 | +52,953,088 bytes | every tile stays within one physical payload, but half-payload tile boundaries exist | 1 |
-| 5 | 210,141,184 | 200.40625 | +425,984 bytes | some tiles cross a physical-payload boundary | 2 |
-| 8 | 131,334,144 | 125.25 | -78,381,056 bytes | physical and execution boundaries align 1:1 | 1 |
+| physical payloads | max physical bytes | max physical MiB | relation to 200 MiB target | 8 execution tiles | max physical payloads touched by one tile | total physical slices across 8 tiles |
+|---:|---:|---:|---:|---|---:|---:|
+| 4 | 262,668,288 | 250.5 | +52,953,088 bytes | every tile stays within one physical payload, but half-payload tile boundaries exist | 1 | 8 |
+| 5 | 210,141,184 | 200.40625 | +425,984 bytes | some tiles cross a physical-payload boundary | 2 | 12 |
+| 8 | 131,334,144 | 125.25 | -78,381,056 bytes | physical and execution boundaries align 1:1 | 1 | 8 |
 
 All three raw physical layouts are below the current preferred `256 MiB` payload ceiling. This is **byte geometry only**. It does not imply that any candidate meets host-memory, GPU-memory, ORT session, cache-quota, latency, cancellation, or numerical-equivalence requirements.
 
 The 5-way candidate is useful because it is closest to the existing ~200 MiB target, but its 8-way execution views are not naturally aligned: tile-to-artifact binding must sometimes combine two physical slices. The 4-way candidate preserves the already materialized preferred evidence and lets each 8-way tile remain inside one physical payload, while execution boundaries can occur inside a payload. The 8-way candidate makes physical and execution boundaries identical but doubles the physical object count relative to the existing 4-way materialization evidence.
 
 These observations are inputs to a later design decision, not a ranking.
+
+## Exact range bindings
+
+Report schema `1.1.0` adds enough arithmetic coordinates to hand one tile to the next S0 range-supply spike without guessing how a row interval maps back to bytes.
+
+Each execution tile records:
+
+- `sourceOffsetBytes` / `sourceEndOffsetBytesExclusive`,
+- its full `byteLength`,
+- one or more `physicalSlices`.
+
+Each physical slice records:
+
+- `physicalArtifactIndex`,
+- row coverage,
+- `artifactByteOffset` / `artifactByteEndOffsetExclusive` relative to that physical payload,
+- the corresponding pinned `sourceOffsetBytes` / `sourceEndOffsetBytesExclusive`,
+- exact `byteLength`.
+
+The probe fail-closes if physical slices are not contiguous in rows and source bytes, exceed their physical-artifact byte range, do not sum to the tile byte length, or do not cover the tile source range exactly. Candidate summaries also report `totalPhysicalSlicesAcrossExecutionTiles` and `executionTileSourceRangesCoverWeightExactly`.
+
+For example, the second 8-way tile (`rows [16032,32064)`) in the 5-physical candidate is exactly two reads:
+
+- physical 0: artifact bytes `[131,334,144,210,141,184)`, source bytes `[131,334,144,210,141,184)`, `78,807,040` bytes,
+- physical 1: artifact bytes `[0,52,527,104)`, source bytes `[210,141,184,262,668,288)`, `52,527,104` bytes.
+
+Together they cover the tile's source range `[131,334,144,262,668,288)` with no gap or overlap. This is still a coordinate proof only; it does not prove that ORT Web accepts this supply pattern or that the bytes can be staged within the desired memory budget.
 
 ## Running the probe
 
@@ -57,12 +84,14 @@ The command first invokes the pinned endpoint chunk-envelope probe. A source gra
 The JSON report includes the upstream probe/source identity and, for every candidate:
 
 - exact physical row ranges and source-byte ranges,
-- exact 8-way execution row ranges,
-- per-tile physical slices and byte offsets,
+- exact 8-way execution row and source-byte ranges,
+- per-tile physical slices with physical-artifact-relative and source-relative byte offsets,
 - maximum physical payload bytes,
 - maximum execution-tile bytes,
 - preferred-ceiling comparison,
 - distance from the 200 MiB target,
+- total slice reads implied by the arithmetic mapping,
+- whether the eight tile source ranges cover the tied weight exactly,
 - whether each execution tile is contained within one physical payload,
 - whether execution and physical boundaries align exactly.
 
