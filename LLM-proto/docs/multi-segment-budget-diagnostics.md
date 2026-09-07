@@ -98,10 +98,11 @@ The emitted `unzen-endpoint-source-payload-materialization` report is explicitly
 
 ## Independent materialization verification
 
-`verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate pass. It requires the expected `--stage` and `--tier` on the command line instead of trusting those fields from the materialization report, independently derives the pinned blueprint/provenance from the probe report, checks the source identity and coverage metadata, requires the payload directory to contain exactly the expected `payload-*.bin` set, rejects symlink payloads, and re-hashes every payload before returning `status=pass`.
+`verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate, source-backed pass. It requires the pinned external-data file plus the expected `--stage` and `--tier`, independently derives the pinned blueprint/provenance from the probe report, re-hashes the complete source against the pinned identity, re-hashes every referenced source range and every payload, checks source coverage and payload geometry/count/total bytes, requires the payload directory to contain exactly the expected `payload-*.bin` set, and rejects symlink source/payload files.
 
 ```bash
 python tools/verify_endpoint_payload_materialization.py \
+  /absolute/path/to/model_q4.onnx_data \
   /tmp/endpoint-chunk-envelope.json \
   /tmp/unzen-endpoint-payload-materialization.json \
   /tmp/unzen-endpoint-payloads \
@@ -110,4 +111,4 @@ python tools/verify_endpoint_payload_materialization.py \
   --report-out /tmp/unzen-endpoint-payload-verification.json
 ```
 
-The verifier hashes the exact UTF-8 JSON bytes it parses for both input reports and includes those digests in `inputReports`, so a verification result can be tied back to the precise probe/materialization documents. Its own report is also `decisionStatus=diagnostic-only`: independent byte verification strengthens the evidence chain but does not select vocabulary-axis chunking or change browser cache, manifest, loader, runtime, dispatcher, or artifact-policy semantics.
+The explicit stage/tier arguments mean the verifier does not trust those claims from the producer report. More importantly, a forged or corrupted payload plus a correspondingly edited producer hash still fails unless the payload digest matches the exact byte range in the pinned source file. The verifier also hashes the exact UTF-8 JSON bytes it parses for both input reports and includes those digests in `inputReports`, so the result is tied to the precise probe/materialization documents. Its own report remains `decisionStatus=diagnostic-only`: independent source-backed verification strengthens the evidence chain but does not select vocabulary-axis chunking or change browser cache, manifest, loader, runtime, dispatcher, or artifact-policy semantics.
