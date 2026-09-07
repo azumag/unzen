@@ -588,6 +588,66 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                 )
             self.assertEqual(existing_report.read_text(encoding="utf-8"), "keep")
 
+    def test_main_rechecks_report_alias_after_parent_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"source")
+            probe_report = root / "probe.json"
+            probe_report.write_text("{}", encoding="utf-8")
+            materialization_report = root / "materialization.json"
+            materialization_report.write_text("{}", encoding="utf-8")
+            payload_dir = root / "payloads"
+            payload_dir.mkdir()
+            safe_dir = root / "safe-reports"
+            safe_dir.mkdir()
+            reserved_dir = payload_dir / "payload-9999.bin"
+            reserved_dir.mkdir()
+            report_alias = root / "report-alias"
+            report_alias.symlink_to(safe_dir, target_is_directory=True)
+            report_out = report_alias / "verification.json"
+            real_mkdir = Path.mkdir
+
+            def retarget_after_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+                real_mkdir(path, *args, **kwargs)
+                if path == report_alias:
+                    report_alias.unlink()
+                    report_alias.symlink_to(reserved_dir, target_is_directory=True)
+
+            argv = [
+                "verify_endpoint_payload_materialization.py",
+                str(source),
+                str(probe_report),
+                str(materialization_report),
+                str(payload_dir),
+                "--stage",
+                "embedding-prefix",
+                "--tier",
+                "preferred",
+                "--report-out",
+                str(report_out),
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(
+                    verifier,
+                    "_load_json_with_sha256",
+                    side_effect=[({}, "probe-digest"), ({}, "materialization-digest")],
+                ),
+                mock.patch.object(
+                    verifier,
+                    "verify_pinned_probe_materialization",
+                    return_value={"status": "pass"},
+                ),
+                mock.patch.object(
+                    Path, "mkdir", autospec=True, side_effect=retarget_after_mkdir
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
+                    verifier.main()
+
+            self.assertFalse((reserved_dir / "verification.json").exists())
+
     def test_json_loader_hashes_the_exact_bytes_it_parses(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"

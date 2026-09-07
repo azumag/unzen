@@ -812,7 +812,19 @@ def main() -> int:
     )
     rendered = json.dumps(materialization, indent=2, ensure_ascii=False) + "\n"
     if args.report_out is not None:
+        _validate_report_output_path(
+            args.report_out,
+            source_path=args.source_external_data,
+            output_dir=args.output_dir,
+            payload_count=len(chunks),
+        )
         args.report_out.parent.mkdir(parents=True, exist_ok=True)
+        _validate_report_output_path(
+            args.report_out,
+            source_path=args.source_external_data,
+            output_dir=args.output_dir,
+            payload_count=len(chunks),
+        )
         with args.report_out.open("x", encoding="utf-8") as stream:
             stream.write(rendered)
     print(rendered, end="")

@@ -720,6 +720,53 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                 )
             self.assertEqual(existing_report.read_text(encoding="utf-8"), "keep")
 
+    def test_main_rechecks_report_alias_after_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"source")
+            probe_report = root / "probe.json"
+            probe_report.write_text("{}", encoding="utf-8")
+            output_dir = root / "payloads"
+            output_dir.mkdir()
+            safe_dir = root / "safe-reports"
+            safe_dir.mkdir()
+            reserved_dir = output_dir / "payload-9999.bin"
+            reserved_dir.mkdir()
+            report_alias = root / "report-alias"
+            report_alias.symlink_to(safe_dir, target_is_directory=True)
+            report_out = report_alias / "report.json"
+            chunks = [{}]
+
+            def retarget_report_alias(
+                *args: object, **kwargs: object
+            ) -> tuple[dict[str, object], list[dict[str, object]]]:
+                report_alias.unlink()
+                report_alias.symlink_to(reserved_dir, target_is_directory=True)
+                return {"status": "pass"}, chunks
+
+            argv = [
+                "materialize_endpoint_payload_chunks.py",
+                str(source),
+                str(probe_report),
+                str(output_dir),
+                "--report-out",
+                str(report_out),
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(materializer, "chunks_from_probe_report", return_value=chunks),
+                mock.patch.object(
+                    materializer,
+                    "materialize_pinned_probe_payload_chunks",
+                    side_effect=retarget_report_alias,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
+                    materializer.main()
+
+            self.assertFalse((reserved_dir / "report.json").exists())
+
     def test_rejects_unsafe_blueprint_location(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=2,
