@@ -194,6 +194,33 @@ def _require_stable_source_signature(
         raise RuntimeError(f"source snapshot changed during materialization: {source_path}")
 
 
+def _require_stable_payload_signature(
+    path: Path,
+    expected: tuple[int, int, int, int, int],
+) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"payload snapshot changed during materialization: {path}")
+    try:
+        observed = _file_stat_signature(path.stat())
+    except FileNotFoundError as error:
+        raise RuntimeError(f"payload snapshot changed during materialization: {path}") from error
+    if observed != expected:
+        raise RuntimeError(f"payload snapshot changed during materialization: {path}")
+
+
+def _unlink_if_same_file_identity(path: Path, expected_identity: tuple[int, int]) -> None:
+    """Remove only when the path still resolves to the inode created by this run."""
+
+    if path.is_symlink():
+        return
+    try:
+        stat_result = path.stat()
+    except FileNotFoundError:
+        return
+    if (stat_result.st_dev, stat_result.st_ino) == expected_identity:
+        path.unlink(missing_ok=True)
+
+
 def _sha256_stream(
     stream: BinaryIO,
     *,
@@ -369,7 +396,7 @@ def _copy_exact_range(
     payload_bytes: int,
     buffer_bytes: int,
     expected_source_stat_signature: tuple[int, int, int, int, int] | None = None,
-) -> str:
+) -> tuple[str, tuple[int, int, int, int, int]]:
     if buffer_bytes <= 0:
         raise ValueError("buffer_bytes must be positive")
     tracked_source_path = source_path or Path(getattr(source, "name", "<open-source>"))
@@ -384,6 +411,9 @@ def _copy_exact_range(
     remaining = payload_bytes
     source.seek(source_offset)
     output = destination.open("xb")
+    created_stat = os.fstat(output.fileno())
+    created_identity = (created_stat.st_dev, created_stat.st_ino)
+    destination_signature: tuple[int, int, int, int, int] | None = None
     try:
         with output:
             while remaining:
@@ -396,6 +426,8 @@ def _copy_exact_range(
                 output.write(block)
                 digest.update(block)
                 remaining -= len(block)
+            output.flush()
+            destination_signature = _file_stat_signature(os.fstat(output.fileno()))
         after_signature = _file_stat_signature(os.fstat(source.fileno()))
         _require_stable_source_signature(
             after_signature, before_signature, source_path=tracked_source_path
@@ -407,9 +439,10 @@ def _copy_exact_range(
                 source_path=tracked_source_path,
             )
     except Exception:
-        destination.unlink(missing_ok=True)
+        _unlink_if_same_file_identity(destination, created_identity)
         raise
-    return digest.hexdigest()
+    assert destination_signature is not None
+    return digest.hexdigest(), destination_signature
 
 
 def materialize_source_payload_chunks(
@@ -439,7 +472,7 @@ def materialize_source_payload_chunks(
         raise FileExistsError(f"refusing to overwrite existing payload: {existing[0]}")
 
     materialized: list[dict[str, object]] = []
-    created_destinations: list[Path] = []
+    created_destinations: dict[Path, tuple[int, int, int, int, int]] = {}
     total_payload_bytes = 0
     with source_path.open("rb") as source:
         source_stat_signature = _file_stat_signature(os.fstat(source.fileno()))
@@ -475,7 +508,7 @@ def materialize_source_payload_chunks(
             for chunk, destination in zip(normalized, destinations, strict=True):
                 source_offset = _required_int(chunk["sourceOffsetBytes"], field="sourceOffsetBytes")
                 payload_bytes = _required_int(chunk["payloadBytes"], field="payloadBytes")
-                digest = _copy_exact_range(
+                digest, destination_signature = _copy_exact_range(
                     source,
                     destination,
                     source_path=source_path,
@@ -484,8 +517,9 @@ def materialize_source_payload_chunks(
                     buffer_bytes=buffer_bytes,
                     expected_source_stat_signature=source_stat_signature,
                 )
-                created_destinations.append(destination)
-                actual_bytes = destination.stat().st_size
+                created_destinations[destination] = destination_signature
+                _require_stable_payload_signature(destination, destination_signature)
+                actual_bytes = destination_signature[2]
                 if actual_bytes != payload_bytes:
                     raise RuntimeError(
                         f"materialized payload size mismatch for {destination.name}: "
@@ -514,9 +548,14 @@ def materialize_source_payload_chunks(
                 source_stat_signature,
                 source_path=source_path,
             )
+            for destination, destination_signature in created_destinations.items():
+                _require_stable_payload_signature(destination, destination_signature)
         except Exception:
-            for destination in created_destinations:
-                destination.unlink(missing_ok=True)
+            for destination, destination_signature in created_destinations.items():
+                _unlink_if_same_file_identity(
+                    destination,
+                    (destination_signature[0], destination_signature[1]),
+                )
             raise
 
     return {
