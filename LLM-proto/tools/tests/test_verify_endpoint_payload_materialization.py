@@ -497,6 +497,32 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                 tier="preferred",
             )
 
+    def test_report_output_cannot_create_post_verification_payload_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload_dir = root / "payloads"
+            payload_dir.mkdir()
+
+            with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
+                verifier._validate_report_output_path(
+                    payload_dir / "payload-9999.bin",
+                    payload_dir=payload_dir,
+                )
+
+            verifier._validate_report_output_path(
+                payload_dir / "verification-report.json",
+                payload_dir=payload_dir,
+            )
+
+            existing_report = root / "verification.json"
+            existing_report.write_text("keep", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                verifier._validate_report_output_path(
+                    existing_report,
+                    payload_dir=payload_dir,
+                )
+            self.assertEqual(existing_report.read_text(encoding="utf-8"), "keep")
+
     def test_json_loader_hashes_the_exact_bytes_it_parses(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"
