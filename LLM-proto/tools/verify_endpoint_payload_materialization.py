@@ -151,8 +151,6 @@ def verify_materialization_payloads(
     ).name
     if not source_path.is_file():
         raise FileNotFoundError(f"source external-data file not found: {source_path}")
-    if source_path.is_symlink():
-        raise RuntimeError(f"refusing to verify symlink source external-data file: {source_path}")
     if source_path.name != expected_basename:
         raise RuntimeError(
             "source external-data basename does not match pinned external-data location"
