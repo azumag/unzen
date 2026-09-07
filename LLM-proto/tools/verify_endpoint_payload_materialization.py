@@ -480,43 +480,80 @@ def _require_exact_payload_names(
         )
 
 
-def _sha256_file_range(
+def _sha256_file_and_ranges(
     path: Path,
     *,
-    source_offset: int,
-    payload_bytes: int,
-    buffer_bytes: int,
+    ranges: Iterable[tuple[int, int]],
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
     expected_stat_signature: tuple[int, int, int, int, int] | None = None,
-) -> str:
-    if source_offset < 0 or payload_bytes <= 0:
-        raise ValueError("source range must be non-negative and non-empty")
+) -> tuple[str, list[str]]:
+    """Hash the complete file and non-overlapping byte ranges in one stable pass."""
+
     if buffer_bytes <= 0:
         raise ValueError("buffer_bytes must be positive")
-    digest = hashlib.sha256()
-    remaining = payload_bytes
+    normalized = list(ranges)
+    previous_end = 0
+    for index, (source_offset, payload_bytes) in enumerate(normalized):
+        if source_offset < 0 or payload_bytes <= 0:
+            raise ValueError("source ranges must be non-negative and non-empty")
+        if index and source_offset < previous_end:
+            raise ValueError("source ranges must be sorted and non-overlapping")
+        previous_end = source_offset + payload_bytes
+
+    full_digest = hashlib.sha256()
+    range_digests = [hashlib.sha256() for _ in normalized]
+    range_bytes_seen = [0 for _ in normalized]
+    current_range = 0
+    position = 0
+
     with path.open("rb") as stream:
         before_signature = _file_stat_signature(os.fstat(stream.fileno()))
         if expected_stat_signature is not None:
             _require_stable_file_signature(
                 before_signature, expected_stat_signature, path=path
             )
-        stream.seek(source_offset)
-        while remaining:
-            block = stream.read(min(buffer_bytes, remaining))
+        while True:
+            block = stream.read(buffer_bytes)
             if not block:
-                raise RuntimeError(
-                    f"source data ended early while verifying range at offset {source_offset}: "
-                    f"{remaining} bytes missing"
-                )
-            digest.update(block)
-            remaining -= len(block)
+                break
+            block_start = position
+            block_end = block_start + len(block)
+            full_digest.update(block)
+
+            while current_range < len(normalized):
+                source_offset, payload_bytes = normalized[current_range]
+                range_end = source_offset + payload_bytes
+                if range_end <= block_start:
+                    current_range += 1
+                    continue
+                if source_offset >= block_end:
+                    break
+                slice_start = max(source_offset, block_start) - block_start
+                slice_end = min(range_end, block_end) - block_start
+                if slice_end > slice_start:
+                    range_digests[current_range].update(block[slice_start:slice_end])
+                    range_bytes_seen[current_range] += slice_end - slice_start
+                if range_end <= block_end:
+                    current_range += 1
+                    continue
+                break
+            position = block_end
+
         after_signature = _file_stat_signature(os.fstat(stream.fileno()))
+
     _require_stable_file_signature(after_signature, before_signature, path=path)
     if expected_stat_signature is not None:
-        _require_stable_file_signature(
-            after_signature, expected_stat_signature, path=path
-        )
-    return digest.hexdigest()
+        _require_stable_file_signature(after_signature, expected_stat_signature, path=path)
+    for index, ((_, payload_bytes), observed_bytes) in enumerate(
+        zip(normalized, range_bytes_seen, strict=True)
+    ):
+        if observed_bytes != payload_bytes:
+            raise RuntimeError(
+                f"source data ended early while verifying range[{index}]: "
+                f"expected={payload_bytes}, observed={observed_bytes}"
+            )
+
+    return full_digest.hexdigest(), [digest.hexdigest() for digest in range_digests]
 
 
 def verify_materialization_payloads(
@@ -578,8 +615,16 @@ def verify_materialization_payloads(
     actual_source_bytes = source_stat_signature[2]
     if actual_source_bytes != source_identity["bytes"]:
         raise RuntimeError("source external-data byte size does not match pinned identity")
-    actual_source_sha256 = _sha256_file(
+    source_ranges = [
+        (
+            _required_int(chunk.get("sourceOffsetBytes"), field=f"chunk[{index}].sourceOffsetBytes"),
+            _required_int(chunk.get("payloadBytes"), field=f"chunk[{index}].payloadBytes"),
+        )
+        for index, chunk in enumerate(chunks)
+    ]
+    actual_source_sha256, source_range_sha256_values = _sha256_file_and_ranges(
         source_path,
+        ranges=source_ranges,
         buffer_bytes=buffer_bytes,
         expected_stat_signature=source_stat_signature,
     )
@@ -701,13 +746,7 @@ def verify_materialization_payloads(
             buffer_bytes=buffer_bytes,
             expected_stat_signature=payload_stat_signature,
         )
-        source_range_sha256 = _sha256_file_range(
-            source_path,
-            source_offset=int(expected_fields["sourceOffsetBytes"]),
-            payload_bytes=int(expected_fields["bytes"]),
-            buffer_bytes=buffer_bytes,
-            expected_stat_signature=source_stat_signature,
-        )
+        source_range_sha256 = source_range_sha256_values[index]
         if actual_payload_sha256 != source_range_sha256:
             raise RuntimeError(
                 f"materialized payload does not match pinned source range for {expected_name}: "

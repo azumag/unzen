@@ -272,18 +272,73 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     expected_source_identity=source_identity,
                 )
 
-    def test_rejects_source_snapshot_mutation_between_full_and_range_hashes(self) -> None:
+    def test_hashes_full_source_and_ranges_in_one_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.bin"
+            data = b"0123456789abcdef"
+            source.write_bytes(data)
+
+            full_sha256, range_sha256_values = verifier._sha256_file_and_ranges(
+                source,
+                ranges=[(1, 5), (6, 3), (12, 4)],
+                buffer_bytes=4,
+            )
+
+            self.assertEqual(full_sha256, hashlib.sha256(data).hexdigest())
+            self.assertEqual(
+                range_sha256_values,
+                [
+                    hashlib.sha256(data[1:6]).hexdigest(),
+                    hashlib.sha256(data[6:9]).hexdigest(),
+                    hashlib.sha256(data[12:16]).hexdigest(),
+                ],
+            )
+
+    def test_rejects_source_snapshot_mutation_after_single_source_hash_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, materialization, chunks, provenance, source_identity = self._fixture(root)
-            original_sha256_file = verifier._sha256_file
+            original_source_hash = verifier._sha256_file_and_ranges
+            mutated = False
+
+            def hash_then_mutate(path: Path, **kwargs: object) -> tuple[str, list[str]]:
+                nonlocal mutated
+                digests = original_source_hash(path, **kwargs)
+                if path == source and not mutated:
+                    source.write_bytes(b"HEADabcdEfghTAIL")
+                    mutated = True
+                return digests
+
+            with (
+                mock.patch.object(
+                    verifier,
+                    "_sha256_file_and_ranges",
+                    side_effect=hash_then_mutate,
+                ),
+                self.assertRaisesRegex(RuntimeError, "file snapshot changed during verification"),
+            ):
+                verifier.verify_materialization_payloads(
+                    source,
+                    materialization,
+                    root / "payloads",
+                    expected_chunks=chunks,
+                    expected_provenance=provenance,
+                    expected_source_identity=source_identity,
+                    buffer_bytes=2,
+                )
+
+    def test_rejects_payload_snapshot_mutation_before_report_emission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, materialization, chunks, provenance, source_identity = self._fixture(root)
+            original_file_hash = verifier._sha256_file
             mutated = False
 
             def hash_then_mutate(path: Path, **kwargs: object) -> str:
                 nonlocal mutated
-                digest = original_sha256_file(path, **kwargs)
-                if path == source and not mutated:
-                    source.write_bytes(b"HEADabcdEfghTAIL")
+                digest = original_file_hash(path, **kwargs)
+                if path.name == "payload-0001.bin" and not mutated:
+                    (root / "payloads" / "payload-0000.bin").write_bytes(b"zzzz")
                     mutated = True
                 return digest
 
@@ -301,46 +356,17 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     buffer_bytes=2,
                 )
 
-    def test_rejects_payload_snapshot_mutation_before_report_emission(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source, materialization, chunks, provenance, source_identity = self._fixture(root)
-            original_range_hash = verifier._sha256_file_range
-            mutated = False
-
-            def hash_then_mutate(path: Path, **kwargs: object) -> str:
-                nonlocal mutated
-                digest = original_range_hash(path, **kwargs)
-                if kwargs.get("source_offset") == 8 and not mutated:
-                    (root / "payloads" / "payload-0000.bin").write_bytes(b"zzzz")
-                    mutated = True
-                return digest
-
-            with (
-                mock.patch.object(verifier, "_sha256_file_range", side_effect=hash_then_mutate),
-                self.assertRaisesRegex(RuntimeError, "file snapshot changed during verification"),
-            ):
-                verifier.verify_materialization_payloads(
-                    source,
-                    materialization,
-                    root / "payloads",
-                    expected_chunks=chunks,
-                    expected_provenance=provenance,
-                    expected_source_identity=source_identity,
-                    buffer_bytes=2,
-                )
-
     def test_rejects_payload_namespace_mutation_before_report_emission(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, materialization, chunks, provenance, source_identity = self._fixture(root)
-            original_range_hash = verifier._sha256_file_range
+            original_file_hash = verifier._sha256_file
             mutated = False
 
             def hash_then_add_extra_payload(path: Path, **kwargs: object) -> str:
                 nonlocal mutated
-                digest = original_range_hash(path, **kwargs)
-                if kwargs.get("source_offset") == 8 and not mutated:
+                digest = original_file_hash(path, **kwargs)
+                if path.name == "payload-0001.bin" and not mutated:
                     (root / "payloads" / "payload-9999.bin").write_bytes(b"extra")
                     mutated = True
                 return digest
@@ -348,7 +374,7 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     verifier,
-                    "_sha256_file_range",
+                    "_sha256_file",
                     side_effect=hash_then_add_extra_payload,
                 ),
                 self.assertRaisesRegex(RuntimeError, "directory contents do not match"),
