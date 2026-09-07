@@ -164,6 +164,19 @@ def _candidate(
     }
 
 
+def _preferred_limit(stage: dict[str, object], *, stage_kind: str) -> int:
+    tiers = stage.get("tiers")
+    if not isinstance(tiers, dict):
+        raise RuntimeError(f"{stage_kind}.tiers must be an object")
+    preferred = tiers.get("preferred")
+    if not isinstance(preferred, dict):
+        raise RuntimeError(f"{stage_kind}.tiers.preferred must be an object")
+    limit = preferred.get("limitBytes")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        raise RuntimeError(f"{stage_kind}.tiers.preferred.limitBytes must be positive")
+    return limit
+
+
 def build_report(source_model_path: Path) -> dict[str, object]:
     envelope = envelope_probe.probe_graph(source_model_path)
     if envelope.get("decisionStatus") != "diagnostic-only":
@@ -203,6 +216,19 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         or logits.get("sourceLocation") != source_location
     ):
         raise RuntimeError("embedding/logits tied-weight geometry diverged")
+    if source_identity.get("location") != source_location:
+        raise RuntimeError("pinned external-data identity location diverged from weight geometry")
+
+    embedding_preferred_limit = _preferred_limit(
+        embedding, stage_kind="embedding-prefix"
+    )
+    logits_preferred_limit = _preferred_limit(logits, stage_kind="logits-postfix")
+    if embedding_preferred_limit != logits_preferred_limit:
+        raise RuntimeError("embedding/logits preferred payload limits diverged")
+    if embedding_preferred_limit != PREFERRED_LIMIT_BYTES:
+        raise RuntimeError(
+            "pinned preferred payload limit drifted; update the diagnostic contract explicitly"
+        )
 
     candidates = [
         _candidate(
@@ -232,7 +258,7 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         "candidatePolicy": {
             "physicalArtifactCounts": list(PHYSICAL_ARTIFACT_COUNTS),
             "executionTileCount": EXECUTION_TILE_COUNT,
-            "preferredPhysicalArtifactLimitBytes": PREFERRED_LIMIT_BYTES,
+            "preferredPhysicalArtifactLimitBytes": embedding_preferred_limit,
             "targetBytes": TARGET_BYTES,
         },
         "candidates": candidates,
