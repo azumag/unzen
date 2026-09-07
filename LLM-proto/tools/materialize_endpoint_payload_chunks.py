@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Iterable
 
@@ -173,17 +174,59 @@ def source_identity_from_probe_report(report: dict[str, object]) -> dict[str, ob
     return observed_identity
 
 
-def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
+def _file_stat_signature(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
+
+
+def _require_stable_source_signature(
+    observed: tuple[int, int, int, int, int],
+    expected: tuple[int, int, int, int, int],
+    *,
+    source_path: Path,
+) -> None:
+    if observed != expected:
+        raise RuntimeError(f"source snapshot changed during materialization: {source_path}")
+
+
+def _sha256_stream(
+    stream: BinaryIO,
+    *,
+    source_path: Path,
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
+    expected_stat_signature: tuple[int, int, int, int, int] | None = None,
+) -> str:
     if buffer_bytes <= 0:
         raise ValueError("buffer_bytes must be positive")
+    before_signature = _file_stat_signature(os.fstat(stream.fileno()))
+    if expected_stat_signature is not None:
+        _require_stable_source_signature(
+            before_signature, expected_stat_signature, source_path=source_path
+        )
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while True:
-            block = stream.read(buffer_bytes)
-            if not block:
-                break
-            digest.update(block)
+    stream.seek(0)
+    while True:
+        block = stream.read(buffer_bytes)
+        if not block:
+            break
+        digest.update(block)
+    after_signature = _file_stat_signature(os.fstat(stream.fileno()))
+    _require_stable_source_signature(after_signature, before_signature, source_path=source_path)
+    if expected_stat_signature is not None:
+        _require_stable_source_signature(
+            after_signature, expected_stat_signature, source_path=source_path
+        )
     return digest.hexdigest()
+
+
+def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
+    with path.open("rb") as stream:
+        return _sha256_stream(stream, source_path=path, buffer_bytes=buffer_bytes)
 
 
 def _canonical_json_sha256(value: object) -> str:
@@ -321,12 +364,22 @@ def _copy_exact_range(
     source: BinaryIO,
     destination: Path,
     *,
+    source_path: Path | None = None,
     source_offset: int,
     payload_bytes: int,
     buffer_bytes: int,
+    expected_source_stat_signature: tuple[int, int, int, int, int] | None = None,
 ) -> str:
     if buffer_bytes <= 0:
         raise ValueError("buffer_bytes must be positive")
+    tracked_source_path = source_path or Path(getattr(source, "name", "<open-source>"))
+    before_signature = _file_stat_signature(os.fstat(source.fileno()))
+    if expected_source_stat_signature is not None:
+        _require_stable_source_signature(
+            before_signature,
+            expected_source_stat_signature,
+            source_path=tracked_source_path,
+        )
     digest = hashlib.sha256()
     remaining = payload_bytes
     source.seek(source_offset)
@@ -343,6 +396,16 @@ def _copy_exact_range(
                 output.write(block)
                 digest.update(block)
                 remaining -= len(block)
+        after_signature = _file_stat_signature(os.fstat(source.fileno()))
+        _require_stable_source_signature(
+            after_signature, before_signature, source_path=tracked_source_path
+        )
+        if expected_source_stat_signature is not None:
+            _require_stable_source_signature(
+                after_signature,
+                expected_source_stat_signature,
+                source_path=tracked_source_path,
+            )
     except Exception:
         destination.unlink(missing_ok=True)
         raise
@@ -358,7 +421,7 @@ def materialize_source_payload_chunks(
     expected_source_bytes: int | None = None,
     expected_source_sha256: str | None = None,
 ) -> dict[str, object]:
-    """Copy validated source ranges and return a diagnostic measurement report."""
+    """Copy validated source ranges from one stable source snapshot."""
 
     normalized, source_location, coverage_start, coverage_end = validate_source_payload_chunks(chunks)
     if not source_path.is_file():
@@ -370,33 +433,44 @@ def materialize_source_payload_chunks(
             f"expected={blueprint_name!r}, observed={source_path.name!r}"
         )
 
-    source_bytes = source_path.stat().st_size
-    if expected_source_bytes is not None and source_bytes != expected_source_bytes:
-        raise RuntimeError(
-            "source external-data byte size does not match pinned identity: "
-            f"expected={expected_source_bytes}, observed={source_bytes}"
-        )
-    if coverage_end > source_bytes:
-        raise RuntimeError(
-            f"chunk blueprint exceeds source file size: end={coverage_end}, sourceBytes={source_bytes}"
-        )
-    source_sha256 = sha256_file(source_path, buffer_bytes=buffer_bytes)
-    if expected_source_sha256 is not None and source_sha256 != expected_source_sha256.lower():
-        raise RuntimeError(
-            "source external-data SHA-256 does not match pinned identity: "
-            f"expected={expected_source_sha256.lower()}, observed={source_sha256}"
-        )
-
     destinations = [output_dir / f"payload-{index:04d}.bin" for index in range(len(normalized))]
     existing = [path for path in destinations if path.exists() or path.is_symlink()]
     if existing:
         raise FileExistsError(f"refusing to overwrite existing payload: {existing[0]}")
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     materialized: list[dict[str, object]] = []
     created_destinations: list[Path] = []
     total_payload_bytes = 0
     with source_path.open("rb") as source:
+        source_stat_signature = _file_stat_signature(os.fstat(source.fileno()))
+        _require_stable_source_signature(
+            _file_stat_signature(source_path.stat()),
+            source_stat_signature,
+            source_path=source_path,
+        )
+        source_bytes = source_stat_signature[2]
+        if expected_source_bytes is not None and source_bytes != expected_source_bytes:
+            raise RuntimeError(
+                "source external-data byte size does not match pinned identity: "
+                f"expected={expected_source_bytes}, observed={source_bytes}"
+            )
+        if coverage_end > source_bytes:
+            raise RuntimeError(
+                f"chunk blueprint exceeds source file size: end={coverage_end}, sourceBytes={source_bytes}"
+            )
+        source_sha256 = _sha256_stream(
+            source,
+            source_path=source_path,
+            buffer_bytes=buffer_bytes,
+            expected_stat_signature=source_stat_signature,
+        )
+        if expected_source_sha256 is not None and source_sha256 != expected_source_sha256.lower():
+            raise RuntimeError(
+                "source external-data SHA-256 does not match pinned identity: "
+                f"expected={expected_source_sha256.lower()}, observed={source_sha256}"
+            )
+
+        output_dir.mkdir(parents=True, exist_ok=True)
         try:
             for chunk, destination in zip(normalized, destinations, strict=True):
                 source_offset = _required_int(chunk["sourceOffsetBytes"], field="sourceOffsetBytes")
@@ -404,9 +478,11 @@ def materialize_source_payload_chunks(
                 digest = _copy_exact_range(
                     source,
                     destination,
+                    source_path=source_path,
                     source_offset=source_offset,
                     payload_bytes=payload_bytes,
                     buffer_bytes=buffer_bytes,
+                    expected_source_stat_signature=source_stat_signature,
                 )
                 created_destinations.append(destination)
                 actual_bytes = destination.stat().st_size
@@ -428,6 +504,16 @@ def materialize_source_payload_chunks(
                         "sourceEndOffsetBytesExclusive": chunk["sourceEndOffsetBytesExclusive"],
                     }
                 )
+            _require_stable_source_signature(
+                _file_stat_signature(os.fstat(source.fileno())),
+                source_stat_signature,
+                source_path=source_path,
+            )
+            _require_stable_source_signature(
+                _file_stat_signature(source_path.stat()),
+                source_stat_signature,
+                source_path=source_path,
+            )
         except Exception:
             for destination in created_destinations:
                 destination.unlink(missing_ok=True)
@@ -450,8 +536,9 @@ def materialize_source_payload_chunks(
         "totalPayloadBytes": total_payload_bytes,
         "payloads": materialized,
         "conclusion": (
-            "the diagnostic source-byte blueprint was materialized exactly; this report does not "
-            "define or approve a browser artifact, cache, manifest, loader, or runtime contract"
+            "the diagnostic source-byte blueprint was materialized from one stable source snapshot; "
+            "this report does not define or approve a browser artifact, cache, manifest, loader, "
+            "or runtime contract"
         ),
     }
 

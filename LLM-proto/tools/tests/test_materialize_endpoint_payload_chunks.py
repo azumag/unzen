@@ -206,6 +206,88 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
 
             self.assertEqual(destination.read_bytes(), b"keep")
 
+    def test_rejects_source_mutation_after_identity_hash(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4,
+            row_bytes=2,
+            payload_count=2,
+            location="weights.bin",
+            source_offset_bytes=0,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_path = root / "weights.bin"
+            source_path.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            original_copy = materializer._copy_exact_range
+            mutated = False
+
+            def mutate_then_copy(source, destination, **kwargs):
+                nonlocal mutated
+                if not mutated:
+                    source_path.write_bytes(b"0123X567")
+                    mutated = True
+                return original_copy(source, destination, **kwargs)
+
+            with (
+                mock.patch.object(materializer, "_copy_exact_range", side_effect=mutate_then_copy),
+                self.assertRaisesRegex(RuntimeError, "source snapshot changed during materialization"),
+            ):
+                materializer.materialize_source_payload_chunks(
+                    source_path,
+                    output_dir,
+                    chunks,
+                    buffer_bytes=2,
+                    expected_source_bytes=8,
+                    expected_source_sha256=hashlib.sha256(b"01234567").hexdigest(),
+                )
+
+            self.assertEqual(list(output_dir.glob("payload-*.bin")), [])
+
+    def test_rejects_source_path_replacement_before_report_emission(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4,
+            row_bytes=2,
+            payload_count=2,
+            location="weights.bin",
+            source_offset_bytes=0,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_path = root / "weights.bin"
+            source_bytes = b"01234567"
+            source_path.write_bytes(source_bytes)
+            replacement = root / "replacement.bin"
+            replacement.write_bytes(source_bytes)
+            output_dir = root / "chunks"
+            original_copy = materializer._copy_exact_range
+            replaced = False
+
+            def copy_then_replace(source, destination, **kwargs):
+                nonlocal replaced
+                digest = original_copy(source, destination, **kwargs)
+                if not replaced:
+                    replacement.replace(source_path)
+                    replaced = True
+                return digest
+
+            with (
+                mock.patch.object(materializer, "_copy_exact_range", side_effect=copy_then_replace),
+                self.assertRaisesRegex(RuntimeError, "source snapshot changed during materialization"),
+            ):
+                materializer.materialize_source_payload_chunks(
+                    source_path,
+                    output_dir,
+                    chunks,
+                    buffer_bytes=2,
+                    expected_source_bytes=len(source_bytes),
+                    expected_source_sha256=hashlib.sha256(source_bytes).hexdigest(),
+                )
+
+            self.assertEqual(list(output_dir.glob("payload-*.bin")), [])
+
     def test_extracts_only_feasible_diagnostic_blueprint(self) -> None:
         chunks = materializer._expected_pinned_source_payload_chunks(
             stage_kind="embedding-prefix",
