@@ -47,7 +47,7 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
             "candidates": [cls._candidate(count) for count in (4, 5, 8)],
         }
 
-    def test_four_way_full_artifact_closure_stays_within_preferred(self) -> None:
+    def test_four_way_full_artifact_closure_records_reference_distance(self) -> None:
         closure = closure_probe._candidate_dependency_closure(self._candidate(4))
 
         self.assertEqual(
@@ -60,15 +60,16 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
             ],
             131_334_144,
         )
-        self.assertTrue(
-            closure["allExecutionTilesFitPreferredFullArtifactDependencyClosure"]
+        self.assertEqual(
+            closure["maximumDistanceFromPreferredPhysicalArtifactReferenceBytes"],
+            -5_767_168,
         )
         self.assertEqual(
             [item["requiredPhysicalArtifactCount"] for item in closure["tileClosures"]],
             [1] * 8,
         )
 
-    def test_five_way_boundary_crossing_exceeds_preferred_dependency_closure(self) -> None:
+    def test_five_way_boundary_crossing_has_larger_full_artifact_closure(self) -> None:
         closure = closure_probe._candidate_dependency_closure(self._candidate(5))
 
         self.assertEqual(
@@ -81,8 +82,9 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
             ],
             288_940_032,
         )
-        self.assertFalse(
-            closure["allExecutionTilesFitPreferredFullArtifactDependencyClosure"]
+        self.assertEqual(
+            closure["maximumDistanceFromPreferredPhysicalArtifactReferenceBytes"],
+            151_838_720,
         )
 
         crossing = closure["tileClosures"][1]
@@ -92,8 +94,9 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
         self.assertEqual(
             crossing["unusedBytesWithinRequiredFullArtifacts"], 288_940_032
         )
-        self.assertFalse(
-            crossing["fullArtifactDependencyClosureFitsPreferredLimit"]
+        self.assertEqual(
+            crossing["distanceFromPreferredPhysicalArtifactReferenceBytes"],
+            151_838_720,
         )
 
     def test_eight_way_alignment_has_zero_unused_full_artifact_bytes(self) -> None:
@@ -109,8 +112,9 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
             ],
             0,
         )
-        self.assertTrue(
-            closure["allExecutionTilesFitPreferredFullArtifactDependencyClosure"]
+        self.assertEqual(
+            closure["maximumDistanceFromPreferredPhysicalArtifactReferenceBytes"],
+            -137_101_312,
         )
         self.assertTrue(
             all(
@@ -165,6 +169,7 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
             ],
             [4, 5, 8],
         )
+        self.assertIn("numeric reference", report["conclusion"])
         self.assertIn("dependency-closure calculation only", report["conclusion"])
 
     def test_build_report_rejects_upstream_decision_promotion(self) -> None:
