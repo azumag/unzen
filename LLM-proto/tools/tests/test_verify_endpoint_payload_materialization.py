@@ -330,6 +330,39 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     buffer_bytes=2,
                 )
 
+    def test_rejects_payload_namespace_mutation_before_report_emission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, materialization, chunks, provenance, source_identity = self._fixture(root)
+            original_range_hash = verifier._sha256_file_range
+            mutated = False
+
+            def hash_then_add_extra_payload(path: Path, **kwargs: object) -> str:
+                nonlocal mutated
+                digest = original_range_hash(path, **kwargs)
+                if kwargs.get("source_offset") == 8 and not mutated:
+                    (root / "payloads" / "payload-9999.bin").write_bytes(b"extra")
+                    mutated = True
+                return digest
+
+            with (
+                mock.patch.object(
+                    verifier,
+                    "_sha256_file_range",
+                    side_effect=hash_then_add_extra_payload,
+                ),
+                self.assertRaisesRegex(RuntimeError, "directory contents do not match"),
+            ):
+                verifier.verify_materialization_payloads(
+                    source,
+                    materialization,
+                    root / "payloads",
+                    expected_chunks=chunks,
+                    expected_provenance=provenance,
+                    expected_source_identity=source_identity,
+                    buffer_bytes=2,
+                )
+
     def test_pinned_contract_is_rederived_without_producer_helpers(self) -> None:
         report = self._pinned_probe_report()
 
