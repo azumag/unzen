@@ -172,6 +172,16 @@ class ProbeLlama1BEndpointDependencyClosureTest(unittest.TestCase):
         self.assertIn("numeric reference", report["conclusion"])
         self.assertIn("dependency-closure calculation only", report["conclusion"])
 
+    def test_build_report_rejects_upstream_schema_drift(self) -> None:
+        fake_layout = self._fake_layout_report()
+        fake_layout["schemaVersion"] = "2.0.0"
+
+        with patch.object(
+            closure_probe.layout_probe, "build_report", return_value=fake_layout
+        ):
+            with self.assertRaisesRegex(RuntimeError, "schema version"):
+                closure_probe.build_report(Path("model_q4.onnx"))
+
     def test_build_report_rejects_upstream_decision_promotion(self) -> None:
         fake_layout = self._fake_layout_report()
         fake_layout["decisionStatus"] = "approved"
