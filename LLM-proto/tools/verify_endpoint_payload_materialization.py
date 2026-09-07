@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Independently verify diagnostic endpoint payload materialization evidence.
 
-This helper checks an existing ``materialize_endpoint_payload_chunks.py`` report and
-its payload directory against an explicit pinned probe stage/tier selection.  It
-re-hashes every payload and validates the producer report rather than trusting
-producer-side success assertions.  The verification remains diagnostic-only and
-does not approve a browser cache, manifest, loader, or runtime design for #223.
+This helper checks an existing ``materialize_endpoint_payload_chunks.py`` report,
+its payload directory, and the pinned source external-data file against an explicit
+probe stage/tier selection. It re-hashes the source, each source byte range, and
+every payload instead of trusting producer-side success assertions. The result
+remains diagnostic-only and does not approve a browser cache, manifest, loader,
+or runtime design for #223.
 """
 
 from __future__ import annotations
@@ -72,7 +73,35 @@ def _expected_payload_names(payload_count: int) -> list[str]:
     return [f"payload-{index:04d}.bin" for index in range(payload_count)]
 
 
+def _sha256_file_range(
+    path: Path,
+    *,
+    source_offset: int,
+    payload_bytes: int,
+    buffer_bytes: int,
+) -> str:
+    if source_offset < 0 or payload_bytes <= 0:
+        raise ValueError("source range must be non-negative and non-empty")
+    if buffer_bytes <= 0:
+        raise ValueError("buffer_bytes must be positive")
+    digest = hashlib.sha256()
+    remaining = payload_bytes
+    with path.open("rb") as stream:
+        stream.seek(source_offset)
+        while remaining:
+            block = stream.read(min(buffer_bytes, remaining))
+            if not block:
+                raise RuntimeError(
+                    f"source data ended early while verifying range at offset {source_offset}: "
+                    f"{remaining} bytes missing"
+                )
+            digest.update(block)
+            remaining -= len(block)
+    return digest.hexdigest()
+
+
 def verify_materialization_payloads(
+    source_path: Path,
     materialization: dict[str, object],
     payload_dir: Path,
     *,
@@ -81,7 +110,7 @@ def verify_materialization_payloads(
     expected_source_identity: dict[str, object],
     buffer_bytes: int = materializer.DEFAULT_COPY_BUFFER_BYTES,
 ) -> dict[str, object]:
-    """Verify one materialization report and payload set against explicit expectations."""
+    """Verify one producer report and payload set against source-backed expectations."""
 
     chunks = list(expected_chunks)
     if not chunks:
@@ -109,10 +138,32 @@ def verify_materialization_payloads(
         raise RuntimeError("materialization provenance does not match the explicit pinned probe selection")
 
     source_identity = {
-        "location": _required_str(expected_source_identity.get("location"), field="source identity location"),
+        "location": _required_str(
+            expected_source_identity.get("location"), field="source identity location"
+        ),
         "bytes": _required_int(expected_source_identity.get("bytes"), field="source identity bytes"),
-        "sha256": _normalized_sha256(expected_source_identity.get("sha256"), field="source identity sha256"),
+        "sha256": _normalized_sha256(
+            expected_source_identity.get("sha256"), field="source identity sha256"
+        ),
     }
+    expected_basename = PurePosixPath(
+        str(source_identity["location"]).replace("\\", "/")
+    ).name
+    if not source_path.is_file():
+        raise FileNotFoundError(f"source external-data file not found: {source_path}")
+    if source_path.is_symlink():
+        raise RuntimeError(f"refusing to verify symlink source external-data file: {source_path}")
+    if source_path.name != expected_basename:
+        raise RuntimeError(
+            "source external-data basename does not match pinned external-data location"
+        )
+    actual_source_bytes = source_path.stat().st_size
+    if actual_source_bytes != source_identity["bytes"]:
+        raise RuntimeError("source external-data byte size does not match pinned identity")
+    actual_source_sha256 = materializer.sha256_file(source_path, buffer_bytes=buffer_bytes)
+    if actual_source_sha256 != source_identity["sha256"]:
+        raise RuntimeError("source external-data SHA-256 does not match pinned identity")
+
     source = _required_dict(materialization.get("source"), field="materialization.source")
     observed_source_bytes = _required_int(source.get("bytes"), field="materialization.source.bytes")
     observed_source_sha256 = _normalized_sha256(
@@ -121,10 +172,9 @@ def verify_materialization_payloads(
     observed_blueprint_location = _required_str(
         source.get("blueprintLocation"), field="materialization.source.blueprintLocation"
     )
-    source_path = _required_str(source.get("path"), field="materialization.source.path")
-    source_basename = PurePosixPath(source_path.replace("\\", "/")).name
-    expected_basename = PurePosixPath(source_identity["location"].replace("\\", "/")).name
-    if source_basename != expected_basename:
+    reported_source_path = _required_str(source.get("path"), field="materialization.source.path")
+    reported_source_basename = PurePosixPath(reported_source_path.replace("\\", "/")).name
+    if reported_source_basename != expected_basename:
         raise RuntimeError(
             "materialization source path basename does not match the pinned external-data location"
         )
@@ -135,7 +185,9 @@ def verify_materialization_payloads(
     if observed_blueprint_location != source_identity["location"]:
         raise RuntimeError("materialization blueprintLocation does not match pinned external-data identity")
 
-    coverage_start = _required_int(chunks[0].get("sourceOffsetBytes"), field="chunk[0].sourceOffsetBytes")
+    coverage_start = _required_int(
+        chunks[0].get("sourceOffsetBytes"), field="chunk[0].sourceOffsetBytes"
+    )
     coverage_end = _required_int(
         chunks[-1].get("sourceEndOffsetBytesExclusive"),
         field=f"chunk[{len(chunks) - 1}].sourceEndOffsetBytesExclusive",
@@ -156,7 +208,9 @@ def verify_materialization_payloads(
             _required_list(materialization.get("payloads"), field="materialization.payloads")
         )
     ]
-    if _required_int(materialization.get("payloadCount"), field="materialization.payloadCount") != len(chunks):
+    if _required_int(
+        materialization.get("payloadCount"), field="materialization.payloadCount"
+    ) != len(chunks):
         raise RuntimeError("materialization payloadCount does not match pinned blueprint")
     if len(payloads) != len(chunks):
         raise RuntimeError("materialization payload array length does not match pinned blueprint")
@@ -223,11 +277,22 @@ def verify_materialization_payloads(
                 f"materialized payload size mismatch for {expected_name}: "
                 f"expected={expected_fields['bytes']}, observed={actual_bytes}"
             )
-        actual_sha256 = materializer.sha256_file(payload_path, buffer_bytes=buffer_bytes)
-        if actual_sha256 != reported_sha256:
+        actual_payload_sha256 = materializer.sha256_file(payload_path, buffer_bytes=buffer_bytes)
+        source_range_sha256 = _sha256_file_range(
+            source_path,
+            source_offset=int(expected_fields["sourceOffsetBytes"]),
+            payload_bytes=int(expected_fields["bytes"]),
+            buffer_bytes=buffer_bytes,
+        )
+        if actual_payload_sha256 != source_range_sha256:
             raise RuntimeError(
-                f"materialized payload SHA-256 mismatch for {expected_name}: "
-                f"expected={reported_sha256}, observed={actual_sha256}"
+                f"materialized payload does not match pinned source range for {expected_name}: "
+                f"sourceRangeSha256={source_range_sha256}, payloadSha256={actual_payload_sha256}"
+            )
+        if reported_sha256 != source_range_sha256:
+            raise RuntimeError(
+                f"materialization report SHA-256 does not match pinned source range for {expected_name}: "
+                f"sourceRangeSha256={source_range_sha256}, reportedSha256={reported_sha256}"
             )
         verified_total_bytes += actual_bytes
         verified_payloads.append(
@@ -235,7 +300,8 @@ def verify_materialization_payloads(
                 "chunkIndex": expected_fields["chunkIndex"],
                 "outputFile": expected_name,
                 "bytes": actual_bytes,
-                "sha256": actual_sha256,
+                "sha256": actual_payload_sha256,
+                "sourceRangeSha256": source_range_sha256,
             }
         )
 
@@ -248,18 +314,24 @@ def verify_materialization_payloads(
         "status": "pass",
         "decisionStatus": "diagnostic-only",
         "provenance": expected_provenance,
+        "source": {
+            "path": str(source_path),
+            "bytes": actual_source_bytes,
+            "sha256": actual_source_sha256,
+        },
         "payloadCount": len(verified_payloads),
         "totalPayloadBytes": verified_total_bytes,
         "payloads": verified_payloads,
         "conclusion": (
-            "the diagnostic payload files independently match the pinned probe selection and "
-            "producer materialization report; this verification does not define or approve a "
-            "browser artifact, cache, manifest, loader, or runtime contract"
+            "the diagnostic payload files independently match the pinned source byte ranges, "
+            "probe selection, and producer materialization report; this verification does not "
+            "define or approve a browser artifact, cache, manifest, loader, or runtime contract"
         ),
     }
 
 
 def verify_pinned_probe_materialization(
+    source_path: Path,
     probe_report: dict[str, object],
     materialization: dict[str, object],
     payload_dir: Path,
@@ -268,7 +340,7 @@ def verify_pinned_probe_materialization(
     tier: str,
     buffer_bytes: int = materializer.DEFAULT_COPY_BUFFER_BYTES,
 ) -> dict[str, object]:
-    """Derive the pinned expectations independently, then verify producer evidence."""
+    """Derive pinned expectations independently, then verify source-backed evidence."""
 
     chunks = materializer.chunks_from_probe_report(
         probe_report,
@@ -283,6 +355,7 @@ def verify_pinned_probe_materialization(
     )
     expected_source_identity = materializer.source_identity_from_probe_report(probe_report)
     return verify_materialization_payloads(
+        source_path,
         materialization,
         payload_dir,
         expected_chunks=chunks,
@@ -294,6 +367,7 @@ def verify_pinned_probe_materialization(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source_external_data", type=Path)
     parser.add_argument("probe_report", type=Path)
     parser.add_argument("materialization_report", type=Path)
     parser.add_argument("payload_dir", type=Path)
@@ -307,6 +381,7 @@ def main() -> int:
         args.materialization_report
     )
     verification = verify_pinned_probe_materialization(
+        args.source_external_data,
         probe_report,
         materialization,
         args.payload_dir,
