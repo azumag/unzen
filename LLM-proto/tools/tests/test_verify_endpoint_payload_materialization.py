@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -646,6 +647,41 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
                     verifier.main()
 
+            self.assertFalse((reserved_dir / "verification.json").exists())
+
+    def test_report_write_pins_parent_fd_and_cleans_up_on_late_alias_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload_dir = root / "payloads"
+            payload_dir.mkdir()
+            safe_dir = root / "safe-reports"
+            safe_dir.mkdir()
+            reserved_dir = payload_dir / "payload-9999.bin"
+            reserved_dir.mkdir()
+            report_alias = root / "report-alias"
+            report_alias.symlink_to(safe_dir, target_is_directory=True)
+            report_out = report_alias / "verification.json"
+            real_os_open = os.open
+
+            def retarget_after_child_open(
+                path: object, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+            ) -> int:
+                fd = real_os_open(path, flags, mode, dir_fd=dir_fd)
+                if dir_fd is not None and os.fspath(path) == report_out.name:
+                    report_alias.unlink()
+                    report_alias.symlink_to(reserved_dir, target_is_directory=True)
+                return fd
+
+            validate = lambda: verifier._validate_report_output_path(
+                report_out, payload_dir=payload_dir
+            )
+            with mock.patch.object(verifier.os, "open", side_effect=retarget_after_child_open):
+                with self.assertRaisesRegex(RuntimeError, "report parent directory changed"):
+                    verifier._write_report_exclusively(
+                        report_out, '{"status":"pass"}\n', validate_output_path=validate
+                    )
+
+            self.assertFalse((safe_dir / "verification.json").exists())
             self.assertFalse((reserved_dir / "verification.json").exists())
 
     def test_json_loader_hashes_the_exact_bytes_it_parses(self) -> None:
