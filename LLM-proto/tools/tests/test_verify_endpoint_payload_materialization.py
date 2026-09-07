@@ -115,6 +115,10 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
             stage_kind=stage_kind,
             tier=tier,
         )
+        budget = verifier._expected_pinned_tier_budget(
+            stage_kind=stage_kind,
+            tier=tier,
+        )
         return {
             "kind": verifier.EXPECTED_PROBE_KIND,
             "schemaVersion": verifier.EXPECTED_PROBE_SCHEMA_VERSION,
@@ -128,12 +132,18 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
             },
             "endpointChunkEnvelope": {
                 stage_kind: {
+                    "rows": verifier.EXPECTED_ROWS,
+                    "rowBytes": verifier.EXPECTED_ROW_BYTES,
+                    "largestRangeBytes": verifier.EXPECTED_ROWS * verifier.EXPECTED_ROW_BYTES,
+                    "sourceLocation": verifier.EXPECTED_SOURCE_LOCATION,
+                    "sourceOffsetBytes": verifier.EXPECTED_SOURCE_OFFSET_BYTES,
+                    "sourceStageResidualBytes": verifier.EXPECTED_STAGE_RESIDUAL_BYTES[stage_kind],
                     "tiers": {
                         tier: {
-                            "feasible": True,
+                            **budget,
                             "balancedSourcePayloadChunks": chunks,
                         }
-                    }
+                    },
                 }
             },
         }
@@ -352,6 +362,47 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
             },
         )
 
+    def test_pinned_contract_rejects_tier_budget_drift(self) -> None:
+        report = self._pinned_probe_report()
+        selected = report["endpointChunkEnvelope"]["embedding-prefix"]["tiers"]["preferred"]
+        selected["remainingHeadroomBytes"] += 1
+
+        with self.assertRaisesRegex(RuntimeError, "verifier-owned pinned budget"):
+            verifier._chunks_from_probe_report(
+                report,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
+
+    def test_pinned_contract_rejects_stage_residual_drift(self) -> None:
+        report = self._pinned_probe_report()
+        stage = report["endpointChunkEnvelope"]["embedding-prefix"]
+        stage["sourceStageResidualBytes"] += 1
+
+        with self.assertRaisesRegex(RuntimeError, "verifier-owned pinned budget"):
+            verifier._chunks_from_probe_report(
+                report,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
+
+    def test_pinned_budget_derivation_matches_preferred_endpoint_envelopes(self) -> None:
+        embedding = verifier._expected_pinned_tier_budget(
+            stage_kind="embedding-prefix",
+            tier="preferred",
+        )
+        logits = verifier._expected_pinned_tier_budget(
+            stage_kind="logits-postfix",
+            tier="preferred",
+        )
+
+        self.assertEqual(embedding["limitBytes"], 268_435_456)
+        self.assertEqual(embedding["minimumPayloadCount"], 4)
+        self.assertEqual(embedding["balancedMaximumPayloadBytes"], 262_668_288)
+        self.assertEqual(embedding["remainingHeadroomBytes"], 5_766_668)
+        self.assertEqual(logits["minimumPayloadCount"], 4)
+        self.assertEqual(logits["remainingHeadroomBytes"], 5_757_614)
+
     def test_pinned_contract_rejects_self_consistent_probe_blueprint_drift(self) -> None:
         report = self._pinned_probe_report()
         selected = report["endpointChunkEnvelope"]["embedding-prefix"]["tiers"]["preferred"]
@@ -396,6 +447,24 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     "_source_identity_from_probe_report",
                     return_value=source_identity,
                 ) as source_mock,
+                mock.patch.object(
+                    verifier,
+                    "_expected_pinned_tier_budget",
+                    return_value={
+                        "limitBytes": 16,
+                        "maximumWholeRowsPerArtifact": 7,
+                        "minimumPayloadCount": 2,
+                        "balancedMaximumRows": 2,
+                        "balancedMaximumPayloadBytes": 4,
+                        "conservativeMaximumArtifactBytes": 6,
+                        "remainingHeadroomBytes": 10,
+                        "feasible": True,
+                    },
+                ) as budget_mock,
+                mock.patch.dict(
+                    verifier.EXPECTED_STAGE_RESIDUAL_BYTES,
+                    {"embedding-prefix": 2},
+                ),
             ):
                 report = verifier.verify_pinned_probe_materialization(
                     source,
@@ -407,6 +476,10 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                 )
 
             self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["schemaVersion"], verifier.REPORT_SCHEMA_VERSION)
+            self.assertEqual(report["budget"]["limitBytes"], 16)
+            self.assertEqual(report["budget"]["sourceStageResidualBytes"], 2)
+            self.assertEqual(report["budget"]["verifiedMaximumPayloadBytes"], 4)
             chunks_mock.assert_called_once_with(
                 probe_report,
                 stage_kind="embedding-prefix",
@@ -419,6 +492,10 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                 chunks=chunks,
             )
             source_mock.assert_called_once_with(probe_report)
+            budget_mock.assert_called_once_with(
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
 
     def test_json_loader_hashes_the_exact_bytes_it_parses(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

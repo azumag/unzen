@@ -100,6 +100,8 @@ The emitted `unzen-endpoint-source-payload-materialization` report is explicitly
 
 `verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate, source-backed pass. It requires the pinned external-data file plus the expected `--stage` and `--tier`, independently derives the pinned blueprint/provenance from the probe report, re-hashes the complete source against the pinned identity, re-hashes every referenced source range and every payload, checks source coverage and payload geometry/count/total bytes, requires the payload directory to contain exactly the expected `payload-*.bin` set, and rejects symlink payload files. Source symlinks remain supported for model-cache compatibility because the dereferenced bytes are independently checked against the pinned size/SHA-256 and per-range digests.
 
+The verifier also owns the pinned browser-budget contract instead of trusting budget numbers emitted by the probe. From the fixed tier ceilings (256 MiB / 512 MiB / 1 GiB), endpoint residual bytes, row geometry, and explicit stage/tier it independently derives the maximum whole rows per artifact, minimum payload count, balanced maximum payload size, conservative maximum artifact size, and remaining headroom. The probe report must match those values exactly. CLI verification reports use schema `1.1.0` and include a `budget` section that records those independently derived values plus the maximum payload size actually verified from disk.
+
 ```bash
 python tools/verify_endpoint_payload_materialization.py \
   /absolute/path/to/model_q4.onnx_data \

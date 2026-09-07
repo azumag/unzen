@@ -22,7 +22,8 @@ from typing import Iterable
 
 
 REPORT_KIND = "unzen-endpoint-source-payload-materialization-verification"
-REPORT_SCHEMA_VERSION = "1.0.0"
+REPORT_SCHEMA_VERSION = "1.1.0"
+BASE_REPORT_SCHEMA_VERSION = "1.0.0"
 EXPECTED_MATERIALIZATION_KIND = "unzen-endpoint-source-payload-materialization"
 EXPECTED_MATERIALIZATION_SCHEMA_VERSION = "1.1.0"
 DEFAULT_COPY_BUFFER_BYTES = 8 * 1024 * 1024
@@ -39,6 +40,15 @@ EXPECTED_SOURCE_SHA256 = (
 EXPECTED_ROWS = 128_256
 EXPECTED_ROW_BYTES = 8_192
 EXPECTED_SOURCE_OFFSET_BYTES = 0
+EXPECTED_STAGE_RESIDUAL_BYTES = {
+    "embedding-prefix": 500,
+    "logits-postfix": 9_554,
+}
+EXPECTED_TIER_LIMIT_BYTES = {
+    "preferred": 268_435_456,
+    "normal": 536_870_912,
+    "absolute": 1_073_741_824,
+}
 EXPECTED_STAGE_TIER_PAYLOAD_COUNTS = {
     "embedding-prefix": {"preferred": 4, "normal": 2, "absolute": 1},
     "logits-postfix": {"preferred": 4, "normal": 2, "absolute": 1},
@@ -147,6 +157,56 @@ def _canonical_json_sha256(value: object) -> str:
     return hashlib.sha256(rendered).hexdigest()
 
 
+def _expected_pinned_tier_budget(*, stage_kind: str, tier: str) -> dict[str, object]:
+    """Independently derive the pinned budget envelope for one stage/tier."""
+
+    stage_tiers = EXPECTED_STAGE_TIER_PAYLOAD_COUNTS.get(stage_kind)
+    residual_bytes = EXPECTED_STAGE_RESIDUAL_BYTES.get(stage_kind)
+    limit_bytes = EXPECTED_TIER_LIMIT_BYTES.get(tier)
+    if (
+        stage_tiers is None
+        or residual_bytes is None
+        or limit_bytes is None
+        or tier not in stage_tiers
+    ):
+        raise RuntimeError(f"unsupported pinned diagnostic stage/tier: {stage_kind}/{tier}")
+
+    payload_capacity_bytes = limit_bytes - residual_bytes
+    maximum_rows = payload_capacity_bytes // EXPECTED_ROW_BYTES
+    if maximum_rows <= 0:
+        raise RuntimeError(
+            f"pinned diagnostic tier leaves no room for one row: {stage_kind}/{tier}"
+        )
+    minimum_payload_count = (EXPECTED_ROWS + maximum_rows - 1) // maximum_rows
+    if minimum_payload_count != stage_tiers[tier]:
+        raise RuntimeError(
+            "verifier-owned pinned payload count is inconsistent with the independently "
+            "derived tier budget: "
+            f"{stage_kind}/{tier}"
+        )
+    balanced_maximum_rows = (
+        EXPECTED_ROWS + minimum_payload_count - 1
+    ) // minimum_payload_count
+    balanced_maximum_payload_bytes = balanced_maximum_rows * EXPECTED_ROW_BYTES
+    conservative_maximum_artifact_bytes = (
+        balanced_maximum_payload_bytes + residual_bytes
+    )
+    remaining_headroom_bytes = limit_bytes - conservative_maximum_artifact_bytes
+    if remaining_headroom_bytes < 0:
+        raise RuntimeError(f"pinned diagnostic tier budget is infeasible: {stage_kind}/{tier}")
+
+    return {
+        "limitBytes": limit_bytes,
+        "maximumWholeRowsPerArtifact": maximum_rows,
+        "minimumPayloadCount": minimum_payload_count,
+        "balancedMaximumRows": balanced_maximum_rows,
+        "balancedMaximumPayloadBytes": balanced_maximum_payload_bytes,
+        "conservativeMaximumArtifactBytes": conservative_maximum_artifact_bytes,
+        "remainingHeadroomBytes": remaining_headroom_bytes,
+        "feasible": True,
+    }
+
+
 def _expected_pinned_source_payload_chunks(
     *, stage_kind: str, tier: str
 ) -> list[dict[str, object]]:
@@ -238,8 +298,31 @@ def _chunks_from_probe_report(
     stage = _required_dict(envelopes.get(stage_kind), field=f"endpointChunkEnvelope.{stage_kind}")
     tiers = _required_dict(stage.get("tiers"), field=f"endpointChunkEnvelope.{stage_kind}.tiers")
     selected = _required_dict(tiers.get(tier), field=f"endpointChunkEnvelope.{stage_kind}.tiers.{tier}")
-    if selected.get("feasible") is not True:
-        raise RuntimeError(f"selected diagnostic tier is not feasible: {stage_kind}/{tier}")
+    expected_budget = _expected_pinned_tier_budget(stage_kind=stage_kind, tier=tier)
+    for field, expected in expected_budget.items():
+        observed = selected.get(field)
+        if observed != expected:
+            raise RuntimeError(
+                "probe report tier budget does not match the verifier-owned pinned budget: "
+                f"{stage_kind}/{tier}.{field}: expected={expected!r}, observed={observed!r}"
+            )
+
+    expected_stage_fields = {
+        "rows": EXPECTED_ROWS,
+        "rowBytes": EXPECTED_ROW_BYTES,
+        "largestRangeBytes": EXPECTED_ROWS * EXPECTED_ROW_BYTES,
+        "sourceLocation": EXPECTED_SOURCE_LOCATION,
+        "sourceOffsetBytes": EXPECTED_SOURCE_OFFSET_BYTES,
+        "sourceStageResidualBytes": EXPECTED_STAGE_RESIDUAL_BYTES[stage_kind],
+    }
+    for field, expected in expected_stage_fields.items():
+        observed = stage.get(field)
+        if observed != expected:
+            raise RuntimeError(
+                "probe report stage envelope does not match the verifier-owned pinned budget: "
+                f"{stage_kind}.{field}: expected={expected!r}, observed={observed!r}"
+            )
+
     chunks = [
         _required_dict(item, field=f"chunk[{index}]")
         for index, item in enumerate(
@@ -656,8 +739,8 @@ def verify_materialization_payloads(
         path=source_path,
     )
 
-    return {
-        "schemaVersion": REPORT_SCHEMA_VERSION,
+    report: dict[str, object] = {
+        "schemaVersion": BASE_REPORT_SCHEMA_VERSION,
         "kind": REPORT_KIND,
         "status": "pass",
         "decisionStatus": "diagnostic-only",
@@ -676,6 +759,7 @@ def verify_materialization_payloads(
             "does not define or approve a browser artifact, cache, manifest, loader, or runtime contract"
         ),
     }
+    return report
 
 
 def verify_pinned_probe_materialization(
@@ -702,7 +786,8 @@ def verify_pinned_probe_materialization(
         chunks=chunks,
     )
     expected_source_identity = _source_identity_from_probe_report(probe_report)
-    return verify_materialization_payloads(
+    expected_budget = _expected_pinned_tier_budget(stage_kind=stage_kind, tier=tier)
+    report = verify_materialization_payloads(
         source_path,
         materialization,
         payload_dir,
@@ -711,6 +796,29 @@ def verify_pinned_probe_materialization(
         expected_source_identity=expected_source_identity,
         buffer_bytes=buffer_bytes,
     )
+    verified_payloads = _required_list(report.get("payloads"), field="verification.payloads")
+    actual_max_payload_bytes = max(
+        _required_int(
+            _required_dict(item, field="verification.payload").get("bytes"),
+            field="verification.payload.bytes",
+        )
+        for item in verified_payloads
+    )
+    expected_max_payload_bytes = _required_int(
+        expected_budget.get("balancedMaximumPayloadBytes"),
+        field="expected budget balancedMaximumPayloadBytes",
+    )
+    if actual_max_payload_bytes != expected_max_payload_bytes:
+        raise RuntimeError(
+            "verified maximum payload bytes do not match the verifier-owned pinned tier budget"
+        )
+    report["schemaVersion"] = REPORT_SCHEMA_VERSION
+    report["budget"] = {
+        **expected_budget,
+        "sourceStageResidualBytes": EXPECTED_STAGE_RESIDUAL_BYTES[stage_kind],
+        "verifiedMaximumPayloadBytes": actual_max_payload_bytes,
+    }
+    return report
 
 
 def main() -> int:
