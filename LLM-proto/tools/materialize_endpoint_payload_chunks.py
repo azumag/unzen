@@ -757,6 +757,24 @@ def _report_path_enters_reserved_payload_namespace(
     return False
 
 
+def _report_path_blocks_payload_directory(report_out: Path, *, output_dir: Path) -> bool:
+    """Return whether the report file path must become the payload directory or an ancestor."""
+
+    path_pairs = (
+        (Path(os.path.abspath(report_out)), Path(os.path.abspath(output_dir))),
+        (report_out.resolve(), output_dir.resolve()),
+    )
+    for target, payload_root in path_pairs:
+        if target == payload_root:
+            return True
+        try:
+            payload_root.relative_to(target)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 def _validate_report_output_path(
     report_out: Path,
     *,
@@ -766,6 +784,10 @@ def _validate_report_output_path(
 ) -> None:
     if report_out.exists() or report_out.is_symlink():
         raise FileExistsError(f"refusing to overwrite existing report: {report_out}")
+    if _report_path_blocks_payload_directory(report_out, output_dir=output_dir):
+        raise RuntimeError(
+            "report output must not be the payload directory or one of its ancestors"
+        )
     target = report_out.resolve()
     payload_targets = {
         (output_dir / f"payload-{index:04d}.bin").resolve()
