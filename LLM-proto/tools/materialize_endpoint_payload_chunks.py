@@ -18,7 +18,8 @@ from typing import BinaryIO, Iterable
 
 
 REPORT_KIND = "unzen-endpoint-source-payload-materialization"
-REPORT_SCHEMA_VERSION = "1.0.0"
+REPORT_SCHEMA_VERSION = "1.1.0"
+LEGACY_REPORT_SCHEMA_VERSION = "1.0.0"
 DEFAULT_COPY_BUFFER_BYTES = 8 * 1024 * 1024
 EXPECTED_PROBE_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
 EXPECTED_PROBE_SCHEMA_VERSION = "1.2.0"
@@ -183,6 +184,48 @@ def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) ->
                 break
             digest.update(block)
     return digest.hexdigest()
+
+
+def _canonical_json_sha256(value: object) -> str:
+    rendered = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(rendered).hexdigest()
+
+
+def materialization_provenance_from_probe_report(
+    report: dict[str, object],
+    *,
+    stage_kind: str,
+    tier: str,
+    chunks: Iterable[dict[str, object]],
+) -> dict[str, object]:
+    """Bind materialization evidence to one exact pinned probe selection."""
+
+    normalized_chunks = list(chunks)
+    selected_chunks = chunks_from_probe_report(
+        report,
+        stage_kind=stage_kind,
+        tier=tier,
+    )
+    if normalized_chunks != selected_chunks:
+        raise RuntimeError(
+            "materialization chunks do not match the selected pinned probe blueprint: "
+            f"{stage_kind}/{tier}"
+        )
+    source_identity = source_identity_from_probe_report(report)
+    return {
+        "probeKind": EXPECTED_PROBE_KIND,
+        "probeSchemaVersion": EXPECTED_PROBE_SCHEMA_VERSION,
+        "sourceGraphSha256": EXPECTED_SOURCE_GRAPH_SHA256,
+        "stageKind": stage_kind,
+        "tier": tier,
+        "blueprintSha256": _canonical_json_sha256(selected_chunks),
+        "sourceExternalDataIdentity": source_identity,
+    }
 
 
 def validate_source_payload_chunks(
@@ -391,7 +434,7 @@ def materialize_source_payload_chunks(
             raise
 
     return {
-        "schemaVersion": REPORT_SCHEMA_VERSION,
+        "schemaVersion": LEGACY_REPORT_SCHEMA_VERSION,
         "kind": REPORT_KIND,
         "status": "pass",
         "decisionStatus": "diagnostic-only",
@@ -411,6 +454,38 @@ def materialize_source_payload_chunks(
             "define or approve a browser artifact, cache, manifest, loader, or runtime contract"
         ),
     }
+
+
+def materialize_pinned_probe_payload_chunks(
+    source_path: Path,
+    output_dir: Path,
+    report: dict[str, object],
+    *,
+    stage_kind: str,
+    tier: str,
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """Materialize one validated pinned probe selection and bind its provenance."""
+
+    chunks = chunks_from_probe_report(report, stage_kind=stage_kind, tier=tier)
+    source_identity = source_identity_from_probe_report(report)
+    provenance = materialization_provenance_from_probe_report(
+        report,
+        stage_kind=stage_kind,
+        tier=tier,
+        chunks=chunks,
+    )
+    materialization = materialize_source_payload_chunks(
+        source_path,
+        output_dir,
+        chunks,
+        buffer_bytes=buffer_bytes,
+        expected_source_bytes=_required_int(source_identity["bytes"], field="source identity bytes"),
+        expected_source_sha256=_required_str(source_identity["sha256"], field="source identity sha256"),
+    )
+    materialization["schemaVersion"] = REPORT_SCHEMA_VERSION
+    materialization["provenance"] = provenance
+    return materialization, chunks
 
 
 def _validate_report_output_path(
@@ -447,12 +522,6 @@ def main() -> int:
     if not isinstance(report, dict):
         raise RuntimeError("probe report root must be an object")
     chunks = chunks_from_probe_report(report, stage_kind=args.stage, tier=args.tier)
-    source_identity = source_identity_from_probe_report(report)
-    chunk_locations = {chunk.get("sourceLocation") for chunk in chunks}
-    if chunk_locations != {source_identity["location"]}:
-        raise RuntimeError(
-            "chunk blueprint sourceLocation does not match pinned source external-data identity"
-        )
     if args.report_out is not None:
         _validate_report_output_path(
             args.report_out,
@@ -460,12 +529,12 @@ def main() -> int:
             output_dir=args.output_dir,
             payload_count=len(chunks),
         )
-    materialization = materialize_source_payload_chunks(
+    materialization, _ = materialize_pinned_probe_payload_chunks(
         args.source_external_data,
         args.output_dir,
-        chunks,
-        expected_source_bytes=_required_int(source_identity["bytes"], field="source identity bytes"),
-        expected_source_sha256=_required_str(source_identity["sha256"], field="source identity sha256"),
+        report,
+        stage_kind=args.stage,
+        tier=args.tier,
     )
     rendered = json.dumps(materialization, indent=2, ensure_ascii=False) + "\n"
     if args.report_out is not None:
