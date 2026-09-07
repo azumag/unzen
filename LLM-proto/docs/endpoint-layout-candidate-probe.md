@@ -92,6 +92,32 @@ The 4-way and 8-way arithmetic mappings fall below the same 256 MiB numeric refe
 
 The dependency-closure probe fail-closes on unknown/duplicate physical-artifact references, mismatched slice byte totals, malformed artifact sizes/counts, or any upstream promotion away from `decisionStatus=diagnostic-only`.
 
+## Pinned CPU ORT tile execution spike
+
+`tools/probe_llama_1b_endpoint_preferred_tile_ort_cpu.py` takes the already materialized and hash-pinned **4-way preferred physical payloads** and executes the two primitive operations that directly consume the tied endpoint weight for each of the eight diagnostic execution tiles:
+
+- embedding-side `Gather`, using tile-local token IDs,
+- logits-side `Transpose + MatMul`, using a deterministic sparse hidden vector.
+
+The generated ONNX models keep the weight external. Each tile initializer points directly at the tile byte range inside `payload-0000.bin` through `payload-0003.bin`; odd-numbered tiles therefore exercise a non-zero external-data offset inside a physical payload. The helper refuses payload symlinks, verifies exact physical payload sizes, and fail-closes unless each full physical payload SHA-256 matches the previously materialized preferred-tier evidence recorded for #223. It pins every verified payload by open file descriptor, points ORT at `/dev/fd/<fd>`, and rechecks the requested payload path identity after execution so pathname replacement cannot silently redirect the run. It also requires `onnxruntime==1.22.0` and `CPUExecutionProvider`.
+
+This is still **diagnostic-only**. It deliberately uses CPU ORT rather than ORT Web/WebGPU, does not include final norm, does not execute decoder layers, and does not choose the 4-way layout. Its purpose is narrower: prove that the exact byte-range bindings already emitted by the layout probe are sufficient to execute the tied-weight primitive semantics without rebuilding the full 1,050,673,152-byte matrix in one external artifact.
+
+### 2026-09-08 pinned real-artifact run
+
+The immutable Hugging Face revision already used by CI was range-fetched into the four previously recorded preferred payloads. All four full payload hashes matched the existing evidence:
+
+- payload 0: `b783704059e886b1e5438d23c3f9911b0d947c86125501c9071e5bb8f7cebdce`
+- payload 1: `6725be963565c84faaf487339c9b6020166077d62ffeae36467ce284c49cafb7`
+- payload 2: `21ea80f5829262b36028f32b17ef213090ff27ff708c6baa47277d45a99bff0a`
+- payload 3: `b2d23fbe273c8ae5f43c4ac4200613d3c88b0d11d389d2551a47af8649a688e9`
+
+Environment: macOS 26.6.1 arm64, Python `3.12.12`, NumPy `2.5.3`, ONNX `1.18.0`, ONNX Runtime `1.22.0`, `CPUExecutionProvider`. The exact machine-readable report is committed as [`docs/evidence/endpoint-preferred-tile-ort-cpu-20260908.json`](./evidence/endpoint-preferred-tile-ort-cpu-20260908.json). All eight execution tiles passed. For every tile, embedding output was byte-exact against the selected payload rows (`maxAbsDiff=0.0`) and the sparse logits probe was also exact (`maxAbsDiff=0.0`, `maxRelativeDiff=0.0`). Tiles `1`, `3`, `5`, and `7` bind at physical-artifact offset `131,334,144`, so the run also proves non-zero external-data offsets rather than only artifact-prefix reads.
+
+Observed session/run timing is retained in the JSON report as diagnostic data rather than a performance gate; payload pages may already be warm in the OS page cache. In the committed representative run, embedding session creation was at most about `35.38 ms`, logits session creation at most about `378.73 ms`, and the sparse logits run at most about `25.81 ms`. These numbers are machine- and CPU-provider-specific and are **not** browser or WebGPU working-set/latency evidence.
+
+What this closes for S0: the existing 4-way physical payload -> 8-way tile arithmetic is no longer coordinate-only for the primitive tied-weight operators; it has executed against the real pinned payload bytes under ORT CPU. What remains open is multi-physical-slice execution (notably the 5-way boundary-crossing case), ORT Web/WebGPU binding, peak host/GPU working set, session release behavior, final-norm/post-stage composition, and full-vs-staged numerical equivalence.
+
 ## Running the probes
 
 From `LLM-proto/`:
@@ -102,9 +128,14 @@ python tools/probe_llama_1b_endpoint_layout_candidates.py \
 
 python tools/probe_llama_1b_endpoint_dependency_closure.py \
   /absolute/path/to/model_q4.onnx
+
+python tools/probe_llama_1b_endpoint_preferred_tile_ort_cpu.py \
+  /absolute/path/to/model_q4.onnx \
+  /absolute/path/to/preferred-payload-dir \
+  --all-tiles
 ```
 
-Both commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
+All three commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
 
 The layout JSON report includes the upstream probe/source identity and, for every candidate:
 
@@ -128,23 +159,24 @@ The dependency-closure JSON report preserves the same source identity and adds, 
 - bytes inside those required full artifacts not consumed by the tile,
 - numeric distance from the current preferred physical-artifact reference, explicitly not an execution-policy verdict.
 
-CI runs both probes against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes.
+CI runs the arithmetic layout/dependency probes against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes. The CPU ORT tile execution helper is covered by synthetic external-data unit tests but is not run against the 1.0+ GiB real endpoint payloads on every CI run; the pinned real-payload report above is committed as diagnostic evidence rather than promoted to a CI performance gate.
 
 ## Evidence boundary
 
-A passing result proves only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent.
+The arithmetic probes prove only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent. A passing CPU ORT tile run additionally proves the selected primitive `Gather` and `Transpose + MatMul` executions consume the pinned 4-way payload byte ranges correctly under the pinned CPU provider.
 
 It does **not** prove:
 
 - that the 4/5/8 candidate payloads have all been materialized and independently verified,
 - that multiple physical artifacts are an approved manifest/cache contract,
 - that ORT Web can bind the slices without hidden whole-weight reconstruction,
+- that the 5-way boundary-crossing tile can execute directly from two physical payloads,
 - that physical dependency-closure bytes equal resident host/GPU memory,
 - that the physical payload count should be 4, 5, or 8,
 - that an 8-way execution plan should be adopted,
 - that peak host/GPU working set is acceptable,
 - that browser cold/warm latency is acceptable,
-- that embedding or logits execution is numerically equivalent,
+- that the complete embedding/final-norm/logits endpoint stages are numerically equivalent to the full model under ORT Web/WebGPU,
 - that a normal short-lived visitor should run endpoint stages.
 
 Those remain explicit #223 decision and S0 feasibility gates. Runtime, manifest, loader, cache, residency, dispatcher, and artifact-policy behavior remain unchanged by these probes.
