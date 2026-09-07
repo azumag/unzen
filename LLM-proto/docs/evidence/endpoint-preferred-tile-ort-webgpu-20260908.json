@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "unzen-pinned-llama-1b-endpoint-preferred-tile-ort-webgpu-runtime",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "evidenceLevel": "self-reported-runtime",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+  "adapterInfo": {
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "",
+    "description": ""
+  },
+  "adapterLimits": {
+    "maxBufferSize": 4294967292,
+    "maxStorageBufferBindingSize": 4294967292,
+    "maxComputeWorkgroupStorageSize": 32768
+  },
+  "onnxruntimeWebVersion": "1.22.0",
+  "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+  "physicalArtifact": {
+    "index": 0,
+    "bytes": 262668288,
+    "sha256": "b783704059e886b1e5438d23c3f9911b0d947c86125501c9071e5bb8f7cebdce"
+  },
+  "executedTiles": [
+    {
+      "tileIndex": 0,
+      "artifactByteOffset": 0,
+      "byteLength": 131334144,
+      "embedding": {
+        "allClose": true,
+        "exactEqual": true,
+        "maxAbsDiff": 0,
+        "maxRelativeDiff": 0,
+        "localIds": [
+          0,
+          8016,
+          16031
+        ],
+        "sessionCreateMs": 80.39999961853027,
+        "runMs": 110.90000009536743,
+        "sessionReleaseMs": 0.3000001907348633
+      },
+      "logits": {
+        "allClose": true,
+        "maxAbsDiff": 0,
+        "maxRelativeDiff": 0,
+        "sparseColumns": [
+          0,
+          17,
+          2047
+        ],
+        "sparseCoefficients": [
+          0.5,
+          -0.25,
+          0.125
+        ],
+        "atol": 0.000001,
+        "rtol": 0.000001,
+        "sessionCreateMs": 247,
+        "runMs": 3.8000001907348633,
+        "sessionReleaseMs": 0
+      }
+    },
+    {
+      "tileIndex": 1,
+      "artifactByteOffset": 131334144,
+      "byteLength": 131334144,
+      "embedding": {
+        "allClose": true,
+        "exactEqual": true,
+        "maxAbsDiff": 0,
+        "maxRelativeDiff": 0,
+        "localIds": [
+          0,
+          8016,
+          16031
+        ],
+        "sessionCreateMs": 20.100000381469727,
+        "runMs": 21.199999809265137,
+        "sessionReleaseMs": 0.09999990463256836
+      },
+      "logits": {
+        "allClose": true,
+        "maxAbsDiff": 0,
+        "maxRelativeDiff": 0,
+        "sparseColumns": [
+          0,
+          17,
+          2047
+        ],
+        "sparseCoefficients": [
+          0.5,
+          -0.25,
+          0.125
+        ],
+        "atol": 0.000001,
+        "rtol": 0.000001,
+        "sessionCreateMs": 70.5,
+        "runMs": 22.90000009536743,
+        "sessionReleaseMs": 0
+      }
+    }
+  ],
+  "sessionReleaseApiCompleted": true,
+  "conclusion": "Real browser ORT Web/WebGPU executed zero-offset and non-zero-offset ranges inside one verified preferred physical payload. InferenceSession.release() completed after each run, but that does not prove immediate GPU-memory reclamation. This remains diagnostic-only and does not select a 4-way/8-way architecture, establish full endpoint composition, measure peak host/GPU memory, or prove full-vs-staged equivalence.",
+  "environment": {
+    "chromeVersion": "152.0.7977.83",
+    "system": "Darwin",
+    "release": "25.6.0",
+    "machine": "arm64",
+    "macOSVersion": "26.6.1"
+  }
+}
