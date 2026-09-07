@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 REPORT_KIND = "unzen-endpoint-source-payload-materialization-verification"
@@ -901,6 +901,70 @@ def _validate_report_output_path(report_out: Path, *, payload_dir: Path) -> None
         )
 
 
+def _stat_identity(snapshot: os.stat_result) -> tuple[int, int]:
+    return snapshot.st_dev, snapshot.st_ino
+
+
+def _write_report_exclusively(
+    report_out: Path,
+    rendered: str,
+    *,
+    validate_output_path: Callable[[], None],
+) -> None:
+    """Create a report relative to a pinned parent directory descriptor."""
+
+    validate_output_path()
+    resolved_parent = report_out.parent.resolve(strict=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = os.open(resolved_parent, directory_flags)
+    created_identity: tuple[int, int] | None = None
+    try:
+        parent_identity = _stat_identity(os.fstat(parent_fd))
+
+        def recheck_requested_parent() -> None:
+            current = os.stat(report_out.parent, follow_symlinks=True)
+            if _stat_identity(current) != parent_identity:
+                raise RuntimeError(
+                    "report parent directory changed after validation; refusing to write report"
+                )
+
+        recheck_requested_parent()
+        validate_output_path()
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        file_flags |= getattr(os, "O_CLOEXEC", 0)
+        file_flags |= getattr(os, "O_NOFOLLOW", 0)
+        report_fd = os.open(report_out.name, file_flags, 0o666, dir_fd=parent_fd)
+        try:
+            created_identity = _stat_identity(os.fstat(report_fd))
+            with os.fdopen(report_fd, "w", encoding="utf-8", closefd=True) as stream:
+                report_fd = -1
+                stream.write(rendered)
+        finally:
+            if report_fd >= 0:
+                os.close(report_fd)
+
+        recheck_requested_parent()
+    except BaseException:
+        if created_identity is not None:
+            try:
+                current_report = os.stat(
+                    report_out.name, dir_fd=parent_fd, follow_symlinks=False
+                )
+            except OSError:
+                pass
+            else:
+                if _stat_identity(current_report) == created_identity:
+                    try:
+                        os.unlink(report_out.name, dir_fd=parent_fd)
+                    except OSError:
+                        pass
+        raise
+    finally:
+        os.close(parent_fd)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_external_data", type=Path)
@@ -935,9 +999,13 @@ def main() -> int:
     if args.report_out is not None:
         _validate_report_output_path(args.report_out, payload_dir=args.payload_dir)
         args.report_out.parent.mkdir(parents=True, exist_ok=True)
-        _validate_report_output_path(args.report_out, payload_dir=args.payload_dir)
-        with args.report_out.open("x", encoding="utf-8") as stream:
-            stream.write(rendered)
+        _write_report_exclusively(
+            args.report_out,
+            rendered,
+            validate_output_path=lambda: _validate_report_output_path(
+                args.report_out, payload_dir=args.payload_dir
+            ),
+        )
     print(rendered, end="")
     return 0
 

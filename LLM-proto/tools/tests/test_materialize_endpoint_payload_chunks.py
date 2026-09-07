@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 from pathlib import Path
 import sys
@@ -765,6 +766,48 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
                     materializer.main()
 
+            self.assertFalse((reserved_dir / "report.json").exists())
+
+    def test_report_write_pins_parent_fd_and_cleans_up_on_late_alias_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"source")
+            output_dir = root / "payloads"
+            output_dir.mkdir()
+            safe_dir = root / "safe-reports"
+            safe_dir.mkdir()
+            reserved_dir = output_dir / "payload-9999.bin"
+            reserved_dir.mkdir()
+            report_alias = root / "report-alias"
+            report_alias.symlink_to(safe_dir, target_is_directory=True)
+            report_out = report_alias / "report.json"
+            real_os_open = os.open
+
+            def retarget_after_child_open(
+                path: object, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+            ) -> int:
+                fd = real_os_open(path, flags, mode, dir_fd=dir_fd)
+                if dir_fd is not None and os.fspath(path) == report_out.name:
+                    report_alias.unlink()
+                    report_alias.symlink_to(reserved_dir, target_is_directory=True)
+                return fd
+
+            validate = lambda: materializer._validate_report_output_path(
+                report_out,
+                source_path=source,
+                output_dir=output_dir,
+                payload_count=1,
+            )
+            with mock.patch.object(
+                materializer.os, "open", side_effect=retarget_after_child_open
+            ):
+                with self.assertRaisesRegex(RuntimeError, "report parent directory changed"):
+                    materializer._write_report_exclusively(
+                        report_out, '{"status":"pass"}\n', validate_output_path=validate
+                    )
+
+            self.assertFalse((safe_dir / "report.json").exists())
             self.assertFalse((reserved_dir / "report.json").exists())
 
     def test_rejects_unsafe_blueprint_location(self) -> None:
