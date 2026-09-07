@@ -105,6 +105,39 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
         }
         return source_path, materialization, chunks, provenance, source_identity
 
+    def _pinned_probe_report(
+        self,
+        *,
+        stage_kind: str = "embedding-prefix",
+        tier: str = "preferred",
+    ) -> dict[str, object]:
+        chunks = verifier._expected_pinned_source_payload_chunks(
+            stage_kind=stage_kind,
+            tier=tier,
+        )
+        return {
+            "kind": verifier.EXPECTED_PROBE_KIND,
+            "schemaVersion": verifier.EXPECTED_PROBE_SCHEMA_VERSION,
+            "status": "pass",
+            "decisionStatus": "diagnostic-only",
+            "sourceGraphSha256": verifier.EXPECTED_SOURCE_GRAPH_SHA256,
+            "pinnedSourceExternalDataIdentity": {
+                "location": verifier.EXPECTED_SOURCE_LOCATION,
+                "bytes": verifier.EXPECTED_SOURCE_BYTES,
+                "sha256": verifier.EXPECTED_SOURCE_SHA256,
+            },
+            "endpointChunkEnvelope": {
+                stage_kind: {
+                    "tiers": {
+                        tier: {
+                            "feasible": True,
+                            "balancedSourcePayloadChunks": chunks,
+                        }
+                    }
+                }
+            },
+        }
+
     def test_independently_rehashes_source_ranges_and_exact_payload_set(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -182,7 +215,9 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     expected_source_identity=source_identity,
                 )
 
-            source, materialization, chunks, provenance, source_identity = self._fixture(root / "second")
+            source, materialization, chunks, provenance, source_identity = self._fixture(
+                root / "second"
+            )
             expected_other_selection = dict(provenance)
             expected_other_selection["stageKind"] = "logits-postfix"
             with self.assertRaisesRegex(RuntimeError, "explicit pinned probe selection"):
@@ -227,7 +262,61 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     expected_source_identity=source_identity,
                 )
 
-    def test_pinned_wrapper_derives_expectations_from_explicit_stage_and_tier(self) -> None:
+    def test_pinned_contract_is_rederived_without_producer_helpers(self) -> None:
+        report = self._pinned_probe_report()
+
+        chunks = verifier._chunks_from_probe_report(
+            report,
+            stage_kind="embedding-prefix",
+            tier="preferred",
+        )
+        provenance = verifier._materialization_provenance_from_probe_report(
+            report,
+            stage_kind="embedding-prefix",
+            tier="preferred",
+            chunks=chunks,
+        )
+
+        self.assertEqual(len(chunks), 4)
+        self.assertEqual(chunks[0]["sourceOffsetBytes"], 0)
+        self.assertEqual(
+            chunks[-1]["sourceEndOffsetBytesExclusive"],
+            1_050_673_152,
+        )
+        self.assertEqual(provenance["stageKind"], "embedding-prefix")
+        self.assertEqual(provenance["tier"], "preferred")
+        self.assertEqual(
+            provenance["sourceExternalDataIdentity"],
+            {
+                "location": verifier.EXPECTED_SOURCE_LOCATION,
+                "bytes": verifier.EXPECTED_SOURCE_BYTES,
+                "sha256": verifier.EXPECTED_SOURCE_SHA256,
+            },
+        )
+
+    def test_pinned_contract_rejects_self_consistent_probe_blueprint_drift(self) -> None:
+        report = self._pinned_probe_report()
+        selected = report["endpointChunkEnvelope"]["embedding-prefix"]["tiers"]["preferred"]
+        chunks = selected["balancedSourcePayloadChunks"]
+        chunks[0] = dict(chunks[0])
+        chunks[1] = dict(chunks[1])
+        chunks[0]["endRowExclusive"] -= 1
+        chunks[0]["rowCount"] -= 1
+        chunks[0]["sourceEndOffsetBytesExclusive"] -= verifier.EXPECTED_ROW_BYTES
+        chunks[0]["payloadBytes"] -= verifier.EXPECTED_ROW_BYTES
+        chunks[1]["startRow"] -= 1
+        chunks[1]["rowCount"] += 1
+        chunks[1]["sourceOffsetBytes"] -= verifier.EXPECTED_ROW_BYTES
+        chunks[1]["payloadBytes"] += verifier.EXPECTED_ROW_BYTES
+
+        with self.assertRaisesRegex(RuntimeError, "verifier-owned pinned blueprint"):
+            verifier._chunks_from_probe_report(
+                report,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
+
+    def test_pinned_wrapper_uses_verifier_owned_derivation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, materialization, chunks, provenance, source_identity = self._fixture(root)
@@ -235,18 +324,18 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    verifier.materializer,
-                    "chunks_from_probe_report",
+                    verifier,
+                    "_chunks_from_probe_report",
                     return_value=chunks,
                 ) as chunks_mock,
                 mock.patch.object(
-                    verifier.materializer,
-                    "materialization_provenance_from_probe_report",
+                    verifier,
+                    "_materialization_provenance_from_probe_report",
                     return_value=provenance,
                 ) as provenance_mock,
                 mock.patch.object(
-                    verifier.materializer,
-                    "source_identity_from_probe_report",
+                    verifier,
+                    "_source_identity_from_probe_report",
                     return_value=source_identity,
                 ) as source_mock,
             ):
