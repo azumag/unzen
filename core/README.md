@@ -280,6 +280,12 @@ fallback request は UTF-8 JSON 4 MiB、client が受信する untrusted body �
 function code / MoonBit module 16 MiB、fallback response 16 MiB を上限とする。client は送信前に
 request を拒否し、server/client の受信側は `Content-Length` だけに依存せず stream の実 byte 数を
 計測する。chunked body も上限を越えた時点で cancel し、JSON parse・cache・compile 前に拒否する。
+fallback POST は `redirect: 'error'` を使い、301/302/303/307/308 を転送前に
+`UnzenNetworkError` として拒否する。307/308 による別 endpoint への引数再送も行わないため、
+endpoint にはリダイレクト前の URL ではなく最終 API URL を指定する。
+code / manifest / MoonBit（in-process・Worker 両方）の HTTP エラーや、取消後に
+adapter が返した fallback response は、
+未読 body を best-effort で cancel する。cancel の完了待ちや cleanup の失敗で本来のエラーを隠さない。
 server も fallback result を一度だけ JSON 化して response の 16 MiB 上限と正確な
 `Content-Length` を適用し、過大または JSON 化不能な result は構造化 `422` で返す。JSON が
 別値へ暗黙変換する top-level `Symbol` / function / 非有限 number も成功扱いにしない。

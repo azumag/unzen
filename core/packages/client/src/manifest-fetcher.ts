@@ -44,7 +44,7 @@ import {
   throwIfAborted,
 } from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
-import { readBoundedJsonResponse } from './response-body';
+import { cancelResponseBody, readBoundedJsonResponse } from './response-body';
 
 /** A shared in-flight manifest request with per-caller waiter tracking. */
 interface InflightManifestRequest {
@@ -263,6 +263,7 @@ export class ManifestFetcher {
 
       // Check HTTP status for other non-OK responses
       if (!response.ok) {
+        cancelResponseBody(response);
         throw new UnzenNetworkError(
           `Failed to fetch manifest: ${response.status} ${response.statusText}`
         );

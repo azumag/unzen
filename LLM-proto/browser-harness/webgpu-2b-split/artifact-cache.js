@@ -2,6 +2,19 @@ import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from './artifact-budget.js';
 import { abortError, throwIfAborted } from './execution-lifecycle.js';
 
 const CACHE_NAME = 'unzen-real-split-artifacts-v2';
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const typedArrayTag = Object.getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
+const typedArrayByteLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength').get;
+
+function cancelReadable(readable, reason) {
+  try {
+    // A tee branch's cancel promise waits for its sibling. Request cleanup,
+    // but never make rejection/Stop depend on another consumer finishing.
+    void Promise.resolve(readable?.cancel(reason)).catch(() => {});
+  } catch {
+    // Cleanup is best-effort; preserve the original load/validation failure.
+  }
+}
 
 function hex(bytes) {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
@@ -44,11 +57,16 @@ export async function readResponseBytesBounded(
   if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0)) {
     throw new Error(`expectedBytes must be a non-negative safe integer: ${expectedBytes}`);
   }
-  throwIfAborted(signal);
   const effectiveMax = expectedBytes === undefined ? maxBytes : Math.min(maxBytes, expectedBytes);
-  const contentLength = parseContentLength(response);
-  if (contentLength !== undefined && contentLength > effectiveMax) {
-    throw new Error(`artifact exceeds byte limit before body read for ${url}: ${contentLength} > ${effectiveMax}`);
+  try {
+    throwIfAborted(signal);
+    const contentLength = parseContentLength(response);
+    if (contentLength !== undefined && contentLength > effectiveMax) {
+      throw new Error(`artifact exceeds byte limit before body read for ${url}: ${contentLength} > ${effectiveMax}`);
+    }
+  } catch (error) {
+    cancelReadable(response.body, error);
+    throw error;
   }
 
   if (!response.body?.getReader) {
@@ -67,7 +85,7 @@ export async function readResponseBytesBounded(
   const chunks = [];
   let total = 0;
   const onAbort = () => {
-    void reader.cancel('artifact-load-aborted').catch(() => {});
+    cancelReadable(reader, 'artifact-load-aborted');
   };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
@@ -83,14 +101,23 @@ export async function readResponseBytesBounded(
       throwIfAborted(signal);
       const { done, value } = next;
       if (done) break;
-      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-      total += chunk.byteLength;
-      if (total > effectiveMax) {
-        await reader.cancel('artifact-byte-limit-exceeded').catch(() => {});
-        throw new Error(`artifact exceeds byte limit for ${url}: ${total} > ${effectiveMax}`);
+      // Native getters accept cross-realm bytes without trusting a forged
+      // byteLength or coercing a non-byte value into a potentially huge buffer.
+      if (typedArrayTag.call(value) !== 'Uint8Array') {
+        throw new Error(`artifact body returned a non-byte chunk for ${url}`);
       }
-      chunks.push(chunk);
+      const chunkBytes = typedArrayByteLength.call(value);
+      if (chunkBytes > effectiveMax - total) {
+        throw new Error(`artifact exceeds byte limit for ${url}: ${total + chunkBytes} > ${effectiveMax}`);
+      }
+      total += chunkBytes;
+      // Producers may reuse their buffer on the next pull. Own accepted bytes
+      // now, before another read can mutate data awaiting digest verification.
+      if (chunkBytes > 0) chunks.push(new Uint8Array(value));
     }
+  } catch (error) {
+    cancelReadable(reader, error);
+    throw error;
   } finally {
     signal?.removeEventListener('abort', onAbort);
     reader.releaseLock?.();
@@ -131,12 +158,20 @@ export async function loadVerifiedArtifact(
   throwIfAborted(signal);
   const key = cacheKey(url, expectedSha256.toLowerCase());
   let response = await cache.match(key);
-  throwIfAborted(signal);
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    cancelReadable(response?.body, error);
+    throw error;
+  }
   const cacheHit = Boolean(response);
 
   if (!response) {
     response = await fetch(url, { cache: 'no-store', signal });
-    if (!response.ok) throw new Error(`artifact fetch failed ${response.status}: ${url}`);
+    if (!response.ok) {
+      cancelReadable(response.body, 'artifact-fetch-failed');
+      throw new Error(`artifact fetch failed ${response.status}: ${url}`);
+    }
   }
 
   let bytes;
@@ -177,7 +212,17 @@ export async function loadVerifiedArtifact(
       },
     };
   } catch (error) {
-    await cache.delete(key);
+    // Cancellation is not evidence of corruption. A failed cache miss also
+    // owns no old entry: deleting its key could evict another caller's newly
+    // verified download (including a put that completed as Stop arrived).
+    if (cacheHit && !signal?.aborted && error?.name !== 'AbortError') {
+      try {
+        await cache.delete(key);
+      } catch {
+        // A cache-storage failure must not hide the original integrity error.
+        // Any remaining entry is still size/digest-checked on the next load.
+      }
+    }
     throw error;
   }
 }

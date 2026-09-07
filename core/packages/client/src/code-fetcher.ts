@@ -36,7 +36,7 @@ import {
   throwIfAborted,
 } from './abort';
 import { assertUnzenContentIntegrity } from './content-integrity';
-import { readBoundedResponseBytes } from './response-body';
+import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
 
 interface InflightCodeRequest {
   readonly promise: Promise<string>;
@@ -215,6 +215,7 @@ export class CodeFetcher {
 
       // Check HTTP status
       if (!response.ok) {
+        cancelResponseBody(response);
         throw new UnzenNetworkError(
           `Failed to fetch code from ${codeUrl}: ${response.status} ${response.statusText}`
         );

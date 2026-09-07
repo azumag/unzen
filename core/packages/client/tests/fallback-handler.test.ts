@@ -103,6 +103,7 @@ describe('FallbackHandler', () => {
       'https://example.com/exec/add',
       {
         method: 'POST',
+        redirect: 'error',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ args: [1, 2] }),
       }

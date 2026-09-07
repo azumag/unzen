@@ -15,6 +15,21 @@ Each click on **Execute role** creates a fresh `AbortController`. While it is ac
 
 Pressing **Stop** aborts the controller. A new run can be started after the current operation has unwound.
 
+### Artifact response and cache ownership
+
+Rejected Content-Length, already-aborted reads, and unsuccessful HTTP responses cancel
+unread bodies. Stream failures cancel their reader and release its lock; cancellation
+completion is not awaited because a native `tee()` branch can wait for its sibling.
+Only genuine Uint8Array chunks are accepted, checked against the remaining byte budget,
+and copied before the next read so a producer cannot overwrite previously accepted bytes.
+The preferred and absolute artifact limits are unchanged.
+
+Stop does not evict a verified cache hit. Verified bytes already committed during
+`cache.put()` remain available to a later run even though the cancelled caller rejects.
+A failed cache miss cannot delete a concurrent caller's successful cache write. Corrupt
+cache hits are still rejected and removal is attempted; a removal failure does not hide
+the original integrity error. Cache reads always repeat size and SHA-256 verification.
+
 ### WebGPU/ORT caveat
 
 The harness does not claim that `ort.InferenceSession.run()` can always be forcibly interrupted in ONNX Runtime Web 1.22.0. If Stop is pressed while an ORT WebGPU call is already executing, the UI remains in **Stop requested** state until that call returns or throws. The harness then observes the abort before tensor conversion/network posting and releases the session in `finally`.
@@ -61,3 +76,12 @@ For the next #168 real run, verify all of the following in Chrome Task Manager /
 ## Automated evidence
 
 Vitest covers bounded checkpoint waiting, explicit abort, timeout, session release exactly once, try/finally release on inference failure, and abort during streamed artifact reads. The CI browser-harness syntax check continues to parse the actual runner.
+
+Checkpoint-envelope boundary validation separately rejects malformed/non-finite or
+negative creation times, TTLs and clocks, and expiry sums beyond the safe numeric range.
+The configured payload ceiling must be a non-negative safe integer. These failures are
+rejected before digest work and never promote a checkpoint to accepted evidence.
+
+The artifact tests include native Web Streams/tee cleanup, buffer reuse, concurrent cache
+misses, cancellation during cache reads/writes, and corrupt-cache cleanup failures.
+They are contract tests, not measurements of real-model WebGPU memory or throughput.

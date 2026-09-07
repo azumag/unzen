@@ -70,7 +70,7 @@ import {
 } from './moonbit-compile-options';
 import { normalizeMoonBitCacheLimit } from './moonbit-cache';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
-import { readBoundedResponseBytes } from './response-body';
+import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
 import {
   createMoonbitExecuteMessage,
   createMoonbitInitMessage,
@@ -1082,6 +1082,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       );
     }
     if (!response.ok) {
+      cancelResponseBody(response);
       throw new UnzenNetworkError(
         `Failed to fetch MoonBit module: ${response.status} ${response.statusText}`,
       );

@@ -58,7 +58,7 @@ import {
 } from './moonbit-call';
 import { normalizeMoonBitCacheLimit } from './moonbit-cache';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
-import { readBoundedResponseBytes } from './response-body';
+import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
 
 /** A compiled MoonBit module ready for instantiation. */
 export interface PreparedMoonBitModule {
@@ -414,6 +414,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       );
     }
     if (!response.ok) {
+      cancelResponseBody(response);
       throw new UnzenNetworkError(
         `Failed to fetch MoonBit module: ${response.status} ${response.statusText}`,
       );
