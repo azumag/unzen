@@ -1,0 +1,1177 @@
+{
+  "node": "v24.18.0",
+  "os": "Darwin",
+  "arch": "arm64",
+  "addedLoadWorkers": 2,
+  "trials": [
+    {
+      "mode": "idle",
+      "trial": 1,
+      "wallMs": 2914.7,
+      "exitCode": 0,
+      "phases": [
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 413.34
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 174.98
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 118.24
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.26
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 40.68
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 83.63
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.05
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 29.7
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 75.22
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 1.97
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 32.41
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 89.05
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 1.92
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 31.53
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 69.19
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.32
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 354.85
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 89.36
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 46.2
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.01
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 54.33
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 1.99
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 72.16
+        }
+      ]
+    },
+    {
+      "mode": "idle",
+      "trial": 2,
+      "wallMs": 2957.89,
+      "exitCode": 0,
+      "phases": [
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 430.85
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 56.74
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 83.01
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 6.14
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 40.07
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 86.8
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.48
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 35.8
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 71.62
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.17
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 38.11
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 115.14
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.5
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 45.44
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 83.77
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.19
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 500.45
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 97.47
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 29.48
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.48
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 47.93
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 1.92
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 72.1
+        }
+      ]
+    },
+    {
+      "mode": "idle",
+      "trial": 3,
+      "wallMs": 2621.25,
+      "exitCode": 0,
+      "phases": [
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 390.24
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 64.45
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 84.41
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 9.26
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 37.67
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 78.75
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.15
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 31.95
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 69.81
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.25
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 29.47
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 91.58
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.04
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 34.46
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 67.83
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.42
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 448.94
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 81.13
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 37.51
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.17
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 59.18
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 1.9
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 67.32
+        }
+      ]
+    },
+    {
+      "mode": "loaded",
+      "trial": 1,
+      "wallMs": 3129.61,
+      "exitCode": 0,
+      "phases": [
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 538.64
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 62.98
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 93.4
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 4.46
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 35.05
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 85.05
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.34
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 33.63
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 75.12
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 5.22
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 32.93
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 103.88
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.55
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 36.09
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 68.63
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.5
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 444.76
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 84.2
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 31.37
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.6
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 52.04
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.26
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 68.6
+        }
+      ]
+    },
+    {
+      "mode": "loaded",
+      "trial": 2,
+      "wallMs": 2960.72,
+      "exitCode": 0,
+      "phases": [
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 483.42
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 66.7
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 136.53
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 7.16
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 48.37
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 89.5
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.38
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 41.86
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 86.21
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.4
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 42.98
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 101.95
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.36
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 33.28
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 66.42
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.71
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 455.72
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 82.84
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 33.24
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.88
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 53.34
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 1.69
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 65.92
+        }
+      ]
+    },
+    {
+      "mode": "loaded",
+      "trial": 3,
+      "wallMs": 2821.38,
+      "exitCode": 0,
+      "phases": [
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 442.83
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 67.55
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 102.35
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 4.11
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 44.66
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 90.91
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.52
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 32.83
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 82.02
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 4,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.93
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 34.5
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 104.44
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 5,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 3.11
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 38.76
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 65.99
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "engine",
+          "sample": 6,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 4.1
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 1,
+          "phase": "compile",
+          "status": "passed",
+          "elapsedMs": 437.47
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 95.36
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 30.97
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 2,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.44
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "startup",
+          "status": "passed",
+          "elapsedMs": 60.39
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "dispose",
+          "status": "passed",
+          "elapsedMs": 2.18
+        },
+        {
+          "event": "unzen_miniflare_phase",
+          "suite": "adapters",
+          "sample": 3,
+          "phase": "request-verification",
+          "status": "passed",
+          "elapsedMs": 78.9
+        }
+      ]
+    }
+  ],
+  "evidenceLevel": "self-reported local test timing; not production or real-GPU evidence",
+  "baseCommit": "2ee701d52df5deeabaf9fb51849f58f8634009af",
+  "testFiles": 2,
+  "assertionTestsPerTrial": 8,
+  "trialRuns": 6,
+  "sourceSha256": {
+    "tests/helpers/miniflare-phase-timing.ts": "b9e2d60a93589b6b2e99567beb1e12952cabaa6878cb59318c87f608ddbaca45",
+    "tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-adapter-workers.test.ts": "b2fc6b927468f62ce6c19233164cbaf692f875b55f55f0ae8db3868c99523f98",
+    "tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-engine-worker.test.ts": "cdcbf35858b3391c2e9b0e520754f2ecf6a372e7e862796fe74ec45a8e2bae88"
+  },
+  "conditions": {
+    "idle": "No synthetic load added; existing host load not controlled",
+    "loaded": "Two local CPU-bound Node processes, pbkdf2Sync fixture workloads, stopped after each trial; all within 20-second bounded lifetime",
+    "runCommand": "UNZEN_MINIFLARE_TIMING=1 npm test -- --project miniflare-multi-service",
+    "clock": "performance.now for phases; Python monotonic for whole command",
+    "coldWarm": "Each trial is a fresh Vitest process. Filesystem/module caches were not flushed."
+  }
+}
