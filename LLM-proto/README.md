@@ -339,6 +339,8 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 
 ## 9. 関連ドキュメント
 
+[Durable Coordinator checkpoint preflightと再試行・復旧時の入力所有](docs/durable-coordinator-checkpoint-preflight.md) — executorによる書き換え・buffer転送が保存済み途中状態を壊さないための契約。
+
 | ドキュメント | 内容 | 状態 |
 |---|---|---|
 | [`PLAN.md`](./PLAN.md) | 確定方針とpipeline計画 | 設計基準。仮定値は実測値と区別する |

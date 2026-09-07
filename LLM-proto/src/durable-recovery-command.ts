@@ -230,7 +230,13 @@ export function beginDurableRecovery(
     kind: 'resume-claimed',
     ownership,
     segmentIndex: plan.segmentIndex,
-    checkpoint: plan.checkpoint,
+    // Recovery callbacks own their input just like normal executors. A live
+    // in-memory repository reference must not escape to a consumer that may
+    // mutate metadata or transfer/detach the hidden-state buffer.
+    checkpoint: plan.checkpoint === undefined ? undefined : {
+      ...plan.checkpoint,
+      payload: new Uint8Array(plan.checkpoint.payload),
+    },
     deadlineAt: plan.deadlineAt,
   };
 }

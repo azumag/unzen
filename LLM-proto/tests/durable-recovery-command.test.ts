@@ -12,6 +12,7 @@ import {
   type DurableRepository,
 } from '../src/durable-repository.js';
 import { ErrorCode } from '../src/errors.js';
+import { createCheckpointEnvelope, verifyCheckpointDigest } from '../src/checkpoint-envelope.js';
 import {
   generateAttemptId,
   generateLeaseId,
@@ -129,6 +130,32 @@ describe('durable recovery command', () => {
 
       const third = beginDurableRecovery(repo, record.requestId, options('owner-b'));
       expect(third.kind).toBe('resume-claimed');
+    });
+  }
+
+  for (const mutation of ['payload', 'metadata', 'transfer']) {
+    it.each(repositories())(`%s: a recovery caller cannot mutate stored predecessor ${mutation}`, async (_name, repo) => {
+      const record = seed(repo, 'queued', { currentSegment: 1 });
+      const envelope = await createCheckpointEnvelope({
+        requestId: record.requestId, attemptId: generateAttemptId(), segmentIndex: 0,
+        workerId: workerId('predecessor'), workerGeneration: generateWorkerGeneration(),
+        modelManifestDigest: MANIFEST, payload: new Uint8Array([1, 2, 3, 4]),
+        createdAt: NOW - 100, ttlMs: 60_000,
+      });
+      repo.putCheckpoint(envelope);
+      const first = beginDurableRecovery(repo, record.requestId, options('owner-first'));
+      expect(first.kind).toBe('resume-claimed');
+      if (first.kind !== 'resume-claimed' || !first.checkpoint) throw new Error('missing checkpoint');
+      if (mutation === 'payload') first.checkpoint.payload.fill(0);
+      else if (mutation === 'transfer') structuredClone(first.checkpoint.payload, { transfer: [first.checkpoint.payload.buffer as ArrayBuffer] });
+      else Object.assign(first.checkpoint, { modelManifestDigest: 'caller-mutated', ttlMs: 0 });
+      expect(releaseDurableRecoveryOwnership(repo, record.requestId, 'owner-first')).toBe(true);
+      const next = beginDurableRecovery(repo, record.requestId, options('owner-next'));
+      expect(next.kind).toBe('resume-claimed');
+      if (next.kind !== 'resume-claimed' || !next.checkpoint) throw new Error('missing next checkpoint');
+      expect([...next.checkpoint.payload]).toEqual([1, 2, 3, 4]);
+      expect(next.checkpoint.modelManifestDigest).toBe(MANIFEST);
+      expect(await verifyCheckpointDigest(next.checkpoint)).toBe(true);
     });
   }
 

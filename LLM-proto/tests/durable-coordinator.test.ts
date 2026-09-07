@@ -19,7 +19,7 @@ import { DurableCoordinator } from '../src/durable-coordinator.js';
 import type { DurableSegmentExecutor } from '../src/durable-coordinator.js';
 import { InMemoryRepository } from '../src/durable-repository.js';
 import { createFixtureModelManifest } from '../src/model-manifest-fixtures.js';
-import { createCheckpointEnvelope } from '../src/checkpoint-envelope.js';
+import { createCheckpointEnvelope, verifyCheckpointDigest } from '../src/checkpoint-envelope.js';
 import type { CheckpointEnvelope } from '../src/checkpoint-envelope.js';
 import { ErrorCode, UnzenError, UnzenCancelledError } from '../src/errors.js';
 import { generateRequestId, generateAttemptId, generateLeaseId, generateWorkerGeneration, idempotencyKey } from '../src/ids.js';
@@ -218,6 +218,39 @@ describe('DurableCoordinator', () => {
       expect(status?.attempts[0].outcome).toBe('completed');
       expect(status?.completedAt).toBeGreaterThanOrEqual(status?.startedAt ?? 0);
       expect(coord.getResult(submission.requestId)?.text).toBe('ok');
+    });
+
+    it.each(['payload', 'metadata', 'transfer'])('keeps the stored predecessor intact when a retrying executor mutates %s', async (mutation) => {
+      const { executor: normal } = createMockExecutor(totalSegments, manifest.manifestDigest);
+      const deliveries: Array<{ bytes: number[]; revision: string; digestValid: boolean }> = [];
+      coord = createCoordinator({
+        async execute(worker, assignment, options) {
+          if (assignment.segmentIndex === 1) {
+            const checkpoint = assignment.checkpoint!;
+            deliveries.push({
+              bytes: [...checkpoint.payload],
+              revision: checkpoint.modelManifestDigest,
+              digestValid: await verifyCheckpointDigest(checkpoint),
+            });
+            if (deliveries.length === 1) {
+              // Real caller-owned JS mutation, not a fabricated digest/checkpoint.
+              if (mutation === 'payload') checkpoint.payload.fill(9);
+              else if (mutation === 'transfer') structuredClone(checkpoint.payload, { transfer: [checkpoint.payload.buffer as ArrayBuffer] });
+              else Object.assign(checkpoint, { modelManifestDigest: 'changed-by-executor', ttlMs: 0 });
+              throw new UnzenError('fixture transient failure', ErrorCode.RuntimeTransient);
+            }
+          }
+          return normal.execute(worker, assignment, options);
+        },
+      });
+      registerWorkers(2);
+      const submission = coord.submit('resume after executor mutation');
+      const result = await submission.result.catch(() => undefined);
+      expect(result?.text).toBe('ok');
+      expect(deliveries).toHaveLength(2);
+      expect(deliveries[1]).toEqual(deliveries[0]);
+      expect(deliveries[1].digestValid).toBe(true);
+      expect(coord.getStatus(submission.requestId)?.retryCount).toBe(1);
     });
 
     it('records retries in the observability fields', async () => {
