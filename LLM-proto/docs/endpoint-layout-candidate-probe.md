@@ -76,17 +76,19 @@ Together they cover the tile's source range `[131,334,144,262,668,288)` with no 
 
 This is not a host-memory or GPU-memory measurement. A runtime might stream a slice, reuse an already cached object, or avoid copying all bytes into one buffer. The closure instead records the amount of independently identified physical artifact data that must be available/verified before the tile can be satisfied under a whole-artifact cache/residency contract.
 
+The current `256 MiB` preferred limit is carried into this report **only as a numeric reference taken from the physical-artifact policy**. #223 does not currently define a 256 MiB execution-dependency-closure policy, so the companion probe does not convert this comparison into a pass/fail gate.
+
 For the pinned geometry:
 
-| physical payloads | max full-artifact dependency closure per 8-way tile | max bytes in required artifacts not used by that tile | every tile closure <=256 MiB? |
-|---:|---:|---:|---|
-| 4 | 262,668,288 bytes (250.5 MiB) | 131,334,144 | yes |
-| 5 | 420,274,176 bytes (400.8046875 MiB) | 288,940,032 | **no** |
-| 8 | 131,334,144 bytes (125.25 MiB) | 0 | yes |
+| physical payloads | max full-artifact dependency closure per 8-way tile | max bytes in required artifacts not used by that tile | distance from 256 MiB physical-artifact reference |
+|---:|---:|---:|---:|
+| 4 | 262,668,288 bytes (250.5 MiB) | 131,334,144 | -5,767,168 bytes |
+| 5 | 420,274,176 bytes (400.8046875 MiB) | 288,940,032 | +151,838,720 bytes |
+| 8 | 131,334,144 bytes (125.25 MiB) | 0 | -137,101,312 bytes |
 
-The 5-way result is the important new constraint. Although every individual 5-way physical payload is close to the 200 MiB target and below 256 MiB, a boundary-crossing execution tile references two whole physical artifacts. Counting those cache/residency dependencies in full produces a maximum closure of `420,274,176` bytes. Therefore "every physical artifact is preferred-sized" does not imply "every execution step has a preferred-sized whole-artifact dependency closure."
+The 5-way result is the important new comparison. Although every individual 5-way physical payload is close to the 200 MiB target and below 256 MiB, a boundary-crossing execution tile references two whole physical artifacts. Counting those cache/residency dependencies in full produces a maximum closure of `420,274,176` bytes. Therefore "every physical artifact is preferred-sized" does not imply that the execution dependency closure has the same byte scale.
 
-Conversely, the 4-way and 8-way arithmetic mappings keep each tile's whole-artifact dependency closure within the preferred ceiling. The 4-way mapping still has `131,334,144` bytes in the required artifact that the tile itself does not consume, while the 8-way 1:1 alignment has zero such unused bytes. These numbers are comparison inputs only; they do not select 4 or 8, because request count, session count, cache reuse, transfer behavior, working set, and ORT/WebGPU feasibility remain unmeasured.
+The 4-way and 8-way arithmetic mappings fall below the same 256 MiB numeric reference, while the 5-way maximum is above it. The 4-way mapping still has `131,334,144` bytes in the required artifact that the tile itself does not consume, while the 8-way 1:1 alignment has zero such unused bytes. These numbers are comparison inputs only; they do not select 4 or 8 and they do not create a new policy gate, because request count, session count, cache reuse, transfer behavior, working set, and ORT/WebGPU feasibility remain unmeasured.
 
 The dependency-closure probe fail-closes on unknown/duplicate physical-artifact references, mismatched slice byte totals, malformed artifact sizes/counts, or any upstream promotion away from `decisionStatus=diagnostic-only`.
 
@@ -124,7 +126,7 @@ The dependency-closure JSON report preserves the same source identity and adds, 
 - execution-tile bytes,
 - full physical-artifact dependency bytes,
 - bytes inside those required full artifacts not consumed by the tile,
-- whether that whole-artifact dependency closure fits the preferred 256 MiB ceiling.
+- numeric distance from the current preferred physical-artifact reference, explicitly not an execution-policy verdict.
 
 CI runs both probes against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes.
 
