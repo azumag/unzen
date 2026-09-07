@@ -388,3 +388,4 @@ contract gateが揃っていても、実provider・実tax filing・実browser ar
 - payout・provider・tax関連は実environmentとoperator approval
 
 条件未達の場合は`hold`または`not-evaluated`とし、contract testの`pass`で代替しません。
+Test infrastructure: [Miniflare multi-service isolation, phase timing and immutable build reuse](docs/miniflare-multi-service-test-isolation.md).

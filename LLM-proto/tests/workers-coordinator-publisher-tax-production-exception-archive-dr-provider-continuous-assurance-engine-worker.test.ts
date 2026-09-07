@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import ts from 'typescript';
 import { Miniflare } from 'miniflare';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createMiniflarePhaseTimer } from './helpers/miniflare-phase-timing.js';
 import { PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_STEADY_STATE_OPERATIONS_EVIDENCE_KIND } from '../src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-steady-state-operations.js';
 
 const SCOPE = 'publisher-tax-exception-archive-dr';
@@ -104,18 +105,35 @@ function bootstrapSnapshot() {
   };
 }
 
+// Only immutable transpiled source is shared. Every scenario still creates
+// fresh Miniflare instances and a unique persistence root, including restart tests.
+let fixtureRoot: string | undefined;
+let fixtureBuildRoot: string;
+beforeAll(async () => {
+  fixtureRoot = await mkdtemp(join(tmpdir(), 'unzen-engine-build-'));
+  fixtureBuildRoot = join(fixtureRoot, 'build');
+  await createMiniflarePhaseTimer('engine')('compile', () => compileEngineWorker(fixtureBuildRoot));
+}, 5_000);
+afterAll(async () => {
+  if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+});
+
 async function withRuntime<T>(run: (mf: Miniflare, evidenceCalls: string[]) => Promise<T>): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), 'unzen-assurance-engine-'));
-  const buildRoot = join(root, 'build');
+  const buildRoot = fixtureBuildRoot;
+  const measure = createMiniflarePhaseTimer('engine');
   const persistRoot = join(root, 'persist');
   try {
-    await compileEngineWorker(buildRoot);
     const evidenceCalls: string[] = [];
-    const mf = createMiniflare(buildRoot, persistRoot, evidenceCalls);
+    let mf: Miniflare | undefined;
     try {
-      return await run(mf, evidenceCalls);
+      await measure('startup', async () => {
+        mf = createMiniflare(buildRoot, persistRoot, evidenceCalls);
+        await mf.ready;
+      });
+      return await measure('request-verification', () => run(mf!, evidenceCalls));
     } finally {
-      await mf.dispose();
+      if (mf) await measure('dispose', () => mf!.dispose());
     }
   } finally {
     await rm(root, { recursive: true, force: true });

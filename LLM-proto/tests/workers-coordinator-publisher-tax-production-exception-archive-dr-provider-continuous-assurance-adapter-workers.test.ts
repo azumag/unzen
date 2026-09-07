@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import ts from 'typescript';
 import { Miniflare } from 'miniflare';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createMiniflarePhaseTimer } from './helpers/miniflare-phase-timing.js';
 
 const BASE = Date.parse('2026-08-20T02:00:00.000Z');
 const DIGEST = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -33,21 +34,42 @@ function cycleDraft() {
   };
 }
 
-async function withRuntime<T>(run: (mf: Miniflare, persistRoot: string, buildRoot: string) => Promise<T>): Promise<T> {
+// Only immutable transpiled source is shared. Every scenario still creates
+// fresh Miniflare instances and a unique persistence root, including restart tests.
+let fixtureRoot: string | undefined;
+let fixtureBuildRoot: string;
+beforeAll(async () => {
+  fixtureRoot = await mkdtemp(join(tmpdir(), 'unzen-adapters-build-'));
+  fixtureBuildRoot = join(fixtureRoot, 'build');
+  await createMiniflarePhaseTimer('adapters')('compile', () => compileWorkers(fixtureBuildRoot));
+}, 5_000);
+afterAll(async () => {
+  if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+});
+
+async function withRuntime<T>(run: (mf: Miniflare, persistRoot: string, buildRoot: string, dispose: () => Promise<void>) => Promise<T>): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), 'unzen-assurance-adapters-'));
-  const buildRoot = join(root, 'build');
+  const buildRoot = fixtureBuildRoot;
+  const measure = createMiniflarePhaseTimer('adapters');
   const persistRoot = join(root, 'r2');
   try {
-    await compileWorkers(buildRoot);
-    const mf = createMiniflare(buildRoot, persistRoot);
+    let mf: Miniflare | undefined;
+    let disposed = false;
+    const dispose = async () => {
+      if (!mf || disposed) return;
+      disposed = true;
+      await measure('dispose', () => mf!.dispose());
+    };
     try {
-      return await run(mf, persistRoot, buildRoot);
+      await measure('startup', async () => {
+        mf = createMiniflare(buildRoot, persistRoot);
+        await mf.ready;
+      });
+      return await measure('request-verification', () => run(mf!, persistRoot, buildRoot, dispose));
     } finally {
-      try {
-        await mf.dispose();
-      } catch {
-        // Restart-persistence tests may intentionally dispose this instance early.
-      }
+      // The restart scenario shares this owner instead of double-disposing
+      // the first runtime and swallowing unrelated cleanup failures.
+      await dispose();
     }
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -165,13 +187,13 @@ describe('continuous assurance adapter Workers Miniflare multi-service smoke', (
   });
 
   it('persists R2 artifacts across a Miniflare restart', async () => {
-    await withRuntime(async (mf, persistRoot, buildRoot) => {
+    await withRuntime(async (mf, persistRoot, buildRoot, dispose) => {
       const archiveKey = 'cycle-miniflare-1:cycle-evidence-archive';
       const archived = await mf.dispatchFetch('http://evidence.mf/evidence/cycle/archive', post('/evidence/cycle/archive', {
         draft: cycleDraft(), minimumRetentionMs: 86_400_000, context: actionContext('cycle-evidence-archive', archiveKey),
       }, archiveKey));
       const retained = await archived.json() as any;
-      await mf.dispose();
+      await dispose();
       const restarted = createMiniflare(buildRoot, persistRoot);
       try {
         const locator = `r2://continuous-assurance-evidence/${encodeURIComponent(retained.evidenceArchiveId)}`;
