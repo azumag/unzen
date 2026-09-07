@@ -17,7 +17,7 @@ It intentionally does not define a manifest, Cache API layout, ORT external-data
 
 ## Pinned geometry
 
-The upstream pinned probe must pass first and remain `decisionStatus=diagnostic-only`.
+The upstream pinned probe must pass first and remain `decisionStatus=diagnostic-only`. The candidate report carries the upstream probe kind/schema, pinned source graph SHA-256, and pinned external-data location/size/SHA-256 so the comparison cannot be detached from the source identity that established the row geometry.
 
 - tied weight rows: `128256`
 - row bytes: `8192`
@@ -52,9 +52,9 @@ python tools/probe_llama_1b_endpoint_layout_candidates.py \
   /absolute/path/to/model_q4.onnx
 ```
 
-The command first invokes the pinned endpoint chunk-envelope probe. A source graph identity or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
+The command first invokes the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
 
-The JSON report includes, for every candidate:
+The JSON report includes the upstream probe/source identity and, for every candidate:
 
 - exact physical row ranges and source-byte ranges,
 - exact 8-way execution row ranges,
@@ -70,10 +70,11 @@ CI runs this probe against the same pinned Llama 1B graph used by the existing b
 
 ## Evidence boundary
 
-A passing result proves only that the pinned graph still yields the recorded source-row/byte geometry and that the candidate range mappings are internally exact.
+A passing result proves only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity and that the candidate range mappings are internally exact.
 
 It does **not** prove:
 
+- that the 4/5/8 candidate payloads have all been materialized and independently verified,
 - that multiple physical artifacts are an approved manifest/cache contract,
 - that ORT Web can bind the slices without hidden whole-weight reconstruction,
 - that the physical payload count should be 4, 5, or 8,
