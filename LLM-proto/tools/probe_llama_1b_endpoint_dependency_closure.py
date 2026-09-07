@@ -41,7 +41,7 @@ def _candidate_dependency_closure(candidate: dict[str, object]) -> dict[str, obj
     if not isinstance(tiles, list) or not tiles:
         raise RuntimeError("candidate executionTiles must be a non-empty array")
 
-    preferred_limit = _positive_int(
+    preferred_reference = _positive_int(
         candidate.get("preferredPhysicalArtifactLimitBytes"),
         field="preferredPhysicalArtifactLimitBytes",
     )
@@ -117,6 +117,7 @@ def _candidate_dependency_closure(candidate: dict[str, object]) -> dict[str, obj
                 f"execution tile {tile_index} full-artifact dependency is smaller than tile"
             )
         unused_bytes = full_dependency_bytes - tile_bytes
+        distance_from_preferred_reference = full_dependency_bytes - preferred_reference
 
         tile_closures.append(
             {
@@ -126,8 +127,8 @@ def _candidate_dependency_closure(candidate: dict[str, object]) -> dict[str, obj
                 "requiredPhysicalArtifactCount": len(required_indices),
                 "fullArtifactDependencyBytes": full_dependency_bytes,
                 "unusedBytesWithinRequiredFullArtifacts": unused_bytes,
-                "fullArtifactDependencyClosureFitsPreferredLimit": (
-                    full_dependency_bytes <= preferred_limit
+                "distanceFromPreferredPhysicalArtifactReferenceBytes": (
+                    distance_from_preferred_reference
                 ),
             }
         )
@@ -135,7 +136,7 @@ def _candidate_dependency_closure(candidate: dict[str, object]) -> dict[str, obj
     return {
         "physicalArtifactCount": physical_count,
         "executionTileCount": len(tile_closures),
-        "preferredPhysicalArtifactLimitBytes": preferred_limit,
+        "preferredPhysicalArtifactReferenceBytes": preferred_reference,
         "tileClosures": tile_closures,
         "maximumFullArtifactDependencyBytesPerExecutionTile": max(
             item["fullArtifactDependencyBytes"] for item in tile_closures
@@ -143,8 +144,8 @@ def _candidate_dependency_closure(candidate: dict[str, object]) -> dict[str, obj
         "maximumUnusedBytesWithinRequiredFullArtifactsPerExecutionTile": max(
             item["unusedBytesWithinRequiredFullArtifacts"] for item in tile_closures
         ),
-        "allExecutionTilesFitPreferredFullArtifactDependencyClosure": all(
-            item["fullArtifactDependencyClosureFitsPreferredLimit"]
+        "maximumDistanceFromPreferredPhysicalArtifactReferenceBytes": max(
+            item["distanceFromPreferredPhysicalArtifactReferenceBytes"]
             for item in tile_closures
         ),
     }
@@ -183,9 +184,11 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         "candidateDependencyClosures": closures,
         "conclusion": (
             "This report counts whole physical artifacts referenced by each execution tile. "
-            "It is a cache/residency dependency-closure calculation only: it does not prove "
-            "host or GPU resident memory, ORT/WebGPU range binding, cache behavior, latency, "
-            "numerical equivalence, or a chosen #223 architecture."
+            "The preferred physical-artifact limit is carried only as a numeric reference, "
+            "not applied as a new execution-closure policy. This is a cache/residency "
+            "dependency-closure calculation only: it does not prove host or GPU resident "
+            "memory, ORT/WebGPU range binding, cache behavior, latency, numerical "
+            "equivalence, or a chosen #223 architecture."
         ),
     }
 
