@@ -417,6 +417,76 @@ def _require_exact_payload_names(
         )
 
 
+def _payload_namespace_names_from_fd(directory_fd: int) -> set[str]:
+    return {name for name in os.listdir(directory_fd) if Path(name).match("payload-*.bin")}
+
+
+def _require_empty_payload_namespace_from_fd(directory_fd: int) -> None:
+    observed = _payload_namespace_names_from_fd(directory_fd)
+    if observed:
+        raise FileExistsError(
+            "refusing to materialize into a payload directory with existing reserved "
+            f"payload-*.bin entries: {sorted(observed)!r}"
+        )
+
+
+def _require_exact_payload_names_from_fd(
+    directory_fd: int, *, expected_names: Iterable[str]
+) -> None:
+    expected = set(expected_names)
+    observed = _payload_namespace_names_from_fd(directory_fd)
+    if observed != expected:
+        raise RuntimeError(
+            "payload directory contents changed during materialization: "
+            f"expected={sorted(expected)!r}, observed={sorted(observed)!r}"
+        )
+
+
+def _require_stable_output_directory_identity(
+    output_dir: Path, expected_identity: tuple[int, int]
+) -> None:
+    try:
+        observed = output_dir.stat()
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            f"payload output directory changed during materialization: {output_dir}"
+        ) from error
+    if (observed.st_dev, observed.st_ino) != expected_identity:
+        raise RuntimeError(
+            f"payload output directory changed during materialization: {output_dir}"
+        )
+
+
+def _require_stable_payload_signature_at(
+    directory_fd: int, name: str, expected: tuple[int, int, int, int, int]
+) -> None:
+    try:
+        observed = _file_stat_signature(
+            os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            f"payload snapshot changed during materialization: {name}"
+        ) from error
+    if observed != expected:
+        raise RuntimeError(f"payload snapshot changed during materialization: {name}")
+
+
+def _unlink_if_same_file_identity_at(
+    directory_fd: int, name: str, expected_identity: tuple[int, int]
+) -> None:
+    try:
+        observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if (observed.st_dev, observed.st_ino) != expected_identity:
+        return
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        pass
+
+
 def _ensure_output_directory(output_dir: Path) -> tuple[int, int] | None:
     """Create the output directory when absent and return its created identity."""
 
@@ -457,6 +527,7 @@ def _hash_source_and_materialize_ranges(
     source_path: Path,
     buffer_bytes: int,
     expected_source_stat_signature: tuple[int, int, int, int, int],
+    destination_dir_fd: int | None = None,
 ) -> tuple[str, list[tuple[str, tuple[int, int, int, int, int]]]]:
     """Hash the complete source while materializing ordered ranges in one sequential pass."""
 
@@ -485,7 +556,18 @@ def _hash_source_and_materialize_ranges(
         with ExitStack() as stack:
             outputs: list[BinaryIO] = []
             for destination in destinations:
-                output = stack.enter_context(destination.open("xb"))
+                if destination_dir_fd is None:
+                    output = stack.enter_context(destination.open("xb"))
+                else:
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                    flags |= getattr(os, "O_CLOEXEC", 0)
+                    flags |= getattr(os, "O_NOFOLLOW", 0)
+                    output_fd = os.open(
+                        destination.name, flags, 0o666, dir_fd=destination_dir_fd
+                    )
+                    output = stack.enter_context(
+                        os.fdopen(output_fd, "wb", closefd=True)
+                    )
                 created_stat = os.fstat(output.fileno())
                 created_identities[destination] = (created_stat.st_dev, created_stat.st_ino)
                 outputs.append(output)
@@ -553,7 +635,12 @@ def _hash_source_and_materialize_ranges(
                     )
     except Exception:
         for destination, created_identity in created_identities.items():
-            _unlink_if_same_file_identity(destination, created_identity)
+            if destination_dir_fd is None:
+                _unlink_if_same_file_identity(destination, created_identity)
+            else:
+                _unlink_if_same_file_identity_at(
+                    destination_dir_fd, destination.name, created_identity
+                )
         raise
 
     results: list[tuple[str, tuple[int, int, int, int, int]]] = []
@@ -609,7 +696,34 @@ def materialize_source_payload_chunks(
             )
 
         output_dir_created_identity = _ensure_output_directory(output_dir)
+        output_dir_fd = -1
         try:
+            output_dir_stat = output_dir.stat()
+            output_dir_identity = (output_dir_stat.st_dev, output_dir_stat.st_ino)
+            if (
+                output_dir_created_identity is not None
+                and output_dir_identity != output_dir_created_identity
+            ):
+                raise RuntimeError(
+                    f"payload output directory changed during materialization: {output_dir}"
+                )
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_flags |= getattr(os, "O_CLOEXEC", 0)
+            directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+            output_dir_fd = os.open(output_dir.resolve(strict=True), directory_flags)
+            pinned_output_dir_stat = os.fstat(output_dir_fd)
+            pinned_output_dir_identity = (
+                pinned_output_dir_stat.st_dev, pinned_output_dir_stat.st_ino
+            )
+            if pinned_output_dir_identity != output_dir_identity:
+                raise RuntimeError(
+                    f"payload output directory changed during materialization: {output_dir}"
+                )
+            _require_stable_output_directory_identity(
+                output_dir, pinned_output_dir_identity
+            )
+            _require_empty_payload_namespace_from_fd(output_dir_fd)
+
             source_sha256, payload_results = _hash_source_and_materialize_ranges(
                 source,
                 destinations,
@@ -617,6 +731,7 @@ def materialize_source_payload_chunks(
                 source_path=source_path,
                 buffer_bytes=buffer_bytes,
                 expected_source_stat_signature=source_stat_signature,
+                destination_dir_fd=output_dir_fd,
             )
             created_destinations = {
                 destination: signature
@@ -624,6 +739,9 @@ def materialize_source_payload_chunks(
                     destinations, payload_results, strict=True
                 )
             }
+            _require_stable_output_directory_identity(
+                output_dir, pinned_output_dir_identity
+            )
             if expected_source_sha256 is not None and source_sha256 != expected_source_sha256.lower():
                 raise RuntimeError(
                     "source external-data SHA-256 does not match pinned identity: "
@@ -633,7 +751,9 @@ def materialize_source_payload_chunks(
             for chunk, destination, (digest, destination_signature) in zip(
                 normalized, destinations, payload_results, strict=True
             ):
-                _require_stable_payload_signature(destination, destination_signature)
+                _require_stable_payload_signature_at(
+                    output_dir_fd, destination.name, destination_signature
+                )
                 payload_bytes = _required_int(chunk["payloadBytes"], field="payloadBytes")
                 actual_bytes = destination_signature[2]
                 if actual_bytes != payload_bytes:
@@ -665,22 +785,32 @@ def materialize_source_payload_chunks(
                 source_path=source_path,
             )
             for destination, destination_signature in created_destinations.items():
-                _require_stable_payload_signature(destination, destination_signature)
-            _require_exact_payload_names(
-                output_dir,
+                _require_stable_payload_signature_at(
+                    output_dir_fd, destination.name, destination_signature
+                )
+            _require_exact_payload_names_from_fd(
+                output_dir_fd,
                 expected_names=(destination.name for destination in destinations),
             )
+            _require_stable_output_directory_identity(
+                output_dir, pinned_output_dir_identity
+            )
         except Exception:
-            for destination, destination_signature in created_destinations.items():
-                _unlink_if_same_file_identity(
-                    destination,
-                    (destination_signature[0], destination_signature[1]),
-                )
+            if output_dir_fd >= 0:
+                for destination, destination_signature in created_destinations.items():
+                    _unlink_if_same_file_identity_at(
+                        output_dir_fd,
+                        destination.name,
+                        (destination_signature[0], destination_signature[1]),
+                    )
             if output_dir_created_identity is not None:
                 _rmdir_if_same_directory_identity(
                     output_dir, output_dir_created_identity
                 )
             raise
+        finally:
+            if output_dir_fd >= 0:
+                os.close(output_dir_fd)
 
     return {
         "schemaVersion": LEGACY_REPORT_SCHEMA_VERSION,

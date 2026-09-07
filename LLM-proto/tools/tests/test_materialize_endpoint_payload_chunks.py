@@ -289,6 +289,50 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             self.assertTrue(output_dir.is_dir())
             self.assertEqual(list(output_dir.glob("payload-*.bin")), [])
 
+    def test_output_directory_replacement_is_detected_and_pinned_payloads_are_cleaned(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            output_dir.mkdir()
+            displaced_output_dir = root / "original-chunks"
+            original_pass = materializer._hash_source_and_materialize_ranges
+            swapped = False
+
+            def replace_output_dir(source_stream, destinations, selected_chunks, **kwargs):
+                nonlocal swapped
+                output_dir.rename(displaced_output_dir)
+                output_dir.mkdir()
+                swapped = True
+                return original_pass(source_stream, destinations, selected_chunks, **kwargs)
+
+            with (
+                mock.patch.object(
+                    materializer,
+                    "_hash_source_and_materialize_ranges",
+                    side_effect=replace_output_dir,
+                ),
+                self.assertRaisesRegex(RuntimeError, "payload output directory changed"),
+            ):
+                materializer.materialize_source_payload_chunks(
+                    source,
+                    output_dir,
+                    chunks,
+                    buffer_bytes=2,
+                    expected_source_bytes=8,
+                    expected_source_sha256=hashlib.sha256(b"01234567").hexdigest(),
+                )
+
+            self.assertTrue(swapped)
+            self.assertTrue(output_dir.is_dir())
+            self.assertTrue(displaced_output_dir.is_dir())
+            self.assertEqual(list(output_dir.glob("payload-*.bin")), [])
+            self.assertEqual(list(displaced_output_dir.glob("payload-*.bin")), [])
+
     def test_materializer_uses_combined_source_pass(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0
