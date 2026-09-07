@@ -3,10 +3,12 @@
 
 This helper checks an existing ``materialize_endpoint_payload_chunks.py`` report,
 its payload directory, and the pinned source external-data file against an explicit
-probe stage/tier selection. It re-hashes the source, each source byte range, and
-every payload instead of trusting producer-side success assertions. The result
-remains diagnostic-only and does not approve a browser cache, manifest, loader,
-or runtime design for #223.
+probe stage/tier selection. The verifier owns a pinned copy of the diagnostic
+contract and deterministically re-derives the expected source-byte blueprint and
+provenance instead of importing producer-side derivation helpers. It then re-hashes
+the source, each source byte range, and every payload. The result remains
+diagnostic-only and does not approve a browser cache, manifest, loader, or runtime
+design for #223.
 """
 
 from __future__ import annotations
@@ -17,13 +19,29 @@ import json
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
-import materialize_endpoint_payload_chunks as materializer
-
 
 REPORT_KIND = "unzen-endpoint-source-payload-materialization-verification"
 REPORT_SCHEMA_VERSION = "1.0.0"
-EXPECTED_MATERIALIZATION_KIND = materializer.REPORT_KIND
-EXPECTED_MATERIALIZATION_SCHEMA_VERSION = materializer.REPORT_SCHEMA_VERSION
+EXPECTED_MATERIALIZATION_KIND = "unzen-endpoint-source-payload-materialization"
+EXPECTED_MATERIALIZATION_SCHEMA_VERSION = "1.1.0"
+DEFAULT_COPY_BUFFER_BYTES = 8 * 1024 * 1024
+EXPECTED_PROBE_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
+EXPECTED_PROBE_SCHEMA_VERSION = "1.2.0"
+EXPECTED_SOURCE_GRAPH_SHA256 = (
+    "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46"
+)
+EXPECTED_SOURCE_LOCATION = "model_q4.onnx_data"
+EXPECTED_SOURCE_BYTES = 1_692_672_000
+EXPECTED_SOURCE_SHA256 = (
+    "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+)
+EXPECTED_ROWS = 128_256
+EXPECTED_ROW_BYTES = 8_192
+EXPECTED_SOURCE_OFFSET_BYTES = 0
+EXPECTED_STAGE_TIER_PAYLOAD_COUNTS = {
+    "embedding-prefix": {"preferred": 4, "normal": 2, "absolute": 1},
+    "logits-postfix": {"preferred": 4, "normal": 2, "absolute": 1},
+}
 
 
 def _required_dict(value: object, *, field: str) -> dict[str, object]:
@@ -69,6 +87,261 @@ def _load_json_with_sha256(path: Path) -> tuple[dict[str, object], str]:
     return value, digest
 
 
+def _sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
+    if buffer_bytes <= 0:
+        raise ValueError("buffer_bytes must be positive")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            block = stream.read(buffer_bytes)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _canonical_json_sha256(value: object) -> str:
+    rendered = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(rendered).hexdigest()
+
+
+def _expected_pinned_source_payload_chunks(
+    *, stage_kind: str, tier: str
+) -> list[dict[str, object]]:
+    """Return the verifier-owned source-byte blueprint for the pinned graph contract."""
+
+    stage_tiers = EXPECTED_STAGE_TIER_PAYLOAD_COUNTS.get(stage_kind)
+    if stage_tiers is None or tier not in stage_tiers:
+        raise RuntimeError(f"unsupported pinned diagnostic stage/tier: {stage_kind}/{tier}")
+    payload_count = stage_tiers[tier]
+    smaller_rows, larger_chunk_count = divmod(EXPECTED_ROWS, payload_count)
+    row_cursor = 0
+    chunks: list[dict[str, object]] = []
+    for chunk_index in range(payload_count):
+        row_count = smaller_rows + (1 if chunk_index < larger_chunk_count else 0)
+        source_offset = EXPECTED_SOURCE_OFFSET_BYTES + row_cursor * EXPECTED_ROW_BYTES
+        payload_bytes = row_count * EXPECTED_ROW_BYTES
+        chunks.append(
+            {
+                "chunkIndex": chunk_index,
+                "startRow": row_cursor,
+                "endRowExclusive": row_cursor + row_count,
+                "rowCount": row_count,
+                "sourceLocation": EXPECTED_SOURCE_LOCATION,
+                "sourceOffsetBytes": source_offset,
+                "sourceEndOffsetBytesExclusive": source_offset + payload_bytes,
+                "payloadBytes": payload_bytes,
+            }
+        )
+        row_cursor += row_count
+    return chunks
+
+
+def _source_identity_from_probe_report(report: dict[str, object]) -> dict[str, object]:
+    """Validate the pinned probe contract using verifier-owned constants."""
+
+    expected_scalars = {
+        "kind": EXPECTED_PROBE_KIND,
+        "schemaVersion": EXPECTED_PROBE_SCHEMA_VERSION,
+        "status": "pass",
+        "decisionStatus": "diagnostic-only",
+        "sourceGraphSha256": EXPECTED_SOURCE_GRAPH_SHA256,
+    }
+    for field, expected in expected_scalars.items():
+        observed = report.get(field)
+        if observed != expected:
+            raise RuntimeError(
+                f"probe report identity mismatch for {field}: "
+                f"expected={expected!r}, observed={observed!r}"
+            )
+
+    identity = _required_dict(
+        report.get("pinnedSourceExternalDataIdentity"),
+        field="pinnedSourceExternalDataIdentity",
+    )
+    observed_identity = {
+        "location": _required_str(
+            identity.get("location"), field="pinnedSourceExternalDataIdentity.location"
+        ),
+        "bytes": _required_int(
+            identity.get("bytes"), field="pinnedSourceExternalDataIdentity.bytes"
+        ),
+        "sha256": _normalized_sha256(
+            identity.get("sha256"), field="pinnedSourceExternalDataIdentity.sha256"
+        ),
+    }
+    expected_identity: dict[str, object] = {
+        "location": EXPECTED_SOURCE_LOCATION,
+        "bytes": EXPECTED_SOURCE_BYTES,
+        "sha256": EXPECTED_SOURCE_SHA256,
+    }
+    if observed_identity != expected_identity:
+        raise RuntimeError(
+            "probe report pinned external-data identity mismatch: "
+            f"expected={expected_identity!r}, observed={observed_identity!r}"
+        )
+    return observed_identity
+
+
+def _chunks_from_probe_report(
+    report: dict[str, object],
+    *,
+    stage_kind: str,
+    tier: str,
+) -> list[dict[str, object]]:
+    """Validate a probe selection against the verifier-owned deterministic blueprint."""
+
+    _source_identity_from_probe_report(report)
+    envelopes = _required_dict(report.get("endpointChunkEnvelope"), field="endpointChunkEnvelope")
+    stage = _required_dict(envelopes.get(stage_kind), field=f"endpointChunkEnvelope.{stage_kind}")
+    tiers = _required_dict(stage.get("tiers"), field=f"endpointChunkEnvelope.{stage_kind}.tiers")
+    selected = _required_dict(tiers.get(tier), field=f"endpointChunkEnvelope.{stage_kind}.tiers.{tier}")
+    if selected.get("feasible") is not True:
+        raise RuntimeError(f"selected diagnostic tier is not feasible: {stage_kind}/{tier}")
+    chunks = [
+        _required_dict(item, field=f"chunk[{index}]")
+        for index, item in enumerate(
+            _required_list(
+                selected.get("balancedSourcePayloadChunks"),
+                field=f"endpointChunkEnvelope.{stage_kind}.tiers.{tier}.balancedSourcePayloadChunks",
+            )
+        )
+    ]
+    expected_chunks = _expected_pinned_source_payload_chunks(stage_kind=stage_kind, tier=tier)
+    if chunks != expected_chunks:
+        raise RuntimeError(
+            "probe report balancedSourcePayloadChunks does not match the verifier-owned pinned blueprint: "
+            f"{stage_kind}/{tier}"
+        )
+    return chunks
+
+
+def _materialization_provenance_from_probe_report(
+    report: dict[str, object],
+    *,
+    stage_kind: str,
+    tier: str,
+    chunks: Iterable[dict[str, object]],
+) -> dict[str, object]:
+    """Reconstruct producer provenance from verifier-owned pinned expectations."""
+
+    normalized_chunks = list(chunks)
+    selected_chunks = _chunks_from_probe_report(
+        report,
+        stage_kind=stage_kind,
+        tier=tier,
+    )
+    if normalized_chunks != selected_chunks:
+        raise RuntimeError(
+            "verification chunks do not match the selected pinned probe blueprint: "
+            f"{stage_kind}/{tier}"
+        )
+    source_identity = _source_identity_from_probe_report(report)
+    return {
+        "probeKind": EXPECTED_PROBE_KIND,
+        "probeSchemaVersion": EXPECTED_PROBE_SCHEMA_VERSION,
+        "sourceGraphSha256": EXPECTED_SOURCE_GRAPH_SHA256,
+        "stageKind": stage_kind,
+        "tier": tier,
+        "blueprintSha256": _canonical_json_sha256(selected_chunks),
+        "sourceExternalDataIdentity": source_identity,
+    }
+
+
+def _validate_source_payload_chunks(
+    chunks: Iterable[dict[str, object]],
+) -> tuple[list[dict[str, object]], str, int, int]:
+    """Validate row/source contiguity without producer-side validation helpers."""
+
+    normalized = list(chunks)
+    if not normalized:
+        raise RuntimeError("chunk blueprint must not be empty")
+
+    expected_row = 0
+    expected_source_offset: int | None = None
+    expected_row_bytes: int | None = None
+    source_location: str | None = None
+    coverage_start: int | None = None
+
+    for expected_index, chunk in enumerate(normalized):
+        chunk_index = _required_int(chunk.get("chunkIndex"), field=f"chunk[{expected_index}].chunkIndex")
+        start_row = _required_int(chunk.get("startRow"), field=f"chunk[{expected_index}].startRow")
+        end_row = _required_int(
+            chunk.get("endRowExclusive"), field=f"chunk[{expected_index}].endRowExclusive"
+        )
+        row_count = _required_int(chunk.get("rowCount"), field=f"chunk[{expected_index}].rowCount")
+        location = _required_str(
+            chunk.get("sourceLocation"), field=f"chunk[{expected_index}].sourceLocation"
+        )
+        source_offset = _required_int(
+            chunk.get("sourceOffsetBytes"), field=f"chunk[{expected_index}].sourceOffsetBytes"
+        )
+        source_end = _required_int(
+            chunk.get("sourceEndOffsetBytesExclusive"),
+            field=f"chunk[{expected_index}].sourceEndOffsetBytesExclusive",
+        )
+        payload_bytes = _required_int(
+            chunk.get("payloadBytes"), field=f"chunk[{expected_index}].payloadBytes"
+        )
+
+        location_path = PurePosixPath(location.replace("\\", "/"))
+        if location_path.is_absolute() or ".." in location_path.parts:
+            raise RuntimeError(f"unsafe source location in chunk blueprint: {location}")
+        if chunk_index != expected_index:
+            raise RuntimeError(
+                f"chunkIndex must be contiguous from zero: expected={expected_index}, observed={chunk_index}"
+            )
+        if start_row != expected_row:
+            raise RuntimeError(
+                f"row coverage must be contiguous: expected startRow={expected_row}, observed={start_row}"
+            )
+        if end_row <= start_row or row_count != end_row - start_row:
+            raise RuntimeError(f"invalid row coverage in chunk[{expected_index}]")
+        if source_offset < 0 or source_end <= source_offset:
+            raise RuntimeError(f"invalid source byte range in chunk[{expected_index}]")
+        if payload_bytes != source_end - source_offset:
+            raise RuntimeError(f"payloadBytes does not match source byte range in chunk[{expected_index}]")
+        if payload_bytes % row_count != 0:
+            raise RuntimeError(f"payloadBytes is not divisible by rowCount in chunk[{expected_index}]")
+        row_bytes = payload_bytes // row_count
+        if row_bytes <= 0:
+            raise RuntimeError(f"row byte width must be positive in chunk[{expected_index}]")
+        if expected_row_bytes is None:
+            expected_row_bytes = row_bytes
+        elif row_bytes != expected_row_bytes:
+            raise RuntimeError(
+                "row byte width must remain constant across chunks: "
+                f"expected={expected_row_bytes}, observed={row_bytes}"
+            )
+
+        if source_location is None:
+            source_location = location
+            coverage_start = source_offset
+            expected_source_offset = source_offset
+        elif location != source_location:
+            raise RuntimeError("all chunks must reference the same sourceLocation")
+
+        assert expected_source_offset is not None
+        if source_offset != expected_source_offset:
+            raise RuntimeError(
+                "source byte coverage must be contiguous: "
+                f"expected offset={expected_source_offset}, observed={source_offset}"
+            )
+
+        expected_row = end_row
+        expected_source_offset = source_end
+
+    assert source_location is not None
+    assert coverage_start is not None
+    assert expected_source_offset is not None
+    return normalized, source_location, coverage_start, expected_source_offset
+
+
 def _expected_payload_names(payload_count: int) -> list[str]:
     return [f"payload-{index:04d}.bin" for index in range(payload_count)]
 
@@ -108,14 +381,14 @@ def verify_materialization_payloads(
     expected_chunks: Iterable[dict[str, object]],
     expected_provenance: dict[str, object],
     expected_source_identity: dict[str, object],
-    buffer_bytes: int = materializer.DEFAULT_COPY_BUFFER_BYTES,
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
 ) -> dict[str, object]:
     """Verify one producer report and payload set against source-backed expectations."""
 
     chunks = list(expected_chunks)
     if not chunks:
         raise RuntimeError("expected chunk blueprint must not be empty")
-    materializer.validate_source_payload_chunks(chunks)
+    _validate_source_payload_chunks(chunks)
 
     expected_scalars = {
         "schemaVersion": EXPECTED_MATERIALIZATION_SCHEMA_VERSION,
@@ -158,7 +431,7 @@ def verify_materialization_payloads(
     actual_source_bytes = source_path.stat().st_size
     if actual_source_bytes != source_identity["bytes"]:
         raise RuntimeError("source external-data byte size does not match pinned identity")
-    actual_source_sha256 = materializer.sha256_file(source_path, buffer_bytes=buffer_bytes)
+    actual_source_sha256 = _sha256_file(source_path, buffer_bytes=buffer_bytes)
     if actual_source_sha256 != source_identity["sha256"]:
         raise RuntimeError("source external-data SHA-256 does not match pinned identity")
 
@@ -275,7 +548,7 @@ def verify_materialization_payloads(
                 f"materialized payload size mismatch for {expected_name}: "
                 f"expected={expected_fields['bytes']}, observed={actual_bytes}"
             )
-        actual_payload_sha256 = materializer.sha256_file(payload_path, buffer_bytes=buffer_bytes)
+        actual_payload_sha256 = _sha256_file(payload_path, buffer_bytes=buffer_bytes)
         source_range_sha256 = _sha256_file_range(
             source_path,
             source_offset=int(expected_fields["sourceOffsetBytes"]),
@@ -321,9 +594,9 @@ def verify_materialization_payloads(
         "totalPayloadBytes": verified_total_bytes,
         "payloads": verified_payloads,
         "conclusion": (
-            "the diagnostic payload files independently match the pinned source byte ranges, "
-            "probe selection, and producer materialization report; this verification does not "
-            "define or approve a browser artifact, cache, manifest, loader, or runtime contract"
+            "the diagnostic payload files independently match the verifier-owned pinned source "
+            "byte ranges, probe selection, and producer materialization report; this verification "
+            "does not define or approve a browser artifact, cache, manifest, loader, or runtime contract"
         ),
     }
 
@@ -336,22 +609,22 @@ def verify_pinned_probe_materialization(
     *,
     stage_kind: str,
     tier: str,
-    buffer_bytes: int = materializer.DEFAULT_COPY_BUFFER_BYTES,
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
 ) -> dict[str, object]:
-    """Derive pinned expectations independently, then verify source-backed evidence."""
+    """Derive pinned expectations locally, then verify source-backed producer evidence."""
 
-    chunks = materializer.chunks_from_probe_report(
+    chunks = _chunks_from_probe_report(
         probe_report,
         stage_kind=stage_kind,
         tier=tier,
     )
-    expected_provenance = materializer.materialization_provenance_from_probe_report(
+    expected_provenance = _materialization_provenance_from_probe_report(
         probe_report,
         stage_kind=stage_kind,
         tier=tier,
         chunks=chunks,
     )
-    expected_source_identity = materializer.source_identity_from_probe_report(probe_report)
+    expected_source_identity = _source_identity_from_probe_report(probe_report)
     return verify_materialization_payloads(
         source_path,
         materialization,
