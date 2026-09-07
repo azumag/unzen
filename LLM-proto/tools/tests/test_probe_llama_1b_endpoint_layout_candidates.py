@@ -79,6 +79,8 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
             candidate["maximumPhysicalArtifactDistanceFromTargetBytes"], 425_984
         )
         self.assertEqual(candidate["maximumPhysicalArtifactsPerExecutionTile"], 2)
+        self.assertEqual(candidate["totalPhysicalSlicesAcrossExecutionTiles"], 12)
+        self.assertTrue(candidate["executionTileSourceRangesCoverWeightExactly"])
         self.assertFalse(
             candidate["executionTilesContainedWithinSinglePhysicalArtifact"]
         )
@@ -88,6 +90,39 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
         self.assertEqual(
             [item["physicalArtifactCount"] for item in candidate["executionTiles"]],
             [1, 2, 1, 2, 2, 1, 2, 1],
+        )
+
+        crossing_tile = candidate["executionTiles"][1]
+        self.assertEqual(crossing_tile["sourceOffsetBytes"], 131_334_144)
+        self.assertEqual(
+            crossing_tile["sourceEndOffsetBytesExclusive"], 262_668_288
+        )
+        self.assertEqual(
+            crossing_tile["physicalSlices"],
+            [
+                {
+                    "physicalArtifactIndex": 0,
+                    "startRow": 16_032,
+                    "endRowExclusive": 25_652,
+                    "rowCount": 9_620,
+                    "artifactByteOffset": 131_334_144,
+                    "artifactByteEndOffsetExclusive": 210_141_184,
+                    "sourceOffsetBytes": 131_334_144,
+                    "sourceEndOffsetBytesExclusive": 210_141_184,
+                    "byteLength": 78_807_040,
+                },
+                {
+                    "physicalArtifactIndex": 1,
+                    "startRow": 25_652,
+                    "endRowExclusive": 32_064,
+                    "rowCount": 6_412,
+                    "artifactByteOffset": 0,
+                    "artifactByteEndOffsetExclusive": 52_527_104,
+                    "sourceOffsetBytes": 210_141_184,
+                    "sourceEndOffsetBytesExclusive": 262_668_288,
+                    "byteLength": 52_527_104,
+                },
+            ],
         )
 
     def test_four_and_eight_way_layouts_have_distinct_binding_geometry(self) -> None:
@@ -105,16 +140,38 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
         )
 
         self.assertEqual(four["maximumPhysicalArtifactBytes"], 262_668_288)
+        self.assertEqual(four["totalPhysicalSlicesAcrossExecutionTiles"], 8)
+        self.assertTrue(four["executionTileSourceRangesCoverWeightExactly"])
         self.assertTrue(four["executionTilesContainedWithinSinglePhysicalArtifact"])
         self.assertFalse(
             four["allExecutionTileBoundariesAlignToPhysicalArtifactBoundaries"]
         )
 
         self.assertEqual(eight["maximumPhysicalArtifactBytes"], 131_334_144)
+        self.assertEqual(eight["totalPhysicalSlicesAcrossExecutionTiles"], 8)
+        self.assertTrue(eight["executionTileSourceRangesCoverWeightExactly"])
         self.assertTrue(eight["executionTilesContainedWithinSinglePhysicalArtifact"])
         self.assertTrue(
             eight["allExecutionTileBoundariesAlignToPhysicalArtifactBoundaries"]
         )
+
+    def test_tile_bindings_reject_physical_source_offset_drift(self) -> None:
+        physical = probe_module._balanced_ranges(
+            rows=128_256,
+            row_bytes=8_192,
+            count=4,
+            source_offset_bytes=0,
+        )
+        tiles = probe_module._balanced_ranges(
+            rows=128_256,
+            row_bytes=8_192,
+            count=8,
+            source_offset_bytes=0,
+        )
+        physical[1]["sourceOffsetBytes"] += 8_192
+
+        with self.assertRaisesRegex(RuntimeError, "source-byte-contiguous"):
+            probe_module._tile_bindings(physical, tiles, row_bytes=8_192)
 
     def test_build_report_requires_tied_embedding_and_logits_geometry_to_match(self) -> None:
         fake_envelope = self._fake_envelope()
@@ -169,7 +226,7 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
         ):
             report = probe_module.build_report(Path("model_q4.onnx"))
 
-        self.assertEqual(report["schemaVersion"], "1.0.0")
+        self.assertEqual(report["schemaVersion"], "1.1.0")
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["decisionStatus"], "diagnostic-only")
         self.assertEqual(
@@ -191,8 +248,9 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
             [candidate["physicalArtifactCount"] for candidate in report["candidates"]],
             [4, 5, 8],
         )
+        self.assertIn("exact source-byte", report["conclusion"])
         self.assertIn(
-            "does not establish ORT/WebGPU feasibility", report["conclusion"]
+            "do not establish ORT/WebGPU feasibility", report["conclusion"]
         )
 
 
