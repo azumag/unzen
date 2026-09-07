@@ -8,11 +8,12 @@
 4. [`evidence-validation.md`](./evidence-validation.md) — TypeScript validator、trust boundary、利用方法
 5. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
 6. [`endpoint-layout-candidate-probe.md`](./endpoint-layout-candidate-probe.md) — #223 の方式決定前に4/5/8 physical payloadと8-way execution viewのbyte geometryを比較するdiagnostic-only probe
-7. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
-8. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
-9. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
-10. [`../browser-harness/webgpu-2b/`](../browser-harness/webgpu-2b/) — 単一ブラウザWebGPU 実測harness（transformers.js + WebGPU）
-11. [`../browser-harness/webgpu-2b-split/`](../browser-harness/webgpu-2b-split/) — #165 の2ブラウザ実segment relay harness（ディレクトリ名はhistorical）
+7. [`miniflare-multi-service-test-isolation.md`](./miniflare-multi-service-test-isolation.md) — #261 の重いMiniflare multi-service smokeを通常suite後に直列実行するテスト分離方針
+8. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
+9. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
+10. [`inference-backend-abstraction.md`](./inference-backend-abstraction.md) — InferenceBackend / `WorkerCapability`抽象化（#94）とper-backend責任境界
+11. [`../browser-harness/webgpu-2b/`](../browser-harness/webgpu-2b/) — 単一ブラウザWebGPU 実測harness（transformers.js + WebGPU）
+12. [`../browser-harness/webgpu-2b-split/`](../browser-harness/webgpu-2b-split/) — #165 の2ブラウザ実segment relay harness（ディレクトリ名はhistorical）
 
 ## 読み方
 
