@@ -155,6 +155,8 @@ def build_report(source_model_path: Path) -> dict[str, object]:
     layout = layout_probe.build_report(source_model_path)
     if layout.get("kind") != layout_probe.REPORT_KIND:
         raise RuntimeError("unexpected upstream endpoint layout report kind")
+    if layout.get("schemaVersion") != layout_probe.REPORT_SCHEMA_VERSION:
+        raise RuntimeError("unexpected upstream endpoint layout report schema version")
     if layout.get("decisionStatus") != "diagnostic-only":
         raise RuntimeError("endpoint layout report must remain diagnostic-only")
 
