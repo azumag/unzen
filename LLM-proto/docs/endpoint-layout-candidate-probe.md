@@ -118,6 +118,72 @@ Observed session/run timing is retained in the JSON report as diagnostic data ra
 
 What this closes for S0: the existing 4-way physical payload -> 8-way tile arithmetic is no longer coordinate-only for the primitive tied-weight operators; it has executed against the real pinned payload bytes under ORT CPU.
 
+## Pinned browser ORT Web/WebGPU preferred-payload range spike
+
+`tools/prepare_llama_1b_endpoint_preferred_tile_ort_webgpu.py` and
+`browser-harness/endpoint-tile-webgpu/` close the next narrow S0 question: can
+ONNX Runtime Web `1.22.0` execute a tied-weight tile whose initializer points at
+an exact byte range **inside** a verified preferred-size physical payload?
+
+The preparation tool re-runs the pinned layout probe, requires the upstream
+report to remain `decisionStatus=diagnostic-only`, verifies the complete
+`1,692,672,000`-byte source external-data SHA-256, and materializes only
+preferred physical artifact 0 (`262,668,288` bytes / `250.5 MiB`). It then emits
+four tiny external-data ONNX graphs for execution tiles 0 and 1:
+
+- tile 0: artifact byte offset `0`, length `131,334,144`,
+- tile 1: artifact byte offset `131,334,144`, length `131,334,144`,
+- each tile has an embedding `Gather` graph and a logits `Transpose + MatMul`
+  graph,
+- all four graphs name the same `payload-0000.bin`; the ONNX external-data
+  metadata, rather than a rebuilt tile file, selects the byte range.
+
+The browser verifies the full physical payload SHA-256 before creating any ORT
+session and supplies that full verified object through ORT Web's `externalData`
+option. This experiment therefore proves **external-data offset binding inside a
+whole verified physical object**. It does not prove HTTP range fetching,
+sub-object Cache API residency, or a production streaming strategy.
+
+### 2026-09-08 real Chrome / Apple Metal run
+
+The exact runtime report is committed as
+[`docs/evidence/endpoint-preferred-tile-ort-webgpu-20260908.json`](./evidence/endpoint-preferred-tile-ort-webgpu-20260908.json).
+The run used Chrome `152.0.7977.83` headless on macOS `26.6.1` arm64 / Apple M4,
+with the WebGPU adapter reporting `vendor=apple`, `architecture=metal-3`, and
+ONNX Runtime Web `1.22.0`.
+
+Both selected tiles passed against direct references computed from the verified
+physical payload bytes:
+
+| tile | artifact offset | embedding | sparse logits |
+|---:|---:|---|---|
+| 0 | `0` | byte-exact, `maxAbsDiff=0.0` | `maxAbsDiff=0.0`, `maxRelativeDiff=0.0` |
+| 1 | `131,334,144` | byte-exact, `maxAbsDiff=0.0` | `maxAbsDiff=0.0`, `maxRelativeDiff=0.0` |
+
+The runtime awaits `InferenceSession.release()` after every embedding/logits
+session and records the API completion latency separately. This proves that all
+four release calls returned; it does **not** prove that the browser/driver
+immediately reclaimed all GPU allocations. Timing is retained only as
+diagnostic context because this run does not control OS page-cache state or
+measure GPU/host peak memory. The report also records the adapter's exposed
+`maxBufferSize` and `maxStorageBufferBindingSize` for the tested device. In the
+recorded Apple Metal run both were `4,294,967,292` bytes (with
+`maxComputeWorkgroupStorageSize=32,768`), so the 125.25 MiB tile was below the
+adapter's exposed single-buffer/storage-binding limits. This is a device-specific
+observation, not a cross-device support guarantee.
+
+What this closes for S0: ORT Web/WebGPU is no longer an untested assumption for
+the 4-way preferred-payload -> 8-way tile offset mechanism. A real WebGPU
+session consumed both a payload-prefix tile and a non-zero-offset tile from the
+same 250.5 MiB verified physical payload and produced exact primitive results.
+
+What remains open: this result does **not** select the 4-way layout or 8-way
+execution model, does not exercise the 5-way two-physical-slice case in the
+browser, does not include final norm or decoder composition, does not prove
+full-vs-staged logits equivalence, and does not measure peak host/GPU working
+set. Manifest/cache/loader/dispatcher contracts are still unapproved #223
+architecture work.
+
 ## Pinned CPU ORT 5-way boundary-crossing spike
 
 `tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py` targets the remaining CPU-side multi-physical-slice question for the diagnostic 5-way layout. The 5-way physical artifacts remain the deterministic balanced row ranges from the layout probe (maximum `210,141,184` bytes, about `200.40625 MiB`), while four of the eight execution tiles cross one physical-artifact boundary. For those tiles, the helper opens both payloads independently and exposes each slice as its own ONNX external initializer. A temporary ONNX graph performs `Concat(axis=0)` on the two slice tensors before the same embedding `Gather` or logits `Transpose + MatMul` primitive is evaluated. The full tied weight is never rebuilt as one external artifact.
@@ -165,9 +231,24 @@ python tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py \
   /absolute/path/to/model_q4.onnx \
   /absolute/path/to/model_q4.onnx_data \
   /absolute/path/to/five-way-payload-dir
+
+python tools/prepare_llama_1b_endpoint_preferred_tile_ort_webgpu.py \
+  /absolute/path/to/model_q4.onnx \
+  /absolute/path/to/model_q4.onnx_data \
+  /tmp/unzen-endpoint-webgpu-data
+
+DATA_DIR=/tmp/unzen-endpoint-webgpu-data PORT=8793 \
+  node browser-harness/endpoint-tile-webgpu/serve.mjs
+
+# In another shell, use a fresh browser profile and open http://127.0.0.1:8793/.
+# The recorded macOS run used Chrome 152 with:
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --user-data-dir=/tmp/unzen-endpoint-webgpu-chrome \
+  --disable-gpu-sandbox --enable-unsafe-webgpu \
+  http://127.0.0.1:8793/
 ```
 
-All four commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
+All five Python commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
 
 The layout JSON report includes the upstream probe/source identity and, for every candidate:
 
