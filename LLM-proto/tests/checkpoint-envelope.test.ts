@@ -6,7 +6,7 @@
  * TTL. A checkpoint from another request or a different model revision must
  * never be saved or relayed.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   createCheckpointEnvelope,
   verifyCheckpointDigest,
@@ -98,6 +98,54 @@ describe('checkpoint-envelope', () => {
         },
       };
     };
+
+    it.each([NaN, Infinity, -Infinity, -1, null, '1000'])(
+      'fails closed on malformed checkpoint timing %s before hashing', async (value) => {
+        const { envelope, expected: exp } = await expected();
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        try {
+          for (const field of ['createdAt', 'ttlMs'] as const) {
+            const malformed = { ...envelope, [field]: value } as unknown as typeof envelope;
+            expect(isCheckpointExpired(malformed, exp.now)).toBe(true);
+            expect((await validateCheckpointEnvelope(malformed, exp)).ok).toBe(false);
+          }
+          const now = value as number;
+          expect(isCheckpointExpired(envelope, now)).toBe(true);
+          expect((await validateCheckpointEnvelope(envelope, { ...exp, now })).ok).toBe(false);
+          expect(digest).not.toHaveBeenCalled();
+        } finally { digest.mockRestore(); }
+      },
+    );
+
+    it('rejects an expiry timestamp beyond the safe numeric range', async () => {
+      const { envelope, expected: exp } = await expected();
+      const malformed = { ...envelope, createdAt: Number.MAX_SAFE_INTEGER, ttlMs: 1 };
+      expect(isCheckpointExpired(malformed, exp.now)).toBe(true);
+      expect((await validateCheckpointEnvelope(malformed, exp)).ok).toBe(false);
+    });
+
+    it.each([NaN, Infinity, null, '1024'])(
+      'rejects an invalid payload byte limit %s before hashing', async (value) => {
+        const { envelope, expected: exp } = await expected();
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        try {
+          expect((await validateCheckpointEnvelope(envelope, {
+            ...exp, maxPayloadBytes: value as number,
+          })).ok).toBe(false);
+          expect(digest).not.toHaveBeenCalled();
+        } finally { digest.mockRestore(); }
+      },
+    );
+
+    it('rejects a dishonest payloadLength before hashing actual bytes', async () => {
+      const { envelope, expected: exp } = await expected();
+      const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+      try {
+        expect((await validateCheckpointEnvelope({ ...envelope, payloadLength: 0 }, exp)).ok)
+          .toBe(false);
+        expect(digest).not.toHaveBeenCalled();
+      } finally { digest.mockRestore(); }
+    });
 
     it('accepts a valid, in-TTL envelope', async () => {
       const { envelope, expected: exp } = await expected();

@@ -82,12 +82,13 @@ function assertDeclaredResponseSize(
   }
 }
 
-function cancelResponseBody(response: Response, reason: unknown): void {
+/** Release a response rejected before a bounded reader takes ownership. */
+export function cancelResponseBody(response: Response, reason?: unknown): void {
   try {
     const cancellation = response.body?.cancel(reason);
     void cancellation?.catch(() => {});
   } catch {
-    // Releasing a rejected body is best-effort and must not mask the size error.
+    // Releasing a rejected body is best-effort and must not mask the original error.
   }
 }
 

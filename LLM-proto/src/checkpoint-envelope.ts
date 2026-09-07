@@ -109,9 +109,16 @@ export async function verifyCheckpointDigest(
   return (await sha256Hex(envelope.payload)) === envelope.payloadDigest;
 }
 
-/** True when the envelope has outlived its TTL relative to `now`. */
+/** Invalid timing is unusable, just like an expired checkpoint. */
 export function isCheckpointExpired(envelope: CheckpointEnvelope, now: number): boolean {
-  return now >= envelope.createdAt + envelope.ttlMs;
+  const { createdAt, ttlMs } = envelope;
+  // JSON/runtime values are not guaranteed to satisfy the TypeScript type.
+  // NaN, Infinity and coercible values must not disable the relay TTL gate.
+  if (![now, createdAt, ttlMs].every((value) => Number.isFinite(value) && value >= 0)) {
+    return true;
+  }
+  const expiresAt = createdAt + ttlMs;
+  return expiresAt > Number.MAX_SAFE_INTEGER || now >= expiresAt;
 }
 
 /** The run context a checkpoint must match to be accepted at the boundary. */
@@ -173,6 +180,11 @@ export async function validateCheckpointEnvelope(
   }
   if (envelope.formatVersion !== expected.formatVersion) {
     return mismatch('checkpoint format version does not match the run');
+  }
+  // An invalid configured ceiling must not turn the size comparison into an
+  // always-false test and allow unbounded hashing/storage at this boundary.
+  if (!Number.isSafeInteger(expected.maxPayloadBytes) || expected.maxPayloadBytes < 0) {
+    return mismatch('checkpoint payload byte limit must be a non-negative safe integer');
   }
   if (envelope.payloadLength > expected.maxPayloadBytes) {
     return mismatch(`checkpoint payload ${envelope.payloadLength}B exceeds the ${expected.maxPayloadBytes}B limit`);

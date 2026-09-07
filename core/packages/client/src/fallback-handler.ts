@@ -28,7 +28,7 @@ import {
 } from '@unzen/shared';
 import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort';
 import { normalizeUnzenEndpoint } from './endpoint';
-import { readBoundedJsonResponse, ResponseBodyLimitError } from './response-body';
+import { cancelResponseBody, readBoundedJsonResponse, ResponseBodyLimitError } from './response-body';
 
 export class FallbackHandler {
   /**
@@ -120,11 +120,20 @@ export class FallbackHandler {
       // Make HTTP request to server (signal cancels the request on abort)
       const response = await globalThis.fetch(url, {
         method: 'POST',
+        // Reject before fetch follows a redirect: 307/308 can resend arguments
+        // to a different endpoint, before response status validation can run.
+        redirect: 'error',
         headers: { 'Content-Type': 'application/json' },
         body,
         signal: requestSignal,
       });
-      throwIfAborted(requestSignal);
+      try {
+        throwIfAborted(requestSignal);
+      } catch (error) {
+        // A fetch adapter may still deliver a body after cancellation.
+        cancelResponseBody(response, error);
+        throw error;
+      }
 
       // Parse response JSON regardless of status code
       // Server returns structured error responses for both 4xx and 5xx:
