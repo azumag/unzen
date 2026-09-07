@@ -95,3 +95,19 @@ The materializer also validates that row coverage and source byte ranges are con
 Materialization report schema `1.1.0` also binds the emitted bytes to the exact diagnostic selection that produced them. The `provenance` object records the probe kind/schema, pinned source-graph SHA-256, `stageKind`, policy `tier`, pinned external-data identity, and a SHA-256 of the canonical selected source-byte blueprint. This matters because `embedding-prefix` and `logits-postfix` both reference the same tied embedding range and can therefore produce identical raw payload slices at the same tier; payload hashes alone cannot identify which endpoint candidate was selected. The CLI regenerates and revalidates the pinned blueprint before constructing this provenance, and refuses a caller-supplied chunk list that differs from that selected blueprint.
 
 The emitted `unzen-endpoint-source-payload-materialization` report is explicitly `decisionStatus=diagnostic-only`. The payload filenames and report are measurement scaffolding only. They do not establish a browser cache format, manifest schema, loader behavior, endpoint execution semantics, or approval of vocabulary-axis chunking. Those remain the explicit design decision in #223.
+
+## Independent materialization verification
+
+`verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate pass. It requires the expected `--stage` and `--tier` on the command line instead of trusting those fields from the materialization report, independently derives the pinned blueprint/provenance from the probe report, checks the source identity and coverage metadata, requires the payload directory to contain exactly the expected `payload-*.bin` set, rejects symlink payloads, and re-hashes every payload before returning `status=pass`.
+
+```bash
+python tools/verify_endpoint_payload_materialization.py \
+  /tmp/endpoint-chunk-envelope.json \
+  /tmp/unzen-endpoint-payload-materialization.json \
+  /tmp/unzen-endpoint-payloads \
+  --stage embedding-prefix \
+  --tier preferred \
+  --report-out /tmp/unzen-endpoint-payload-verification.json
+```
+
+The verifier hashes the exact UTF-8 JSON bytes it parses for both input reports and includes those digests in `inputReports`, so a verification result can be tied back to the precise probe/materialization documents. Its own report is also `decisionStatus=diagnostic-only`: independent byte verification strengthens the evidence chain but does not select vocabulary-axis chunking or change browser cache, manifest, loader, runtime, dispatcher, or artifact-policy semantics.
