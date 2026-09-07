@@ -252,6 +252,42 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             self.assertFalse((output_dir / "payload-0000.bin").exists())
             self.assertFalse((output_dir / "payload-0001.bin").exists())
 
+    def test_failure_does_not_remove_directory_created_by_race(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            original_mkdir = Path.mkdir
+            injected = False
+
+            def racing_mkdir(path, mode=0o777, parents=False, exist_ok=False):
+                nonlocal injected
+                if path == output_dir and not injected:
+                    injected = True
+                    original_mkdir(path, mode=mode, parents=parents, exist_ok=False)
+                return original_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+            with (
+                mock.patch.object(Path, "mkdir", new=racing_mkdir),
+                self.assertRaisesRegex(RuntimeError, "SHA-256 does not match pinned identity"),
+            ):
+                materializer.materialize_source_payload_chunks(
+                    source,
+                    output_dir,
+                    chunks,
+                    buffer_bytes=2,
+                    expected_source_bytes=8,
+                    expected_source_sha256="0" * 64,
+                )
+
+            self.assertTrue(injected)
+            self.assertTrue(output_dir.is_dir())
+            self.assertEqual(list(output_dir.glob("payload-*.bin")), [])
+
     def test_materializer_uses_combined_source_pass(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0

@@ -417,6 +417,38 @@ def _require_exact_payload_names(
         )
 
 
+def _ensure_output_directory(output_dir: Path) -> tuple[int, int] | None:
+    """Create the output directory when absent and return its created identity."""
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        if not output_dir.is_dir():
+            raise
+        return None
+    created_stat = output_dir.stat()
+    return created_stat.st_dev, created_stat.st_ino
+
+
+def _rmdir_if_same_directory_identity(
+    path: Path, expected_identity: tuple[int, int]
+) -> None:
+    """Remove only an empty directory still resolving to the one created by this run."""
+
+    if path.is_symlink():
+        return
+    try:
+        stat_result = path.stat()
+    except FileNotFoundError:
+        return
+    if (stat_result.st_dev, stat_result.st_ino) != expected_identity:
+        return
+    try:
+        path.rmdir()
+    except OSError:
+        pass
+
+
 def _hash_source_and_materialize_ranges(
     source: BinaryIO,
     destinations: list[Path],
@@ -558,7 +590,6 @@ def materialize_source_payload_chunks(
     materialized: list[dict[str, object]] = []
     created_destinations: dict[Path, tuple[int, int, int, int, int]] = {}
     total_payload_bytes = 0
-    output_dir_existed = output_dir.exists()
     with source_path.open("rb") as source:
         source_stat_signature = _file_stat_signature(os.fstat(source.fileno()))
         _require_stable_source_signature(
@@ -577,7 +608,7 @@ def materialize_source_payload_chunks(
                 f"chunk blueprint exceeds source file size: end={coverage_end}, sourceBytes={source_bytes}"
             )
 
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir_created_identity = _ensure_output_directory(output_dir)
         try:
             source_sha256, payload_results = _hash_source_and_materialize_ranges(
                 source,
@@ -645,11 +676,10 @@ def materialize_source_payload_chunks(
                     destination,
                     (destination_signature[0], destination_signature[1]),
                 )
-            if not output_dir_existed:
-                try:
-                    output_dir.rmdir()
-                except OSError:
-                    pass
+            if output_dir_created_identity is not None:
+                _rmdir_if_same_directory_identity(
+                    output_dir, output_dir_created_identity
+                )
             raise
 
     return {
