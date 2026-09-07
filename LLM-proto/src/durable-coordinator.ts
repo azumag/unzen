@@ -604,7 +604,12 @@ export class DurableCoordinator {
         segmentIndex,
         modelManifestDigest: this.manifest.manifestDigest,
         segment,
-        checkpoint: previousCheckpoint,
+        // Executors may mutate or transfer their input buffer. Keep the
+        // repository-owned predecessor intact for later attempts/resume.
+        checkpoint: previousCheckpoint === undefined ? undefined : {
+          ...previousCheckpoint,
+          payload: new Uint8Array(previousCheckpoint.payload),
+        },
       };
 
       try {

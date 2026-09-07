@@ -32,3 +32,24 @@ The failure cases assert that only segment 0 reached the executor, no active lea
 ## Scope
 
 This change only strengthens continuation preflight. It does not define restart recovery policy (#183), cancellation semantics (#184), or the async result-commit race tracked by #182.
+
+## Consumer ownership during retries and recovery
+
+After preflight, an execution assignment owns a new checkpoint envelope and a byte
+copy of its predecessor payload. `beginDurableRecovery` returns the same owned
+snapshot contract for a claimed resume. Executors and recovery callbacks may mutate
+their input or transfer its ArrayBuffer to a Worker without changing or detaching the
+repository's accepted checkpoint. Each retry/recovery claim receives a fresh copy.
+
+Only the selected predecessor is copied at the consumer boundary. Repository-wide
+status enumeration and the existing mutable request/worker record semantics are not
+changed. This does not add a new digest pass over arbitrary repository writes:
+inbound checkpoint acceptance still performs the existing identity/size/TTL/digest
+validation, and the repository remains a trusted internal storage boundary.
+
+Regression tests exercise ordinary payload mutation, model/TTL metadata mutation,
+and real ArrayBuffer transfer/detachment. A transient failure is followed by an actual
+Coordinator retry whose checkpoint must still match its original bytes and SHA-256.
+Recovery command tests cover both the live in-memory adapter and the clone-on-access
+Durable Object adapter. These are executable contract tests, not real-model WebGPU
+numerical-equivalence or production-storage evidence.
