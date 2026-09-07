@@ -387,6 +387,35 @@ def validate_source_payload_chunks(
     return normalized, source_location, coverage_start, expected_source_offset
 
 
+def _payload_namespace_names(output_dir: Path) -> set[str]:
+    if not output_dir.is_dir():
+        return set()
+    return {path.name for path in output_dir.glob("payload-*.bin")}
+
+
+def _require_empty_payload_namespace(output_dir: Path) -> None:
+    observed = _payload_namespace_names(output_dir)
+    if observed:
+        raise FileExistsError(
+            "refusing to materialize into a payload directory with existing reserved "
+            f"payload-*.bin entries: {sorted(observed)!r}"
+        )
+
+
+def _require_exact_payload_names(
+    output_dir: Path,
+    *,
+    expected_names: Iterable[str],
+) -> None:
+    expected = set(expected_names)
+    observed = _payload_namespace_names(output_dir)
+    if observed != expected:
+        raise RuntimeError(
+            "payload directory contents changed during materialization: "
+            f"expected={sorted(expected)!r}, observed={sorted(observed)!r}"
+        )
+
+
 def _copy_exact_range(
     source: BinaryIO,
     destination: Path,
@@ -467,9 +496,7 @@ def materialize_source_payload_chunks(
         )
 
     destinations = [output_dir / f"payload-{index:04d}.bin" for index in range(len(normalized))]
-    existing = [path for path in destinations if path.exists() or path.is_symlink()]
-    if existing:
-        raise FileExistsError(f"refusing to overwrite existing payload: {existing[0]}")
+    _require_empty_payload_namespace(output_dir)
 
     materialized: list[dict[str, object]] = []
     created_destinations: dict[Path, tuple[int, int, int, int, int]] = {}
@@ -550,6 +577,10 @@ def materialize_source_payload_chunks(
             )
             for destination, destination_signature in created_destinations.items():
                 _require_stable_payload_signature(destination, destination_signature)
+            _require_exact_payload_names(
+                output_dir,
+                expected_names=(destination.name for destination in destinations),
+            )
         except Exception:
             for destination, destination_signature in created_destinations.items():
                 _unlink_if_same_file_identity(
