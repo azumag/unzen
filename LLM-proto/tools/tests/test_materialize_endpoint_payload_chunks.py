@@ -694,8 +694,16 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                     payload_count=2,
                 )
 
+            with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
+                materializer._validate_report_output_path(
+                    output_dir / "payload-9999.bin" / "report.json",
+                    source_path=source,
+                    output_dir=output_dir,
+                    payload_count=2,
+                )
+
             materializer._validate_report_output_path(
-                output_dir / "materialization-report.json",
+                output_dir / "reports" / "materialization-report.json",
                 source_path=source,
                 output_dir=output_dir,
                 payload_count=2,

@@ -870,16 +870,34 @@ def verify_pinned_probe_materialization(
     return report
 
 
+def _report_path_enters_reserved_payload_namespace(
+    report_out: Path, *, payload_dir: Path
+) -> bool:
+    """Return whether report creation would traverse a reserved payload-shaped entry."""
+
+    path_pairs = (
+        (Path(os.path.abspath(report_out)), Path(os.path.abspath(payload_dir))),
+        (report_out.resolve(), payload_dir.resolve()),
+    )
+    for target, root in path_pairs:
+        try:
+            relative = target.relative_to(root)
+        except ValueError:
+            continue
+        if relative.parts and Path(relative.parts[0]).match("payload-*.bin"):
+            return True
+    return False
+
+
 def _validate_report_output_path(report_out: Path, *, payload_dir: Path) -> None:
     if report_out.exists() or report_out.is_symlink():
         raise FileExistsError(
             f"refusing to overwrite existing verification report: {report_out}"
         )
-    target = report_out.resolve()
-    if target.parent == payload_dir.resolve() and target.match("payload-*.bin"):
+    if _report_path_enters_reserved_payload_namespace(report_out, payload_dir=payload_dir):
         raise RuntimeError(
-            "verification report output must not use the reserved payload-*.bin namespace "
-            "in the payload directory"
+            "verification report output must not use or create the reserved payload-*.bin "
+            "namespace in the payload directory"
         )
 
 
