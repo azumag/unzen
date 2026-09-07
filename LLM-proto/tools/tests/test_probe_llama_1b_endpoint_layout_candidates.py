@@ -36,6 +36,11 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
                     "rowBytes": 8_192,
                     "sourceOffsetBytes": 0,
                     "sourceLocation": "model_q4.onnx_data",
+                    "tiers": {
+                        "preferred": {
+                            "limitBytes": probe_module.PREFERRED_LIMIT_BYTES,
+                        }
+                    },
                 }
                 for stage in ("embedding-prefix", "logits-postfix")
             },
@@ -133,6 +138,29 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
             ):
                 probe_module.build_report(Path("model_q4.onnx"))
 
+    def test_build_report_rejects_external_data_location_drift(self) -> None:
+        fake_envelope = self._fake_envelope()
+        fake_envelope["pinnedSourceExternalDataIdentity"]["location"] = "other.bin"
+
+        with patch.object(
+            probe_module.envelope_probe, "probe_graph", return_value=fake_envelope
+        ):
+            with self.assertRaisesRegex(RuntimeError, "identity location diverged"):
+                probe_module.build_report(Path("model_q4.onnx"))
+
+    def test_build_report_rejects_preferred_policy_drift(self) -> None:
+        fake_envelope = self._fake_envelope()
+        for stage in ("embedding-prefix", "logits-postfix"):
+            fake_envelope["endpointChunkEnvelope"][stage]["tiers"]["preferred"][
+                "limitBytes"
+            ] += 1
+
+        with patch.object(
+            probe_module.envelope_probe, "probe_graph", return_value=fake_envelope
+        ):
+            with self.assertRaisesRegex(RuntimeError, "preferred payload limit drifted"):
+                probe_module.build_report(Path("model_q4.onnx"))
+
     def test_build_report_keeps_candidate_comparison_diagnostic_only(self) -> None:
         fake_envelope = self._fake_envelope()
 
@@ -153,6 +181,10 @@ class ProbeLlama1BEndpointLayoutCandidatesTest(unittest.TestCase):
         )
         self.assertEqual(
             report["pinnedSourceExternalDataIdentity"], self._source_identity()
+        )
+        self.assertEqual(
+            report["candidatePolicy"]["preferredPhysicalArtifactLimitBytes"],
+            probe_module.PREFERRED_LIMIT_BYTES,
         )
         self.assertEqual(report["weightBytes"], 1_050_673_152)
         self.assertEqual(
