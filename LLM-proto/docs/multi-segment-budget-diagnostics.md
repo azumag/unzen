@@ -98,7 +98,7 @@ The emitted `unzen-endpoint-source-payload-materialization` report is explicitly
 
 ## Independent materialization verification
 
-`verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate, source-backed pass. It requires the pinned external-data file plus the expected `--stage` and `--tier`, independently derives the pinned blueprint/provenance from the probe report, re-hashes the complete source against the pinned identity, re-hashes every referenced source range and every payload, checks source coverage and payload geometry/count/total bytes, requires the payload directory to contain exactly the expected `payload-*.bin` set, and rejects symlink source/payload files.
+`verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate, source-backed pass. It requires the pinned external-data file plus the expected `--stage` and `--tier`, independently derives the pinned blueprint/provenance from the probe report, re-hashes the complete source against the pinned identity, re-hashes every referenced source range and every payload, checks source coverage and payload geometry/count/total bytes, requires the payload directory to contain exactly the expected `payload-*.bin` set, and rejects symlink payload files. Source symlinks remain supported for model-cache compatibility because the dereferenced bytes are independently checked against the pinned size/SHA-256 and per-range digests.
 
 ```bash
 python tools/verify_endpoint_payload_materialization.py \
