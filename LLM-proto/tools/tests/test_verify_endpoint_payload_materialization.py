@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 import sys
 import tempfile
@@ -59,7 +58,7 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
             "sha256": "3" * 64,
         }
         payload_dir = root / "payloads"
-        payload_dir.mkdir()
+        payload_dir.mkdir(parents=True)
         payload_bytes = [b"abcd", b"efgh"]
         for index, data in enumerate(payload_bytes):
             (payload_dir / f"payload-{index:04d}.bin").write_bytes(data)
