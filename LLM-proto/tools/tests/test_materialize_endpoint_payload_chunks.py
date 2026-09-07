@@ -710,6 +710,24 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                 payload_count=2,
             )
 
+            with self.assertRaisesRegex(RuntimeError, "payload directory or one of its ancestors"):
+                materializer._validate_report_output_path(
+                    output_dir,
+                    source_path=source,
+                    output_dir=output_dir,
+                    payload_count=2,
+                )
+
+            report_ancestor = root / "future-report"
+            nested_output_dir = report_ancestor / "chunks"
+            with self.assertRaisesRegex(RuntimeError, "payload directory or one of its ancestors"):
+                materializer._validate_report_output_path(
+                    report_ancestor,
+                    source_path=source,
+                    output_dir=nested_output_dir,
+                    payload_count=2,
+                )
+
             existing_report = root / "report.json"
             existing_report.write_text("keep", encoding="utf-8")
             with self.assertRaises(FileExistsError):
@@ -720,6 +738,35 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                     payload_count=2,
                 )
             self.assertEqual(existing_report.read_text(encoding="utf-8"), "keep")
+
+    def test_main_rejects_report_ancestor_before_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"source")
+            probe_report = root / "probe.json"
+            probe_report.write_text("{}", encoding="utf-8")
+            report_out = root / "future-report"
+            output_dir = report_out / "payloads"
+            chunks = [{}]
+            argv = [
+                "materialize_endpoint_payload_chunks.py",
+                str(source),
+                str(probe_report),
+                str(output_dir),
+                "--report-out",
+                str(report_out),
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(materializer, "chunks_from_probe_report", return_value=chunks),
+                mock.patch.object(materializer, "materialize_pinned_probe_payload_chunks") as materialize,
+                self.assertRaisesRegex(RuntimeError, "payload directory or one of its ancestors"),
+            ):
+                materializer.main()
+
+            materialize.assert_not_called()
+            self.assertFalse(output_dir.exists())
 
     def test_main_rechecks_report_alias_after_materialization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
