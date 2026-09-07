@@ -568,8 +568,14 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     payload_dir=payload_dir,
                 )
 
+            with self.assertRaisesRegex(RuntimeError, r"reserved payload-\*\.bin namespace"):
+                verifier._validate_report_output_path(
+                    payload_dir / "payload-9999.bin" / "verification.json",
+                    payload_dir=payload_dir,
+                )
+
             verifier._validate_report_output_path(
-                payload_dir / "verification-report.json",
+                payload_dir / "reports" / "verification-report.json",
                 payload_dir=payload_dir,
             )
 
