@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -87,16 +88,52 @@ def _load_json_with_sha256(path: Path) -> tuple[dict[str, object], str]:
     return value, digest
 
 
-def _sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
+def _file_stat_signature(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
+
+
+def _require_stable_file_signature(
+    observed: tuple[int, int, int, int, int],
+    expected: tuple[int, int, int, int, int],
+    *,
+    path: Path,
+) -> None:
+    if observed != expected:
+        raise RuntimeError(f"file snapshot changed during verification: {path}")
+
+
+def _sha256_file(
+    path: Path,
+    *,
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
+    expected_stat_signature: tuple[int, int, int, int, int] | None = None,
+) -> str:
     if buffer_bytes <= 0:
         raise ValueError("buffer_bytes must be positive")
     digest = hashlib.sha256()
     with path.open("rb") as stream:
+        before_signature = _file_stat_signature(os.fstat(stream.fileno()))
+        if expected_stat_signature is not None:
+            _require_stable_file_signature(
+                before_signature, expected_stat_signature, path=path
+            )
         while True:
             block = stream.read(buffer_bytes)
             if not block:
                 break
             digest.update(block)
+        after_signature = _file_stat_signature(os.fstat(stream.fileno()))
+    _require_stable_file_signature(after_signature, before_signature, path=path)
+    if expected_stat_signature is not None:
+        _require_stable_file_signature(
+            after_signature, expected_stat_signature, path=path
+        )
     return digest.hexdigest()
 
 
@@ -352,6 +389,7 @@ def _sha256_file_range(
     source_offset: int,
     payload_bytes: int,
     buffer_bytes: int,
+    expected_stat_signature: tuple[int, int, int, int, int] | None = None,
 ) -> str:
     if source_offset < 0 or payload_bytes <= 0:
         raise ValueError("source range must be non-negative and non-empty")
@@ -360,6 +398,11 @@ def _sha256_file_range(
     digest = hashlib.sha256()
     remaining = payload_bytes
     with path.open("rb") as stream:
+        before_signature = _file_stat_signature(os.fstat(stream.fileno()))
+        if expected_stat_signature is not None:
+            _require_stable_file_signature(
+                before_signature, expected_stat_signature, path=path
+            )
         stream.seek(source_offset)
         while remaining:
             block = stream.read(min(buffer_bytes, remaining))
@@ -370,6 +413,12 @@ def _sha256_file_range(
                 )
             digest.update(block)
             remaining -= len(block)
+        after_signature = _file_stat_signature(os.fstat(stream.fileno()))
+    _require_stable_file_signature(after_signature, before_signature, path=path)
+    if expected_stat_signature is not None:
+        _require_stable_file_signature(
+            after_signature, expected_stat_signature, path=path
+        )
     return digest.hexdigest()
 
 
@@ -428,10 +477,15 @@ def verify_materialization_payloads(
         raise RuntimeError(
             "source external-data basename does not match pinned external-data location"
         )
-    actual_source_bytes = source_path.stat().st_size
+    source_stat_signature = _file_stat_signature(source_path.stat())
+    actual_source_bytes = source_stat_signature[2]
     if actual_source_bytes != source_identity["bytes"]:
         raise RuntimeError("source external-data byte size does not match pinned identity")
-    actual_source_sha256 = _sha256_file(source_path, buffer_bytes=buffer_bytes)
+    actual_source_sha256 = _sha256_file(
+        source_path,
+        buffer_bytes=buffer_bytes,
+        expected_stat_signature=source_stat_signature,
+    )
     if actual_source_sha256 != source_identity["sha256"]:
         raise RuntimeError("source external-data SHA-256 does not match pinned identity")
 
@@ -506,6 +560,7 @@ def verify_materialization_payloads(
         )
 
     verified_payloads: list[dict[str, object]] = []
+    verified_payload_signatures: dict[str, tuple[int, int, int, int, int]] = {}
     verified_total_bytes = 0
     for index, (chunk, payload, expected_name) in enumerate(
         zip(chunks, payloads, expected_names, strict=True)
@@ -542,18 +597,24 @@ def verify_materialization_payloads(
             raise RuntimeError(f"refusing to verify symlink payload: {payload_path}")
         if not payload_path.is_file():
             raise FileNotFoundError(f"materialized payload not found: {payload_path}")
-        actual_bytes = payload_path.stat().st_size
+        payload_stat_signature = _file_stat_signature(payload_path.stat())
+        actual_bytes = payload_stat_signature[2]
         if actual_bytes != expected_fields["bytes"]:
             raise RuntimeError(
                 f"materialized payload size mismatch for {expected_name}: "
                 f"expected={expected_fields['bytes']}, observed={actual_bytes}"
             )
-        actual_payload_sha256 = _sha256_file(payload_path, buffer_bytes=buffer_bytes)
+        actual_payload_sha256 = _sha256_file(
+            payload_path,
+            buffer_bytes=buffer_bytes,
+            expected_stat_signature=payload_stat_signature,
+        )
         source_range_sha256 = _sha256_file_range(
             source_path,
             source_offset=int(expected_fields["sourceOffsetBytes"]),
             payload_bytes=int(expected_fields["bytes"]),
             buffer_bytes=buffer_bytes,
+            expected_stat_signature=source_stat_signature,
         )
         if actual_payload_sha256 != source_range_sha256:
             raise RuntimeError(
@@ -566,6 +627,7 @@ def verify_materialization_payloads(
                 f"sourceRangeSha256={source_range_sha256}, reportedSha256={reported_sha256}"
             )
         verified_total_bytes += actual_bytes
+        verified_payload_signatures[expected_name] = payload_stat_signature
         verified_payloads.append(
             {
                 "chunkIndex": expected_fields["chunkIndex"],
@@ -578,6 +640,21 @@ def verify_materialization_payloads(
 
     if verified_total_bytes != expected_total_payload_bytes:
         raise RuntimeError("verified payload byte total does not match pinned blueprint")
+
+    for expected_name, payload_stat_signature in verified_payload_signatures.items():
+        payload_path = payload_dir / expected_name
+        if payload_path.is_symlink():
+            raise RuntimeError(f"refusing to verify symlink payload: {payload_path}")
+        _require_stable_file_signature(
+            _file_stat_signature(payload_path.stat()),
+            payload_stat_signature,
+            path=payload_path,
+        )
+    _require_stable_file_signature(
+        _file_stat_signature(source_path.stat()),
+        source_stat_signature,
+        path=source_path,
+    )
 
     return {
         "schemaVersion": REPORT_SCHEMA_VERSION,
