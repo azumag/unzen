@@ -225,20 +225,19 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             source = root / "weights.bin"
             source.write_bytes(b"01234567")
             output_dir = root / "chunks"
-            original_copy = materializer._copy_exact_range
+            original_pass = materializer._hash_source_and_materialize_ranges
             extra = output_dir / "payload-9999.bin"
 
-            def copy_then_add_extra(source_stream, destination, **kwargs):
-                result = original_copy(source_stream, destination, **kwargs)
-                if destination.name == "payload-0001.bin":
-                    extra.write_bytes(b"foreign")
+            def pass_then_add_extra(source_stream, destinations, selected_chunks, **kwargs):
+                result = original_pass(source_stream, destinations, selected_chunks, **kwargs)
+                extra.write_bytes(b"foreign")
                 return result
 
             with (
                 mock.patch.object(
                     materializer,
-                    "_copy_exact_range",
-                    side_effect=copy_then_add_extra,
+                    "_hash_source_and_materialize_ranges",
+                    side_effect=pass_then_add_extra,
                 ),
                 self.assertRaisesRegex(RuntimeError, "contents changed during materialization"),
             ):
@@ -253,27 +252,86 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             self.assertFalse((output_dir / "payload-0000.bin").exists())
             self.assertFalse((output_dir / "payload-0001.bin").exists())
 
-    def test_copy_exact_range_never_unlinks_a_preexisting_destination(self) -> None:
+    def test_failure_does_not_remove_directory_created_by_race(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            original_mkdir = Path.mkdir
+            injected = False
+
+            def racing_mkdir(path, mode=0o777, parents=False, exist_ok=False):
+                nonlocal injected
+                if path == output_dir and not injected:
+                    injected = True
+                    original_mkdir(path, mode=mode, parents=parents, exist_ok=False)
+                return original_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
+
+            with (
+                mock.patch.object(Path, "mkdir", new=racing_mkdir),
+                self.assertRaisesRegex(RuntimeError, "SHA-256 does not match pinned identity"),
+            ):
+                materializer.materialize_source_payload_chunks(
+                    source,
+                    output_dir,
+                    chunks,
+                    buffer_bytes=2,
+                    expected_source_bytes=8,
+                    expected_source_sha256="0" * 64,
+                )
+
+            self.assertTrue(injected)
+            self.assertTrue(output_dir.is_dir())
+            self.assertEqual(list(output_dir.glob("payload-*.bin")), [])
+
+    def test_materializer_uses_combined_source_pass(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            with mock.patch.object(
+                materializer, "_sha256_stream", side_effect=AssertionError("legacy prehash")
+            ):
+                report = materializer.materialize_source_payload_chunks(
+                    source, output_dir, chunks, buffer_bytes=3,
+                    expected_source_bytes=8,
+                    expected_source_sha256=hashlib.sha256(b"01234567").hexdigest(),
+                )
+            self.assertEqual(report["source"]["sha256"], hashlib.sha256(b"01234567").hexdigest())
+            self.assertEqual((output_dir / "payload-0000.bin").read_bytes(), b"0123")
+            self.assertEqual((output_dir / "payload-0001.bin").read_bytes(), b"4567")
+
+    def test_combined_pass_never_unlinks_a_preexisting_destination(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4, row_bytes=2, payload_count=2, location="weights.bin", source_offset_bytes=0
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source_path = root / "weights.bin"
             source_path.write_bytes(b"01234567")
-            destination = root / "payload.bin"
-            destination.write_bytes(b"keep")
-
+            first = root / "payload-0000.bin"
+            second = root / "payload-0001.bin"
+            first.write_bytes(b"keep")
             with source_path.open("rb") as source:
+                signature = materializer._file_stat_signature(source_path.stat())
                 with self.assertRaises(FileExistsError):
-                    materializer._copy_exact_range(
-                        source,
-                        destination,
-                        source_offset=0,
-                        payload_bytes=4,
-                        buffer_bytes=2,
+                    materializer._hash_source_and_materialize_ranges(
+                        source, [first, second], chunks,
+                        source_path=source_path, buffer_bytes=2,
+                        expected_source_stat_signature=signature,
                     )
+            self.assertEqual(first.read_bytes(), b"keep")
+            self.assertFalse(second.exists())
 
-            self.assertEqual(destination.read_bytes(), b"keep")
-
-    def test_rejects_source_mutation_after_identity_hash(self) -> None:
+    def test_rejects_source_mutation_after_combined_source_pass(self) -> None:
         chunks = probe_module._balanced_source_payload_chunks(
             rows=4,
             row_bytes=2,
@@ -287,18 +345,19 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             source_path = root / "weights.bin"
             source_path.write_bytes(b"01234567")
             output_dir = root / "chunks"
-            original_copy = materializer._copy_exact_range
-            mutated = False
+            original_pass = materializer._hash_source_and_materialize_ranges
 
-            def mutate_then_copy(source, destination, **kwargs):
-                nonlocal mutated
-                if not mutated:
-                    source_path.write_bytes(b"0123X567")
-                    mutated = True
-                return original_copy(source, destination, **kwargs)
+            def pass_then_mutate(source_stream, destinations, selected_chunks, **kwargs):
+                result = original_pass(source_stream, destinations, selected_chunks, **kwargs)
+                source_path.write_bytes(b"0123X567")
+                return result
 
             with (
-                mock.patch.object(materializer, "_copy_exact_range", side_effect=mutate_then_copy),
+                mock.patch.object(
+                    materializer,
+                    "_hash_source_and_materialize_ranges",
+                    side_effect=pass_then_mutate,
+                ),
                 self.assertRaisesRegex(RuntimeError, "source snapshot changed during materialization"),
             ):
                 materializer.materialize_source_payload_chunks(
@@ -329,19 +388,19 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             replacement = root / "replacement.bin"
             replacement.write_bytes(source_bytes)
             output_dir = root / "chunks"
-            original_copy = materializer._copy_exact_range
-            replaced = False
+            original_pass = materializer._hash_source_and_materialize_ranges
 
-            def copy_then_replace(source, destination, **kwargs):
-                nonlocal replaced
-                digest = original_copy(source, destination, **kwargs)
-                if not replaced:
-                    replacement.replace(source_path)
-                    replaced = True
-                return digest
+            def pass_then_replace(source_stream, destinations, selected_chunks, **kwargs):
+                result = original_pass(source_stream, destinations, selected_chunks, **kwargs)
+                replacement.replace(source_path)
+                return result
 
             with (
-                mock.patch.object(materializer, "_copy_exact_range", side_effect=copy_then_replace),
+                mock.patch.object(
+                    materializer,
+                    "_hash_source_and_materialize_ranges",
+                    side_effect=pass_then_replace,
+                ),
                 self.assertRaisesRegex(RuntimeError, "source snapshot changed during materialization"),
             ):
                 materializer.materialize_source_payload_chunks(
@@ -369,19 +428,19 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             source_path = root / "weights.bin"
             source_path.write_bytes(b"01234567")
             output_dir = root / "chunks"
-            original_copy = materializer._copy_exact_range
-            mutated = False
+            original_pass = materializer._hash_source_and_materialize_ranges
 
-            def copy_then_mutate(source, destination, **kwargs):
-                nonlocal mutated
-                result = original_copy(source, destination, **kwargs)
-                if not mutated:
-                    destination.write_bytes(b"ABCD")
-                    mutated = True
+            def pass_then_mutate(source_stream, destinations, selected_chunks, **kwargs):
+                result = original_pass(source_stream, destinations, selected_chunks, **kwargs)
+                destinations[0].write_bytes(b"ABCD")
                 return result
 
             with (
-                mock.patch.object(materializer, "_copy_exact_range", side_effect=copy_then_mutate),
+                mock.patch.object(
+                    materializer,
+                    "_hash_source_and_materialize_ranges",
+                    side_effect=pass_then_mutate,
+                ),
                 self.assertRaisesRegex(RuntimeError, "payload snapshot changed during materialization"),
             ):
                 materializer.materialize_source_payload_chunks(
@@ -412,19 +471,19 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             output_dir.mkdir()
             replacement = root / "foreign-payload.bin"
             replacement.write_bytes(b"SAFE")
-            original_copy = materializer._copy_exact_range
-            replaced = False
+            original_pass = materializer._hash_source_and_materialize_ranges
 
-            def copy_then_replace(source, destination, **kwargs):
-                nonlocal replaced
-                result = original_copy(source, destination, **kwargs)
-                if not replaced:
-                    replacement.replace(destination)
-                    replaced = True
+            def pass_then_replace(source_stream, destinations, selected_chunks, **kwargs):
+                result = original_pass(source_stream, destinations, selected_chunks, **kwargs)
+                replacement.replace(destinations[0])
                 return result
 
             with (
-                mock.patch.object(materializer, "_copy_exact_range", side_effect=copy_then_replace),
+                mock.patch.object(
+                    materializer,
+                    "_hash_source_and_materialize_ranges",
+                    side_effect=pass_then_replace,
+                ),
                 self.assertRaisesRegex(RuntimeError, "payload snapshot changed during materialization"),
             ):
                 materializer.materialize_source_payload_chunks(

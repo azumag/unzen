@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Iterable
 
@@ -416,62 +417,150 @@ def _require_exact_payload_names(
         )
 
 
-def _copy_exact_range(
+def _ensure_output_directory(output_dir: Path) -> tuple[int, int] | None:
+    """Create the output directory when absent and return its created identity."""
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        if not output_dir.is_dir():
+            raise
+        return None
+    created_stat = output_dir.stat()
+    return created_stat.st_dev, created_stat.st_ino
+
+
+def _rmdir_if_same_directory_identity(
+    path: Path, expected_identity: tuple[int, int]
+) -> None:
+    """Remove only an empty directory still resolving to the one created by this run."""
+
+    if path.is_symlink():
+        return
+    try:
+        stat_result = path.stat()
+    except FileNotFoundError:
+        return
+    if (stat_result.st_dev, stat_result.st_ino) != expected_identity:
+        return
+    try:
+        path.rmdir()
+    except OSError:
+        pass
+
+
+def _hash_source_and_materialize_ranges(
     source: BinaryIO,
-    destination: Path,
+    destinations: list[Path],
+    chunks: list[dict[str, object]],
     *,
-    source_path: Path | None = None,
-    source_offset: int,
-    payload_bytes: int,
+    source_path: Path,
     buffer_bytes: int,
-    expected_source_stat_signature: tuple[int, int, int, int, int] | None = None,
-) -> tuple[str, tuple[int, int, int, int, int]]:
+    expected_source_stat_signature: tuple[int, int, int, int, int],
+) -> tuple[str, list[tuple[str, tuple[int, int, int, int, int]]]]:
+    """Hash the complete source while materializing ordered ranges in one sequential pass."""
+
     if buffer_bytes <= 0:
         raise ValueError("buffer_bytes must be positive")
-    tracked_source_path = source_path or Path(getattr(source, "name", "<open-source>"))
+    if len(destinations) != len(chunks):
+        raise ValueError("destination count must match chunk count")
+
     before_signature = _file_stat_signature(os.fstat(source.fileno()))
-    if expected_source_stat_signature is not None:
-        _require_stable_source_signature(
-            before_signature,
-            expected_source_stat_signature,
-            source_path=tracked_source_path,
-        )
-    digest = hashlib.sha256()
-    remaining = payload_bytes
-    source.seek(source_offset)
-    output = destination.open("xb")
-    created_stat = os.fstat(output.fileno())
-    created_identity = (created_stat.st_dev, created_stat.st_ino)
-    destination_signature: tuple[int, int, int, int, int] | None = None
+    _require_stable_source_signature(
+        before_signature,
+        expected_source_stat_signature,
+        source_path=source_path,
+    )
+    full_digest = hashlib.sha256()
+    payload_digests = [hashlib.sha256() for _ in chunks]
+    payload_bytes_written = [0 for _ in chunks]
+    destination_signatures: list[tuple[int, int, int, int, int] | None] = [
+        None for _ in chunks
+    ]
+    created_identities: dict[Path, tuple[int, int]] = {}
+    current_chunk = 0
+    position = 0
+
     try:
-        with output:
-            while remaining:
-                block = source.read(min(buffer_bytes, remaining))
+        with ExitStack() as stack:
+            outputs: list[BinaryIO] = []
+            for destination in destinations:
+                output = stack.enter_context(destination.open("xb"))
+                created_stat = os.fstat(output.fileno())
+                created_identities[destination] = (created_stat.st_dev, created_stat.st_ino)
+                outputs.append(output)
+
+            source.seek(0)
+            while True:
+                block = source.read(buffer_bytes)
                 if not block:
-                    raise RuntimeError(
-                        f"source data ended early while materializing {destination.name}: "
-                        f"{remaining} bytes missing"
+                    break
+                block_start = position
+                block_end = block_start + len(block)
+                full_digest.update(block)
+
+                while current_chunk < len(chunks):
+                    chunk = chunks[current_chunk]
+                    source_offset = _required_int(
+                        chunk["sourceOffsetBytes"], field="sourceOffsetBytes"
                     )
-                output.write(block)
-                digest.update(block)
-                remaining -= len(block)
-            output.flush()
-            destination_signature = _file_stat_signature(os.fstat(output.fileno()))
-        after_signature = _file_stat_signature(os.fstat(source.fileno()))
-        _require_stable_source_signature(
-            after_signature, before_signature, source_path=tracked_source_path
-        )
-        if expected_source_stat_signature is not None:
+                    source_end = _required_int(
+                        chunk["sourceEndOffsetBytesExclusive"],
+                        field="sourceEndOffsetBytesExclusive",
+                    )
+                    if source_end <= block_start:
+                        current_chunk += 1
+                        continue
+                    if source_offset >= block_end:
+                        break
+                    slice_start = max(source_offset, block_start) - block_start
+                    slice_end = min(source_end, block_end) - block_start
+                    if slice_end > slice_start:
+                        payload_block = block[slice_start:slice_end]
+                        outputs[current_chunk].write(payload_block)
+                        payload_digests[current_chunk].update(payload_block)
+                        payload_bytes_written[current_chunk] += len(payload_block)
+                    if source_end <= block_end:
+                        current_chunk += 1
+                        continue
+                    break
+                position = block_end
+
+            for index, output in enumerate(outputs):
+                output.flush()
+                destination_signatures[index] = _file_stat_signature(os.fstat(output.fileno()))
+
+            after_signature = _file_stat_signature(os.fstat(source.fileno()))
+            _require_stable_source_signature(
+                after_signature, before_signature, source_path=source_path
+            )
             _require_stable_source_signature(
                 after_signature,
                 expected_source_stat_signature,
-                source_path=tracked_source_path,
+                source_path=source_path,
             )
+
+            for index, (chunk, observed_bytes) in enumerate(
+                zip(chunks, payload_bytes_written, strict=True)
+            ):
+                expected_bytes = _required_int(
+                    chunk["payloadBytes"], field=f"chunk[{index}].payloadBytes"
+                )
+                if observed_bytes != expected_bytes:
+                    raise RuntimeError(
+                        f"source data ended early while materializing {destinations[index].name}: "
+                        f"expected={expected_bytes}, observed={observed_bytes}"
+                    )
     except Exception:
-        _unlink_if_same_file_identity(destination, created_identity)
+        for destination, created_identity in created_identities.items():
+            _unlink_if_same_file_identity(destination, created_identity)
         raise
-    assert destination_signature is not None
-    return digest.hexdigest(), destination_signature
+
+    results: list[tuple[str, tuple[int, int, int, int, int]]] = []
+    for digest, signature in zip(payload_digests, destination_signatures, strict=True):
+        assert signature is not None
+        results.append((digest.hexdigest(), signature))
+    return full_digest.hexdigest(), results
 
 
 def materialize_source_payload_chunks(
@@ -518,34 +607,34 @@ def materialize_source_payload_chunks(
             raise RuntimeError(
                 f"chunk blueprint exceeds source file size: end={coverage_end}, sourceBytes={source_bytes}"
             )
-        source_sha256 = _sha256_stream(
-            source,
-            source_path=source_path,
-            buffer_bytes=buffer_bytes,
-            expected_stat_signature=source_stat_signature,
-        )
-        if expected_source_sha256 is not None and source_sha256 != expected_source_sha256.lower():
-            raise RuntimeError(
-                "source external-data SHA-256 does not match pinned identity: "
-                f"expected={expected_source_sha256.lower()}, observed={source_sha256}"
-            )
 
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir_created_identity = _ensure_output_directory(output_dir)
         try:
-            for chunk, destination in zip(normalized, destinations, strict=True):
-                source_offset = _required_int(chunk["sourceOffsetBytes"], field="sourceOffsetBytes")
-                payload_bytes = _required_int(chunk["payloadBytes"], field="payloadBytes")
-                digest, destination_signature = _copy_exact_range(
-                    source,
-                    destination,
-                    source_path=source_path,
-                    source_offset=source_offset,
-                    payload_bytes=payload_bytes,
-                    buffer_bytes=buffer_bytes,
-                    expected_source_stat_signature=source_stat_signature,
+            source_sha256, payload_results = _hash_source_and_materialize_ranges(
+                source,
+                destinations,
+                normalized,
+                source_path=source_path,
+                buffer_bytes=buffer_bytes,
+                expected_source_stat_signature=source_stat_signature,
+            )
+            created_destinations = {
+                destination: signature
+                for destination, (_, signature) in zip(
+                    destinations, payload_results, strict=True
                 )
-                created_destinations[destination] = destination_signature
+            }
+            if expected_source_sha256 is not None and source_sha256 != expected_source_sha256.lower():
+                raise RuntimeError(
+                    "source external-data SHA-256 does not match pinned identity: "
+                    f"expected={expected_source_sha256.lower()}, observed={source_sha256}"
+                )
+
+            for chunk, destination, (digest, destination_signature) in zip(
+                normalized, destinations, payload_results, strict=True
+            ):
                 _require_stable_payload_signature(destination, destination_signature)
+                payload_bytes = _required_int(chunk["payloadBytes"], field="payloadBytes")
                 actual_bytes = destination_signature[2]
                 if actual_bytes != payload_bytes:
                     raise RuntimeError(
@@ -561,7 +650,7 @@ def materialize_source_payload_chunks(
                         "sha256": digest,
                         "startRow": chunk["startRow"],
                         "endRowExclusive": chunk["endRowExclusive"],
-                        "sourceOffsetBytes": source_offset,
+                        "sourceOffsetBytes": chunk["sourceOffsetBytes"],
                         "sourceEndOffsetBytesExclusive": chunk["sourceEndOffsetBytesExclusive"],
                     }
                 )
@@ -586,6 +675,10 @@ def materialize_source_payload_chunks(
                 _unlink_if_same_file_identity(
                     destination,
                     (destination_signature[0], destination_signature[1]),
+                )
+            if output_dir_created_identity is not None:
+                _rmdir_if_same_directory_identity(
+                    output_dir, output_dir_created_identity
                 )
             raise
 
