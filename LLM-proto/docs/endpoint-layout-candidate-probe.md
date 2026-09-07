@@ -116,7 +116,34 @@ Environment: macOS 26.6.1 arm64, Python `3.12.12`, NumPy `2.5.3`, ONNX `1.18.0`,
 
 Observed session/run timing is retained in the JSON report as diagnostic data rather than a performance gate; payload pages may already be warm in the OS page cache. In the committed representative run, embedding session creation was at most about `35.38 ms`, logits session creation at most about `378.73 ms`, and the sparse logits run at most about `25.81 ms`. These numbers are machine- and CPU-provider-specific and are **not** browser or WebGPU working-set/latency evidence.
 
-What this closes for S0: the existing 4-way physical payload -> 8-way tile arithmetic is no longer coordinate-only for the primitive tied-weight operators; it has executed against the real pinned payload bytes under ORT CPU. What remains open is multi-physical-slice execution (notably the 5-way boundary-crossing case), ORT Web/WebGPU binding, peak host/GPU working set, session release behavior, final-norm/post-stage composition, and full-vs-staged numerical equivalence.
+What this closes for S0: the existing 4-way physical payload -> 8-way tile arithmetic is no longer coordinate-only for the primitive tied-weight operators; it has executed against the real pinned payload bytes under ORT CPU.
+
+## Pinned CPU ORT 5-way boundary-crossing spike
+
+`tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py` targets the remaining CPU-side multi-physical-slice question for the diagnostic 5-way layout. The 5-way physical artifacts remain the deterministic balanced row ranges from the layout probe (maximum `210,141,184` bytes, about `200.40625 MiB`), while four of the eight execution tiles cross one physical-artifact boundary. For those tiles, the helper opens both payloads independently and exposes each slice as its own ONNX external initializer. A temporary ONNX graph performs `Concat(axis=0)` on the two slice tensors before the same embedding `Gather` or logits `Transpose + MatMul` primitive is evaluated. The full tied weight is never rebuilt as one external artifact.
+
+Unlike the 4-way spike, the five payload SHA-256 values are not accepted as an independent hard-coded source of truth. The helper first verifies the complete pinned external-data file (`1,692,672,000` bytes, SHA-256 `07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647`) through a pinned file descriptor. It then hashes each required 5-way source range directly from that verified descriptor and requires the corresponding standalone payload to match that independently derived range digest, size, and pinned path identity. This keeps the execution evidence bound to the original pinned artifact rather than only to previously copied files.
+
+### 2026-09-08 pinned real-artifact 5-way run
+
+The exact machine-readable report is committed as [`docs/evidence/endpoint-five-way-tile-ort-cpu-20260908.json`](./evidence/endpoint-five-way-tile-ort-cpu-20260908.json). The verified physical payloads were:
+
+- payload 0: `210,141,184` bytes, SHA-256 `3e7e1625498180fc107d572f65bfbb57fef091002fd05990c693b338e2d8edbe`
+- payload 1: `210,132,992` bytes, SHA-256 `b1dd6fe5c5668e8e63e597a6cbe6629093dd724b34d82b89ea9715566db93adf`
+- payload 2: `210,132,992` bytes, SHA-256 `a8e3d8f54878b7d4285eb1ca59468bc36076d11f9fb27b25afdf170890480f8b`
+- payload 3: `210,132,992` bytes, SHA-256 `145c2536a9bbe78212f104b7f7341e1f0c18bbca46b5cf05f314fe313890b3a9`
+- payload 4: `210,132,992` bytes, SHA-256 `23c60d265df609f60a48562ca6d2d01f4fc921e507d22975afe7317b66e383c5`
+
+All four boundary-crossing tiles (`1`, `3`, `4`, `6`) passed under ONNX Runtime `1.22.0` `CPUExecutionProvider`. Embedding was byte-exact and sparse logits had `maxAbsDiff=0.0` / `maxRelativeDiff=0.0` for every tile. The exact two-source bindings were:
+
+| tile | first physical slice | second physical slice |
+|---:|---|---|
+| 1 | artifact 0 offset `131,334,144`, length `78,807,040` | artifact 1 offset `0`, length `52,527,104` |
+| 3 | artifact 1 offset `183,861,248`, length `26,271,744` | artifact 2 offset `0`, length `105,062,400` |
+| 4 | artifact 2 offset `105,062,400`, length `105,070,592` | artifact 3 offset `0`, length `26,263,552` |
+| 6 | artifact 3 offset `157,597,696`, length `52,535,296` | artifact 4 offset `0`, length `78,798,848` |
+
+This closes the **CPU primitive feasibility** question for a logical execution tile assembled from two independently stored physical payloads. It does not demonstrate that `Concat` is an acceptable production execution strategy: ORT may materialize an additional contiguous tensor, and the resulting host/GPU working set has not been measured. It also does not establish ORT Web/WebGPU external-data supply, browser cache semantics, final norm, session release behavior, full-vs-staged numerical equivalence, or select the 5-way architecture. Those remain S0/decision gates.
 
 ## Running the probes
 
@@ -133,9 +160,14 @@ python tools/probe_llama_1b_endpoint_preferred_tile_ort_cpu.py \
   /absolute/path/to/model_q4.onnx \
   /absolute/path/to/preferred-payload-dir \
   --all-tiles
+
+python tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py \
+  /absolute/path/to/model_q4.onnx \
+  /absolute/path/to/model_q4.onnx_data \
+  /absolute/path/to/five-way-payload-dir
 ```
 
-All three commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
+All four commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
 
 The layout JSON report includes the upstream probe/source identity and, for every candidate:
 
@@ -163,14 +195,14 @@ CI runs the arithmetic layout/dependency probes against the same pinned Llama 1B
 
 ## Evidence boundary
 
-The arithmetic probes prove only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent. A passing CPU ORT tile run additionally proves the selected primitive `Gather` and `Transpose + MatMul` executions consume the pinned 4-way payload byte ranges correctly under the pinned CPU provider.
+The arithmetic probes prove only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent. A passing 4-way CPU ORT tile run additionally proves the selected primitive `Gather` and `Transpose + MatMul` executions consume the pinned 4-way payload byte ranges correctly under the pinned CPU provider. The 5-way boundary-crossing run additionally proves that two independently verified physical source ranges can be supplied as separate external initializers, concatenated into one execution-tile tensor inside ORT CPU, and consumed with the same primitive numerical result.
 
 It does **not** prove:
 
-- that the 4/5/8 candidate payloads have all been materialized and independently verified,
+- that all 4/5/8 candidate layouts have been fully materialized and independently verified as production artifacts,
 - that multiple physical artifacts are an approved manifest/cache contract,
 - that ORT Web can bind the slices without hidden whole-weight reconstruction,
-- that the 5-way boundary-crossing tile can execute directly from two physical payloads,
+- that the demonstrated CPU-side two-payload `Concat` strategy is acceptable or bounded under ORT Web/WebGPU,
 - that physical dependency-closure bytes equal resident host/GPU memory,
 - that the physical payload count should be 4, 5, or 8,
 - that an 8-way execution plan should be adopted,
