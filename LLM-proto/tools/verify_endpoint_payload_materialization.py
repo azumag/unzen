@@ -14,9 +14,11 @@ design for #223.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
@@ -116,35 +118,6 @@ def _require_stable_file_signature(
 ) -> None:
     if observed != expected:
         raise RuntimeError(f"file snapshot changed during verification: {path}")
-
-
-def _sha256_file(
-    path: Path,
-    *,
-    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
-    expected_stat_signature: tuple[int, int, int, int, int] | None = None,
-) -> str:
-    if buffer_bytes <= 0:
-        raise ValueError("buffer_bytes must be positive")
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        before_signature = _file_stat_signature(os.fstat(stream.fileno()))
-        if expected_stat_signature is not None:
-            _require_stable_file_signature(
-                before_signature, expected_stat_signature, path=path
-            )
-        while True:
-            block = stream.read(buffer_bytes)
-            if not block:
-                break
-            digest.update(block)
-        after_signature = _file_stat_signature(os.fstat(stream.fileno()))
-    _require_stable_file_signature(after_signature, before_signature, path=path)
-    if expected_stat_signature is not None:
-        _require_stable_file_signature(
-            after_signature, expected_stat_signature, path=path
-        )
-    return digest.hexdigest()
 
 
 def _canonical_json_sha256(value: object) -> str:
@@ -466,18 +439,99 @@ def _expected_payload_names(payload_count: int) -> list[str]:
     return [f"payload-{index:04d}.bin" for index in range(payload_count)]
 
 
-def _require_exact_payload_names(
-    payload_dir: Path,
-    *,
-    expected_names: Iterable[str],
+def _payload_namespace_names_from_fd(directory_fd: int) -> set[str]:
+    return {name for name in os.listdir(directory_fd) if Path(name).match("payload-*.bin")}
+
+
+def _require_exact_payload_names_from_fd(
+    directory_fd: int, *, expected_names: Iterable[str]
 ) -> None:
     expected = set(expected_names)
-    observed = {path.name for path in payload_dir.glob("payload-*.bin")}
+    observed = _payload_namespace_names_from_fd(directory_fd)
     if observed != expected:
         raise RuntimeError(
             "payload directory contents do not match the materialization report: "
             f"expected={sorted(expected)!r}, observed={sorted(observed)!r}"
         )
+
+
+def _require_stable_payload_directory_identity(
+    payload_dir: Path, expected_identity: tuple[int, int]
+) -> None:
+    try:
+        observed = payload_dir.stat()
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            f"payload directory changed during verification: {payload_dir}"
+        ) from error
+    if (observed.st_dev, observed.st_ino) != expected_identity:
+        raise RuntimeError(f"payload directory changed during verification: {payload_dir}")
+
+
+def _payload_stat_signature_at(directory_fd: int, name: str, *, path: Path) -> tuple[int, int, int, int, int]:
+    try:
+        observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"materialized payload not found: {path}") from error
+    if stat.S_ISLNK(observed.st_mode):
+        raise RuntimeError(f"refusing to verify symlink payload: {path}")
+    if not stat.S_ISREG(observed.st_mode):
+        raise FileNotFoundError(f"materialized payload not found: {path}")
+    return _file_stat_signature(observed)
+
+
+def _require_stable_payload_signature_at(
+    directory_fd: int, name: str, expected: tuple[int, int, int, int, int], *, path: Path
+) -> None:
+    observed = _payload_stat_signature_at(directory_fd, name, path=path)
+    _require_stable_file_signature(observed, expected, path=path)
+
+
+def _sha256_payload_at(
+    directory_fd: int,
+    name: str,
+    *,
+    path: Path,
+    buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
+    expected_stat_signature: tuple[int, int, int, int, int] | None = None,
+) -> str:
+    if buffer_bytes <= 0:
+        raise ValueError("buffer_bytes must be positive")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        payload_fd = os.open(name, flags, dir_fd=directory_fd)
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"materialized payload not found: {path}") from error
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise RuntimeError(f"refusing to verify symlink payload: {path}") from error
+        raise
+    try:
+        before_stat = os.fstat(payload_fd)
+        if not stat.S_ISREG(before_stat.st_mode):
+            raise FileNotFoundError(f"materialized payload not found: {path}")
+        before_signature = _file_stat_signature(before_stat)
+        entry_signature = _payload_stat_signature_at(directory_fd, name, path=path)
+        _require_stable_file_signature(entry_signature, before_signature, path=path)
+        if expected_stat_signature is not None:
+            _require_stable_file_signature(before_signature, expected_stat_signature, path=path)
+        digest = hashlib.sha256()
+        with os.fdopen(payload_fd, "rb", closefd=False) as stream:
+            while True:
+                block = stream.read(buffer_bytes)
+                if not block:
+                    break
+                digest.update(block)
+        after_signature = _file_stat_signature(os.fstat(payload_fd))
+        _require_stable_file_signature(after_signature, before_signature, path=path)
+        if expected_stat_signature is not None:
+            _require_stable_file_signature(after_signature, expected_stat_signature, path=path)
+        _require_stable_payload_signature_at(
+            directory_fd, name, after_signature, path=path
+        )
+        return digest.hexdigest()
+    finally:
+        os.close(payload_fd)
 
 
 def _sha256_file_and_ranges(
@@ -694,99 +748,122 @@ def verify_materialization_payloads(
     if not payload_dir.is_dir():
         raise FileNotFoundError(f"payload directory not found: {payload_dir}")
     expected_names = _expected_payload_names(len(chunks))
-    _require_exact_payload_names(payload_dir, expected_names=expected_names)
-
-    verified_payloads: list[dict[str, object]] = []
-    verified_payload_signatures: dict[str, tuple[int, int, int, int, int]] = {}
-    verified_total_bytes = 0
-    for index, (chunk, payload, expected_name) in enumerate(
-        zip(chunks, payloads, expected_names, strict=True)
-    ):
-        expected_fields = {
-            "chunkIndex": _required_int(chunk.get("chunkIndex"), field=f"chunk[{index}].chunkIndex"),
-            "outputFile": expected_name,
-            "bytes": _required_int(chunk.get("payloadBytes"), field=f"chunk[{index}].payloadBytes"),
-            "startRow": _required_int(chunk.get("startRow"), field=f"chunk[{index}].startRow"),
-            "endRowExclusive": _required_int(
-                chunk.get("endRowExclusive"), field=f"chunk[{index}].endRowExclusive"
-            ),
-            "sourceOffsetBytes": _required_int(
-                chunk.get("sourceOffsetBytes"), field=f"chunk[{index}].sourceOffsetBytes"
-            ),
-            "sourceEndOffsetBytesExclusive": _required_int(
-                chunk.get("sourceEndOffsetBytesExclusive"),
-                field=f"chunk[{index}].sourceEndOffsetBytesExclusive",
-            ),
-        }
-        for field, expected in expected_fields.items():
-            observed = payload.get(field)
-            if observed != expected:
-                raise RuntimeError(
-                    f"materialization payload[{index}].{field} does not match pinned blueprint: "
-                    f"expected={expected!r}, observed={observed!r}"
-                )
-
-        reported_sha256 = _normalized_sha256(
-            payload.get("sha256"), field=f"materialization.payloads[{index}].sha256"
+    payload_dir_stat = payload_dir.stat()
+    payload_dir_identity = (payload_dir_stat.st_dev, payload_dir_stat.st_ino)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    payload_dir_fd = os.open(payload_dir.resolve(strict=True), directory_flags)
+    try:
+        pinned_payload_dir_stat = os.fstat(payload_dir_fd)
+        pinned_payload_dir_identity = (
+            pinned_payload_dir_stat.st_dev, pinned_payload_dir_stat.st_ino
         )
-        payload_path = payload_dir / expected_name
-        if payload_path.is_symlink():
-            raise RuntimeError(f"refusing to verify symlink payload: {payload_path}")
-        if not payload_path.is_file():
-            raise FileNotFoundError(f"materialized payload not found: {payload_path}")
-        payload_stat_signature = _file_stat_signature(payload_path.stat())
-        actual_bytes = payload_stat_signature[2]
-        if actual_bytes != expected_fields["bytes"]:
-            raise RuntimeError(
-                f"materialized payload size mismatch for {expected_name}: "
-                f"expected={expected_fields['bytes']}, observed={actual_bytes}"
-            )
-        actual_payload_sha256 = _sha256_file(
-            payload_path,
-            buffer_bytes=buffer_bytes,
-            expected_stat_signature=payload_stat_signature,
+        if pinned_payload_dir_identity != payload_dir_identity:
+            raise RuntimeError(f"payload directory changed during verification: {payload_dir}")
+        _require_stable_payload_directory_identity(
+            payload_dir, pinned_payload_dir_identity
         )
-        source_range_sha256 = source_range_sha256_values[index]
-        if actual_payload_sha256 != source_range_sha256:
-            raise RuntimeError(
-                f"materialized payload does not match pinned source range for {expected_name}: "
-                f"sourceRangeSha256={source_range_sha256}, payloadSha256={actual_payload_sha256}"
-            )
-        if reported_sha256 != source_range_sha256:
-            raise RuntimeError(
-                f"materialization report SHA-256 does not match pinned source range for {expected_name}: "
-                f"sourceRangeSha256={source_range_sha256}, reportedSha256={reported_sha256}"
-            )
-        verified_total_bytes += actual_bytes
-        verified_payload_signatures[expected_name] = payload_stat_signature
-        verified_payloads.append(
-            {
-                "chunkIndex": expected_fields["chunkIndex"],
+        _require_exact_payload_names_from_fd(
+            payload_dir_fd, expected_names=expected_names
+        )
+
+        verified_payloads: list[dict[str, object]] = []
+        verified_payload_signatures: dict[str, tuple[int, int, int, int, int]] = {}
+        verified_total_bytes = 0
+        for index, (chunk, payload, expected_name) in enumerate(
+            zip(chunks, payloads, expected_names, strict=True)
+        ):
+            expected_fields = {
+                "chunkIndex": _required_int(chunk.get("chunkIndex"), field=f"chunk[{index}].chunkIndex"),
                 "outputFile": expected_name,
-                "bytes": actual_bytes,
-                "sha256": actual_payload_sha256,
-                "sourceRangeSha256": source_range_sha256,
+                "bytes": _required_int(chunk.get("payloadBytes"), field=f"chunk[{index}].payloadBytes"),
+                "startRow": _required_int(chunk.get("startRow"), field=f"chunk[{index}].startRow"),
+                "endRowExclusive": _required_int(
+                    chunk.get("endRowExclusive"), field=f"chunk[{index}].endRowExclusive"
+                ),
+                "sourceOffsetBytes": _required_int(
+                    chunk.get("sourceOffsetBytes"), field=f"chunk[{index}].sourceOffsetBytes"
+                ),
+                "sourceEndOffsetBytesExclusive": _required_int(
+                    chunk.get("sourceEndOffsetBytesExclusive"),
+                    field=f"chunk[{index}].sourceEndOffsetBytesExclusive",
+                ),
             }
-        )
+            for field, expected in expected_fields.items():
+                observed = payload.get(field)
+                if observed != expected:
+                    raise RuntimeError(
+                        f"materialization payload[{index}].{field} does not match pinned blueprint: "
+                        f"expected={expected!r}, observed={observed!r}"
+                    )
 
-    if verified_total_bytes != expected_total_payload_bytes:
-        raise RuntimeError("verified payload byte total does not match pinned blueprint")
+            reported_sha256 = _normalized_sha256(
+                payload.get("sha256"), field=f"materialization.payloads[{index}].sha256"
+            )
+            payload_path = payload_dir / expected_name
+            payload_stat_signature = _payload_stat_signature_at(
+                payload_dir_fd, expected_name, path=payload_path
+            )
+            actual_bytes = payload_stat_signature[2]
+            if actual_bytes != expected_fields["bytes"]:
+                raise RuntimeError(
+                    f"materialized payload size mismatch for {expected_name}: "
+                    f"expected={expected_fields['bytes']}, observed={actual_bytes}"
+                )
+            actual_payload_sha256 = _sha256_payload_at(
+                payload_dir_fd,
+                expected_name,
+                path=payload_path,
+                buffer_bytes=buffer_bytes,
+                expected_stat_signature=payload_stat_signature,
+            )
+            source_range_sha256 = source_range_sha256_values[index]
+            if actual_payload_sha256 != source_range_sha256:
+                raise RuntimeError(
+                    f"materialized payload does not match pinned source range for {expected_name}: "
+                    f"sourceRangeSha256={source_range_sha256}, payloadSha256={actual_payload_sha256}"
+                )
+            if reported_sha256 != source_range_sha256:
+                raise RuntimeError(
+                    f"materialization report SHA-256 does not match pinned source range for {expected_name}: "
+                    f"sourceRangeSha256={source_range_sha256}, reportedSha256={reported_sha256}"
+                )
+            verified_total_bytes += actual_bytes
+            verified_payload_signatures[expected_name] = payload_stat_signature
+            verified_payloads.append(
+                {
+                    "chunkIndex": expected_fields["chunkIndex"],
+                    "outputFile": expected_name,
+                    "bytes": actual_bytes,
+                    "sha256": actual_payload_sha256,
+                    "sourceRangeSha256": source_range_sha256,
+                }
+            )
 
-    for expected_name, payload_stat_signature in verified_payload_signatures.items():
-        payload_path = payload_dir / expected_name
-        if payload_path.is_symlink():
-            raise RuntimeError(f"refusing to verify symlink payload: {payload_path}")
+        if verified_total_bytes != expected_total_payload_bytes:
+            raise RuntimeError("verified payload byte total does not match pinned blueprint")
+
+        for expected_name, payload_stat_signature in verified_payload_signatures.items():
+            _require_stable_payload_signature_at(
+                payload_dir_fd,
+                expected_name,
+                payload_stat_signature,
+                path=payload_dir / expected_name,
+            )
         _require_stable_file_signature(
-            _file_stat_signature(payload_path.stat()),
-            payload_stat_signature,
-            path=payload_path,
+            _file_stat_signature(source_path.stat()),
+            source_stat_signature,
+            path=source_path,
         )
-    _require_stable_file_signature(
-        _file_stat_signature(source_path.stat()),
-        source_stat_signature,
-        path=source_path,
-    )
-    _require_exact_payload_names(payload_dir, expected_names=expected_names)
+        _require_exact_payload_names_from_fd(
+            payload_dir_fd, expected_names=expected_names
+        )
+        _require_stable_payload_directory_identity(
+            payload_dir, pinned_payload_dir_identity
+        )
+    finally:
+        os.close(payload_dir_fd)
 
     report: dict[str, object] = {
         "schemaVersion": BASE_REPORT_SCHEMA_VERSION,

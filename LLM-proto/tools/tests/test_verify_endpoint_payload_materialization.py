@@ -332,19 +332,19 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, materialization, chunks, provenance, source_identity = self._fixture(root)
-            original_file_hash = verifier._sha256_file
+            original_file_hash = verifier._sha256_payload_at
             mutated = False
 
-            def hash_then_mutate(path: Path, **kwargs: object) -> str:
+            def hash_then_mutate(directory_fd: int, name: str, **kwargs: object) -> str:
                 nonlocal mutated
-                digest = original_file_hash(path, **kwargs)
-                if path.name == "payload-0001.bin" and not mutated:
+                digest = original_file_hash(directory_fd, name, **kwargs)
+                if name == "payload-0001.bin" and not mutated:
                     (root / "payloads" / "payload-0000.bin").write_bytes(b"zzzz")
                     mutated = True
                 return digest
 
             with (
-                mock.patch.object(verifier, "_sha256_file", side_effect=hash_then_mutate),
+                mock.patch.object(verifier, "_sha256_payload_at", side_effect=hash_then_mutate),
                 self.assertRaisesRegex(RuntimeError, "file snapshot changed during verification"),
             ):
                 verifier.verify_materialization_payloads(
@@ -361,13 +361,13 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, materialization, chunks, provenance, source_identity = self._fixture(root)
-            original_file_hash = verifier._sha256_file
+            original_file_hash = verifier._sha256_payload_at
             mutated = False
 
-            def hash_then_add_extra_payload(path: Path, **kwargs: object) -> str:
+            def hash_then_add_extra_payload(directory_fd: int, name: str, **kwargs: object) -> str:
                 nonlocal mutated
-                digest = original_file_hash(path, **kwargs)
-                if path.name == "payload-0001.bin" and not mutated:
+                digest = original_file_hash(directory_fd, name, **kwargs)
+                if name == "payload-0001.bin" and not mutated:
                     (root / "payloads" / "payload-9999.bin").write_bytes(b"extra")
                     mutated = True
                 return digest
@@ -375,7 +375,7 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     verifier,
-                    "_sha256_file",
+                    "_sha256_payload_at",
                     side_effect=hash_then_add_extra_payload,
                 ),
                 self.assertRaisesRegex(RuntimeError, "directory contents do not match"),
@@ -389,6 +389,52 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     expected_source_identity=source_identity,
                     buffer_bytes=2,
                 )
+
+    def test_rejects_payload_directory_replacement_and_keeps_reads_on_pinned_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, materialization, chunks, provenance, source_identity = self._fixture(root)
+            payload_dir = root / "payloads"
+            displaced_dir = root / "payloads-original"
+            original_payload_hash = verifier._sha256_payload_at
+            observed_digests: dict[str, str] = {}
+            replaced = False
+
+            def hash_then_replace(directory_fd: int, name: str, **kwargs: object) -> str:
+                nonlocal replaced
+                digest = original_payload_hash(directory_fd, name, **kwargs)
+                observed_digests[name] = digest
+                if name == "payload-0000.bin" and not replaced:
+                    payload_dir.rename(displaced_dir)
+                    payload_dir.mkdir()
+                    (payload_dir / "payload-0000.bin").write_bytes(b"xxxx")
+                    (payload_dir / "payload-0001.bin").write_bytes(b"yyyy")
+                    replaced = True
+                return digest
+
+            with (
+                mock.patch.object(
+                    verifier,
+                    "_sha256_payload_at",
+                    side_effect=hash_then_replace,
+                ),
+                self.assertRaisesRegex(RuntimeError, "payload directory changed during verification"),
+            ):
+                verifier.verify_materialization_payloads(
+                    source,
+                    materialization,
+                    payload_dir,
+                    expected_chunks=chunks,
+                    expected_provenance=provenance,
+                    expected_source_identity=source_identity,
+                    buffer_bytes=2,
+                )
+
+            self.assertEqual(
+                observed_digests["payload-0001.bin"],
+                hashlib.sha256(b"efgh").hexdigest(),
+            )
+            self.assertEqual((payload_dir / "payload-0001.bin").read_bytes(), b"yyyy")
 
     def test_pinned_contract_is_rederived_without_producer_helpers(self) -> None:
         report = self._pinned_probe_report()
