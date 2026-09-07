@@ -186,6 +186,73 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
             self.assertEqual(existing.read_bytes(), b"keep")
             self.assertFalse((output_dir / "payload-0001.bin").exists())
 
+    def test_rejects_preexisting_extra_payload_namespace_before_writing(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4,
+            row_bytes=2,
+            payload_count=2,
+            location="weights.bin",
+            source_offset_bytes=0,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            output_dir.mkdir()
+            extra = output_dir / "payload-9999.bin"
+            extra.write_bytes(b"keep")
+
+            with self.assertRaisesRegex(FileExistsError, "existing reserved"):
+                materializer.materialize_source_payload_chunks(source, output_dir, chunks)
+
+            self.assertEqual(extra.read_bytes(), b"keep")
+            self.assertFalse((output_dir / "payload-0000.bin").exists())
+            self.assertFalse((output_dir / "payload-0001.bin").exists())
+
+    def test_rejects_late_extra_payload_namespace_before_report_return(self) -> None:
+        chunks = probe_module._balanced_source_payload_chunks(
+            rows=4,
+            row_bytes=2,
+            payload_count=2,
+            location="weights.bin",
+            source_offset_bytes=0,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "weights.bin"
+            source.write_bytes(b"01234567")
+            output_dir = root / "chunks"
+            original_copy = materializer._copy_exact_range
+            extra = output_dir / "payload-9999.bin"
+
+            def copy_then_add_extra(source_stream, destination, **kwargs):
+                result = original_copy(source_stream, destination, **kwargs)
+                if destination.name == "payload-0001.bin":
+                    extra.write_bytes(b"foreign")
+                return result
+
+            with (
+                mock.patch.object(
+                    materializer,
+                    "_copy_exact_range",
+                    side_effect=copy_then_add_extra,
+                ),
+                self.assertRaisesRegex(RuntimeError, "contents changed during materialization"),
+            ):
+                materializer.materialize_source_payload_chunks(
+                    source,
+                    output_dir,
+                    chunks,
+                    buffer_bytes=2,
+                )
+
+            self.assertEqual(extra.read_bytes(), b"foreign")
+            self.assertFalse((output_dir / "payload-0000.bin").exists())
+            self.assertFalse((output_dir / "payload-0001.bin").exists())
+
     def test_copy_exact_range_never_unlinks_a_preexisting_destination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
