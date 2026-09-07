@@ -184,6 +184,26 @@ full-vs-staged logits equivalence, and does not measure peak host/GPU working
 set. Manifest/cache/loader/dispatcher contracts are still unapproved #223
 architecture work.
 
+## Pinned browser ORT Web/WebGPU 5-way boundary-crossing spike
+
+`tools/prepare_llama_1b_endpoint_five_way_tile_ort_webgpu.py` and
+`browser-harness/endpoint-five-way-tile-webgpu/` close the corresponding browser-side S0 question for one representative 5-way boundary-crossing execution tile. The preparation re-verifies the full pinned external-data identity, materializes whole physical artifacts 0 and 1 directly from their exact source ranges, and emits embedding/logits graphs with two external initializers followed by `Concat(axis=0)`. The browser then verifies both complete physical payload SHA-256 values before constructing ORT sessions and supplies both payloads through ORT Web's `externalData` option.
+
+### 2026-09-08 real Chrome / Apple Metal 5-way run
+
+The exact runtime report is committed as [`docs/evidence/endpoint-five-way-tile-ort-webgpu-20260908.json`](./evidence/endpoint-five-way-tile-ort-webgpu-20260908.json). The run used Chrome `152.0.7977.83` headless on macOS `26.6.1` arm64 / Apple M4, ONNX Runtime Web `1.22.0`, and the WebGPU adapter reported `vendor=apple`, `architecture=metal-3`.
+
+Execution tile 1 crossed the physical-artifact boundary exactly as predicted:
+
+| physical slice | whole artifact bytes | slice offset | slice bytes |
+|---|---:|---:|---:|
+| artifact 0 | `210,141,184` | `131,334,144` | `78,807,040` |
+| artifact 1 | `210,132,992` | `0` | `52,527,104` |
+
+The browser retained and verified `420,274,176` bytes of whole physical dependencies for this tile. Embedding `Gather` was byte-exact (`maxAbsDiff=0.0`) and sparse logits `Transpose + MatMul` was within tolerance with `maxAbsDiff=0.0` / `maxRelativeDiff=0.0`. Both `InferenceSession.release()` calls completed. This proves that ORT Web/WebGPU on the measured device can bind two independently verified external payload objects into one temporary graph and execute the reconstructed tied-weight tile.
+
+This remains diagnostic-only. In particular, it does **not** prove that `Concat` is memory-efficient enough for production: the two whole payloads total about `400.8 MiB`, and ORT may additionally materialize the `125.25 MiB` concatenated tile plus provider-specific copies. No peak host/GPU memory or post-release reclamation was measured. It also does not select the 5-way layout, define Cache API residency, loader/manifest/runtime/dispatcher semantics, include final norm, or prove full-vs-staged logits equivalence.
+
 ## Pinned CPU ORT 5-way boundary-crossing spike
 
 `tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py` targets the remaining CPU-side multi-physical-slice question for the diagnostic 5-way layout. The 5-way physical artifacts remain the deterministic balanced row ranges from the layout probe (maximum `210,141,184` bytes, about `200.40625 MiB`), while four of the eight execution tiles cross one physical-artifact boundary. For those tiles, the helper opens both payloads independently and exposes each slice as its own ONNX external initializer. A temporary ONNX graph performs `Concat(axis=0)` on the two slice tensors before the same embedding `Gather` or logits `Transpose + MatMul` primitive is evaluated. The full tied weight is never rebuilt as one external artifact.
@@ -239,6 +259,14 @@ python tools/prepare_llama_1b_endpoint_preferred_tile_ort_webgpu.py \
 
 DATA_DIR=/tmp/unzen-endpoint-webgpu-data PORT=8793 \
   node browser-harness/endpoint-tile-webgpu/serve.mjs
+
+python tools/prepare_llama_1b_endpoint_five_way_tile_ort_webgpu.py \
+  /absolute/path/to/model_q4.onnx \
+  /absolute/path/to/model_q4.onnx_data \
+  /tmp/unzen-endpoint-five-way-webgpu-data
+
+DATA_DIR=/tmp/unzen-endpoint-five-way-webgpu-data PORT=8794 \
+  node browser-harness/endpoint-five-way-tile-webgpu/serve.mjs
 
 # In another shell, use a fresh browser profile and open http://127.0.0.1:8793/.
 # The recorded macOS run used Chrome 152 with:
