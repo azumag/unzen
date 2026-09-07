@@ -169,6 +169,10 @@ def build_report(source_model_path: Path) -> dict[str, object]:
     if envelope.get("decisionStatus") != "diagnostic-only":
         raise RuntimeError("endpoint chunk envelope must remain diagnostic-only")
 
+    source_identity = envelope.get("pinnedSourceExternalDataIdentity")
+    if not isinstance(source_identity, dict):
+        raise RuntimeError("pinnedSourceExternalDataIdentity must be an object")
+
     endpoint = envelope.get("endpointChunkEnvelope")
     if not isinstance(endpoint, dict):
         raise RuntimeError("endpointChunkEnvelope must be an object")
@@ -215,7 +219,12 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         "kind": REPORT_KIND,
         "status": "pass",
         "decisionStatus": "diagnostic-only",
+        "upstreamProbe": {
+            "kind": envelope.get("kind"),
+            "schemaVersion": envelope.get("schemaVersion"),
+        },
         "sourceGraphSha256": envelope.get("sourceGraphSha256"),
+        "pinnedSourceExternalDataIdentity": dict(source_identity),
         "sourceLocation": source_location,
         "rows": rows,
         "rowBytes": row_bytes,
