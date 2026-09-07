@@ -262,6 +262,64 @@ class VerifyEndpointPayloadMaterializationTest(unittest.TestCase):
                     expected_source_identity=source_identity,
                 )
 
+    def test_rejects_source_snapshot_mutation_between_full_and_range_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, materialization, chunks, provenance, source_identity = self._fixture(root)
+            original_sha256_file = verifier._sha256_file
+            mutated = False
+
+            def hash_then_mutate(path: Path, **kwargs: object) -> str:
+                nonlocal mutated
+                digest = original_sha256_file(path, **kwargs)
+                if path == source and not mutated:
+                    source.write_bytes(b"HEADabcdEfghTAIL")
+                    mutated = True
+                return digest
+
+            with (
+                mock.patch.object(verifier, "_sha256_file", side_effect=hash_then_mutate),
+                self.assertRaisesRegex(RuntimeError, "file snapshot changed during verification"),
+            ):
+                verifier.verify_materialization_payloads(
+                    source,
+                    materialization,
+                    root / "payloads",
+                    expected_chunks=chunks,
+                    expected_provenance=provenance,
+                    expected_source_identity=source_identity,
+                    buffer_bytes=2,
+                )
+
+    def test_rejects_payload_snapshot_mutation_before_report_emission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, materialization, chunks, provenance, source_identity = self._fixture(root)
+            original_range_hash = verifier._sha256_file_range
+            mutated = False
+
+            def hash_then_mutate(path: Path, **kwargs: object) -> str:
+                nonlocal mutated
+                digest = original_range_hash(path, **kwargs)
+                if kwargs.get("source_offset") == 8 and not mutated:
+                    (root / "payloads" / "payload-0000.bin").write_bytes(b"zzzz")
+                    mutated = True
+                return digest
+
+            with (
+                mock.patch.object(verifier, "_sha256_file_range", side_effect=hash_then_mutate),
+                self.assertRaisesRegex(RuntimeError, "file snapshot changed during verification"),
+            ):
+                verifier.verify_materialization_payloads(
+                    source,
+                    materialization,
+                    root / "payloads",
+                    expected_chunks=chunks,
+                    expected_provenance=provenance,
+                    expected_source_identity=source_identity,
+                    buffer_bytes=2,
+                )
+
     def test_pinned_contract_is_rederived_without_producer_helpers(self) -> None:
         report = self._pinned_probe_report()
 
