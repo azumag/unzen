@@ -16,7 +16,7 @@ import probe_llama_1b_endpoint_chunk_envelope as envelope_probe
 
 
 REPORT_KIND = "unzen-pinned-llama-1b-endpoint-layout-candidate-probe"
-REPORT_SCHEMA_VERSION = "1.0.0"
+REPORT_SCHEMA_VERSION = "1.1.0"
 PREFERRED_LIMIT_BYTES = 256 * 1024 * 1024
 TARGET_BYTES = 200 * 1024 * 1024
 PHYSICAL_ARTIFACT_COUNTS = (4, 5, 8)
@@ -70,31 +70,74 @@ def _tile_bindings(
     for tile in tiles:
         tile_start = tile["startRow"]
         tile_end = tile["endRowExclusive"]
+        tile_source_start = tile["sourceOffsetBytes"]
+        tile_source_end = tile["sourceEndOffsetBytesExclusive"]
         slices: list[dict[str, int]] = []
         covered_rows = 0
+        covered_bytes = 0
+        expected_row = tile_start
+        expected_source_offset = tile_source_start
 
         for artifact in physical:
             start_row = max(tile_start, artifact["startRow"])
             end_row = min(tile_end, artifact["endRowExclusive"])
             if start_row >= end_row:
                 continue
+
             row_count = end_row - start_row
             byte_length = row_count * row_bytes
+            artifact_byte_offset = (start_row - artifact["startRow"]) * row_bytes
+            artifact_byte_end = artifact_byte_offset + byte_length
+            source_offset = artifact["sourceOffsetBytes"] + artifact_byte_offset
+            source_end = source_offset + byte_length
+
+            if start_row != expected_row:
+                raise RuntimeError(
+                    f"execution tile {tile['index']} physical slices are not row-contiguous"
+                )
+            if source_offset != expected_source_offset:
+                raise RuntimeError(
+                    f"execution tile {tile['index']} physical slices are not source-byte-contiguous"
+                )
+            if artifact_byte_offset < 0 or artifact_byte_end > artifact["byteLength"]:
+                raise RuntimeError(
+                    f"execution tile {tile['index']} slice exceeds physical artifact {artifact['index']}"
+                )
+            if source_end > artifact["sourceEndOffsetBytesExclusive"]:
+                raise RuntimeError(
+                    f"execution tile {tile['index']} slice exceeds source range for physical artifact "
+                    f"{artifact['index']}"
+                )
+
             slices.append(
                 {
                     "physicalArtifactIndex": artifact["index"],
                     "startRow": start_row,
                     "endRowExclusive": end_row,
                     "rowCount": row_count,
-                    "artifactByteOffset": (start_row - artifact["startRow"]) * row_bytes,
+                    "artifactByteOffset": artifact_byte_offset,
+                    "artifactByteEndOffsetExclusive": artifact_byte_end,
+                    "sourceOffsetBytes": source_offset,
+                    "sourceEndOffsetBytesExclusive": source_end,
                     "byteLength": byte_length,
                 }
             )
             covered_rows += row_count
+            covered_bytes += byte_length
+            expected_row = end_row
+            expected_source_offset = source_end
 
         if covered_rows != tile["rowCount"]:
             raise RuntimeError(
                 f"execution tile {tile['index']} is not fully covered by physical artifacts"
+            )
+        if covered_bytes != tile["byteLength"]:
+            raise RuntimeError(
+                f"execution tile {tile['index']} byte coverage does not match tile length"
+            )
+        if expected_row != tile_end or expected_source_offset != tile_source_end:
+            raise RuntimeError(
+                f"execution tile {tile['index']} source range is not covered exactly"
             )
 
         bindings.append(
@@ -103,6 +146,8 @@ def _tile_bindings(
                 "startRow": tile_start,
                 "endRowExclusive": tile_end,
                 "rowCount": tile["rowCount"],
+                "sourceOffsetBytes": tile_source_start,
+                "sourceEndOffsetBytesExclusive": tile_source_end,
                 "byteLength": tile["byteLength"],
                 "physicalSlices": slices,
                 "physicalArtifactCount": len(slices),
@@ -134,6 +179,16 @@ def _candidate(
         for artifact in physical
         for row in (artifact["startRow"], artifact["endRowExclusive"])
     }
+    total_physical_slices = sum(item["physicalArtifactCount"] for item in bindings)
+    source_coverage_exact = (
+        bindings[0]["sourceOffsetBytes"] == source_offset_bytes
+        and bindings[-1]["sourceEndOffsetBytesExclusive"]
+        == source_offset_bytes + rows * row_bytes
+        and all(
+            left["sourceEndOffsetBytesExclusive"] == right["sourceOffsetBytes"]
+            for left, right in zip(bindings, bindings[1:], strict=False)
+        )
+    )
 
     return {
         "physicalArtifactCount": physical_count,
@@ -153,6 +208,8 @@ def _candidate(
         "maximumPhysicalArtifactsPerExecutionTile": max(
             item["physicalArtifactCount"] for item in bindings
         ),
+        "totalPhysicalSlicesAcrossExecutionTiles": total_physical_slices,
+        "executionTileSourceRangesCoverWeightExactly": source_coverage_exact,
         "executionTilesContainedWithinSinglePhysicalArtifact": all(
             item["physicalArtifactCount"] == 1 for item in bindings
         ),
@@ -264,9 +321,10 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         "candidates": candidates,
         "conclusion": (
             "4, 5, and 8 balanced physical layouts are byte-feasible under the "
-            "preferred payload ceiling; 8 execution tiles are only source-row views. "
-            "This report does not establish ORT/WebGPU feasibility, peak memory, "
-            "cache behavior, numerical equivalence, or a chosen #223 architecture."
+            "preferred payload ceiling; 8 execution tiles now include exact source-byte "
+            "and physical-artifact slice coordinates for range-supply feasibility work. "
+            "These bindings are arithmetic only and do not establish ORT/WebGPU feasibility, "
+            "peak memory, cache behavior, numerical equivalence, or a chosen #223 architecture."
         ),
     }
 
