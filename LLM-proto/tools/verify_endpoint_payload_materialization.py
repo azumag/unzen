@@ -466,6 +466,20 @@ def _expected_payload_names(payload_count: int) -> list[str]:
     return [f"payload-{index:04d}.bin" for index in range(payload_count)]
 
 
+def _require_exact_payload_names(
+    payload_dir: Path,
+    *,
+    expected_names: Iterable[str],
+) -> None:
+    expected = set(expected_names)
+    observed = {path.name for path in payload_dir.glob("payload-*.bin")}
+    if observed != expected:
+        raise RuntimeError(
+            "payload directory contents do not match the materialization report: "
+            f"expected={sorted(expected)!r}, observed={sorted(observed)!r}"
+        )
+
+
 def _sha256_file_range(
     path: Path,
     *,
@@ -635,12 +649,7 @@ def verify_materialization_payloads(
     if not payload_dir.is_dir():
         raise FileNotFoundError(f"payload directory not found: {payload_dir}")
     expected_names = _expected_payload_names(len(chunks))
-    actual_payload_names = {path.name for path in payload_dir.glob("payload-*.bin")}
-    if actual_payload_names != set(expected_names):
-        raise RuntimeError(
-            "payload directory contents do not match the materialization report: "
-            f"expected={sorted(expected_names)!r}, observed={sorted(actual_payload_names)!r}"
-        )
+    _require_exact_payload_names(payload_dir, expected_names=expected_names)
 
     verified_payloads: list[dict[str, object]] = []
     verified_payload_signatures: dict[str, tuple[int, int, int, int, int]] = {}
@@ -738,6 +747,7 @@ def verify_materialization_payloads(
         source_stat_signature,
         path=source_path,
     )
+    _require_exact_payload_names(payload_dir, expected_names=expected_names)
 
     report: dict[str, object] = {
         "schemaVersion": BASE_REPORT_SCHEMA_VERSION,
