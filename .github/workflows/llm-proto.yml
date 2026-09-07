@@ -74,6 +74,7 @@ jobs:
           python tools/probe_llama_1b_budget_blocker.py /tmp/llama-3.2-1b-model_q4.onnx
           python tools/probe_llama_1b_endpoint_chunk_envelope.py /tmp/llama-3.2-1b-model_q4.onnx
           python tools/probe_llama_1b_endpoint_layout_candidates.py /tmp/llama-3.2-1b-model_q4.onnx
+          python tools/probe_llama_1b_endpoint_dependency_closure.py /tmp/llama-3.2-1b-model_q4.onnx
 
       - name: Test real ONNX split contract
         run: python -m unittest discover -s tools/tests -p 'test_*.py'

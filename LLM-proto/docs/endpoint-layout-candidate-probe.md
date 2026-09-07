@@ -1,6 +1,6 @@
 # Endpoint layout candidate probe
 
-Status: **diagnostic-only / #223 feasibility support**. This document and its probe do not choose the endpoint runtime/cache architecture, change the artifact policy, or approve a browser execution profile.
+Status: **diagnostic-only / #223 feasibility support**. This document and its probes do not choose the endpoint runtime/cache architecture, change the artifact policy, or approve a browser execution profile.
 
 ## Purpose
 
@@ -70,18 +70,43 @@ For example, the second 8-way tile (`rows [16032,32064)`) in the 5-physical cand
 
 Together they cover the tile's source range `[131,334,144,262,668,288)` with no gap or overlap. This is still a coordinate proof only; it does not prove that ORT Web accepts this supply pattern or that the bytes can be staged within the desired memory budget.
 
-## Running the probe
+## Whole-artifact dependency closure
+
+`tools/probe_llama_1b_endpoint_dependency_closure.py` consumes the layout report and adds one deliberately conservative accounting view: **if cache/residency identity is the whole physical artifact, how many full physical-artifact bytes are in the dependency closure of each execution tile?**
+
+This is not a host-memory or GPU-memory measurement. A runtime might stream a slice, reuse an already cached object, or avoid copying all bytes into one buffer. The closure instead records the amount of independently identified physical artifact data that must be available/verified before the tile can be satisfied under a whole-artifact cache/residency contract.
+
+The current `256 MiB` preferred limit is carried into this report **only as a numeric reference taken from the physical-artifact policy**. #223 does not currently define a 256 MiB execution-dependency-closure policy, so the companion probe does not convert this comparison into a pass/fail gate.
+
+For the pinned geometry:
+
+| physical payloads | max full-artifact dependency closure per 8-way tile | max bytes in required artifacts not used by that tile | distance from 256 MiB physical-artifact reference |
+|---:|---:|---:|---:|
+| 4 | 262,668,288 bytes (250.5 MiB) | 131,334,144 | -5,767,168 bytes |
+| 5 | 420,274,176 bytes (400.8046875 MiB) | 288,940,032 | +151,838,720 bytes |
+| 8 | 131,334,144 bytes (125.25 MiB) | 0 | -137,101,312 bytes |
+
+The 5-way result is the important new comparison. Although every individual 5-way physical payload is close to the 200 MiB target and below 256 MiB, a boundary-crossing execution tile references two whole physical artifacts. Counting those cache/residency dependencies in full produces a maximum closure of `420,274,176` bytes. Therefore "every physical artifact is preferred-sized" does not imply that the execution dependency closure has the same byte scale.
+
+The 4-way and 8-way arithmetic mappings fall below the same 256 MiB numeric reference, while the 5-way maximum is above it. The 4-way mapping still has `131,334,144` bytes in the required artifact that the tile itself does not consume, while the 8-way 1:1 alignment has zero such unused bytes. These numbers are comparison inputs only; they do not select 4 or 8 and they do not create a new policy gate, because request count, session count, cache reuse, transfer behavior, working set, and ORT/WebGPU feasibility remain unmeasured.
+
+The dependency-closure probe fail-closes on unknown/duplicate physical-artifact references, mismatched slice byte totals, malformed artifact sizes/counts, or any upstream promotion away from `decisionStatus=diagnostic-only`.
+
+## Running the probes
 
 From `LLM-proto/`:
 
 ```bash
 python tools/probe_llama_1b_endpoint_layout_candidates.py \
   /absolute/path/to/model_q4.onnx
+
+python tools/probe_llama_1b_endpoint_dependency_closure.py \
+  /absolute/path/to/model_q4.onnx
 ```
 
-The command first invokes the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
+Both commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
 
-The JSON report includes the upstream probe/source identity and, for every candidate:
+The layout JSON report includes the upstream probe/source identity and, for every candidate:
 
 - exact physical row ranges and source-byte ranges,
 - exact 8-way execution row and source-byte ranges,
@@ -95,17 +120,26 @@ The JSON report includes the upstream probe/source identity and, for every candi
 - whether each execution tile is contained within one physical payload,
 - whether execution and physical boundaries align exactly.
 
-CI runs this probe against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes.
+The dependency-closure JSON report preserves the same source identity and adds, per candidate and tile:
+
+- required physical-artifact indices/count,
+- execution-tile bytes,
+- full physical-artifact dependency bytes,
+- bytes inside those required full artifacts not consumed by the tile,
+- numeric distance from the current preferred physical-artifact reference, explicitly not an execution-policy verdict.
+
+CI runs both probes against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes.
 
 ## Evidence boundary
 
-A passing result proves only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity and that the candidate range mappings are internally exact.
+A passing result proves only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent.
 
 It does **not** prove:
 
 - that the 4/5/8 candidate payloads have all been materialized and independently verified,
 - that multiple physical artifacts are an approved manifest/cache contract,
 - that ORT Web can bind the slices without hidden whole-weight reconstruction,
+- that physical dependency-closure bytes equal resident host/GPU memory,
 - that the physical payload count should be 4, 5, or 8,
 - that an 8-way execution plan should be adopted,
 - that peak host/GPU working set is acceptable,
@@ -113,4 +147,4 @@ It does **not** prove:
 - that embedding or logits execution is numerically equivalent,
 - that a normal short-lived visitor should run endpoint stages.
 
-Those remain explicit #223 decision and S0 feasibility gates. Runtime, manifest, loader, cache, residency, dispatcher, and artifact-policy behavior remain unchanged by this probe.
+Those remain explicit #223 decision and S0 feasibility gates. Runtime, manifest, loader, cache, residency, dispatcher, and artifact-policy behavior remain unchanged by these probes.
