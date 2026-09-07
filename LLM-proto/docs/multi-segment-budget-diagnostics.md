@@ -95,3 +95,20 @@ The materializer also validates that row coverage and source byte ranges are con
 Materialization report schema `1.1.0` also binds the emitted bytes to the exact diagnostic selection that produced them. The `provenance` object records the probe kind/schema, pinned source-graph SHA-256, `stageKind`, policy `tier`, pinned external-data identity, and a SHA-256 of the canonical selected source-byte blueprint. This matters because `embedding-prefix` and `logits-postfix` both reference the same tied embedding range and can therefore produce identical raw payload slices at the same tier; payload hashes alone cannot identify which endpoint candidate was selected. The CLI regenerates and revalidates the pinned blueprint before constructing this provenance, and refuses a caller-supplied chunk list that differs from that selected blueprint.
 
 The emitted `unzen-endpoint-source-payload-materialization` report is explicitly `decisionStatus=diagnostic-only`. The payload filenames and report are measurement scaffolding only. They do not establish a browser cache format, manifest schema, loader behavior, endpoint execution semantics, or approval of vocabulary-axis chunking. Those remain the explicit design decision in #223.
+
+## Independent materialization verification
+
+`verify_endpoint_payload_materialization.py` verifies the producer evidence as a separate, source-backed pass. It requires the pinned external-data file plus the expected `--stage` and `--tier`, independently derives the pinned blueprint/provenance from the probe report, re-hashes the complete source against the pinned identity, re-hashes every referenced source range and every payload, checks source coverage and payload geometry/count/total bytes, requires the payload directory to contain exactly the expected `payload-*.bin` set, and rejects symlink payload files. Source symlinks remain supported for model-cache compatibility because the dereferenced bytes are independently checked against the pinned size/SHA-256 and per-range digests.
+
+```bash
+python tools/verify_endpoint_payload_materialization.py \
+  /absolute/path/to/model_q4.onnx_data \
+  /tmp/endpoint-chunk-envelope.json \
+  /tmp/unzen-endpoint-payload-materialization.json \
+  /tmp/unzen-endpoint-payloads \
+  --stage embedding-prefix \
+  --tier preferred \
+  --report-out /tmp/unzen-endpoint-payload-verification.json
+```
+
+The explicit stage/tier arguments mean the verifier does not trust those claims from the producer report. More importantly, a forged or corrupted payload plus a correspondingly edited producer hash still fails unless the payload digest matches the exact byte range in the pinned source file. The verifier also hashes the exact UTF-8 JSON bytes it parses for both input reports and includes those digests in `inputReports`, so the result is tied to the precise probe/materialization documents. Its own report remains `decisionStatus=diagnostic-only`: independent source-backed verification strengthens the evidence chain but does not select vocabulary-axis chunking or change browser cache, manifest, loader, runtime, dispatcher, or artifact-policy semantics.
