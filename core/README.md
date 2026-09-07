@@ -283,7 +283,8 @@ request を拒否し、server/client の受信側は `Content-Length` だけに�
 fallback POST は `redirect: 'error'` を使い、301/302/303/307/308 を転送前に
 `UnzenNetworkError` として拒否する。307/308 による別 endpoint への引数再送も行わないため、
 endpoint にはリダイレクト前の URL ではなく最終 API URL を指定する。
-code / manifest の HTTP エラーや、取消後に adapter が返した fallback response は、
+code / manifest / MoonBit（in-process・Worker 両方）の HTTP エラーや、取消後に
+adapter が返した fallback response は、
 未読 body を best-effort で cancel する。cancel の完了待ちや cleanup の失敗で本来のエラーを隠さない。
 server も fallback result を一度だけ JSON 化して response の 16 MiB 上限と正確な
 `Content-Length` を適用し、過大または JSON 化不能な result は構造化 `422` で返す。JSON が

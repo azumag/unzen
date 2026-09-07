@@ -22,6 +22,7 @@ async function close(server: Server): Promise<void> {
 describe('fallback redirect transport boundary', () => {
   it.each([301, 302, 303, 307, 308])('rejects HTTP %s before contacting a redirected endpoint', async (status) => {
     let redirectedRequests = 0;
+    let originRequests = 0;
     const target = createServer((request, response) => {
       redirectedRequests++;
       request.resume();
@@ -29,6 +30,7 @@ describe('fallback redirect transport boundary', () => {
       response.end(JSON.stringify({ result: 'unexpected redirected execution' }));
     });
     const origin = createServer((request, response) => {
+      originRequests++;
       request.resume();
       response.writeHead(status, { Location: targetUrl });
       response.end();
@@ -41,6 +43,7 @@ describe('fallback redirect transport boundary', () => {
       // fetch normally hides redirects and can resend the POST body for 307/308.
       const outcome = await new FallbackHandler(originUrl).execute('identity', ['fixture-only'])
         .then((value) => value, (error) => error);
+      expect(originRequests).toBe(1);
       expect(redirectedRequests).toBe(0);
       expect(outcome).toBeInstanceOf(UnzenNetworkError);
     } finally {

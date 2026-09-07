@@ -3,6 +3,8 @@ import { UnzenCancelledError, UnzenNetworkError } from '@unzen/shared';
 import { CodeFetcher } from '../src/code-fetcher';
 import { ManifestFetcher } from '../src/manifest-fetcher';
 import { FallbackHandler } from '../src/fallback-handler';
+import { MoonBitSandboxExecutor } from '../src/moonbit-sandbox';
+import { MoonBitWorkerSandboxExecutor } from '../src/moonbit-worker-sandbox';
 
 const ENDPOINT = 'https://example.test/unzen';
 const ENTRY = {
@@ -27,9 +29,26 @@ describe('rejected fetch response cleanup', () => {
     expect(body.locked).toBe(false);
   });
 
+  it.each(['in-process', 'worker'] as const)('cancels a rejected MoonBit %s response', async (kind) => {
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const fetch = vi.fn(async () => new Response(body, { status: 503 }));
+    vi.stubGlobal('fetch', fetch);
+    const executor = kind === 'in-process'
+      ? new MoonBitSandboxExecutor()
+      : new MoonBitWorkerSandboxExecutor({ workerUrl: '/moonbit-worker.js' });
+    try {
+      await expect(executor.prepare(`${ENDPOINT}/module.wasm`))
+        .rejects.toThrow(/Failed to fetch MoonBit module: 503/);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(body.locked).toBe(false);
+    } finally { executor.dispose(); }
+  });
+
   it('releases a fallback response delivered after caller cancellation', async () => {
     const controller = new AbortController();
-    const cancel = vi.fn();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
     const body = new ReadableStream<Uint8Array>({ cancel });
     vi.stubGlobal('fetch', vi.fn(async () => {
       controller.abort();
