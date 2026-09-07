@@ -624,12 +624,17 @@ def _validate_report_output_path(
     if report_out.exists() or report_out.is_symlink():
         raise FileExistsError(f"refusing to overwrite existing report: {report_out}")
     target = report_out.resolve()
+    resolved_output_dir = output_dir.resolve()
     payload_targets = {
         (output_dir / f"payload-{index:04d}.bin").resolve()
         for index in range(payload_count)
     }
     if target in payload_targets:
         raise RuntimeError("report output must not collide with a materialized payload path")
+    if target.parent == resolved_output_dir and target.match("payload-*.bin"):
+        raise RuntimeError(
+            "report output must not use the reserved payload-*.bin namespace in the payload directory"
+        )
     if target == source_path.resolve():
         raise RuntimeError("report output must not collide with the source external-data file")
 

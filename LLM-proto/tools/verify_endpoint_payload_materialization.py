@@ -821,6 +821,19 @@ def verify_pinned_probe_materialization(
     return report
 
 
+def _validate_report_output_path(report_out: Path, *, payload_dir: Path) -> None:
+    if report_out.exists() or report_out.is_symlink():
+        raise FileExistsError(
+            f"refusing to overwrite existing verification report: {report_out}"
+        )
+    target = report_out.resolve()
+    if target.parent == payload_dir.resolve() and target.match("payload-*.bin"):
+        raise RuntimeError(
+            "verification report output must not use the reserved payload-*.bin namespace "
+            "in the payload directory"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_external_data", type=Path)
@@ -831,6 +844,9 @@ def main() -> int:
     parser.add_argument("--tier", required=True)
     parser.add_argument("--report-out", type=Path)
     args = parser.parse_args()
+
+    if args.report_out is not None:
+        _validate_report_output_path(args.report_out, payload_dir=args.payload_dir)
 
     probe_report, probe_report_sha256 = _load_json_with_sha256(args.probe_report)
     materialization, materialization_report_sha256 = _load_json_with_sha256(
@@ -850,8 +866,7 @@ def main() -> int:
     }
     rendered = json.dumps(verification, indent=2, ensure_ascii=False) + "\n"
     if args.report_out is not None:
-        if args.report_out.exists() or args.report_out.is_symlink():
-            raise FileExistsError(f"refusing to overwrite existing verification report: {args.report_out}")
+        _validate_report_output_path(args.report_out, payload_dir=args.payload_dir)
         args.report_out.parent.mkdir(parents=True, exist_ok=True)
         with args.report_out.open("x", encoding="utf-8") as stream:
             stream.write(rendered)
