@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+from unittest import mock
 import tempfile
 import unittest
 
@@ -45,6 +46,8 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
 
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["decisionStatus"], "diagnostic-only")
+            self.assertEqual(report["schemaVersion"], "1.0.0")
+            self.assertNotIn("provenance", report)
             self.assertEqual(report["payloadCount"], 3)
             self.assertEqual(report["totalPayloadBytes"], len(payload))
             outputs = [
@@ -227,7 +230,15 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                             "balancedSourcePayloadChunks": chunks,
                         }
                     }
-                }
+                },
+                "logits-postfix": {
+                    "tiers": {
+                        "preferred": {
+                            "feasible": True,
+                            "balancedSourcePayloadChunks": chunks,
+                        }
+                    }
+                },
             },
         }
 
@@ -246,6 +257,86 @@ class MaterializeEndpointPayloadChunksTest(unittest.TestCase):
                 "sha256": materializer.EXPECTED_SOURCE_SHA256,
             },
         )
+        prefix_provenance = materializer.materialization_provenance_from_probe_report(
+            report,
+            stage_kind="embedding-prefix",
+            tier="preferred",
+            chunks=chunks,
+        )
+        postfix_provenance = materializer.materialization_provenance_from_probe_report(
+            report,
+            stage_kind="logits-postfix",
+            tier="preferred",
+            chunks=chunks,
+        )
+        self.assertEqual(prefix_provenance["probeKind"], materializer.EXPECTED_PROBE_KIND)
+        self.assertEqual(
+            prefix_provenance["probeSchemaVersion"],
+            materializer.EXPECTED_PROBE_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            prefix_provenance["sourceGraphSha256"],
+            materializer.EXPECTED_SOURCE_GRAPH_SHA256,
+        )
+        self.assertEqual(prefix_provenance["stageKind"], "embedding-prefix")
+        self.assertEqual(prefix_provenance["tier"], "preferred")
+        self.assertEqual(
+            prefix_provenance["blueprintSha256"],
+            materializer._canonical_json_sha256(chunks),
+        )
+        self.assertEqual(
+            prefix_provenance["sourceExternalDataIdentity"],
+            materializer.source_identity_from_probe_report(report),
+        )
+        self.assertEqual(
+            prefix_provenance["blueprintSha256"],
+            postfix_provenance["blueprintSha256"],
+        )
+        self.assertNotEqual(
+            prefix_provenance["stageKind"],
+            postfix_provenance["stageKind"],
+        )
+
+        synthetic_materialization = {
+            "schemaVersion": "1.0.0",
+            "kind": materializer.REPORT_KIND,
+            "status": "pass",
+            "decisionStatus": "diagnostic-only",
+            "payloads": [],
+        }
+        with mock.patch.object(
+            materializer,
+            "materialize_source_payload_chunks",
+            return_value=synthetic_materialization.copy(),
+        ) as materialize_mock:
+            bound_report, bound_chunks = materializer.materialize_pinned_probe_payload_chunks(
+                Path("model_q4.onnx_data"),
+                Path("chunks"),
+                report,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+            )
+        self.assertEqual(bound_chunks, chunks)
+        self.assertEqual(bound_report["schemaVersion"], "1.1.0")
+        self.assertEqual(bound_report["provenance"], prefix_provenance)
+        materialize_mock.assert_called_once_with(
+            Path("model_q4.onnx_data"),
+            Path("chunks"),
+            chunks,
+            buffer_bytes=materializer.DEFAULT_COPY_BUFFER_BYTES,
+            expected_source_bytes=materializer.EXPECTED_SOURCE_BYTES,
+            expected_source_sha256=materializer.EXPECTED_SOURCE_SHA256,
+        )
+
+        wrong_chunks = json.loads(json.dumps(chunks))
+        wrong_chunks[0]["endRowExclusive"] -= 1
+        with self.assertRaisesRegex(RuntimeError, "do not match the selected pinned probe blueprint"):
+            materializer.materialization_provenance_from_probe_report(
+                report,
+                stage_kind="embedding-prefix",
+                tier="preferred",
+                chunks=wrong_chunks,
+            )
         tampered = json.loads(json.dumps(report))
         tampered["pinnedSourceExternalDataIdentity"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(RuntimeError, "pinned external-data identity mismatch"):
