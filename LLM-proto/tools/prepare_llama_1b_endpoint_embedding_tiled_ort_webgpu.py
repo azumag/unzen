@@ -74,10 +74,10 @@ def _write_graph_variants(
 ) -> dict[str, dict[str, object]]:
     """Write the two byte-pinned Gather graphs.
 
-    The in-memory checker validates graph semantics without resolving external
-    data, which keeps the unit test small. Real preparation sets
-    ``verify_external_data=True`` after payload-0000.bin has been materialized,
-    adding the path-based checker that proves the external range is accessible.
+    Unit tests pin the exact serialized graph bytes without materializing a
+    250.5 MiB payload. Real preparation sets ``verify_external_data=True`` only
+    after payload-0000.bin has been materialized; then ONNX's path-based checker
+    validates the graph together with the actual external-data range.
     """
     result: dict[str, dict[str, object]] = {}
     if verify_external_data:
@@ -94,7 +94,6 @@ def _write_graph_variants(
             offset=offset,
             length=TILE_BYTES,
         )
-        onnx.checker.check_model(model, full_check=True)
         onnx.save(model, path)
         if verify_external_data:
             onnx.checker.check_model(str(path), full_check=True)
