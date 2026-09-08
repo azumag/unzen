@@ -10,9 +10,11 @@ It validates the exact pinned preparation manifest through the same `validateEnd
 
 The preflight also executes the selected Chrome binary with `--version` and requires a four-part browser version. This catches a missing or obviously incompatible browser command before the capture helper is started.
 
+The capture helper now runs this same preflight automatically after its cheap local port-availability checks and before it reserves the evidence output path, creates a temporary Chrome profile, starts the harness, or launches Chrome. Running the standalone command remains useful when an operator wants a bounded readiness report without starting the browser capture, but it is no longer a correctness prerequisite that can be accidentally skipped.
+
 ## Run
 
-Prepare the bundle as documented in `endpoint-embedding-tiled-webgpu.md`, then run:
+Prepare the bundle as documented in `endpoint-embedding-tiled-webgpu.md`. To inspect readiness separately, run:
 
 ```bash
 cd LLM-proto
@@ -36,13 +38,15 @@ node tools/preflight_endpoint_embedding_webgpu_capture.mjs \
 
 A passing JSON summary reports `decisionStatus=diagnostic-only`, the pinned manifest identity, the Chrome version, the six verified prepared files (two graph variants plus four physical payloads), and the total verified byte count.
 
-After a pass, run the actual capture helper:
+The actual capture can be invoked directly; it repeats the same prepared-bundle and Chrome preflight automatically before any browser process is launched:
 
 ```bash
 node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
   /tmp/unzen-endpoint-embedding-webgpu-data \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
+
+This deliberate duplicate verification is defense in depth: the standalone preflight is optional operator feedback, while the capture helper itself enforces the gate at the execution boundary.
 
 ## What a pass means
 
