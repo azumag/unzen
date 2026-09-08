@@ -50,6 +50,39 @@ export function validateEndpointEmbeddingRuntimeReport(report) {
   return report;
 }
 
+function requireNonEmptyString(value, label) {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${label} must be a non-empty string`);
+  return value;
+}
+
+export function validateCapturedEndpointEmbeddingRuntimeEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) throw new Error('captured evidence must be an object');
+  if (evidence.evidenceLevel !== 'captured-browser-runtime') throw new Error('captured evidence level drift');
+
+  const capturedAtUtc = requireNonEmptyString(evidence.capturedAtUtc, 'capturedAtUtc');
+  const capturedAt = new Date(capturedAtUtc);
+  if (!Number.isFinite(capturedAt.getTime()) || capturedAt.toISOString() !== capturedAtUtc) {
+    throw new Error('capturedAtUtc must be a canonical UTC ISO-8601 timestamp');
+  }
+
+  const environment = evidence.captureEnvironment;
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)) throw new Error('captureEnvironment must be an object');
+  const chromeVersion = requireNonEmptyString(environment.chromeVersion, 'captureEnvironment.chromeVersion');
+  const cdpBrowser = requireNonEmptyString(environment.cdpBrowser, 'captureEnvironment.cdpBrowser');
+  const nodeVersion = requireNonEmptyString(environment.nodeVersion, 'captureEnvironment.nodeVersion');
+  requireNonEmptyString(environment.platform, 'captureEnvironment.platform');
+  if (!/^v\d+\.\d+\.\d+/.test(nodeVersion)) throw new Error('captureEnvironment.nodeVersion format drift');
+
+  const chromeVersionMatch = chromeVersion.match(/\d+\.\d+\.\d+\.\d+/);
+  const cdpVersionMatch = cdpBrowser.match(/\d+\.\d+\.\d+\.\d+/);
+  if (!chromeVersionMatch || !cdpVersionMatch || chromeVersionMatch[0] !== cdpVersionMatch[0]) {
+    throw new Error('captureEnvironment Chrome/CDP version mismatch');
+  }
+
+  validateEndpointEmbeddingRuntimeReport({ ...evidence, evidenceLevel: 'self-reported-runtime' });
+  return evidence;
+}
+
 export function assertDistinctCapturePorts(serverPort, debugPort) {
   if (serverPort === debugPort) throw new Error('harness and DevTools ports must be distinct');
 }
@@ -177,6 +210,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
         platform: platform(),
       },
     };
+    validateCapturedEndpointEmbeddingRuntimeEvidence(evidence);
     writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\n`);
     fsyncSync(outputFd);
     outputCommitted = true;
