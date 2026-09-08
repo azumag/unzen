@@ -10,6 +10,7 @@ const RTOL = 1e-4;
 
 function setStatus(value) {
   statusEl.textContent = value;
+  window.__unzenEndpointPoststageWebGpuPhase = value;
 }
 
 async function sha256Hex(bytes) {

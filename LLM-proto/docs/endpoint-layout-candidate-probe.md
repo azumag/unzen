@@ -237,6 +237,23 @@ The browser retained and verified `420,274,176` bytes of whole physical dependen
 
 This remains diagnostic-only. In particular, it does **not** prove that `Concat` is memory-efficient enough for production: the two whole payloads total about `400.8 MiB`, and ORT may additionally materialize the `125.25 MiB` concatenated tile plus provider-specific copies. No peak host/GPU memory or post-release reclamation was measured. It also does not select the 5-way layout, define Cache API residency, loader/manifest/runtime/dispatcher semantics, include final norm, or prove full-vs-staged logits equivalence.
 
+## Complete post-stage browser process-RSS diagnostic
+
+`tools/capture_endpoint_poststage_webgpu_process_rss.mjs` wraps the complete 4-way-backed browser post-stage harness in a fresh Chrome profile and samples the launched Chrome process tree with the host OS `ps` resident-set-size (RSS) metric. The harness publishes its current diagnostic phase to `window.__unzenEndpointPoststageWebGpuPhase`, so the capture can retain phase-local peaks without changing execution order or forcing GC/memory pressure. Sampling continues for five seconds after the browser has reported `sessionReleaseApiCompleted=true`, which means the final-norm session and all eight logits-tile `InferenceSession.release()` promises have returned.
+
+The exact machine-readable report from the 2026-09-08 Apple M4 / Chrome 152 run is committed as [`docs/evidence/endpoint-poststage-webgpu-process-rss-20260908.json`](./evidence/endpoint-poststage-webgpu-process-rss-20260908.json). At a 100 ms sampling interval, the sum of RSS across the isolated Chrome root and discovered descendants was:
+
+| observation | summed process RSS | delta from clean `about:blank` baseline |
+|---|---:|---:|
+| clean isolated Chrome baseline | `1,193,472 KiB` (`1,165.50 MiB`) | — |
+| sampled global peak | `3,032,544 KiB` (`2,961.47 MiB`) | `+1,795.97 MiB` |
+| immediately after all nine release promises returned | `2,561,040 KiB` (`2,501.02 MiB`) | `+1,335.52 MiB` |
+| five seconds after the release-complete report | `2,484,240 KiB` (`2,426.02 MiB`) | `+1,260.52 MiB` |
+
+The sampled global peak occurred while executing logits tile 4. The process-role breakdown at that sample was browser `223,792 KiB`, GPU process `247,696 KiB`, network utility `88,848 KiB`, other utility `63,872 KiB`, and renderers `2,408,336 KiB`. The final five-second sample remained roughly `1.23 GiB` above the clean baseline, so this run provides **no evidence of prompt process-RSS return to baseline after `release()`**. Conversely, the metric cannot establish that the retained RSS is live ORT/WebGPU model memory: Chrome allocators may retain reusable pages and the process sum may count shared mappings more than once.
+
+This is deliberately a coarse residency envelope, not a GPU-memory meter. On Apple unified memory, RSS cannot distinguish CPU-only pages from GPU-visible shared allocations; `ps` cannot identify Metal/WebGPU provider allocations; summed per-process RSS can double-count shared pages; and a five-second observation without forced GC or allocator flush cannot prove eventual reclamation or a leak. The diagnostic therefore narrows #223 by showing the measured process-tree envelope and the lack of immediate baseline recovery, but it does not set a production memory budget or select a physical/execution layout.
+
 ## Pinned CPU ORT 5-way boundary-crossing spike
 
 `tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py` targets the remaining CPU-side multi-physical-slice question for the diagnostic 5-way layout. The 5-way physical artifacts remain the deterministic balanced row ranges from the layout probe (maximum `210,141,184` bytes, about `200.40625 MiB`), while four of the eight execution tiles cross one physical-artifact boundary. For those tiles, the helper opens both payloads independently and exposes each slice as its own ONNX external initializer. A temporary ONNX graph performs `Concat(axis=0)` on the two slice tensors before the same embedding `Gather` or logits `Transpose + MatMul` primitive is evaluated. The full tied weight is never rebuilt as one external artifact.
@@ -313,6 +330,11 @@ python tools/prepare_llama_1b_endpoint_poststage_tiled_ort_webgpu.py \
 
 DATA_DIR=/tmp/unzen-endpoint-poststage-webgpu-data PORT=8795 \
   node browser-harness/endpoint-poststage-tiled-webgpu/serve.mjs
+
+# Or launch an isolated Chrome instance and capture the diagnostic process-RSS envelope.
+node tools/capture_endpoint_poststage_webgpu_process_rss.mjs \
+  /tmp/unzen-endpoint-poststage-webgpu-data \
+  /tmp/endpoint-poststage-webgpu-process-rss.json
 
 # In another shell, use a fresh browser profile and open the matching URL above
 # (8793, 8794, or 8795). The recorded macOS runs used Chrome 152; for example:
