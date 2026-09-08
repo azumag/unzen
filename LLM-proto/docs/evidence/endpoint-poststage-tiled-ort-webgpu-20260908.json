@@ -1,0 +1,270 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "unzen-pinned-llama-1b-endpoint-poststage-tiled-ort-webgpu-runtime",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "evidenceLevel": "self-reported-runtime",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+  "adapterInfo": {
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "",
+    "description": ""
+  },
+  "adapterLimits": {
+    "maxBufferSize": 4294967292,
+    "maxStorageBufferBindingSize": 4294967292,
+    "maxComputeWorkgroupStorageSize": 32768
+  },
+  "onnxruntimeWebVersion": "1.22.0",
+  "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+  "sourceExternalData": {
+    "bytes": 1692672000,
+    "sha256": "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+  },
+  "inputs": {
+    "residualSha256": "0e0804a84063a6a34c6672dc902c1fdc67e19e4eab68b9c2020e8252a195505e",
+    "updateSha256": "179d47aed831cb549d5b0c2a9c6d7b2e2cb17548b6f954efec1b913d1a861b27"
+  },
+  "referenceOutputs": {
+    "finalNormSha256": "004b193d729503acac3f27ec7914db2a225c7bd5c981c804fa90ddb1d8e8bffc",
+    "logitsSha256": "6337a483dd57dd8806646cd6a1a7f4423871795a6cd878e2e23fcd621266b2ae",
+    "provider": "CPUExecutionProvider",
+    "onnxruntimeVersion": "1.22.0"
+  },
+  "finalNorm": {
+    "allClose": true,
+    "exactEqual": false,
+    "atol": 0.0001,
+    "rtol": 0.0001,
+    "maxAbsDiff": 9.5367431640625e-07,
+    "maxRelativeDiff": 1.7643061632242554e-07,
+    "worstIndex": 91,
+    "graphSha256": "ed16d525afe71ac3e87c37d26ce60cd29f4e7dd8bf07a2902b2a1174531c1a6a",
+    "weightSha256": "af89374a4f1edc09ec38496e36efb1663713bc0e44026b8ef9d9d13aac99e75e",
+    "sessionCreateMs": 59.5,
+    "runMs": 2.3000001907348633,
+    "sessionReleaseMs": 0.09999990463256836
+  },
+  "verifiedPhysicalArtifacts": [
+    {
+      "index": 0,
+      "bytes": 262668288,
+      "sha256": "b783704059e886b1e5438d23c3f9911b0d947c86125501c9071e5bb8f7cebdce"
+    },
+    {
+      "index": 1,
+      "bytes": 262668288,
+      "sha256": "6725be963565c84faaf487339c9b6020166077d62ffeae36467ce284c49cafb7"
+    },
+    {
+      "index": 2,
+      "bytes": 262668288,
+      "sha256": "21ea80f5829262b36028f32b17ef213090ff27ff708c6baa47277d45a99bff0a"
+    },
+    {
+      "index": 3,
+      "bytes": 262668288,
+      "sha256": "b2d23fbe273c8ae5f43c4ac4200613d3c88b0d11d389d2551a47af8649a688e9"
+    }
+  ],
+  "executedTiles": [
+    {
+      "tileIndex": 0,
+      "startRow": 0,
+      "endRowExclusive": 16032,
+      "physicalArtifactIndex": 0,
+      "artifactByteOffset": 0,
+      "byteLength": 131334144,
+      "graphSha256": "73025db300e5c834263b277966963d2cf2b4a6298e8b787ee4eb79f0a5f96c8d",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.5735626220703125e-05,
+        "maxRelativeDiff": 0.004647934662940379,
+        "worstIndex": 8690
+      },
+      "sessionCreateMs": 169,
+      "runMs": 8.699999809265137,
+      "sessionReleaseMs": 0.09999990463256836
+    },
+    {
+      "tileIndex": 1,
+      "startRow": 16032,
+      "endRowExclusive": 32064,
+      "physicalArtifactIndex": 0,
+      "artifactByteOffset": 131334144,
+      "byteLength": 131334144,
+      "graphSha256": "d05e43d2d3679fe669a8859d13640b0162130aee134eafb434405ab3c790b873",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.2874603271484375e-05,
+        "maxRelativeDiff": 0.005197173822229409,
+        "worstIndex": 4067
+      },
+      "sessionCreateMs": 72.59999990463257,
+      "runMs": 21.699999809265137,
+      "sessionReleaseMs": 0.09999990463256836
+    },
+    {
+      "tileIndex": 2,
+      "startRow": 32064,
+      "endRowExclusive": 48096,
+      "physicalArtifactIndex": 1,
+      "artifactByteOffset": 0,
+      "byteLength": 131334144,
+      "graphSha256": "87089b9eead11e62f1b9b4e47dce64a33bc143250a126eda79708b63a0bbeabe",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.52587890625e-05,
+        "maxRelativeDiff": 0.0024579044008104403,
+        "worstIndex": 11130
+      },
+      "sessionCreateMs": 74,
+      "runMs": 23.09999990463257,
+      "sessionReleaseMs": 0.09999990463256836
+    },
+    {
+      "tileIndex": 3,
+      "startRow": 48096,
+      "endRowExclusive": 64128,
+      "physicalArtifactIndex": 1,
+      "artifactByteOffset": 131334144,
+      "byteLength": 131334144,
+      "graphSha256": "88e411df56e7aeb7cc17620b40925a974a6cc5f5bc74025d5d55e997c966f00b",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.4543533325195312e-05,
+        "maxRelativeDiff": 0.019190318548857277,
+        "worstIndex": 8536
+      },
+      "sessionCreateMs": 70.59999990463257,
+      "runMs": 32.799999713897705,
+      "sessionReleaseMs": 0.10000038146972656
+    },
+    {
+      "tileIndex": 4,
+      "startRow": 64128,
+      "endRowExclusive": 80160,
+      "physicalArtifactIndex": 2,
+      "artifactByteOffset": 0,
+      "byteLength": 131334144,
+      "graphSha256": "d2034fc6273d3d78fcd5e33ab23efadb1cf44a7165408899d3c41794c0fa49f2",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.52587890625e-05,
+        "maxRelativeDiff": 0.0022239139195091512,
+        "worstIndex": 4739
+      },
+      "sessionCreateMs": 95,
+      "runMs": 28.5,
+      "sessionReleaseMs": 0.10000038146972656
+    },
+    {
+      "tileIndex": 5,
+      "startRow": 80160,
+      "endRowExclusive": 96192,
+      "physicalArtifactIndex": 2,
+      "artifactByteOffset": 131334144,
+      "byteLength": 131334144,
+      "graphSha256": "ae092a6166d7e581ea6503a2d4c89c7246eac8de83ed5e3db00c4326b73f03d6",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.621246337890625e-05,
+        "maxRelativeDiff": 0.007622160491751838,
+        "worstIndex": 3575
+      },
+      "sessionCreateMs": 69.2000002861023,
+      "runMs": 24.699999809265137,
+      "sessionReleaseMs": 0.09999990463256836
+    },
+    {
+      "tileIndex": 6,
+      "startRow": 96192,
+      "endRowExclusive": 112224,
+      "physicalArtifactIndex": 3,
+      "artifactByteOffset": 0,
+      "byteLength": 131334144,
+      "graphSha256": "0e9b7c58cfc831c542d4ab0b50c3ef9fb56cce9085e9a66006005ca5f39e0ca2",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.71661376953125e-05,
+        "maxRelativeDiff": 0.007449127906976744,
+        "worstIndex": 61
+      },
+      "sessionCreateMs": 81.60000038146973,
+      "runMs": 25.199999809265137,
+      "sessionReleaseMs": 0.19999980926513672
+    },
+    {
+      "tileIndex": 7,
+      "startRow": 112224,
+      "endRowExclusive": 128256,
+      "physicalArtifactIndex": 3,
+      "artifactByteOffset": 131334144,
+      "byteLength": 131334144,
+      "graphSha256": "7275799694e90449a600e046ae87d02d95ad9338ca213263f64470ea14ebb026",
+      "comparison": {
+        "allClose": true,
+        "exactEqual": false,
+        "atol": 0.0001,
+        "rtol": 0.0001,
+        "maxAbsDiff": 1.1444091796875e-05,
+        "maxRelativeDiff": 0.002243917680523439,
+        "worstIndex": 11798
+      },
+      "sessionCreateMs": 73.30000019073486,
+      "runMs": 21.5,
+      "sessionReleaseMs": 0.09999990463256836
+    }
+  ],
+  "logitsComparison": {
+    "allClose": true,
+    "exactEqual": false,
+    "atol": 0.0001,
+    "rtol": 0.0001,
+    "maxAbsDiff": 1.71661376953125e-05,
+    "maxRelativeDiff": 0.019190318548857277,
+    "worstIndex": 96253
+  },
+  "sequentialExecution": {
+    "physicalArtifactOrder": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "tilesPerPhysicalArtifact": 2,
+    "maximumWholePhysicalPayloadBytesPerStep": 262668288,
+    "totalPhysicalPayloadBytesVerifiedAcrossRun": 1050673152
+  },
+  "sessionReleaseApiCompleted": true,
+  "conclusion": "A real browser ORT Web/WebGPU run executed the pinned source final norm once and all eight preferred-payload-backed vocabulary logits tiles sequentially, then compared the complete logits tensor with a pinned-source CPU ORT reference. This remains diagnostic-only. release() completion and sequential JavaScript references do not prove immediate host/GPU memory reclamation, and this result does not select the 4-way/8-way architecture, define production cache/runtime/dispatcher semantics, or prove decoder/KV/checkpoint full-model staged equivalence.",
+  "environment": {
+    "chromeVersion": "152.0.7977.83",
+    "system": "Darwin",
+    "release": "25.6.0",
+    "machine": "arm64",
+    "macOSVersion": "26.6.1"
+  }
+}
