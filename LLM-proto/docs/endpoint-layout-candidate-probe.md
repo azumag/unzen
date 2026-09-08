@@ -254,6 +254,23 @@ The sampled global peak occurred while executing logits tile 4. The process-role
 
 This is deliberately a coarse residency envelope, not a GPU-memory meter. On Apple unified memory, RSS cannot distinguish CPU-only pages from GPU-visible shared allocations; `ps` cannot identify Metal/WebGPU provider allocations; summed per-process RSS can double-count shared pages; and a five-second observation without forced GC or allocator flush cannot prove eventual reclamation or a leak. The diagnostic therefore narrows #223 by showing the measured process-tree envelope and the lack of immediate baseline recovery, but it does not set a production memory budget or select a physical/execution layout.
 
+### 2026-09-08 document-teardown follow-up
+
+The capture tool now keeps the same Chrome process alive after the five-second post-`release()` settle window, navigates the measured page target to `about:blank`, waits for the replacement document to reach `readyState=complete`, and then samples the same Chrome process tree for another 30 seconds. This separates "the ORT sessions have returned from `release()` while the harness document is still alive" from "the harness document itself has been torn down" without forcing GC, memory pressure, browser restart, or driver reset. The follow-up report is committed as [`docs/evidence/endpoint-poststage-webgpu-process-rss-teardown-20260908.json`](./evidence/endpoint-poststage-webgpu-process-rss-teardown-20260908.json).
+
+| observation | summed process RSS | delta from clean `about:blank` baseline |
+|---|---:|---:|
+| clean isolated Chrome baseline | `1,193,472 KiB` (`1,165.50 MiB`) | — |
+| sampled global peak (logits tile 6) | `3,062,000 KiB` (`2,990.23 MiB`) | `+1,824.73 MiB` |
+| five seconds after all nine release promises returned | `2,510,720 KiB` (`2,451.88 MiB`) | `+1,286.38 MiB` |
+| immediately after the `about:blank` replacement document was ready | `2,268,464 KiB` (`2,215.30 MiB`) | `+1,049.80 MiB` |
+| first sample at or below the original baseline | `1,137,584 KiB` (`1,110.92 MiB`) at `23,746 ms` | `-54.58 MiB` |
+| final 30-second teardown-settle sample | `1,109,808 KiB` (`1,083.80 MiB`) | `-81.70 MiB` |
+
+So, in this run, the elevated summed process RSS did **not** persist for the lifetime of the launched Chrome process: after the harness document was replaced, the sampled process-tree RSS crossed back below the original clean-browser baseline within about 23.7 seconds and remained below it at the 30-second endpoint. That is useful negative evidence against treating the earlier five-second retained RSS as automatically permanent process-lifetime residency.
+
+It is still not direct allocator evidence. The process topology changed during teardown (the baseline had five renderer processes, the execution peak had seven, and the final teardown sample had three), so process retirement itself contributes to the drop. Chrome/Metal may also keep or release shared mappings independently of ORT session lifetime. Therefore the follow-up does **not** prove that `InferenceSession.release()` alone promptly reclaims GPU allocations, does not establish a leak-free provider contract, and does not justify a production memory budget. It only establishes that this isolated real run returned the coarse Chrome process-tree RSS to/below baseline after document teardown without restarting Chrome.
+
 ## Pinned CPU ORT 5-way boundary-crossing spike
 
 `tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py` targets the remaining CPU-side multi-physical-slice question for the diagnostic 5-way layout. The 5-way physical artifacts remain the deterministic balanced row ranges from the layout probe (maximum `210,141,184` bytes, about `200.40625 MiB`), while four of the eight execution tiles cross one physical-artifact boundary. For those tiles, the helper opens both payloads independently and exposes each slice as its own ONNX external initializer. A temporary ONNX graph performs `Concat(axis=0)` on the two slice tensors before the same embedding `Gather` or logits `Transpose + MatMul` primitive is evaluated. The full tied weight is never rebuilt as one external artifact.

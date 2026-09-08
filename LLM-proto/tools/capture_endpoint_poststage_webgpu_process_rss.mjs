@@ -24,6 +24,7 @@ const HARNESS_SERVER = resolve(
 );
 const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_POST_REPORT_SETTLE_MS = 5000;
+const DEFAULT_POST_TEARDOWN_SETTLE_MS = 30000;
 const DEFAULT_TIMEOUT_MS = 120000;
 
 function sleep(ms) {
@@ -91,6 +92,13 @@ export function summarizeProcessRows(rootPid, rows) {
 
 export function mergePeak(current, sample) {
   if (!current || sample.totalRssKiB > current.totalRssKiB) {
+    return structuredClone(sample);
+  }
+  return current;
+}
+
+export function mergeMinimum(current, sample) {
+  if (!current || sample.totalRssKiB < current.totalRssKiB) {
     return structuredClone(sample);
   }
   return current;
@@ -194,6 +202,28 @@ async function evaluateState(cdp) {
   return JSON.parse(raw);
 }
 
+async function waitForPageUrl(cdp, expectedUrl, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const result = await cdp.send('Runtime.evaluate', {
+        expression: 'JSON.stringify({ href: location.href, readyState: document.readyState })',
+        returnByValue: true,
+      });
+      const raw = result?.result?.value;
+      if (typeof raw === 'string') {
+        const state = JSON.parse(raw);
+        if (state.href === expectedUrl && state.readyState === 'complete') return;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(100);
+  }
+  throw new Error(`page did not settle at ${expectedUrl}${lastError ? `: ${lastError}` : ''}`);
+}
+
 function chromeDefault() {
   if (platform() === 'darwin') {
     return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -219,6 +249,7 @@ async function runCapture({
   debugPort,
   sampleIntervalMs,
   postReportSettleMs,
+  postTeardownSettleMs,
   timeoutMs,
 }) {
   if (!['darwin', 'linux'].includes(platform())) {
@@ -324,9 +355,40 @@ async function runCapture({
       globalPeak = mergePeak(globalPeak, sample);
     }
 
+    await cdp.send('Page.navigate', { url: 'about:blank' });
+    await waitForPageUrl(cdp, 'about:blank', 10000);
+    const teardownStartedAt = Date.now();
+    const immediatePostTeardown = psSnapshot(chrome.pid);
+    sampleCount += 1;
+    let postTeardownPeak = structuredClone(immediatePostTeardown);
+    let postTeardownMinimum = structuredClone(immediatePostTeardown);
+    let finalPostTeardown = structuredClone(immediatePostTeardown);
+    let firstAtOrBelowBaseline = immediatePostTeardown.totalRssKiB <= baseline.totalRssKiB
+      ? { elapsedMs: 0, ...structuredClone(immediatePostTeardown) }
+      : null;
+    globalPeak = mergePeak(globalPeak, immediatePostTeardown);
+    recordPhasePeak(phasePeaks, 'post-teardown-about-blank', immediatePostTeardown);
+    const teardownDeadline = teardownStartedAt + postTeardownSettleMs;
+    while (Date.now() < teardownDeadline) {
+      await sleep(sampleIntervalMs);
+      const sample = psSnapshot(chrome.pid);
+      sampleCount += 1;
+      finalPostTeardown = sample;
+      postTeardownPeak = mergePeak(postTeardownPeak, sample);
+      postTeardownMinimum = mergeMinimum(postTeardownMinimum, sample);
+      if (!firstAtOrBelowBaseline && sample.totalRssKiB <= baseline.totalRssKiB) {
+        firstAtOrBelowBaseline = {
+          elapsedMs: Date.now() - teardownStartedAt,
+          ...structuredClone(sample),
+        };
+      }
+      globalPeak = mergePeak(globalPeak, sample);
+      recordPhasePeak(phasePeaks, 'post-teardown-about-blank', sample);
+    }
+
     const chromeVersion = execFileSync(chromeBinary, ['--version'], { encoding: 'utf8' }).trim();
     const evidence = {
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.1.0',
       kind: 'unzen-endpoint-poststage-webgpu-process-rss-diagnostic',
       status: 'pass',
       decisionStatus: 'diagnostic-only',
@@ -347,6 +409,7 @@ async function runCapture({
         sampleIntervalMs,
         sampleCount,
         postReportSettleMs,
+        postDocumentTeardownSettleMs: postTeardownSettleMs,
         baseline,
         globalPeak,
         phasePeaks: compactPeakMap(phasePeaks),
@@ -355,14 +418,24 @@ async function runCapture({
           peakDuringSettle: postReportPeak,
           finalAfterSettle: finalPostReport,
         },
+        afterDocumentTeardown: {
+          action: 'navigate the measured page to about:blank after the release settle window',
+          baselineRssKiB: baseline.totalRssKiB,
+          immediateAfterBlankReady: immediatePostTeardown,
+          peakDuringSettle: postTeardownPeak,
+          minimumDuringSettle: postTeardownMinimum,
+          firstAtOrBelowBaseline,
+          finalAfterSettle: finalPostTeardown,
+        },
       },
       runtimeReport,
-      conclusion: 'The complete diagnostic post-stage WebGPU run was observed with OS process RSS sampling before, during, and after its nine InferenceSession.release() calls. This bounds the sampled Chrome process-tree residency for this run only. It does not measure provider allocations directly or prove immediate GPU/Metal/driver reclamation.',
+      conclusion: 'The complete diagnostic post-stage WebGPU run was observed with OS process RSS sampling before, during, and after its nine InferenceSession.release() calls, then through a same-page-target navigation to about:blank. This bounds the sampled Chrome process-tree residency for this run only and separates release-settle behavior from document teardown behavior. It does not measure provider allocations directly or prove GPU/Metal/driver reclamation.',
       limitations: [
         'RSS is an OS process metric, not a WebGPU/Metal allocation metric.',
         'Summing process RSS can double-count shared pages and shared-memory mappings.',
         'On Apple unified memory, RSS cannot distinguish CPU-resident pages from GPU-visible shared allocations.',
         'A decrease after release is observational only; no GC, memory-pressure, or allocator flush was forced.',
+        'Navigating to about:blank tears down the measured document context but Chrome may retain renderer processes, reusable allocator pages, driver caches, or shared mappings.',
         'This diagnostic does not select 4-way physical payloads, 8-way execution, or production cache/runtime/dispatcher policy.',
       ],
     };
@@ -391,6 +464,7 @@ function parseArgs(argv) {
     debugPort: Number(process.env.UNZEN_CDP_PORT ?? 9336),
     sampleIntervalMs: Number(process.env.UNZEN_RSS_SAMPLE_INTERVAL_MS ?? DEFAULT_INTERVAL_MS),
     postReportSettleMs: Number(process.env.UNZEN_RSS_POST_REPORT_SETTLE_MS ?? DEFAULT_POST_REPORT_SETTLE_MS),
+    postTeardownSettleMs: Number(process.env.UNZEN_RSS_POST_TEARDOWN_SETTLE_MS ?? DEFAULT_POST_TEARDOWN_SETTLE_MS),
     timeoutMs: Number(process.env.UNZEN_RSS_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
   };
 }
@@ -403,6 +477,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       baselineRssKiB: evidence.measurement.baseline.totalRssKiB,
       peakRssKiB: evidence.measurement.globalPeak.totalRssKiB,
       finalRssKiB: evidence.measurement.afterAllSessionReleaseApisReturned.finalAfterSettle.totalRssKiB,
+      postTeardownFinalRssKiB: evidence.measurement.afterDocumentTeardown.finalAfterSettle.totalRssKiB,
       output: resolve(process.argv[3]),
     }, null, 2));
   } catch (error) {

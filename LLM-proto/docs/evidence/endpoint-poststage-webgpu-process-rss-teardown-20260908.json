@@ -1,0 +1,1010 @@
+{
+  "schemaVersion": "1.1.0",
+  "kind": "unzen-endpoint-poststage-webgpu-process-rss-diagnostic",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "evidenceLevel": "captured-os-process-rss",
+  "capturedAtUtc": "2026-09-08T03:57:45.660Z",
+  "environment": {
+    "platform": "darwin",
+    "osRelease": "25.6.0",
+    "hostTotalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 152.0.7977.83",
+    "nodeVersion": "v24.18.0",
+    "cdpBrowser": "Chrome/152.0.7977.83"
+  },
+  "measurement": {
+    "metric": "resident-set-size",
+    "unit": "KiB",
+    "aggregation": "sum of Chrome root process and descendants discovered by PPID",
+    "sampleIntervalMs": 100,
+    "sampleCount": 280,
+    "postReportSettleMs": 5000,
+    "postDocumentTeardownSettleMs": 30000,
+    "baseline": {
+      "processCount": 9,
+      "totalRssKiB": 1193472,
+      "roles": {
+        "browser": {
+          "processCount": 1,
+          "rssKiB": 225744
+        },
+        "gpu-process": {
+          "processCount": 1,
+          "rssKiB": 139520
+        },
+        "utility-network": {
+          "processCount": 1,
+          "rssKiB": 102240
+        },
+        "utility": {
+          "processCount": 1,
+          "rssKiB": 80640
+        },
+        "renderer": {
+          "processCount": 5,
+          "rssKiB": 645328
+        }
+      }
+    },
+    "globalPeak": {
+      "processCount": 11,
+      "totalRssKiB": 3062000,
+      "roles": {
+        "browser": {
+          "processCount": 1,
+          "rssKiB": 212720
+        },
+        "gpu-process": {
+          "processCount": 1,
+          "rssKiB": 241584
+        },
+        "utility-network": {
+          "processCount": 1,
+          "rssKiB": 80464
+        },
+        "utility": {
+          "processCount": 1,
+          "rssKiB": 61040
+        },
+        "renderer": {
+          "processCount": 7,
+          "rssKiB": 2466192
+        }
+      }
+    },
+    "phasePeaks": [
+      {
+        "phase": "baseline-about-blank",
+        "processCount": 9,
+        "totalRssKiB": 1193472,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 225744
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 139520
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 102240
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 80640
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 645328
+          }
+        }
+      },
+      {
+        "phase": "pre-harness",
+        "processCount": 9,
+        "totalRssKiB": 1199984,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 226432
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 139552
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 103744
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 81072
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 649184
+          }
+        }
+      },
+      {
+        "phase": "executing pinned final norm",
+        "processCount": 9,
+        "totalRssKiB": 1398928,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 143440
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 106512
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 81072
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 839856
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 0",
+        "processCount": 9,
+        "totalRssKiB": 1555984,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 148928
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 108592
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 81072
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 989344
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 0",
+        "processCount": 9,
+        "totalRssKiB": 2052048,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 205424
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 117536
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 88336
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64128
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1576624
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 1",
+        "processCount": 9,
+        "totalRssKiB": 2393168,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 205440
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 375168
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 88336
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64128
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1660096
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 1",
+        "processCount": 9,
+        "totalRssKiB": 2414192,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 205376
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 375248
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 90384
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64128
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1679056
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 2",
+        "processCount": 11,
+        "totalRssKiB": 2452080,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 221392
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 176912
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 89424
+          },
+          "utility": {
+            "processCount": 3,
+            "rssKiB": 217168
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1747184
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 2",
+        "processCount": 11,
+        "totalRssKiB": 2706800,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 225664
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 376304
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 90080
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64464
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1950288
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 4",
+        "processCount": 11,
+        "totalRssKiB": 2787968,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 226672
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 248272
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 90208
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64464
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 2158352
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 5",
+        "processCount": 11,
+        "totalRssKiB": 2746544,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 225200
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 376464
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 90112
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64416
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1990352
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 3",
+        "processCount": 11,
+        "totalRssKiB": 2624032,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 225200
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 248256
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 92160
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64416
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1994000
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 6",
+        "processCount": 11,
+        "totalRssKiB": 3062000,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 212720
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 241584
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 80464
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61040
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 2466192
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 7",
+        "processCount": 11,
+        "totalRssKiB": 2677376,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 212176
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 370640
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 81856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60688
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1952016
+          }
+        }
+      },
+      {
+        "phase": "pass",
+        "processCount": 11,
+        "totalRssKiB": 2556672,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 212816
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 246368
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 81856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60688
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1954944
+          }
+        }
+      },
+      {
+        "phase": "post-teardown-about-blank",
+        "processCount": 12,
+        "totalRssKiB": 2361648,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 113024
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 88576
+          },
+          "utility": {
+            "processCount": 2,
+            "rssKiB": 136176
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1795824
+          }
+        }
+      }
+    ],
+    "afterAllSessionReleaseApisReturned": {
+      "immediate": {
+        "processCount": 11,
+        "totalRssKiB": 2556672,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 212816
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 246368
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 81856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60688
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1954944
+          }
+        }
+      },
+      "peakDuringSettle": {
+        "processCount": 11,
+        "totalRssKiB": 2566304,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 215408
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 246240
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 83632
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60896
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1960128
+          }
+        }
+      },
+      "finalAfterSettle": {
+        "processCount": 11,
+        "totalRssKiB": 2510720,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 213856
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 244608
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 83504
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60896
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1907856
+          }
+        }
+      }
+    },
+    "afterDocumentTeardown": {
+      "action": "navigate the measured page to about:blank after the release settle window",
+      "baselineRssKiB": 1193472,
+      "immediateAfterBlankReady": {
+        "processCount": 11,
+        "totalRssKiB": 2268464,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 219168
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 117904
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86752
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60896
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1783744
+          }
+        }
+      },
+      "peakDuringSettle": {
+        "processCount": 12,
+        "totalRssKiB": 2361648,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 113024
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 88576
+          },
+          "utility": {
+            "processCount": 2,
+            "rssKiB": 136176
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1795824
+          }
+        }
+      },
+      "minimumDuringSettle": {
+        "processCount": 8,
+        "totalRssKiB": 1109792,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228464
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 113424
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 89152
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62336
+          },
+          "renderer": {
+            "processCount": 3,
+            "rssKiB": 616416
+          },
+          "browser-child": {
+            "processCount": 1,
+            "rssKiB": 0
+          }
+        }
+      },
+      "firstAtOrBelowBaseline": {
+        "elapsedMs": 23746,
+        "processCount": 10,
+        "totalRssKiB": 1137584,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228448
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 113424
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 89152
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62336
+          },
+          "renderer": {
+            "processCount": 3,
+            "rssKiB": 616416
+          },
+          "browser-child": {
+            "processCount": 3,
+            "rssKiB": 27808
+          }
+        }
+      },
+      "finalAfterSettle": {
+        "processCount": 8,
+        "totalRssKiB": 1109808,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 228464
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 113424
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 89152
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62336
+          },
+          "renderer": {
+            "processCount": 3,
+            "rssKiB": 616432
+          },
+          "browser-child": {
+            "processCount": 1,
+            "rssKiB": 0
+          }
+        }
+      }
+    }
+  },
+  "runtimeReport": {
+    "schemaVersion": "1.0.0",
+    "kind": "unzen-pinned-llama-1b-endpoint-poststage-tiled-ort-webgpu-runtime",
+    "status": "pass",
+    "decisionStatus": "diagnostic-only",
+    "evidenceLevel": "self-reported-runtime",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "adapterInfo": {
+      "vendor": "apple",
+      "architecture": "metal-3",
+      "device": "",
+      "description": ""
+    },
+    "adapterLimits": {
+      "maxBufferSize": 4294967292,
+      "maxStorageBufferBindingSize": 4294967292,
+      "maxComputeWorkgroupStorageSize": 32768
+    },
+    "onnxruntimeWebVersion": "1.22.0",
+    "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+    "sourceExternalData": {
+      "bytes": 1692672000,
+      "sha256": "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+    },
+    "inputs": {
+      "residualSha256": "0e0804a84063a6a34c6672dc902c1fdc67e19e4eab68b9c2020e8252a195505e",
+      "updateSha256": "179d47aed831cb549d5b0c2a9c6d7b2e2cb17548b6f954efec1b913d1a861b27"
+    },
+    "referenceOutputs": {
+      "finalNormSha256": "004b193d729503acac3f27ec7914db2a225c7bd5c981c804fa90ddb1d8e8bffc",
+      "logitsSha256": "6337a483dd57dd8806646cd6a1a7f4423871795a6cd878e2e23fcd621266b2ae",
+      "provider": "CPUExecutionProvider",
+      "onnxruntimeVersion": "1.22.0"
+    },
+    "finalNorm": {
+      "allClose": true,
+      "exactEqual": false,
+      "atol": 0.0001,
+      "rtol": 0.0001,
+      "maxAbsDiff": 9.5367431640625e-7,
+      "maxRelativeDiff": 1.7643061632242554e-7,
+      "worstIndex": 91,
+      "graphSha256": "ed16d525afe71ac3e87c37d26ce60cd29f4e7dd8bf07a2902b2a1174531c1a6a",
+      "weightSha256": "af89374a4f1edc09ec38496e36efb1663713bc0e44026b8ef9d9d13aac99e75e",
+      "sessionCreateMs": 507.09999990463257,
+      "runMs": 9.300000190734863,
+      "sessionReleaseMs": 1.5
+    },
+    "verifiedPhysicalArtifacts": [
+      {
+        "index": 0,
+        "bytes": 262668288,
+        "sha256": "b783704059e886b1e5438d23c3f9911b0d947c86125501c9071e5bb8f7cebdce"
+      },
+      {
+        "index": 1,
+        "bytes": 262668288,
+        "sha256": "6725be963565c84faaf487339c9b6020166077d62ffeae36467ce284c49cafb7"
+      },
+      {
+        "index": 2,
+        "bytes": 262668288,
+        "sha256": "21ea80f5829262b36028f32b17ef213090ff27ff708c6baa47277d45a99bff0a"
+      },
+      {
+        "index": 3,
+        "bytes": 262668288,
+        "sha256": "b2d23fbe273c8ae5f43c4ac4200613d3c88b0d11d389d2551a47af8649a688e9"
+      }
+    ],
+    "executedTiles": [
+      {
+        "tileIndex": 0,
+        "startRow": 0,
+        "endRowExclusive": 16032,
+        "physicalArtifactIndex": 0,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "73025db300e5c834263b277966963d2cf2b4a6298e8b787ee4eb79f0a5f96c8d",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000015735626220703125,
+          "maxRelativeDiff": 0.004647934662940379,
+          "worstIndex": 8690
+        },
+        "sessionCreateMs": 167.09999990463257,
+        "runMs": 61,
+        "sessionReleaseMs": 0.20000028610229492
+      },
+      {
+        "tileIndex": 1,
+        "startRow": 16032,
+        "endRowExclusive": 32064,
+        "physicalArtifactIndex": 0,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "d05e43d2d3679fe669a8859d13640b0162130aee134eafb434405ab3c790b873",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000012874603271484375,
+          "maxRelativeDiff": 0.005197173822229409,
+          "worstIndex": 4067
+        },
+        "sessionCreateMs": 74.80000019073486,
+        "runMs": 25.90000009536743,
+        "sessionReleaseMs": 0.09999990463256836
+      },
+      {
+        "tileIndex": 2,
+        "startRow": 32064,
+        "endRowExclusive": 48096,
+        "physicalArtifactIndex": 1,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "87089b9eead11e62f1b9b4e47dce64a33bc143250a126eda79708b63a0bbeabe",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.0000152587890625,
+          "maxRelativeDiff": 0.0024579044008104403,
+          "worstIndex": 11130
+        },
+        "sessionCreateMs": 102.09999990463257,
+        "runMs": 29.800000190734863,
+        "sessionReleaseMs": 0
+      },
+      {
+        "tileIndex": 3,
+        "startRow": 48096,
+        "endRowExclusive": 64128,
+        "physicalArtifactIndex": 1,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "88e411df56e7aeb7cc17620b40925a974a6cc5f5bc74025d5d55e997c966f00b",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000014543533325195312,
+          "maxRelativeDiff": 0.019190318548857277,
+          "worstIndex": 8536
+        },
+        "sessionCreateMs": 78.39999961853027,
+        "runMs": 26.800000190734863,
+        "sessionReleaseMs": 0.09999990463256836
+      },
+      {
+        "tileIndex": 4,
+        "startRow": 64128,
+        "endRowExclusive": 80160,
+        "physicalArtifactIndex": 2,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "d2034fc6273d3d78fcd5e33ab23efadb1cf44a7165408899d3c41794c0fa49f2",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.0000152587890625,
+          "maxRelativeDiff": 0.0022239139195091512,
+          "worstIndex": 4739
+        },
+        "sessionCreateMs": 71.5,
+        "runMs": 26.5,
+        "sessionReleaseMs": 0.09999990463256836
+      },
+      {
+        "tileIndex": 5,
+        "startRow": 80160,
+        "endRowExclusive": 96192,
+        "physicalArtifactIndex": 2,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "ae092a6166d7e581ea6503a2d4c89c7246eac8de83ed5e3db00c4326b73f03d6",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.00001621246337890625,
+          "maxRelativeDiff": 0.007622160491751838,
+          "worstIndex": 3575
+        },
+        "sessionCreateMs": 69.19999980926514,
+        "runMs": 22.600000381469727,
+        "sessionReleaseMs": 0.19999980926513672
+      },
+      {
+        "tileIndex": 6,
+        "startRow": 96192,
+        "endRowExclusive": 112224,
+        "physicalArtifactIndex": 3,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "0e9b7c58cfc831c542d4ab0b50c3ef9fb56cce9085e9a66006005ca5f39e0ca2",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.0000171661376953125,
+          "maxRelativeDiff": 0.007449127906976744,
+          "worstIndex": 61
+        },
+        "sessionCreateMs": 73.19999980926514,
+        "runMs": 25.40000009536743,
+        "sessionReleaseMs": 0.09999990463256836
+      },
+      {
+        "tileIndex": 7,
+        "startRow": 112224,
+        "endRowExclusive": 128256,
+        "physicalArtifactIndex": 3,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "7275799694e90449a600e046ae87d02d95ad9338ca213263f64470ea14ebb026",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000011444091796875,
+          "maxRelativeDiff": 0.002243917680523439,
+          "worstIndex": 11798
+        },
+        "sessionCreateMs": 68.80000019073486,
+        "runMs": 21.299999713897705,
+        "sessionReleaseMs": 0.20000028610229492
+      }
+    ],
+    "logitsComparison": {
+      "allClose": true,
+      "exactEqual": false,
+      "atol": 0.0001,
+      "rtol": 0.0001,
+      "maxAbsDiff": 0.0000171661376953125,
+      "maxRelativeDiff": 0.019190318548857277,
+      "worstIndex": 96253
+    },
+    "sequentialExecution": {
+      "physicalArtifactOrder": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tilesPerPhysicalArtifact": 2,
+      "maximumWholePhysicalPayloadBytesPerStep": 262668288,
+      "totalPhysicalPayloadBytesVerifiedAcrossRun": 1050673152
+    },
+    "sessionReleaseApiCompleted": true,
+    "conclusion": "A real browser ORT Web/WebGPU run executed the pinned source final norm once and all eight preferred-payload-backed vocabulary logits tiles sequentially, then compared the complete logits tensor with a pinned-source CPU ORT reference. This remains diagnostic-only. release() completion and sequential JavaScript references do not prove immediate host/GPU memory reclamation, and this result does not select the 4-way/8-way architecture, define production cache/runtime/dispatcher semantics, or prove decoder/KV/checkpoint full-model staged equivalence."
+  },
+  "conclusion": "The complete diagnostic post-stage WebGPU run was observed with OS process RSS sampling before, during, and after its nine InferenceSession.release() calls, then through a same-page-target navigation to about:blank. This bounds the sampled Chrome process-tree residency for this run only and separates release-settle behavior from document teardown behavior. It does not measure provider allocations directly or prove GPU/Metal/driver reclamation.",
+  "limitations": [
+    "RSS is an OS process metric, not a WebGPU/Metal allocation metric.",
+    "Summing process RSS can double-count shared pages and shared-memory mappings.",
+    "On Apple unified memory, RSS cannot distinguish CPU-resident pages from GPU-visible shared allocations.",
+    "A decrease after release is observational only; no GC, memory-pressure, or allocator flush was forced.",
+    "Navigating to about:blank tears down the measured document context but Chrome may retain renderer processes, reusable allocator pages, driver caches, or shared mappings.",
+    "This diagnostic does not select 4-way physical payloads, 8-way execution, or production cache/runtime/dispatcher policy."
+  ]
+}
