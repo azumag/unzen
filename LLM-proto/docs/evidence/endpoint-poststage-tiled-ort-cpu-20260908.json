@@ -1,0 +1,285 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "unzen-pinned-llama-1b-endpoint-poststage-tiled-ort-cpu-probe",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "upstreamProbe": {
+    "kind": "unzen-pinned-llama-1b-endpoint-layout-candidate-probe",
+    "schemaVersion": "1.1.0"
+  },
+  "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+  "verifiedPinnedSourceGraph": {
+    "fileName": "model_q4.onnx",
+    "byteLength": 149112,
+    "sha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+    "role": "pinned-source-graph"
+  },
+  "pinnedSourceExternalDataIdentity": {
+    "location": "model_q4.onnx_data",
+    "bytes": 1692672000,
+    "sha256": "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+  },
+  "verifiedPinnedSourceExternalData": {
+    "fileName": "model_q4.onnx_data",
+    "byteLength": 1692672000,
+    "sha256": "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647",
+    "role": "pinned-source-external-data"
+  },
+  "postStageContract": {
+    "finalNorm": {
+      "nodeName": "/model/layers.16/final_norm_layernorm/SkipLayerNorm",
+      "opType": "SkipSimplifiedLayerNormalization",
+      "domain": "com.microsoft",
+      "inputs": [
+        "/model/layers.15/post_attention_layernorm/output_3",
+        "/model/layers.15/mlp/down_proj/MatMul/output_0",
+        "model.layers.16.final_norm_layernorm.weight"
+      ],
+      "output": "/model/layers.16/final_norm_layernorm/output_0",
+      "epsilon": 9.999999747378752e-06,
+      "weight": {
+        "name": "model.layers.16.final_norm_layernorm.weight",
+        "sourceOffsetBytes": 1084489728,
+        "byteLength": 8192
+      }
+    },
+    "lmHead": {
+      "transposeNodeName": "/lm_head/Transpose",
+      "matMulNodeName": "/lm_head/MatMul",
+      "tiedWeight": {
+        "name": "model.embed_tokens.weight",
+        "rows": 128256,
+        "hiddenSize": 2048,
+        "sourceOffsetBytes": 0,
+        "byteLength": 1050673152
+      },
+      "output": "logits"
+    }
+  },
+  "finalNormWeightSha256": "af89374a4f1edc09ec38496e36efb1663713bc0e44026b8ef9d9d13aac99e75e",
+  "physicalArtifactCount": 4,
+  "executionTileCount": 8,
+  "verifiedPhysicalPayloads": [
+    {
+      "fileName": "payload-0000.bin",
+      "byteLength": 262668288,
+      "sha256": "b783704059e886b1e5438d23c3f9911b0d947c86125501c9071e5bb8f7cebdce",
+      "physicalArtifactIndex": 0,
+      "sourceOffsetBytes": 0,
+      "sourceEndOffsetBytesExclusive": 262668288,
+      "matchesPinnedSourceRange": true
+    },
+    {
+      "fileName": "payload-0001.bin",
+      "byteLength": 262668288,
+      "sha256": "6725be963565c84faaf487339c9b6020166077d62ffeae36467ce284c49cafb7",
+      "physicalArtifactIndex": 1,
+      "sourceOffsetBytes": 262668288,
+      "sourceEndOffsetBytesExclusive": 525336576,
+      "matchesPinnedSourceRange": true
+    },
+    {
+      "fileName": "payload-0002.bin",
+      "byteLength": 262668288,
+      "sha256": "21ea80f5829262b36028f32b17ef213090ff27ff708c6baa47277d45a99bff0a",
+      "physicalArtifactIndex": 2,
+      "sourceOffsetBytes": 525336576,
+      "sourceEndOffsetBytesExclusive": 788004864,
+      "matchesPinnedSourceRange": true
+    },
+    {
+      "fileName": "payload-0003.bin",
+      "byteLength": 262668288,
+      "sha256": "b2d23fbe273c8ae5f43c4ac4200613d3c88b0d11d389d2551a47af8649a688e9",
+      "physicalArtifactIndex": 3,
+      "sourceOffsetBytes": 788004864,
+      "sourceEndOffsetBytesExclusive": 1050673152,
+      "matchesPinnedSourceRange": true
+    }
+  ],
+  "inputShape": [
+    1,
+    1,
+    2048
+  ],
+  "reference": {
+    "kind": "source-poststage-topology-with-full-tied-weight",
+    "sessionCreateMs": 2014.9129168130457,
+    "runMs": 17.33299996703863
+  },
+  "staged": {
+    "kind": "single-final-norm-plus-eight-vocabulary-row-logits-tiles",
+    "sessionCreateMs": 3030.336041934788,
+    "runMs": 16.77870796993375
+  },
+  "finalNormComparison": {
+    "shape": [
+      1,
+      1,
+      2048
+    ],
+    "exactEqual": true,
+    "allClose": true,
+    "atol": 1e-06,
+    "rtol": 1e-06,
+    "maxAbsDiff": 0.0,
+    "maxRelativeDiff": 0.0
+  },
+  "logitsComparison": {
+    "shape": [
+      1,
+      1,
+      128256
+    ],
+    "exactEqual": true,
+    "allClose": true,
+    "atol": 1e-06,
+    "rtol": 1e-06,
+    "maxAbsDiff": 0.0,
+    "maxRelativeDiff": 0.0
+  },
+  "perExecutionTileLogitsComparison": [
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 0,
+      "startRow": 0,
+      "endRowExclusive": 16032
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 1,
+      "startRow": 16032,
+      "endRowExclusive": 32064
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 2,
+      "startRow": 32064,
+      "endRowExclusive": 48096
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 3,
+      "startRow": 48096,
+      "endRowExclusive": 64128
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 4,
+      "startRow": 64128,
+      "endRowExclusive": 80160
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 5,
+      "startRow": 80160,
+      "endRowExclusive": 96192
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 6,
+      "startRow": 96192,
+      "endRowExclusive": 112224
+    },
+    {
+      "shape": [
+        1,
+        1,
+        16032
+      ],
+      "exactEqual": true,
+      "allClose": true,
+      "atol": 1e-06,
+      "rtol": 1e-06,
+      "maxAbsDiff": 0.0,
+      "maxRelativeDiff": 0.0,
+      "tileIndex": 7,
+      "startRow": 112224,
+      "endRowExclusive": 128256
+    }
+  ],
+  "onnxruntime": {
+    "version": "1.22.0",
+    "provider": "CPUExecutionProvider"
+  },
+  "environment": {
+    "pythonVersion": "3.12.12",
+    "numpyVersion": "2.5.3",
+    "onnxVersion": "1.18.0",
+    "system": "Darwin",
+    "release": "25.6.0",
+    "machine": "arm64",
+    "macOSVersion": "26.6.1"
+  },
+  "conclusion": "The pinned source final-norm + full tied-weight lm_head reference and an 8-way vocabulary-row logits composition backed by four independently verified preferred physical payloads produced numerically equivalent complete logits under pinned onnxruntime CPU. This closes only the post-stage composition S0 question; it does not select this layout, prove full-model multi-segment equivalence, exercise browser/WebGPU execution, measure working set or reclamation, or define production runtime semantics."
+}
