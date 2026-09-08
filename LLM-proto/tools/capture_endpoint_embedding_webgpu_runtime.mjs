@@ -7,6 +7,7 @@ import { platform, tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENDPOINT_EMBEDDING_WEBGPU_EXPECTED } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
+import { preflightEndpointEmbeddingWebGpuCapture } from './preflight_endpoint_embedding_webgpu_capture.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SCRIPT_DIR, '..');
@@ -156,6 +157,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
   assertDistinctCapturePorts(serverPort, debugPort);
   await assertPortAvailable(serverPort, 'harness');
   await assertPortAvailable(debugPort, 'DevTools');
+  await preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeBinary });
   let outputFd;
   let outputCommitted = false;
   let profileDir;
