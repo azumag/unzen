@@ -46,7 +46,9 @@ A successful self-reported runtime object is exposed as `window.__unzenEndpointE
 
 ## Captured runtime evidence
 
-`tools/capture_endpoint_embedding_webgpu_runtime.mjs` turns the manual browser step into a repeatable diagnostic capture. It launches the existing harness server and an isolated temporary Chrome profile, connects through Chrome DevTools Protocol, waits for the runtime report, and validates the pinned source identity, ORT Web version, all four physical artifacts, all eight tile routes, byte-exact tile/complete comparisons, and release-API completion before writing evidence. The output path is create-only (`wx`) so an existing evidence file is never silently overwritten.
+`tools/capture_endpoint_embedding_webgpu_runtime.mjs` turns the manual browser step into a repeatable diagnostic capture. It launches the existing harness server and an isolated temporary Chrome profile, connects through Chrome DevTools Protocol, waits for the runtime report, and validates the pinned source identity, ORT Web version, all four physical artifacts, all eight tile routes, byte-exact tile/complete comparisons, and release-API completion before writing evidence.
+
+Before Chrome is launched, the helper requires distinct/free harness and DevTools ports and atomically reserves the output path with create-only permissions. This makes an existing evidence path fail immediately instead of wasting a complete browser run, and removes the reserved path if capture fails before a valid report is committed. The successful evidence write is flushed before the reserved descriptor is closed, so a concurrent writer cannot replace the target between validation and commit.
 
 ```bash
 cd LLM-proto
@@ -55,7 +57,7 @@ node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
 
-On macOS the default Chrome binary is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`; elsewhere set `CHROME_BINARY` or pass the optional final CLI argument. The helper requires the harness and DevTools ports to be free, uses a tool-owned `mkdtemp` profile only, and deletes that profile at exit. A passing captured report is promoted only from `self-reported-runtime` to `captured-browser-runtime`; its `decisionStatus` remains `diagnostic-only`. This capture records browser/environment identity but does not independently trace WebGPU provider assignment at each node or measure GPU allocation ownership.
+On macOS the default Chrome binary is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`; elsewhere set `CHROME_BINARY` or pass the optional final CLI argument. The helper uses a tool-owned `mkdtemp` profile only and deletes that profile at exit. A passing captured report is promoted only from `self-reported-runtime` to `captured-browser-runtime`; its `decisionStatus` remains `diagnostic-only`. This capture records browser/environment identity but does not independently trace WebGPU provider assignment at each node or measure GPU allocation ownership.
 
 ## What this does not prove
 
