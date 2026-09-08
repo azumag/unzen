@@ -42,8 +42,21 @@ Open `http://127.0.0.1:8796/` in a WebGPU-capable Chrome instance. The browser c
 
 For each tile, the browser reconstructs the expected embedding rows directly from the verified payload bytes, executes `Gather` through the WebGPU provider, requires byte-exact equality, and awaits `InferenceSession.release()`. It then assembles all sixteen rows in original token order and requires the complete `[16, 2048]` result to remain byte-exact.
 
-A successful self-reported runtime object is exposed as `window.__unzenEndpointEmbeddingWebGpuReport`. A future real-device capture should commit a machine-readable report only after independently confirming the browser/environment identity and preserving the diagnostic-only boundary.
+A successful self-reported runtime object is exposed as `window.__unzenEndpointEmbeddingWebGpuReport`.
+
+## Captured runtime evidence
+
+`tools/capture_endpoint_embedding_webgpu_runtime.mjs` turns the manual browser step into a repeatable diagnostic capture. It launches the existing harness server and an isolated temporary Chrome profile, connects through Chrome DevTools Protocol, waits for the runtime report, and validates the pinned source identity, ORT Web version, all four physical artifacts, all eight tile routes, byte-exact tile/complete comparisons, and release-API completion before writing evidence. The output path is create-only (`wx`) so an existing evidence file is never silently overwritten.
+
+```bash
+cd LLM-proto
+node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
+  /tmp/unzen-endpoint-embedding-webgpu-data \
+  /tmp/endpoint-embedding-webgpu-runtime.json
+```
+
+On macOS the default Chrome binary is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`; elsewhere set `CHROME_BINARY` or pass the optional final CLI argument. The helper requires the harness and DevTools ports to be free, uses a tool-owned `mkdtemp` profile only, and deletes that profile at exit. A passing captured report is promoted only from `self-reported-runtime` to `captured-browser-runtime`; its `decisionStatus` remains `diagnostic-only`. This capture records browser/environment identity but does not independently trace WebGPU provider assignment at each node or measure GPU allocation ownership.
 
 ## What this does not prove
 
-This preparation and harness do not by themselves constitute real-browser evidence. Even after a successful real-device run, they would only close the embedding-side browser/WebGPU S0 for the measured token set. They do not prove decoder segmentation, KV-state continuity, Coordinator checkpoint relay, full-model staged equivalence, production cache semantics, peak host/GPU working set, or prompt/visitor UX. `InferenceSession.release()` completion is not evidence of immediate GPU-memory reclamation.
+This preparation and harness do not by themselves constitute real-browser evidence. A successful capture from the helper closes only the embedding-side browser/WebGPU S0 for the measured token set and captured browser/device. It does not prove decoder segmentation, KV-state continuity, Coordinator checkpoint relay, full-model staged equivalence, production cache semantics, peak host/GPU working set, or prompt/visitor UX. `InferenceSession.release()` completion is not evidence of immediate GPU-memory reclamation.
