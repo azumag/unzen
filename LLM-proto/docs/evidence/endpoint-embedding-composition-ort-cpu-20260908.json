@@ -1,0 +1,207 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "unzen-pinned-llama-1b-endpoint-embedding-composition-ort-cpu-probe",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+  "pinnedSourceExternalDataIdentity": {
+    "location": "model_q4.onnx_data",
+    "bytes": 1692672000,
+    "sha256": "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+  },
+  "embeddingInitializer": {
+    "name": "model.embed_tokens.weight",
+    "rows": 128256,
+    "hiddenSize": 2048,
+    "sourceOffset": 0,
+    "byteLength": 1050673152
+  },
+  "onnxruntime": {
+    "version": "1.22.0",
+    "provider": "CPUExecutionProvider"
+  },
+  "environment": {
+    "pythonVersion": "3.11.14",
+    "numpyVersion": "2.4.6",
+    "onnxVersion": "1.18.0",
+    "system": "Darwin",
+    "machine": "arm64"
+  },
+  "tokenIds": [
+    0,
+    16031,
+    16032,
+    32063,
+    32064,
+    48095,
+    48096,
+    64127,
+    64128,
+    80159,
+    80160,
+    96191,
+    96192,
+    112223,
+    112224,
+    128255
+  ],
+  "reference": {
+    "sessionCreateMs": 41.55645798891783,
+    "runMs": 0.5557909607887268
+  },
+  "tileRuns": [
+    {
+      "tileIndex": 0,
+      "physicalArtifactIndex": 0,
+      "positions": [
+        0,
+        1
+      ],
+      "globalTokenIds": [
+        0,
+        16031
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 2.1177083253860474,
+      "runMs": 0.050749629735946655
+    },
+    {
+      "tileIndex": 1,
+      "physicalArtifactIndex": 0,
+      "positions": [
+        2,
+        3
+      ],
+      "globalTokenIds": [
+        16032,
+        32063
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.3078749179840088,
+      "runMs": 0.08729193359613419
+    },
+    {
+      "tileIndex": 2,
+      "physicalArtifactIndex": 1,
+      "positions": [
+        4,
+        5
+      ],
+      "globalTokenIds": [
+        32064,
+        48095
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.984833274036646,
+      "runMs": 0.03145867958664894
+    },
+    {
+      "tileIndex": 3,
+      "physicalArtifactIndex": 1,
+      "positions": [
+        6,
+        7
+      ],
+      "globalTokenIds": [
+        48096,
+        64127
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.2182919308543205,
+      "runMs": 0.031832605600357056
+    },
+    {
+      "tileIndex": 4,
+      "physicalArtifactIndex": 2,
+      "positions": [
+        8,
+        9
+      ],
+      "globalTokenIds": [
+        64128,
+        80159
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.9062915816903114,
+      "runMs": 0.03208313137292862
+    },
+    {
+      "tileIndex": 5,
+      "physicalArtifactIndex": 2,
+      "positions": [
+        10,
+        11
+      ],
+      "globalTokenIds": [
+        80160,
+        96191
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.0170838795602322,
+      "runMs": 0.028959009796380997
+    },
+    {
+      "tileIndex": 6,
+      "physicalArtifactIndex": 3,
+      "positions": [
+        12,
+        13
+      ],
+      "globalTokenIds": [
+        96192,
+        112223
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.794582698494196,
+      "runMs": 0.02808310091495514
+    },
+    {
+      "tileIndex": 7,
+      "physicalArtifactIndex": 3,
+      "positions": [
+        14,
+        15
+      ],
+      "globalTokenIds": [
+        112224,
+        128255
+      ],
+      "localTokenIds": [
+        0,
+        16031
+      ],
+      "sessionCreateMs": 1.073125284165144,
+      "runMs": 0.030500348657369614
+    }
+  ],
+  "comparison": {
+    "exactEqual": true,
+    "maxAbsDiff": 0.0,
+    "shape": [
+      16,
+      2048
+    ]
+  },
+  "conclusion": "The pinned full tied-weight embedding Gather and a routed 8-way vocabulary-tile composition backed by four preferred physical payloads produced byte-exact embeddings for token IDs spanning every tile under pinned CPU ORT. This remains diagnostic-only and does not select the candidate layout or prove decoder/KV/checkpoint full-model staged equivalence."
+}
