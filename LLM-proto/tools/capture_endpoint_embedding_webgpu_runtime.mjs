@@ -17,6 +17,13 @@ const DEFAULT_TIMEOUT_MS = 120000;
 const sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 const exact = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
+function requireFiniteNonNegativeNumber(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a finite non-negative number`);
+  }
+  return value;
+}
+
 export function validateEndpointEmbeddingRuntimeReport(report) {
   if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('runtime report must be an object');
   if (report.schemaVersion !== EXPECTED.schemaVersion) throw new Error('runtime report schemaVersion drift');
@@ -45,7 +52,9 @@ export function validateEndpointEmbeddingRuntimeReport(report) {
     const expectedGraph = EXPECTED.graphVariants[expectedTile.graphVariant];
     if (!expectedGraph || tile?.graphSha256 !== expectedGraph.sha256) throw new Error(`tile ${i} graph SHA-256 drift`);
     if (tile?.comparison?.exactEqual !== true || tile?.comparison?.maxAbsDiff !== 0) throw new Error(`tile ${i} numerical mismatch`);
-    if (!(tile?.sessionCreateMs >= 0) || !(tile?.runMs >= 0) || !(tile?.sessionReleaseMs >= 0)) throw new Error(`tile ${i} timing/release evidence missing`);
+    for (const field of ['sessionCreateMs', 'runMs', 'sessionReleaseMs']) {
+      requireFiniteNonNegativeNumber(tile?.[field], `tile ${i} ${field}`);
+    }
   }
   if (report.completeEmbeddingComparison?.exactEqual !== true || report.completeEmbeddingComparison?.maxAbsDiff !== 0) throw new Error('complete embedding comparison mismatch');
   if (!exact(report.outputShape, [EXPECTED.tokenIds.length, EXPECTED.hiddenSize])) throw new Error('output shape drift');
