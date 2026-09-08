@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Capture the diagnostic-only endpoint embedding ORT Web/WebGPU runtime report. */
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, mkdtempSync, openSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
@@ -48,6 +48,15 @@ export function validateEndpointEmbeddingRuntimeReport(report) {
   if (!exact(report.outputShape, [EXPECTED.tokenIds.length, EXPECTED.hiddenSize])) throw new Error('output shape drift');
   if (report.sessionReleaseApiCompleted !== true) throw new Error('session release API evidence missing');
   return report;
+}
+
+export function assertDistinctCapturePorts(serverPort, debugPort) {
+  if (serverPort === debugPort) throw new Error('harness and DevTools ports must be distinct');
+}
+
+export function reserveEvidenceOutput(outputPath) {
+  mkdirSync(dirname(outputPath), { recursive: true });
+  return openSync(outputPath, 'wx', 0o600);
 }
 
 class CdpClient {
@@ -111,14 +120,18 @@ function chromeDefault() {
 }
 
 async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debugPort, timeoutMs }) {
-  mkdirSync(dirname(outputPath), { recursive: true });
+  assertDistinctCapturePorts(serverPort, debugPort);
   await assertPortAvailable(serverPort, 'harness');
   await assertPortAvailable(debugPort, 'DevTools');
-  const profileDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'));
+  let outputFd;
+  let outputCommitted = false;
+  let profileDir;
   let server;
   let chrome;
   let cdp;
   try {
+    outputFd = reserveEvidenceOutput(outputPath);
+    profileDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'));
     server = spawn(process.execPath, [HARNESS], { cwd: ROOT, env: { ...process.env, DATA_DIR: dataDir, PORT: String(serverPort) }, stdio: 'ignore' });
     const harnessUrl = `http://127.0.0.1:${serverPort}/`;
     const response = await waitFor(harnessUrl, 10000, 'harness');
@@ -164,13 +177,19 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
         platform: platform(),
       },
     };
-    writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx' });
+    writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\n`);
+    fsyncSync(outputFd);
+    outputCommitted = true;
     return evidence;
   } finally {
     cdp?.close();
     if (chrome?.pid) { try { process.kill(chrome.pid, 'SIGTERM'); } catch {} }
     if (server?.pid) { try { process.kill(server.pid, 'SIGTERM'); } catch {} }
-    rmSync(profileDir, { recursive: true, force: true });
+    if (profileDir) rmSync(profileDir, { recursive: true, force: true });
+    if (outputFd !== undefined) {
+      try { closeSync(outputFd); } catch {}
+      if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }
+    }
   }
 }
 
@@ -183,11 +202,14 @@ function parseBoundedInt(value, label, minimum, maximum) {
 function parseArgs(argv) {
   if (argv.length < 2 || argv.length > 6) throw new Error('usage: capture_endpoint_embedding_webgpu_runtime.mjs DATA_DIR OUTPUT_JSON [SERVER_PORT] [DEBUG_PORT] [TIMEOUT_MS] [CHROME_BINARY]');
   const [dataDir, outputPath, serverPort = '8796', debugPort = '9228', timeoutMs = String(DEFAULT_TIMEOUT_MS), chromeBinary = chromeDefault()] = argv;
+  const parsedServerPort = parseBoundedInt(serverPort, 'server port', 1, 65535);
+  const parsedDebugPort = parseBoundedInt(debugPort, 'debug port', 1, 65535);
+  assertDistinctCapturePorts(parsedServerPort, parsedDebugPort);
   return {
     dataDir: resolve(dataDir),
     outputPath: resolve(outputPath),
-    serverPort: parseBoundedInt(serverPort, 'server port', 1, 65535),
-    debugPort: parseBoundedInt(debugPort, 'debug port', 1, 65535),
+    serverPort: parsedServerPort,
+    debugPort: parsedDebugPort,
     timeoutMs: parseBoundedInt(timeoutMs, 'timeout', 1000, 30 * 60 * 1000),
     chromeBinary,
   };
