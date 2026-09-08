@@ -1,4 +1,4 @@
-import { closeSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import {
   validateCapturedEndpointEmbeddingRuntimeEvidence,
   validateEndpointEmbeddingRuntimeReport,
 } from '../tools/capture_endpoint_embedding_webgpu_runtime.mjs';
+import { verifyCapturedEndpointEmbeddingEvidenceFile } from '../tools/verify_endpoint_embedding_webgpu_runtime_evidence.mjs';
 
 function validReport() {
   const expected = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
@@ -122,6 +123,38 @@ describe('endpoint embedding WebGPU capture preflight', () => {
   });
 });
 
+describe('offline captured endpoint embedding evidence verifier', () => {
+  it('revalidates a persisted capture and returns a bounded summary', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-verifier-test-'));
+    const evidencePath = join(dir, 'evidence.json');
+    try {
+      writeFileSync(evidencePath, `${JSON.stringify(validCapturedEvidence())}\n`);
+      expect(verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toMatchObject({
+        status: 'pass',
+        decisionStatus: 'diagnostic-only',
+        evidenceLevel: 'captured-browser-runtime',
+        completeEmbeddingComparison: { exactEqual: true, maxAbsDiff: 0 },
+        outputShape: [16, 2048],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when persisted capture content is tampered', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-verifier-test-'));
+    const evidencePath = join(dir, 'evidence.json');
+    try {
+      const evidence = validCapturedEvidence();
+      evidence.executedTiles[3].globalTokenIds[1] -= 1;
+      writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
+      expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope-validated, and reserved-output-only for evidence', () => {
   const source = readFileSync(new URL('../tools/capture_endpoint_embedding_webgpu_runtime.mjs', import.meta.url), 'utf8');
   expect(source).toContain("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))");
@@ -138,10 +171,4 @@ it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
   expect(source.indexOf('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)'))
     .toBeLessThan(source.indexOf('writeFileSync(outputFd'));
-});
-
-it('keeps an offline verifier wired to the captured-evidence validator', () => {
-  const source = readFileSync(new URL('../tools/verify_endpoint_embedding_webgpu_runtime_evidence.mjs', import.meta.url), 'utf8');
-  expect(source).toContain('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)');
-  expect(source).toContain("usage: verify_endpoint_embedding_webgpu_runtime_evidence.mjs EVIDENCE_JSON");
 });
