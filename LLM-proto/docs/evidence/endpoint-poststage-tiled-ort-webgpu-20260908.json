@@ -42,9 +42,9 @@
     "worstIndex": 91,
     "graphSha256": "ed16d525afe71ac3e87c37d26ce60cd29f4e7dd8bf07a2902b2a1174531c1a6a",
     "weightSha256": "af89374a4f1edc09ec38496e36efb1663713bc0e44026b8ef9d9d13aac99e75e",
-    "sessionCreateMs": 59.5,
-    "runMs": 2.3000001907348633,
-    "sessionReleaseMs": 0.09999990463256836
+    "sessionCreateMs": 119.5,
+    "runMs": 12.300000190734863,
+    "sessionReleaseMs": 0.3000001907348633
   },
   "verifiedPhysicalArtifacts": [
     {
@@ -86,9 +86,9 @@
         "maxRelativeDiff": 0.004647934662940379,
         "worstIndex": 8690
       },
-      "sessionCreateMs": 169,
-      "runMs": 8.699999809265137,
-      "sessionReleaseMs": 0.09999990463256836
+      "sessionCreateMs": 142.7000002861023,
+      "runMs": 42.40000009536743,
+      "sessionReleaseMs": 0.19999980926513672
     },
     {
       "tileIndex": 1,
@@ -107,8 +107,8 @@
         "maxRelativeDiff": 0.005197173822229409,
         "worstIndex": 4067
       },
-      "sessionCreateMs": 72.59999990463257,
-      "runMs": 21.699999809265137,
+      "sessionCreateMs": 71.2999997138977,
+      "runMs": 25.100000381469727,
       "sessionReleaseMs": 0.09999990463256836
     },
     {
@@ -128,9 +128,9 @@
         "maxRelativeDiff": 0.0024579044008104403,
         "worstIndex": 11130
       },
-      "sessionCreateMs": 74,
-      "runMs": 23.09999990463257,
-      "sessionReleaseMs": 0.09999990463256836
+      "sessionCreateMs": 111.90000009536743,
+      "runMs": 29.799999713897705,
+      "sessionReleaseMs": 0.10000038146972656
     },
     {
       "tileIndex": 3,
@@ -149,9 +149,9 @@
         "maxRelativeDiff": 0.019190318548857277,
         "worstIndex": 8536
       },
-      "sessionCreateMs": 70.59999990463257,
-      "runMs": 32.799999713897705,
-      "sessionReleaseMs": 0.10000038146972656
+      "sessionCreateMs": 71.7000002861023,
+      "runMs": 24.699999809265137,
+      "sessionReleaseMs": 0.09999990463256836
     },
     {
       "tileIndex": 4,
@@ -170,9 +170,9 @@
         "maxRelativeDiff": 0.0022239139195091512,
         "worstIndex": 4739
       },
-      "sessionCreateMs": 95,
-      "runMs": 28.5,
-      "sessionReleaseMs": 0.10000038146972656
+      "sessionCreateMs": 75.5,
+      "runMs": 29.799999713897705,
+      "sessionReleaseMs": 0.09999990463256836
     },
     {
       "tileIndex": 5,
@@ -191,9 +191,9 @@
         "maxRelativeDiff": 0.007622160491751838,
         "worstIndex": 3575
       },
-      "sessionCreateMs": 69.2000002861023,
-      "runMs": 24.699999809265137,
-      "sessionReleaseMs": 0.09999990463256836
+      "sessionCreateMs": 77.40000009536743,
+      "runMs": 24.59999990463257,
+      "sessionReleaseMs": 0
     },
     {
       "tileIndex": 6,
@@ -212,9 +212,9 @@
         "maxRelativeDiff": 0.007449127906976744,
         "worstIndex": 61
       },
-      "sessionCreateMs": 81.60000038146973,
-      "runMs": 25.199999809265137,
-      "sessionReleaseMs": 0.19999980926513672
+      "sessionCreateMs": 72.39999961853027,
+      "runMs": 25.90000009536743,
+      "sessionReleaseMs": 0
     },
     {
       "tileIndex": 7,
@@ -233,8 +233,8 @@
         "maxRelativeDiff": 0.002243917680523439,
         "worstIndex": 11798
       },
-      "sessionCreateMs": 73.30000019073486,
-      "runMs": 21.5,
+      "sessionCreateMs": 70.19999980926514,
+      "runMs": 26.300000190734863,
       "sessionReleaseMs": 0.09999990463256836
     }
   ],
