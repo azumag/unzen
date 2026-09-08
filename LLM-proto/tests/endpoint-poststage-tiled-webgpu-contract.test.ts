@@ -12,6 +12,7 @@ function validManifest() {
     status: 'pass',
     decisionStatus: 'diagnostic-only',
     sourceGraphSha256: expected.sourceGraphSha256,
+    verifiedPinnedSourceGraph: expected.verifiedPinnedSourceGraph,
     sourceExternalData: expected.sourceExternalData,
     physicalArtifactCount: expected.physicalArtifactCount,
     executionTileCount: expected.executionTileCount,
@@ -36,6 +37,7 @@ describe('endpoint complete post-stage WebGPU diagnostic manifest contract', () 
 
   it.each([
     ['source graph', (manifest: any) => { manifest.sourceGraphSha256 = '0'.repeat(64); }],
+    ['verified source graph', (manifest: any) => { manifest.verifiedPinnedSourceGraph.sha256 = '1'.repeat(64); }],
     ['source external data', (manifest: any) => { manifest.sourceExternalData.sha256 = 'f'.repeat(64); }],
     ['final norm operator', (manifest: any) => { manifest.finalNorm.opType = 'LayerNormalization'; }],
     ['final norm weight range', (manifest: any) => { manifest.finalNorm.weight.sourceOffsetBytes += 8192; }],

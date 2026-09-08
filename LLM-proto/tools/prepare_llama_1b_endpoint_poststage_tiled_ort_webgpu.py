@@ -228,6 +228,8 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
             "onnxruntime version drift: "
             f"expected {poststage_cpu.PINNED_ORT_VERSION}, got {poststage_cpu.ort.__version__}"
         )
+    if os.name != "posix" or not Path("/dev/fd").is_dir():
+        raise RuntimeError("pinned post-stage reference preparation requires POSIX /dev/fd support")
     layout = layout_probe.build_report(source_model)
     rows, hidden_size, physical, tiles = poststage_cpu._validate_layout(layout)
     source_graph_sha256 = layout.get("sourceGraphSha256")
