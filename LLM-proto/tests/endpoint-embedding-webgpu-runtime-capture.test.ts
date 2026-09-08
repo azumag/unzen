@@ -78,6 +78,9 @@ describe('endpoint embedding WebGPU capture report validator', () => {
     ['tile graph digest drift', (report: any) => { report.executedTiles[5].graphSha256 = '0'.repeat(64); }],
     ['missing tile graph digest', (report: any) => { delete report.executedTiles[1].graphSha256; }],
     ['numerical mismatch', (report: any) => { report.executedTiles[4].comparison.maxAbsDiff = 1e-5; }],
+    ['null timing', (report: any) => { report.executedTiles[0].runMs = null; }],
+    ['string timing', (report: any) => { report.executedTiles[1].sessionCreateMs = '1'; }],
+    ['non-finite timing', (report: any) => { report.executedTiles[2].sessionReleaseMs = Number.POSITIVE_INFINITY; }],
     ['incomplete release', (report: any) => { report.sessionReleaseApiCompleted = false; }],
   ])('fails closed on %s', (_name, mutate) => {
     const report = validReport();
@@ -101,6 +104,7 @@ describe('captured endpoint embedding WebGPU evidence validator', () => {
     ['runtime payload drift inside capture', (evidence: any) => { evidence.verifiedPhysicalArtifacts[0].bytes += 1; }],
     ['runtime graph digest drift inside capture', (evidence: any) => { evidence.executedTiles[7].graphSha256 = 'f'.repeat(64); }],
     ['runtime numerical mismatch inside capture', (evidence: any) => { evidence.completeEmbeddingComparison.exactEqual = false; }],
+    ['runtime null timing inside capture', (evidence: any) => { evidence.executedTiles[0].sessionReleaseMs = null; }],
   ])('fails closed on %s', (_name, mutate) => {
     const evidence = validCapturedEvidence();
     mutate(evidence);
@@ -166,6 +170,19 @@ describe('offline captured endpoint embedding evidence verifier', () => {
       delete evidence.executedTiles[2].graphSha256;
       writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
       expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow('graph SHA-256 drift');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a persisted capture timing is null', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-verifier-test-'));
+    const evidencePath = join(dir, 'evidence.json');
+    try {
+      const evidence = validCapturedEvidence();
+      (evidence.executedTiles[0] as any).sessionReleaseMs = null;
+      writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
+      expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow('finite non-negative number');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
