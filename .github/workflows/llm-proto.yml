@@ -65,6 +65,7 @@ jobs:
           node --check browser-harness/endpoint-poststage-tiled-webgpu/serve.mjs
           node --check browser-harness/endpoint-poststage-tiled-webgpu/contract.js
           node --check browser-harness/endpoint-poststage-tiled-webgpu/runner.js
+          node --check tools/capture_endpoint_poststage_webgpu_process_rss.mjs
 
       - name: Probe pinned SmolLM2 P0 graph contract
         run: |
