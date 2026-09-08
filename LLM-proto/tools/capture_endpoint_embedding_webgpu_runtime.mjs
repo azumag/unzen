@@ -13,6 +13,7 @@ const ROOT = resolve(SCRIPT_DIR, '..');
 const HARNESS = resolve(ROOT, 'browser-harness/endpoint-embedding-tiled-webgpu/serve.mjs');
 const EXPECTED = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
 const DEFAULT_TIMEOUT_MS = 120000;
+const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 10000;
 const sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 const exact = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 
@@ -92,13 +93,40 @@ export function reserveEvidenceOutput(outputPath) {
   return openSync(outputPath, 'wx', 0o600);
 }
 
-class CdpClient {
-  constructor(url) { this.url = url; this.socket = null; this.nextId = 1; this.pending = new Map(); }
+export class CdpClient {
+  constructor(url, commandTimeoutMs = DEFAULT_CDP_COMMAND_TIMEOUT_MS) {
+    if (!Number.isSafeInteger(commandTimeoutMs) || commandTimeoutMs <= 0) {
+      throw new Error('CDP timeout must be a positive integer');
+    }
+    this.url = url;
+    this.commandTimeoutMs = commandTimeoutMs;
+    this.socket = null;
+    this.nextId = 1;
+    this.pending = new Map();
+  }
   async connect() {
     await new Promise((resolvePromise, reject) => {
-      const socket = new WebSocket(this.url); this.socket = socket;
-      socket.addEventListener('open', resolvePromise);
-      socket.addEventListener('error', () => reject(new Error('CDP websocket connection failed')));
+      const socket = new WebSocket(this.url);
+      this.socket = socket;
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { socket.close(); } catch {}
+        reject(new Error(`CDP websocket connection timed out after ${this.commandTimeoutMs}ms`));
+      }, this.commandTimeoutMs);
+      socket.addEventListener('open', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolvePromise();
+      }, { once: true });
+      socket.addEventListener('error', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error('CDP websocket connection failed'));
+      }, { once: true });
       socket.addEventListener('message', (event) => {
         const message = JSON.parse(String(event.data));
         if (!message.id) return;
@@ -118,8 +146,26 @@ class CdpClient {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('CDP websocket is not open');
     const id = this.nextId++;
     return new Promise((resolvePromise, reject) => {
-      this.pending.set(id, { resolve: resolvePromise, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        reject(new Error(`CDP command ${method} timed out after ${this.commandTimeoutMs}ms`));
+      }, this.commandTimeoutMs);
+      const resolveWithCleanup = (value) => {
+        clearTimeout(timer);
+        resolvePromise(value);
+      };
+      const rejectWithCleanup = (error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
+      this.pending.set(id, { resolve: resolveWithCleanup, reject: rejectWithCleanup });
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.pending.delete(id);
+        rejectWithCleanup(error);
+      }
     });
   }
   close() { this.socket?.close(); }
@@ -178,7 +224,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
     const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
     const page = targets.find((target) => target.type === 'page' && target.url === 'about:blank');
     if (!page?.webSocketDebuggerUrl) throw new Error('CDP page target unavailable');
-    cdp = new CdpClient(page.webSocketDebuggerUrl);
+    cdp = new CdpClient(page.webSocketDebuggerUrl, Math.min(DEFAULT_CDP_COMMAND_TIMEOUT_MS, timeoutMs));
     await cdp.connect();
     await cdp.send('Runtime.enable');
     await cdp.send('Page.enable');
