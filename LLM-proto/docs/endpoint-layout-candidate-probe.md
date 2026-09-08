@@ -271,6 +271,22 @@ So, in this run, the elevated summed process RSS did **not** persist for the lif
 
 It is still not direct allocator evidence. The process topology changed during teardown (the baseline had five renderer processes, the execution peak had seven, and the final teardown sample had three), so process retirement itself contributes to the drop. Chrome/Metal may also keep or release shared mappings independently of ORT session lifetime. Therefore the follow-up does **not** prove that `InferenceSession.release()` alone promptly reclaims GPU allocations, does not establish a leak-free provider contract, and does not justify a production memory budget. It only establishes that this isolated real run returned the coarse Chrome process-tree RSS to/below baseline after document teardown without restarting Chrome.
 
+### 2026-09-08 macOS physical-footprint follow-up
+
+The same isolated capture now also invokes macOS `/usr/bin/footprint` at five milestones using one multi-PID invocation over the Chrome root and descendants from a stable `ps` identity set. This adds kernel physical-footprint accounting plus per-process-role VM categories without replacing the 100 ms RSS sampler. The exact report is committed as [`docs/evidence/endpoint-poststage-webgpu-physical-footprint-20260908.json`](./evidence/endpoint-poststage-webgpu-physical-footprint-20260908.json).
+
+| milestone | physical footprint | delta from clean baseline | completeness |
+|---|---:|---:|---|
+| clean isolated Chrome baseline | `486,812,040 B` (`464.26 MiB`) | — | complete (`9/9` processes) |
+| immediately after all nine release promises returned | `1,850,833,704 B` (`1,765.09 MiB`) | `+1,300.83 MiB` | complete (`11/11`) |
+| five seconds after release-complete | `1,724,676,904 B` (`1,644.78 MiB`) | `+1,180.52 MiB` | complete (`11/11`) |
+| immediately after replacement `about:blank` was ready | `1,428,290,176 B` (`1,362.12 MiB`) | `+897.86 MiB` | complete (`11/11`) |
+| 30 seconds after document teardown | `325,444,752 B` (`310.37 MiB`) | not comparable as a whole-tree delta | partial (`7/8`; one `browser-child` omitted by `footprint`) |
+
+The first four milestones are complete, so the measured whole Chrome tree remained about `1.15 GiB` above the clean physical-footprint baseline five seconds after all ORT release promises returned. The final teardown milestone is intentionally marked partial rather than silently promoted: macOS `footprint` omitted one still-stable `browser-child`, so its lower total cannot be used as whole-tree proof of return below baseline. The existing RSS sampler independently observed the 30-second Chrome-tree RSS below its baseline in this run.
+
+Category output is diagnostic only. For example, the complete five-second post-release snapshot reports about `256.88 MiB` of dirty+swapped bytes under `Owned physical footprint (unmapped) (graphics)`, `29.31 MiB` under `IOSurface`, and `12.34 MiB` under `IOAccelerator (graphics)`. These are macOS VM accounting labels, not exact live WebGPU allocation sizes. The report ranks categories by `dirty + swapped`; `wired` is retained as a separate field and is not added because it can overlap dirty accounting. This narrows the residency question further, but still does not expose ORT allocator ownership, Metal heap lifetime, or a production-safe memory ceiling.
+
 ## Pinned CPU ORT 5-way boundary-crossing spike
 
 `tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py` targets the remaining CPU-side multi-physical-slice question for the diagnostic 5-way layout. The 5-way physical artifacts remain the deterministic balanced row ranges from the layout probe (maximum `210,141,184` bytes, about `200.40625 MiB`), while four of the eight execution tiles cross one physical-artifact boundary. For those tiles, the helper opens both payloads independently and exposes each slice as its own ONNX external initializer. A temporary ONNX graph performs `Concat(axis=0)` on the two slice tensors before the same embedding `Gather` or logits `Transpose + MatMul` primitive is evaluated. The full tied weight is never rebuilt as one external artifact.

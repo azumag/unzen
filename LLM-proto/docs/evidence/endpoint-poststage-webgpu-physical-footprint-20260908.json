@@ -1,0 +1,2189 @@
+{
+  "schemaVersion": "1.2.0",
+  "kind": "unzen-endpoint-poststage-webgpu-process-rss-diagnostic",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "evidenceLevel": "captured-os-process-rss+partial-macos-physical-footprint",
+  "capturedAtUtc": "2026-09-08T05:45:01.171Z",
+  "environment": {
+    "platform": "darwin",
+    "osRelease": "25.6.0",
+    "hostTotalMemoryBytes": 17179869184,
+    "chromeVersion": "Google Chrome 152.0.7977.83",
+    "nodeVersion": "v24.18.0",
+    "cdpBrowser": "Chrome/152.0.7977.83"
+  },
+  "measurement": {
+    "metric": "resident-set-size",
+    "unit": "KiB",
+    "aggregation": "sum of Chrome root process and descendants discovered by PPID",
+    "sampleIntervalMs": 100,
+    "sampleCount": 270,
+    "postReportSettleMs": 5000,
+    "postDocumentTeardownSettleMs": 30000,
+    "baseline": {
+      "processCount": 9,
+      "totalRssKiB": 1112704,
+      "roles": {
+        "browser": {
+          "processCount": 1,
+          "rssKiB": 209168
+        },
+        "gpu-process": {
+          "processCount": 1,
+          "rssKiB": 126464
+        },
+        "utility-network": {
+          "processCount": 1,
+          "rssKiB": 88496
+        },
+        "utility": {
+          "processCount": 1,
+          "rssKiB": 64336
+        },
+        "renderer": {
+          "processCount": 5,
+          "rssKiB": 624240
+        }
+      }
+    },
+    "globalPeak": {
+      "processCount": 11,
+      "totalRssKiB": 2846080,
+      "roles": {
+        "browser": {
+          "processCount": 1,
+          "rssKiB": 176352
+        },
+        "gpu-process": {
+          "processCount": 1,
+          "rssKiB": 233520
+        },
+        "utility-network": {
+          "processCount": 1,
+          "rssKiB": 83776
+        },
+        "utility": {
+          "processCount": 3,
+          "rssKiB": 183488
+        },
+        "renderer": {
+          "processCount": 5,
+          "rssKiB": 2168944
+        }
+      }
+    },
+    "phasePeaks": [
+      {
+        "phase": "baseline-about-blank",
+        "processCount": 9,
+        "totalRssKiB": 1112704,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 209168
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 126464
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 88496
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64336
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 624240
+          }
+        }
+      },
+      {
+        "phase": "pre-harness",
+        "processCount": 9,
+        "totalRssKiB": 1105920,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 209008
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 121584
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 89936
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64800
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 620592
+          }
+        }
+      },
+      {
+        "phase": "executing pinned final norm",
+        "processCount": 9,
+        "totalRssKiB": 1222608,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 207728
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 123296
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 93392
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64800
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 733392
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 0",
+        "processCount": 9,
+        "totalRssKiB": 1329280,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 207040
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 117488
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 94800
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64736
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 845216
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 0",
+        "processCount": 9,
+        "totalRssKiB": 1523248,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 206944
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 117264
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 90736
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64736
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1043568
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 1",
+        "processCount": 11,
+        "totalRssKiB": 1843440,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 217264
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 121536
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 91584
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 64928
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1223424
+          },
+          "browser-child": {
+            "processCount": 2,
+            "rssKiB": 124704
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 1",
+        "processCount": 9,
+        "totalRssKiB": 2234448,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 198048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 246512
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 88336
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62208
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1639344
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 2",
+        "processCount": 9,
+        "totalRssKiB": 2327264,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 195488
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 242080
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 87488
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62192
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1740016
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 3",
+        "processCount": 9,
+        "totalRssKiB": 2304416,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 194560
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 356880
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 84960
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62192
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1605824
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 2",
+        "processCount": 9,
+        "totalRssKiB": 2330048,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 195488
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 371312
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 87024
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62192
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1614032
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 4",
+        "processCount": 9,
+        "totalRssKiB": 2566864,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 194512
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 241088
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 84960
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62176
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1984128
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 5",
+        "processCount": 9,
+        "totalRssKiB": 2372208,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 178464
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 239472
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 83856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61296
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1809120
+          }
+        }
+      },
+      {
+        "phase": "loading and verifying physical payload 3",
+        "processCount": 11,
+        "totalRssKiB": 2430752,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 182912
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 236384
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 83856
+          },
+          "utility": {
+            "processCount": 3,
+            "rssKiB": 213280
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 1714320
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 6",
+        "processCount": 11,
+        "totalRssKiB": 2846080,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 176352
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 233520
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 83776
+          },
+          "utility": {
+            "processCount": 3,
+            "rssKiB": 183488
+          },
+          "renderer": {
+            "processCount": 5,
+            "rssKiB": 2168944
+          }
+        }
+      },
+      {
+        "phase": "executing logits tile 7",
+        "processCount": 9,
+        "totalRssKiB": 2370912,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 179232
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 362032
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 83856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 60656
+          },
+          "renderer": {
+            "processCount": 4,
+            "rssKiB": 1606816
+          },
+          "browser-child": {
+            "processCount": 1,
+            "rssKiB": 78320
+          }
+        }
+      },
+      {
+        "phase": "pass",
+        "processCount": 11,
+        "totalRssKiB": 2553872,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 190048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 240768
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86672
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62768
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1973616
+          }
+        }
+      },
+      {
+        "phase": "post-teardown-about-blank",
+        "processCount": 11,
+        "totalRssKiB": 1247984,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 178544
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 108160
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 85856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61984
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 813440
+          }
+        }
+      }
+    ],
+    "afterAllSessionReleaseApisReturned": {
+      "immediate": {
+        "processCount": 11,
+        "totalRssKiB": 2553872,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 190048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 240768
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86672
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62768
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1973616
+          }
+        }
+      },
+      "peakDuringSettle": {
+        "processCount": 11,
+        "totalRssKiB": 2553872,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 190048
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 240768
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86672
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62768
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 1973616
+          }
+        }
+      },
+      "finalAfterSettle": {
+        "processCount": 11,
+        "totalRssKiB": 1338480,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 170000
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 101216
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86176
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62176
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 918912
+          }
+        }
+      }
+    },
+    "afterDocumentTeardown": {
+      "action": "navigate the measured page to about:blank after the release settle window",
+      "baselineRssKiB": 1112704,
+      "immediateAfterBlankReady": {
+        "processCount": 11,
+        "totalRssKiB": 1247984,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 178544
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 108160
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 85856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61984
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 813440
+          }
+        }
+      },
+      "peakDuringSettle": {
+        "processCount": 11,
+        "totalRssKiB": 1247984,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 178544
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 108160
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 85856
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61984
+          },
+          "renderer": {
+            "processCount": 7,
+            "rssKiB": 813440
+          }
+        }
+      },
+      "minimumDuringSettle": {
+        "processCount": 8,
+        "totalRssKiB": 757328,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 173008
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 94544
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86240
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61536
+          },
+          "renderer": {
+            "processCount": 3,
+            "rssKiB": 342000
+          },
+          "browser-child": {
+            "processCount": 1,
+            "rssKiB": 0
+          }
+        }
+      },
+      "firstAtOrBelowBaseline": {
+        "elapsedMs": 4611,
+        "processCount": 10,
+        "totalRssKiB": 1055168,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 186448
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 101584
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86160
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 62320
+          },
+          "renderer": {
+            "processCount": 6,
+            "rssKiB": 618656
+          }
+        }
+      },
+      "finalAfterSettle": {
+        "processCount": 8,
+        "totalRssKiB": 757328,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "rssKiB": 173008
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "rssKiB": 94544
+          },
+          "utility-network": {
+            "processCount": 1,
+            "rssKiB": 86240
+          },
+          "utility": {
+            "processCount": 1,
+            "rssKiB": 61536
+          },
+          "renderer": {
+            "processCount": 3,
+            "rssKiB": 342000
+          },
+          "browser-child": {
+            "processCount": 1,
+            "rssKiB": 0
+          }
+        }
+      }
+    },
+    "macosPhysicalFootprint": {
+      "metric": "macOS physical footprint reported by /usr/bin/footprint",
+      "unit": "bytes",
+      "aggregation": "one /usr/bin/footprint invocation with repeated --pid arguments for the Chrome root and descendants from one ps identity set; the snapshot is marked incomplete if footprint omits any stable target pid",
+      "milestoneCount": 5,
+      "completeMilestoneCount": 4,
+      "completeAcrossMilestones": false,
+      "baseline": {
+        "captureDurationMs": 353,
+        "collectionMode": "single-footprint-invocation-multi-pid",
+        "sweepIsAtomic": false,
+        "attempts": 1,
+        "initialProcessCount": 9,
+        "finalProcessCount": 9,
+        "processChurnObserved": false,
+        "targetProcessCount": 9,
+        "measuredProcessCount": 9,
+        "missingProcessCount": 0,
+        "missingPids": [],
+        "missingProcesses": [],
+        "unexpectedPids": [],
+        "complete": true,
+        "totalFootprintBytes": 486812040,
+        "roles": {
+          "browser": {
+            "processCount": 1,
+            "footprintBytes": 72615376
+          },
+          "gpu-process": {
+            "processCount": 1,
+            "footprintBytes": 189957200
+          },
+          "utility-network": {
+            "processCount": 1,
+            "footprintBytes": 24953792
+          },
+          "utility": {
+            "processCount": 1,
+            "footprintBytes": 20382584
+          },
+          "renderer": {
+            "processCount": 5,
+            "footprintBytes": 178903088
+          }
+        },
+        "topCategoriesByDirtyPlusSwappedBytes": [
+          {
+            "name": "__DATA_CONST",
+            "dirty": 104267776,
+            "swapped": 50954240,
+            "clean": 425984,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 21,
+            "dirtyPlusSwappedBytes": 155222016
+          },
+          {
+            "name": "app-specific tag 14",
+            "dirty": 127172608,
+            "swapped": 14499840,
+            "clean": 0,
+            "reclaimable": 22675456,
+            "wired": 0,
+            "regions": 7050,
+            "dirtyPlusSwappedBytes": 141672448
+          },
+          {
+            "name": "Owned physical footprint (unmapped) (graphics)",
+            "dirty": 109838336,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 109838336,
+            "regions": 87,
+            "dirtyPlusSwappedBytes": 109838336
+          },
+          {
+            "name": "__DATA",
+            "dirty": 25848148,
+            "swapped": 8896392,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 387,
+            "dirtyPlusSwappedBytes": 34744540
+          },
+          {
+            "name": "IOAccelerator (graphics)",
+            "dirty": 30605312,
+            "swapped": 49152,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 230,
+            "dirtyPlusSwappedBytes": 30654464
+          },
+          {
+            "name": "app-specific tag 16",
+            "dirty": 26656768,
+            "swapped": 2146304,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 56169,
+            "dirtyPlusSwappedBytes": 28803072
+          },
+          {
+            "name": "MALLOC_SMALL",
+            "dirty": 10305536,
+            "swapped": 2015232,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 48,
+            "dirtyPlusSwappedBytes": 12320768
+          },
+          {
+            "name": "IOSurface",
+            "dirty": 10993664,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 78,
+            "dirtyPlusSwappedBytes": 10993664
+          },
+          {
+            "name": "__DATA_DIRTY",
+            "dirty": 7508039,
+            "swapped": 1583508,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 1548,
+            "dirtyPlusSwappedBytes": 9091547
+          },
+          {
+            "name": "page table",
+            "dirty": 7416200,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 9,
+            "dirtyPlusSwappedBytes": 7416200
+          },
+          {
+            "name": "stack",
+            "dirty": 5799936,
+            "swapped": 655360,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 308,
+            "dirtyPlusSwappedBytes": 6455296
+          },
+          {
+            "name": "MALLOC metadata",
+            "dirty": 4816896,
+            "swapped": 1507328,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 86,
+            "dirtyPlusSwappedBytes": 6324224
+          }
+        ],
+        "graphicsCategories": [
+          {
+            "name": "Owned physical footprint (unmapped) (graphics)",
+            "dirty": 109838336,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 109838336,
+            "regions": 87,
+            "dirtyPlusSwappedBytes": 109838336
+          },
+          {
+            "name": "IOAccelerator (graphics)",
+            "dirty": 30605312,
+            "swapped": 49152,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 230,
+            "dirtyPlusSwappedBytes": 30654464
+          },
+          {
+            "name": "IOSurface",
+            "dirty": 10993664,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 78,
+            "dirtyPlusSwappedBytes": 10993664
+          },
+          {
+            "name": "IOAccelerator",
+            "dirty": 147456,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 3,
+            "dirtyPlusSwappedBytes": 147456
+          },
+          {
+            "name": "CoreGraphics",
+            "dirty": 49152,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 3,
+            "dirtyPlusSwappedBytes": 49152
+          },
+          {
+            "name": "GPU Carveout (reserved)",
+            "dirty": 0,
+            "swapped": 0,
+            "clean": 0,
+            "reclaimable": 0,
+            "wired": 0,
+            "regions": 9,
+            "dirtyPlusSwappedBytes": 0
+          }
+        ],
+        "errors": [],
+        "warnings": []
+      },
+      "afterAllSessionReleaseApisReturned": {
+        "immediate": {
+          "captureDurationMs": 377,
+          "collectionMode": "single-footprint-invocation-multi-pid",
+          "sweepIsAtomic": false,
+          "attempts": 1,
+          "initialProcessCount": 11,
+          "finalProcessCount": 11,
+          "processChurnObserved": false,
+          "targetProcessCount": 11,
+          "measuredProcessCount": 11,
+          "missingProcessCount": 0,
+          "missingPids": [],
+          "missingProcesses": [],
+          "unexpectedPids": [],
+          "complete": true,
+          "totalFootprintBytes": 1850833704,
+          "roles": {
+            "browser": {
+              "processCount": 1,
+              "footprintBytes": 83789288
+            },
+            "gpu-process": {
+              "processCount": 1,
+              "footprintBytes": 457032904
+            },
+            "utility-network": {
+              "processCount": 1,
+              "footprintBytes": 24871896
+            },
+            "utility": {
+              "processCount": 1,
+              "footprintBytes": 20480888
+            },
+            "renderer": {
+              "processCount": 7,
+              "footprintBytes": 1264658728
+            }
+          },
+          "topCategoriesByDirtyPlusSwappedBytes": [
+            {
+              "name": "app-specific tag 16",
+              "dirty": 596754432,
+              "swapped": 42860544,
+              "clean": 0,
+              "reclaimable": 49152,
+              "wired": 0,
+              "regions": 78627,
+              "dirtyPlusSwappedBytes": 639614976
+            },
+            {
+              "name": "app-specific tag 14",
+              "dirty": 489193472,
+              "swapped": 106758144,
+              "clean": 0,
+              "reclaimable": 261373952,
+              "wired": 0,
+              "regions": 15171,
+              "dirtyPlusSwappedBytes": 595951616
+            },
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 244400128,
+              "swapped": 4014080,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 240386048,
+              "regions": 93,
+              "dirtyPlusSwappedBytes": 248414208
+            },
+            {
+              "name": "__DATA_CONST",
+              "dirty": 127336448,
+              "swapped": 82739200,
+              "clean": 491520,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 27,
+              "dirtyPlusSwappedBytes": 210075648
+            },
+            {
+              "name": "__DATA",
+              "dirty": 31750884,
+              "swapped": 16492395,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 468,
+              "dirtyPlusSwappedBytes": 48243279
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 19021824,
+              "swapped": 14532608,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 103,
+              "dirtyPlusSwappedBytes": 33554432
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 18759680,
+              "swapped": 5668864,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 262,
+              "dirtyPlusSwappedBytes": 24428544
+            },
+            {
+              "name": "MALLOC_SMALL",
+              "dirty": 9502720,
+              "swapped": 6029312,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 58,
+              "dirtyPlusSwappedBytes": 15532032
+            },
+            {
+              "name": "__DATA_DIRTY",
+              "dirty": 8976125,
+              "swapped": 4957971,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 1853,
+              "dirtyPlusSwappedBytes": 13934096
+            },
+            {
+              "name": "stack",
+              "dirty": 7094272,
+              "swapped": 3702784,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 380,
+              "dirtyPlusSwappedBytes": 10797056
+            },
+            {
+              "name": "page table",
+              "dirty": 10533672,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 11,
+              "dirtyPlusSwappedBytes": 10533672
+            },
+            {
+              "name": "MALLOC metadata",
+              "dirty": 5685248,
+              "swapped": 3866624,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 104,
+              "dirtyPlusSwappedBytes": 9551872
+            }
+          ],
+          "graphicsCategories": [
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 244400128,
+              "swapped": 4014080,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 240386048,
+              "regions": 93,
+              "dirtyPlusSwappedBytes": 248414208
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 19021824,
+              "swapped": 14532608,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 103,
+              "dirtyPlusSwappedBytes": 33554432
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 18759680,
+              "swapped": 5668864,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 262,
+              "dirtyPlusSwappedBytes": 24428544
+            },
+            {
+              "name": "IOAccelerator",
+              "dirty": 147456,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 147456
+            },
+            {
+              "name": "CoreGraphics",
+              "dirty": 49152,
+              "swapped": 16384,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 65536
+            },
+            {
+              "name": "GPU Carveout (reserved)",
+              "dirty": 0,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 11,
+              "dirtyPlusSwappedBytes": 0
+            }
+          ],
+          "errors": [],
+          "warnings": []
+        },
+        "finalAfterSettle": {
+          "captureDurationMs": 314,
+          "collectionMode": "single-footprint-invocation-multi-pid",
+          "sweepIsAtomic": false,
+          "attempts": 1,
+          "initialProcessCount": 11,
+          "finalProcessCount": 11,
+          "processChurnObserved": false,
+          "targetProcessCount": 11,
+          "measuredProcessCount": 11,
+          "missingProcessCount": 0,
+          "missingPids": [],
+          "missingProcesses": [],
+          "unexpectedPids": [],
+          "complete": true,
+          "totalFootprintBytes": 1724676904,
+          "roles": {
+            "browser": {
+              "processCount": 1,
+              "footprintBytes": 83871208
+            },
+            "gpu-process": {
+              "processCount": 1,
+              "footprintBytes": 331990216
+            },
+            "utility-network": {
+              "processCount": 1,
+              "footprintBytes": 24904664
+            },
+            "utility": {
+              "processCount": 1,
+              "footprintBytes": 20480888
+            },
+            "renderer": {
+              "processCount": 7,
+              "footprintBytes": 1263429928
+            }
+          },
+          "topCategoriesByDirtyPlusSwappedBytes": [
+            {
+              "name": "app-specific tag 16",
+              "dirty": 596754432,
+              "swapped": 385597440,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 78627,
+              "dirtyPlusSwappedBytes": 982351872
+            },
+            {
+              "name": "app-specific tag 14",
+              "dirty": 488423424,
+              "swapped": 424558592,
+              "clean": 0,
+              "reclaimable": 983040,
+              "wired": 0,
+              "regions": 15175,
+              "dirtyPlusSwappedBytes": 912982016
+            },
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 135397376,
+              "swapped": 133955584,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 65536,
+              "regions": 46,
+              "dirtyPlusSwappedBytes": 269352960
+            },
+            {
+              "name": "__DATA_CONST",
+              "dirty": 127336448,
+              "swapped": 113999872,
+              "clean": 491520,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 27,
+              "dirtyPlusSwappedBytes": 241336320
+            },
+            {
+              "name": "__DATA",
+              "dirty": 31750884,
+              "swapped": 23620899,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 468,
+              "dirtyPlusSwappedBytes": 55371783
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 15368192,
+              "swapped": 15368192,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 92,
+              "dirtyPlusSwappedBytes": 30736384
+            },
+            {
+              "name": "MALLOC_SMALL",
+              "dirty": 9502720,
+              "swapped": 8011776,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 58,
+              "dirtyPlusSwappedBytes": 17514496
+            },
+            {
+              "name": "__DATA_DIRTY",
+              "dirty": 8976125,
+              "swapped": 6330507,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 1853,
+              "dirtyPlusSwappedBytes": 15306632
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 6520832,
+              "swapped": 6422528,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 247,
+              "dirtyPlusSwappedBytes": 12943360
+            },
+            {
+              "name": "stack",
+              "dirty": 6733824,
+              "swapped": 4587520,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 364,
+              "dirtyPlusSwappedBytes": 11321344
+            },
+            {
+              "name": "page table",
+              "dirty": 10533672,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 11,
+              "dirtyPlusSwappedBytes": 10533672
+            },
+            {
+              "name": "MALLOC metadata",
+              "dirty": 5685248,
+              "swapped": 4833280,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 104,
+              "dirtyPlusSwappedBytes": 10518528
+            }
+          ],
+          "graphicsCategories": [
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 135397376,
+              "swapped": 133955584,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 65536,
+              "regions": 46,
+              "dirtyPlusSwappedBytes": 269352960
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 15368192,
+              "swapped": 15368192,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 92,
+              "dirtyPlusSwappedBytes": 30736384
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 6520832,
+              "swapped": 6422528,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 247,
+              "dirtyPlusSwappedBytes": 12943360
+            },
+            {
+              "name": "IOAccelerator",
+              "dirty": 147456,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 147456
+            },
+            {
+              "name": "CoreGraphics",
+              "dirty": 49152,
+              "swapped": 16384,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 65536
+            },
+            {
+              "name": "GPU Carveout (reserved)",
+              "dirty": 0,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 11,
+              "dirtyPlusSwappedBytes": 0
+            }
+          ],
+          "errors": [],
+          "warnings": []
+        }
+      },
+      "afterDocumentTeardown": {
+        "immediateAfterBlankReady": {
+          "captureDurationMs": 514,
+          "collectionMode": "single-footprint-invocation-multi-pid",
+          "sweepIsAtomic": false,
+          "attempts": 1,
+          "initialProcessCount": 11,
+          "finalProcessCount": 11,
+          "processChurnObserved": false,
+          "targetProcessCount": 11,
+          "measuredProcessCount": 11,
+          "missingProcessCount": 0,
+          "missingPids": [],
+          "missingProcesses": [],
+          "unexpectedPids": [],
+          "complete": true,
+          "totalFootprintBytes": 1428290176,
+          "roles": {
+            "browser": {
+              "processCount": 1,
+              "footprintBytes": 84231656
+            },
+            "gpu-process": {
+              "processCount": 1,
+              "footprintBytes": 166675584
+            },
+            "utility-network": {
+              "processCount": 1,
+              "footprintBytes": 24789976
+            },
+            "utility": {
+              "processCount": 1,
+              "footprintBytes": 20480888
+            },
+            "renderer": {
+              "processCount": 7,
+              "footprintBytes": 1132112072
+            }
+          },
+          "topCategoriesByDirtyPlusSwappedBytes": [
+            {
+              "name": "app-specific tag 16",
+              "dirty": 596918272,
+              "swapped": 583974912,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 78628,
+              "dirtyPlusSwappedBytes": 1180893184
+            },
+            {
+              "name": "app-specific tag 14",
+              "dirty": 486719488,
+              "swapped": 416530432,
+              "clean": 0,
+              "reclaimable": 180224,
+              "wired": 0,
+              "regions": 15177,
+              "dirtyPlusSwappedBytes": 903249920
+            },
+            {
+              "name": "__DATA_CONST",
+              "dirty": 127336448,
+              "swapped": 114688000,
+              "clean": 491520,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 27,
+              "dirtyPlusSwappedBytes": 242024448
+            },
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 97648640,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 97648640,
+              "regions": 67,
+              "dirtyPlusSwappedBytes": 97648640
+            },
+            {
+              "name": "__DATA",
+              "dirty": 31750884,
+              "swapped": 24150370,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 468,
+              "dirtyPlusSwappedBytes": 55901254
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 16351232,
+              "swapped": 14565376,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 96,
+              "dirtyPlusSwappedBytes": 30916608
+            },
+            {
+              "name": "MALLOC_SMALL",
+              "dirty": 9502720,
+              "swapped": 7815168,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 58,
+              "dirtyPlusSwappedBytes": 17317888
+            },
+            {
+              "name": "__DATA_DIRTY",
+              "dirty": 8976125,
+              "swapped": 6613969,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 1853,
+              "dirtyPlusSwappedBytes": 15590094
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 11583488,
+              "swapped": 983040,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 251,
+              "dirtyPlusSwappedBytes": 12566528
+            },
+            {
+              "name": "stack",
+              "dirty": 6635520,
+              "swapped": 5029888,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 356,
+              "dirtyPlusSwappedBytes": 11665408
+            },
+            {
+              "name": "MALLOC metadata",
+              "dirty": 5685248,
+              "swapped": 4947968,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 104,
+              "dirtyPlusSwappedBytes": 10633216
+            },
+            {
+              "name": "page table",
+              "dirty": 10418816,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 11,
+              "dirtyPlusSwappedBytes": 10418816
+            }
+          ],
+          "graphicsCategories": [
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 97648640,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 97648640,
+              "regions": 67,
+              "dirtyPlusSwappedBytes": 97648640
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 16351232,
+              "swapped": 14565376,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 96,
+              "dirtyPlusSwappedBytes": 30916608
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 11583488,
+              "swapped": 983040,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 251,
+              "dirtyPlusSwappedBytes": 12566528
+            },
+            {
+              "name": "IOAccelerator",
+              "dirty": 147456,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 147456
+            },
+            {
+              "name": "CoreGraphics",
+              "dirty": 49152,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 49152
+            },
+            {
+              "name": "GPU Carveout (reserved)",
+              "dirty": 0,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 11,
+              "dirtyPlusSwappedBytes": 0
+            }
+          ],
+          "errors": [],
+          "warnings": []
+        },
+        "finalAfterSettle": {
+          "captureDurationMs": 228,
+          "collectionMode": "single-footprint-invocation-multi-pid",
+          "sweepIsAtomic": false,
+          "attempts": 1,
+          "initialProcessCount": 8,
+          "finalProcessCount": 8,
+          "processChurnObserved": false,
+          "targetProcessCount": 8,
+          "measuredProcessCount": 7,
+          "missingProcessCount": 1,
+          "missingPids": [
+            43877
+          ],
+          "missingProcesses": [
+            {
+              "pid": 43877,
+              "role": "browser-child"
+            }
+          ],
+          "unexpectedPids": [],
+          "complete": false,
+          "totalFootprintBytes": 325444752,
+          "roles": {
+            "browser": {
+              "processCount": 1,
+              "footprintBytes": 84870680
+            },
+            "gpu-process": {
+              "processCount": 1,
+              "footprintBytes": 53494888
+            },
+            "utility-network": {
+              "processCount": 1,
+              "footprintBytes": 24724440
+            },
+            "utility": {
+              "processCount": 1,
+              "footprintBytes": 20497272
+            },
+            "renderer": {
+              "processCount": 3,
+              "footprintBytes": 141857472
+            }
+          },
+          "topCategoriesByDirtyPlusSwappedBytes": [
+            {
+              "name": "app-specific tag 14",
+              "dirty": 148013056,
+              "swapped": 89620480,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 12457,
+              "dirtyPlusSwappedBytes": 237633536
+            },
+            {
+              "name": "__DATA_CONST",
+              "dirty": 81264640,
+              "swapped": 75644928,
+              "clean": 245760,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 19,
+              "dirtyPlusSwappedBytes": 156909568
+            },
+            {
+              "name": "__DATA",
+              "dirty": 20555736,
+              "swapped": 16209405,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 344,
+              "dirtyPlusSwappedBytes": 36765141
+            },
+            {
+              "name": "app-specific tag 16",
+              "dirty": 20381696,
+              "swapped": 8159232,
+              "clean": 0,
+              "reclaimable": 2490368,
+              "wired": 0,
+              "regions": 33629,
+              "dirtyPlusSwappedBytes": 28540928
+            },
+            {
+              "name": "IOSurface",
+              "dirty": 12451840,
+              "swapped": 12451840,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 81,
+              "dirtyPlusSwappedBytes": 24903680
+            },
+            {
+              "name": "MALLOC_SMALL",
+              "dirty": 6651904,
+              "swapped": 6045696,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 38,
+              "dirtyPlusSwappedBytes": 12697600
+            },
+            {
+              "name": "__DATA_DIRTY",
+              "dirty": 6351010,
+              "swapped": 5000176,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 1296,
+              "dirtyPlusSwappedBytes": 11351186
+            },
+            {
+              "name": "stack",
+              "dirty": 5029888,
+              "swapped": 3702784,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 258,
+              "dirtyPlusSwappedBytes": 8732672
+            },
+            {
+              "name": "MALLOC metadata",
+              "dirty": 3932160,
+              "swapped": 3686400,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 68,
+              "dirtyPlusSwappedBytes": 7618560
+            },
+            {
+              "name": "page table",
+              "dirty": 6513808,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 7,
+              "dirtyPlusSwappedBytes": 6513808
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 2277376,
+              "swapped": 2277376,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 245,
+              "dirtyPlusSwappedBytes": 4554752
+            },
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 1048576,
+              "swapped": 950272,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 65536,
+              "regions": 22,
+              "dirtyPlusSwappedBytes": 1998848
+            }
+          ],
+          "graphicsCategories": [
+            {
+              "name": "IOSurface",
+              "dirty": 12451840,
+              "swapped": 12451840,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 81,
+              "dirtyPlusSwappedBytes": 24903680
+            },
+            {
+              "name": "IOAccelerator (graphics)",
+              "dirty": 2277376,
+              "swapped": 2277376,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 245,
+              "dirtyPlusSwappedBytes": 4554752
+            },
+            {
+              "name": "Owned physical footprint (unmapped) (graphics)",
+              "dirty": 1048576,
+              "swapped": 950272,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 65536,
+              "regions": 22,
+              "dirtyPlusSwappedBytes": 1998848
+            },
+            {
+              "name": "IOAccelerator",
+              "dirty": 147456,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 147456
+            },
+            {
+              "name": "CoreGraphics",
+              "dirty": 49152,
+              "swapped": 16384,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 3,
+              "dirtyPlusSwappedBytes": 65536
+            },
+            {
+              "name": "GPU Carveout (reserved)",
+              "dirty": 0,
+              "swapped": 0,
+              "clean": 0,
+              "reclaimable": 0,
+              "wired": 0,
+              "regions": 7,
+              "dirtyPlusSwappedBytes": 0
+            }
+          ],
+          "errors": [],
+          "warnings": []
+        }
+      }
+    }
+  },
+  "runtimeReport": {
+    "schemaVersion": "1.0.0",
+    "kind": "unzen-pinned-llama-1b-endpoint-poststage-tiled-ort-webgpu-runtime",
+    "status": "pass",
+    "decisionStatus": "diagnostic-only",
+    "evidenceLevel": "self-reported-runtime",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "adapterInfo": {
+      "vendor": "apple",
+      "architecture": "metal-3",
+      "device": "",
+      "description": ""
+    },
+    "adapterLimits": {
+      "maxBufferSize": 4294967292,
+      "maxStorageBufferBindingSize": 4294967292,
+      "maxComputeWorkgroupStorageSize": 32768
+    },
+    "onnxruntimeWebVersion": "1.22.0",
+    "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+    "sourceExternalData": {
+      "bytes": 1692672000,
+      "sha256": "07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647"
+    },
+    "inputs": {
+      "residualSha256": "0e0804a84063a6a34c6672dc902c1fdc67e19e4eab68b9c2020e8252a195505e",
+      "updateSha256": "179d47aed831cb549d5b0c2a9c6d7b2e2cb17548b6f954efec1b913d1a861b27"
+    },
+    "referenceOutputs": {
+      "finalNormSha256": "004b193d729503acac3f27ec7914db2a225c7bd5c981c804fa90ddb1d8e8bffc",
+      "logitsSha256": "6337a483dd57dd8806646cd6a1a7f4423871795a6cd878e2e23fcd621266b2ae",
+      "provider": "CPUExecutionProvider",
+      "onnxruntimeVersion": "1.22.0"
+    },
+    "finalNorm": {
+      "allClose": true,
+      "exactEqual": false,
+      "atol": 0.0001,
+      "rtol": 0.0001,
+      "maxAbsDiff": 9.5367431640625e-7,
+      "maxRelativeDiff": 1.7643061632242554e-7,
+      "worstIndex": 91,
+      "graphSha256": "ed16d525afe71ac3e87c37d26ce60cd29f4e7dd8bf07a2902b2a1174531c1a6a",
+      "weightSha256": "af89374a4f1edc09ec38496e36efb1663713bc0e44026b8ef9d9d13aac99e75e",
+      "sessionCreateMs": 588,
+      "runMs": 17.299999713897705,
+      "sessionReleaseMs": 1.6000003814697266
+    },
+    "verifiedPhysicalArtifacts": [
+      {
+        "index": 0,
+        "bytes": 262668288,
+        "sha256": "b783704059e886b1e5438d23c3f9911b0d947c86125501c9071e5bb8f7cebdce"
+      },
+      {
+        "index": 1,
+        "bytes": 262668288,
+        "sha256": "6725be963565c84faaf487339c9b6020166077d62ffeae36467ce284c49cafb7"
+      },
+      {
+        "index": 2,
+        "bytes": 262668288,
+        "sha256": "21ea80f5829262b36028f32b17ef213090ff27ff708c6baa47277d45a99bff0a"
+      },
+      {
+        "index": 3,
+        "bytes": 262668288,
+        "sha256": "b2d23fbe273c8ae5f43c4ac4200613d3c88b0d11d389d2551a47af8649a688e9"
+      }
+    ],
+    "executedTiles": [
+      {
+        "tileIndex": 0,
+        "startRow": 0,
+        "endRowExclusive": 16032,
+        "physicalArtifactIndex": 0,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "73025db300e5c834263b277966963d2cf2b4a6298e8b787ee4eb79f0a5f96c8d",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000015735626220703125,
+          "maxRelativeDiff": 0.004647934662940379,
+          "worstIndex": 8690
+        },
+        "sessionCreateMs": 255.5,
+        "runMs": 79.30000019073486,
+        "sessionReleaseMs": 0.2999997138977051
+      },
+      {
+        "tileIndex": 1,
+        "startRow": 16032,
+        "endRowExclusive": 32064,
+        "physicalArtifactIndex": 0,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "d05e43d2d3679fe669a8859d13640b0162130aee134eafb434405ab3c790b873",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000012874603271484375,
+          "maxRelativeDiff": 0.005197173822229409,
+          "worstIndex": 4067
+        },
+        "sessionCreateMs": 125.80000019073486,
+        "runMs": 45.69999980926514,
+        "sessionReleaseMs": 0.09999990463256836
+      },
+      {
+        "tileIndex": 2,
+        "startRow": 32064,
+        "endRowExclusive": 48096,
+        "physicalArtifactIndex": 1,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "87089b9eead11e62f1b9b4e47dce64a33bc143250a126eda79708b63a0bbeabe",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.0000152587890625,
+          "maxRelativeDiff": 0.0024579044008104403,
+          "worstIndex": 11130
+        },
+        "sessionCreateMs": 88.09999990463257,
+        "runMs": 29,
+        "sessionReleaseMs": 0
+      },
+      {
+        "tileIndex": 3,
+        "startRow": 48096,
+        "endRowExclusive": 64128,
+        "physicalArtifactIndex": 1,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "88e411df56e7aeb7cc17620b40925a974a6cc5f5bc74025d5d55e997c966f00b",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000014543533325195312,
+          "maxRelativeDiff": 0.019190318548857277,
+          "worstIndex": 8536
+        },
+        "sessionCreateMs": 80.69999980926514,
+        "runMs": 26.09999990463257,
+        "sessionReleaseMs": 0
+      },
+      {
+        "tileIndex": 4,
+        "startRow": 64128,
+        "endRowExclusive": 80160,
+        "physicalArtifactIndex": 2,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "d2034fc6273d3d78fcd5e33ab23efadb1cf44a7165408899d3c41794c0fa49f2",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.0000152587890625,
+          "maxRelativeDiff": 0.0022239139195091512,
+          "worstIndex": 4739
+        },
+        "sessionCreateMs": 190.09999990463257,
+        "runMs": 45,
+        "sessionReleaseMs": 0.19999980926513672
+      },
+      {
+        "tileIndex": 5,
+        "startRow": 80160,
+        "endRowExclusive": 96192,
+        "physicalArtifactIndex": 2,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "ae092a6166d7e581ea6503a2d4c89c7246eac8de83ed5e3db00c4326b73f03d6",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.00001621246337890625,
+          "maxRelativeDiff": 0.007622160491751838,
+          "worstIndex": 3575
+        },
+        "sessionCreateMs": 93.19999980926514,
+        "runMs": 30.199999809265137,
+        "sessionReleaseMs": 0.10000038146972656
+      },
+      {
+        "tileIndex": 6,
+        "startRow": 96192,
+        "endRowExclusive": 112224,
+        "physicalArtifactIndex": 3,
+        "artifactByteOffset": 0,
+        "byteLength": 131334144,
+        "graphSha256": "0e9b7c58cfc831c542d4ab0b50c3ef9fb56cce9085e9a66006005ca5f39e0ca2",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.0000171661376953125,
+          "maxRelativeDiff": 0.007449127906976744,
+          "worstIndex": 61
+        },
+        "sessionCreateMs": 81.90000009536743,
+        "runMs": 33.19999980926514,
+        "sessionReleaseMs": 0.10000038146972656
+      },
+      {
+        "tileIndex": 7,
+        "startRow": 112224,
+        "endRowExclusive": 128256,
+        "physicalArtifactIndex": 3,
+        "artifactByteOffset": 131334144,
+        "byteLength": 131334144,
+        "graphSha256": "7275799694e90449a600e046ae87d02d95ad9338ca213263f64470ea14ebb026",
+        "comparison": {
+          "allClose": true,
+          "exactEqual": false,
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "maxAbsDiff": 0.000011444091796875,
+          "maxRelativeDiff": 0.002243917680523439,
+          "worstIndex": 11798
+        },
+        "sessionCreateMs": 102.90000009536743,
+        "runMs": 68.80000019073486,
+        "sessionReleaseMs": 0.09999990463256836
+      }
+    ],
+    "logitsComparison": {
+      "allClose": true,
+      "exactEqual": false,
+      "atol": 0.0001,
+      "rtol": 0.0001,
+      "maxAbsDiff": 0.0000171661376953125,
+      "maxRelativeDiff": 0.019190318548857277,
+      "worstIndex": 96253
+    },
+    "sequentialExecution": {
+      "physicalArtifactOrder": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tilesPerPhysicalArtifact": 2,
+      "maximumWholePhysicalPayloadBytesPerStep": 262668288,
+      "totalPhysicalPayloadBytesVerifiedAcrossRun": 1050673152
+    },
+    "sessionReleaseApiCompleted": true,
+    "conclusion": "A real browser ORT Web/WebGPU run executed the pinned source final norm once and all eight preferred-payload-backed vocabulary logits tiles sequentially, then compared the complete logits tensor with a pinned-source CPU ORT reference. This remains diagnostic-only. release() completion and sequential JavaScript references do not prove immediate host/GPU memory reclamation, and this result does not select the 4-way/8-way architecture, define production cache/runtime/dispatcher semantics, or prove decoder/KV/checkpoint full-model staged equivalence."
+  },
+  "conclusion": "The complete diagnostic post-stage WebGPU run was observed with OS process RSS sampling before, during, and after its nine InferenceSession.release() calls, then through a same-page-target navigation to about:blank. On macOS, milestone snapshots additionally capture kernel physical-footprint accounting and per-process-role/category attribution. These metrics bound this isolated run only; neither directly measures ORT/WebGPU/Metal allocations or proves provider/driver reclamation.",
+  "limitations": [
+    "RSS and macOS physical footprint are OS process metrics, not ORT/WebGPU/Metal allocation metrics.",
+    "The macOS footprint command is sampled only at milestones, so it does not identify the physical-footprint peak during tile execution and its inspection can perturb process timing.",
+    "macOS footprint can omit a stable sandboxed Chrome child without an error; each milestone records completeness and missing process roles, and partial snapshots are not promoted to whole-tree footprint evidence.",
+    "Footprint category names such as IOAccelerator, IOSurface, or graphics are kernel VM accounting labels and must not be interpreted as exact live WebGPU allocation sizes.",
+    "Category ranking uses dirty + swapped bytes; wired bytes are reported separately and are not added because wired accounting can overlap dirty pages.",
+    "Summing process RSS can double-count shared pages and shared-memory mappings.",
+    "On Apple unified memory, RSS cannot distinguish CPU-resident pages from GPU-visible shared allocations.",
+    "A decrease after release is observational only; no GC, memory-pressure, or allocator flush was forced.",
+    "Navigating to about:blank tears down the measured document context but Chrome may retain renderer processes, reusable allocator pages, driver caches, or shared mappings.",
+    "This diagnostic does not select 4-way physical payloads, 8-way execution, or production cache/runtime/dispatcher policy."
+  ]
+}
