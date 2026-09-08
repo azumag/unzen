@@ -69,8 +69,21 @@ def _require_int(value: object, *, field: str, positive: bool = False) -> int:
     return value
 
 
-def _write_graph_variants(output_dir: Path, *, hidden_size: int) -> dict[str, dict[str, object]]:
+def _write_graph_variants(
+    output_dir: Path, *, hidden_size: int, verify_external_data: bool = False
+) -> dict[str, dict[str, object]]:
+    """Write the two byte-pinned Gather graphs.
+
+    The in-memory checker validates graph semantics without resolving external
+    data, which keeps the unit test small. Real preparation sets
+    ``verify_external_data=True`` after payload-0000.bin has been materialized,
+    adding the path-based checker that proves the external range is accessible.
+    """
     result: dict[str, dict[str, object]] = {}
+    if verify_external_data:
+        payload0 = output_dir / GRAPH_EXTERNAL_DATA_PATH
+        if not payload0.is_file() or payload0.stat().st_size != PHYSICAL_BYTES:
+            raise RuntimeError("payload-0000.bin must be materialized before graph path validation")
     for key, expected in EXPECTED_GRAPH_VARIANTS.items():
         offset = int(expected["artifactByteOffset"])
         path = output_dir / str(expected["file"])
@@ -81,8 +94,10 @@ def _write_graph_variants(output_dir: Path, *, hidden_size: int) -> dict[str, di
             offset=offset,
             length=TILE_BYTES,
         )
+        onnx.checker.check_model(model, full_check=True)
         onnx.save(model, path)
-        onnx.checker.check_model(str(path), full_check=True)
+        if verify_external_data:
+            onnx.checker.check_model(str(path), full_check=True)
         info = {
             "file": path.name,
             "artifactByteOffset": offset,
@@ -98,7 +113,9 @@ def _write_graph_variants(output_dir: Path, *, hidden_size: int) -> dict[str, di
     return result
 
 
-def _validate_candidate(layout: dict[str, object]) -> tuple[int, list[dict[str, object]], list[dict[str, object]]]:
+def _validate_candidate(
+    layout: dict[str, object],
+) -> tuple[int, list[dict[str, object]], list[dict[str, object]]]:
     if (
         layout.get("kind") != layout_probe.REPORT_KIND
         or layout.get("schemaVersion") != layout_probe.REPORT_SCHEMA_VERSION
@@ -224,7 +241,9 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
                 }
             )
 
-        graph_variants = _write_graph_variants(output_dir, hidden_size=hidden_size)
+        graph_variants = _write_graph_variants(
+            output_dir, hidden_size=hidden_size, verify_external_data=True
+        )
         created.extend(output_dir / str(info["file"]) for info in graph_variants.values())
 
         manifest_tiles: list[dict[str, object]] = []
@@ -232,9 +251,13 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
         for tile_index, tile in enumerate(tiles):
             if tile.get("tileIndex") != tile_index or tile.get("startRow") != expected_start:
                 raise RuntimeError("execution tiles must be ordered and contiguous")
-            row_count = _require_int(tile.get("rowCount"), field=f"tile[{tile_index}].rowCount", positive=True)
+            row_count = _require_int(
+                tile.get("rowCount"), field=f"tile[{tile_index}].rowCount", positive=True
+            )
             end_row = _require_int(
-                tile.get("endRowExclusive"), field=f"tile[{tile_index}].endRowExclusive", positive=True
+                tile.get("endRowExclusive"),
+                field=f"tile[{tile_index}].endRowExclusive",
+                positive=True,
             )
             if row_count != ROWS_PER_TILE or end_row != expected_start + ROWS_PER_TILE:
                 raise RuntimeError(f"tile {tile_index} row geometry drifted")
