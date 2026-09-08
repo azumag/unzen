@@ -118,6 +118,20 @@ Observed session/run timing is retained in the JSON report as diagnostic data ra
 
 What this closes for S0: the existing 4-way physical payload -> 8-way tile arithmetic is no longer coordinate-only for the primitive tied-weight operators; it has executed against the real pinned payload bytes under ORT CPU.
 
+## Pinned CPU ORT final-norm + tiled-lm-head composition spike
+
+`tools/probe_llama_1b_endpoint_poststage_tiled_ort_cpu.py` moves the diagnostic one level above the primitive tied-weight operations. It first validates the pinned source post-stage topology itself: `SkipSimplifiedLayerNormalization` in the `com.microsoft` domain with the two layer-15 residual inputs, the 2,048-element final-norm weight and pinned epsilon, followed by the source `Transpose(perm=[1,0])` and `MatMul` that produce `logits`. The tied weight and final-norm weight must retain their pinned external-data locations, offsets, shapes, and byte lengths.
+
+The reference graph then executes that validated final norm and the full tied-weight lm-head directly from the pinned source external-data descriptor. The staged graph executes the **same final norm once**, binds the eight diagnostic vocabulary-row weight tiles from the four preferred physical payload descriptors, runs eight logits `MatMul`s, and concatenates their outputs along the vocabulary axis. Before either run, the helper verifies the complete `1,692,672,000`-byte source SHA-256, every full physical payload SHA-256, and independently hashes each payload's exact source byte range so copied payload evidence cannot detach from the pinned source artifact.
+
+### 2026-09-08 pinned real-artifact post-stage run
+
+The exact machine-readable report is committed as [`docs/evidence/endpoint-poststage-tiled-ort-cpu-20260908.json`](./evidence/endpoint-poststage-tiled-ort-cpu-20260908.json). Environment: macOS `26.6.1` arm64, Python `3.12.12`, NumPy `2.5.3`, ONNX `1.18.0`, ONNX Runtime `1.22.0`, `CPUExecutionProvider`. The pinned final-norm weight is `8,192` bytes at source offset `1,084,489,728` with SHA-256 `af89374a4f1edc09ec38496e36efb1663713bc0e44026b8ef9d9d13aac99e75e`.
+
+For one deterministic `[1, 1, 2048]` pair of source post-stage boundary tensors, the reconstructed source-poststage reference and the tiled composition produced **byte-exact** results: final norm `[1,1,2048]` had `maxAbsDiff=0.0`, and complete logits `[1,1,128256]` had `maxAbsDiff=0.0` / `maxRelativeDiff=0.0`. Every one of the eight 16,032-row logits slices was also byte-exact against the corresponding reference vocabulary range. Recorded session creation was about `2.01 s` for the full-weight reference and `3.03 s` for the tiled graph; run times were about `17.3 ms` and `16.8 ms`. These timings are diagnostic CPU observations only and are not performance gates.
+
+What this closes for S0: final norm plus a complete vocabulary-axis tiled lm-head can be composed with the already verified 4-way/8-tile bytes under pinned CPU ORT without a numerical change for the measured boundary input. This is **not** full-model multi-segment equivalence: decoder segmentation, checkpoint relay, KV state, and the embedding pre-stage are not part of this comparison. It also does not select 4-way physical payloads or 8-way execution, and it provides no browser/WebGPU memory, reclamation, or production cache/runtime evidence.
+
 ## Pinned browser ORT Web/WebGPU preferred-payload range spike
 
 `tools/prepare_llama_1b_endpoint_preferred_tile_ort_webgpu.py` and
@@ -229,7 +243,7 @@ All four boundary-crossing tiles (`1`, `3`, `4`, `6`) passed under ONNX Runtime 
 | 4 | artifact 2 offset `105,062,400`, length `105,070,592` | artifact 3 offset `0`, length `26,263,552` |
 | 6 | artifact 3 offset `157,597,696`, length `52,535,296` | artifact 4 offset `0`, length `78,798,848` |
 
-This closes the **CPU primitive feasibility** question for a logical execution tile assembled from two independently stored physical payloads. It does not demonstrate that `Concat` is an acceptable production execution strategy: ORT may materialize an additional contiguous tensor, and the resulting host/GPU working set has not been measured. It also does not establish ORT Web/WebGPU external-data supply, browser cache semantics, final norm, session release behavior, full-vs-staged numerical equivalence, or select the 5-way architecture. Those remain S0/decision gates.
+This closes the **CPU primitive feasibility** question for a logical execution tile assembled from two independently stored physical payloads. By itself this CPU run does not demonstrate that `Concat` is an acceptable production execution strategy: ORT may materialize an additional contiguous tensor, and the resulting host/GPU working set has not been measured. The separate real-browser 5-way spike above establishes browser/WebGPU primitive supply for one crossing tile, while the separate CPU post-stage spike establishes final-norm + complete tiled-lm-head equivalence for the 4-way candidate. Neither result selects the 5-way architecture, defines browser cache/runtime semantics, measures working set/reclamation, or proves full-model multi-segment equivalence.
 
 ## Running the probes
 
@@ -251,6 +265,11 @@ python tools/probe_llama_1b_endpoint_five_way_tile_ort_cpu.py \
   /absolute/path/to/model_q4.onnx \
   /absolute/path/to/model_q4.onnx_data \
   /absolute/path/to/five-way-payload-dir
+
+python tools/probe_llama_1b_endpoint_poststage_tiled_ort_cpu.py \
+  /absolute/path/to/model_q4.onnx \
+  /absolute/path/to/model_q4.onnx_data \
+  /absolute/path/to/preferred-payload-dir
 
 python tools/prepare_llama_1b_endpoint_preferred_tile_ort_webgpu.py \
   /absolute/path/to/model_q4.onnx \
@@ -276,7 +295,7 @@ DATA_DIR=/tmp/unzen-endpoint-five-way-webgpu-data PORT=8794 \
   http://127.0.0.1:8793/
 ```
 
-All five Python commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
+All seven Python commands ultimately invoke the pinned endpoint chunk-envelope probe. A source graph identity, pinned external-data identity, or tied embedding/logits geometry drift therefore fails before candidate geometry is emitted.
 
 The layout JSON report includes the upstream probe/source identity and, for every candidate:
 
@@ -300,11 +319,11 @@ The dependency-closure JSON report preserves the same source identity and adds, 
 - bytes inside those required full artifacts not consumed by the tile,
 - numeric distance from the current preferred physical-artifact reference, explicitly not an execution-policy verdict.
 
-CI runs the arithmetic layout/dependency probes against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes. The CPU ORT tile execution helper is covered by synthetic external-data unit tests but is not run against the 1.0+ GiB real endpoint payloads on every CI run; the pinned real-payload report above is committed as diagnostic evidence rather than promoted to a CI performance gate.
+CI runs the arithmetic layout/dependency probes against the same pinned Llama 1B graph used by the existing budget blocker and endpoint-envelope probes. The CPU ORT tile and post-stage composition helpers are covered by synthetic external-data unit tests but are not run against the 1.0+ GiB real endpoint payloads on every CI run; the pinned real-payload reports above are committed as diagnostic evidence rather than promoted to CI performance gates.
 
 ## Evidence boundary
 
-The arithmetic probes prove only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent. A passing 4-way CPU ORT tile run additionally proves the selected primitive `Gather` and `Transpose + MatMul` executions consume the pinned 4-way payload byte ranges correctly under the pinned CPU provider. The 5-way boundary-crossing run additionally proves that two independently verified physical source ranges can be supplied as separate external initializers, concatenated into one execution-tile tensor inside ORT CPU, and consumed with the same primitive numerical result.
+The arithmetic probes prove only that the pinned graph still yields the recorded source-row/byte geometry under the recorded source identity, that the candidate range mappings are internally exact, and that whole-artifact dependency-closure arithmetic is internally consistent. A passing 4-way CPU ORT tile run additionally proves the selected primitive `Gather` and `Transpose + MatMul` executions consume the pinned 4-way payload byte ranges correctly under the pinned CPU provider. The 5-way boundary-crossing run additionally proves that two independently verified physical source ranges can be supplied as separate external initializers, concatenated into one execution-tile tensor inside ORT CPU, and consumed with the same primitive numerical result. The post-stage CPU run further proves that the pinned final norm and all eight 4-way-backed vocabulary logits tiles can be composed into the complete `[1,1,128256]` logits tensor with byte-exact output against a source-topology/full-weight reference for the measured boundary input.
 
 It does **not** prove:
 
@@ -317,7 +336,7 @@ It does **not** prove:
 - that an 8-way execution plan should be adopted,
 - that peak host/GPU working set is acceptable,
 - that browser cold/warm latency is acceptable,
-- that the complete embedding/final-norm/logits endpoint stages are numerically equivalent to the full model under ORT Web/WebGPU,
+- that the complete embedding/decoder/final-norm/logits staged pipeline is numerically equivalent to the full model, especially under ORT Web/WebGPU,
 - that a normal short-lived visitor should run endpoint stages.
 
 Those remain explicit #223 decision and S0 feasibility gates. Runtime, manifest, loader, cache, residency, dispatcher, and artifact-policy behavior remain unchanged by these probes.

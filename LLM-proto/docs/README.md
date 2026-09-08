@@ -7,7 +7,7 @@
 3. [`evidence-readiness.md`](./evidence-readiness.md) — evidence levelとproduction readinessの規約
 4. [`evidence-validation.md`](./evidence-validation.md) — TypeScript validator、trust boundary、利用方法
 5. [`documentation-status.md`](./documentation-status.md) — 文書更新時の整合性チェックリスト
-6. [`endpoint-layout-candidate-probe.md`](./endpoint-layout-candidate-probe.md) — #223 の方式決定前に4/5/8 physical payloadと8-way execution viewを比較し、pinned 4-way payloadと5-way cross-artifact tileのCPU ORTおよび実Chrome/Apple Metal ORT WebGPU primitive実行まで検証するdiagnostic-only probe
+6. [`endpoint-layout-candidate-probe.md`](./endpoint-layout-candidate-probe.md) — #223 の方式決定前に4/5/8 physical payloadと8-way execution viewを比較し、CPU ORTでfinal norm + 8-way tiled lm-headのcomplete logits equivalence、さらにpinned 4-way/5-way cross-artifact primitiveの実Chrome/Apple Metal ORT WebGPU実行まで検証するdiagnostic-only probe
 7. [`miniflare-multi-service-test-isolation.md`](./miniflare-multi-service-test-isolation.md) — #261 の重いMiniflare multi-service smokeを通常suite後に直列実行するテスト分離方針
 8. [`../PLAN.md`](../PLAN.md) — 確定方針と技術計画
 9. [`workers-coordinator-prototype.md`](./workers-coordinator-prototype.md) — Coordinator・operations gate chainの詳細
