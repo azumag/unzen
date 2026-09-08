@@ -1,7 +1,13 @@
+import { closeSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { ENDPOINT_EMBEDDING_WEBGPU_EXPECTED } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
-import { validateEndpointEmbeddingRuntimeReport } from '../tools/capture_endpoint_embedding_webgpu_runtime.mjs';
+import {
+  assertDistinctCapturePorts,
+  reserveEvidenceOutput,
+  validateEndpointEmbeddingRuntimeReport,
+} from '../tools/capture_endpoint_embedding_webgpu_runtime.mjs';
 
 function validReport() {
   const expected = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
@@ -61,12 +67,36 @@ describe('endpoint embedding WebGPU capture report validator', () => {
   });
 });
 
-it('keeps the capture helper isolated-profile, WebGPU-enabled, and create-only for evidence output', () => {
+describe('endpoint embedding WebGPU capture preflight', () => {
+  it('rejects a shared harness and DevTools port before launch', () => {
+    expect(() => assertDistinctCapturePorts(8796, 8796)).toThrow('must be distinct');
+    expect(() => assertDistinctCapturePorts(8796, 9228)).not.toThrow();
+  });
+
+  it('atomically reserves an evidence path and refuses an existing path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-capture-test-'));
+    const outputPath = join(dir, 'evidence.json');
+    try {
+      const fd = reserveEvidenceOutput(outputPath);
+      closeSync(fd);
+      expect(() => reserveEvidenceOutput(outputPath)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+it('keeps the capture helper isolated-profile, WebGPU-enabled, and reserved-output-only for evidence', () => {
   const source = readFileSync(new URL('../tools/capture_endpoint_embedding_webgpu_runtime.mjs', import.meta.url), 'utf8');
   expect(source).toContain("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))");
   expect(source).toContain("'--enable-unsafe-webgpu'");
-  expect(source).toContain("writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\\n`, { flag: 'wx' })");
+  expect(source).toContain("openSync(outputPath, 'wx', 0o600)");
+  expect(source).toContain('writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\\n`)');
+  expect(source).toContain('fsyncSync(outputFd)');
+  expect(source).toContain('if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }');
   expect(source).toContain("evidenceLevel: 'captured-browser-runtime'");
   expect(source.indexOf("await assertPortAvailable(serverPort, 'harness')"))
+    .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
+  expect(source.indexOf('outputFd = reserveEvidenceOutput(outputPath)'))
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
 });
