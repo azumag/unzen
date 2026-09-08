@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "unzen-pinned-llama-1b-endpoint-five-way-tile-ort-webgpu-runtime",
+  "status": "pass",
+  "decisionStatus": "diagnostic-only",
+  "evidenceLevel": "self-reported-runtime",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+  "adapterInfo": {
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "",
+    "description": ""
+  },
+  "adapterLimits": {
+    "maxBufferSize": 4294967292,
+    "maxStorageBufferBindingSize": 4294967292,
+    "maxComputeWorkgroupStorageSize": 32768
+  },
+  "onnxruntimeWebVersion": "1.22.0",
+  "sourceGraphSha256": "a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46",
+  "physicalArtifacts": [
+    {
+      "index": 0,
+      "bytes": 210141184,
+      "sha256": "3e7e1625498180fc107d572f65bfbb57fef091002fd05990c693b338e2d8edbe"
+    },
+    {
+      "index": 1,
+      "bytes": 210132992,
+      "sha256": "b1dd6fe5c5668e8e63e597a6cbe6629093dd724b34d82b89ea9715566db93adf"
+    }
+  ],
+  "fullPhysicalDependencyBytes": 420274176,
+  "executedTile": {
+    "tileIndex": 1,
+    "physicalSlices": [
+      {
+        "physicalArtifactIndex": 0,
+        "startRow": 16032,
+        "endRowExclusive": 25652,
+        "rowCount": 9620,
+        "artifactByteOffset": 131334144,
+        "byteLength": 78807040
+      },
+      {
+        "physicalArtifactIndex": 1,
+        "startRow": 25652,
+        "endRowExclusive": 32064,
+        "rowCount": 6412,
+        "artifactByteOffset": 0,
+        "byteLength": 52527104
+      }
+    ],
+    "embedding": {
+      "allClose": true,
+      "exactEqual": true,
+      "maxAbsDiff": 0,
+      "maxRelativeDiff": 0,
+      "localIds": [
+        0,
+        8016,
+        16031
+      ],
+      "sessionCreateMs": 801.5,
+      "runMs": 68,
+      "sessionReleaseMs": 2.0999999046325684
+    },
+    "logits": {
+      "allClose": true,
+      "maxAbsDiff": 0,
+      "maxRelativeDiff": 0,
+      "sparseColumns": [
+        0,
+        17,
+        2047
+      ],
+      "sparseCoefficients": [
+        0.5,
+        -0.25,
+        0.125
+      ],
+      "atol": 0.000001,
+      "rtol": 0.000001,
+      "sessionCreateMs": 169.7000002861023,
+      "runMs": 80.40000009536743,
+      "sessionReleaseMs": 0.09999990463256836
+    }
+  },
+  "sessionReleaseApiCompleted": true,
+  "conclusion": "Real browser ORT Web/WebGPU executed one diagnostic 5-way boundary-crossing tied-weight tile from two independently verified physical payloads using two external initializers plus Concat. This proves browser multi-artifact primitive feasibility only. It does not select the 5-way architecture, approve Concat as a production strategy, measure peak host/GPU working set or immediate GPU-memory reclamation, define cache/runtime/dispatcher semantics, or prove final-norm/full-vs-staged equivalence."
+}
