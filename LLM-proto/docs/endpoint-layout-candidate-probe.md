@@ -245,12 +245,12 @@ The exact machine-readable report from the 2026-09-08 Apple M4 / Chrome 152 run 
 
 | observation | summed process RSS | delta from clean `about:blank` baseline |
 |---|---:|---:|
-| clean isolated Chrome baseline | `1,195,216 KiB` (`1,167.20 MiB`) | — |
-| sampled global peak | `2,897,968 KiB` (`2,830.05 MiB`) | `+1,662.84 MiB` |
-| immediately after all nine release promises returned | `2,597,088 KiB` (`2,536.22 MiB`) | `+1,369.02 MiB` |
-| five seconds after the release-complete report | `2,485,536 KiB` (`2,427.28 MiB`) | `+1,260.08 MiB` |
+| clean isolated Chrome baseline | `1,193,472 KiB` (`1,165.50 MiB`) | — |
+| sampled global peak | `3,032,544 KiB` (`2,961.47 MiB`) | `+1,795.97 MiB` |
+| immediately after all nine release promises returned | `2,561,040 KiB` (`2,501.02 MiB`) | `+1,335.52 MiB` |
+| five seconds after the release-complete report | `2,484,240 KiB` (`2,426.02 MiB`) | `+1,260.52 MiB` |
 
-The sampled global peak occurred while executing logits tile 6. The process-role breakdown at that sample was browser `215,024 KiB`, GPU process `245,872 KiB`, network utility `90,576 KiB`, other utility `64,016 KiB`, and renderers `2,282,480 KiB`. The final five-second sample remained roughly `1.23 GiB` above the clean baseline, so this run provides **no evidence of prompt process-RSS return to baseline after `release()`**. Conversely, the metric cannot establish that the retained RSS is live ORT/WebGPU model memory: Chrome allocators may retain reusable pages and the process sum may count shared mappings more than once.
+The sampled global peak occurred while executing logits tile 4. The process-role breakdown at that sample was browser `223,792 KiB`, GPU process `247,696 KiB`, network utility `88,848 KiB`, other utility `63,872 KiB`, and renderers `2,408,336 KiB`. The final five-second sample remained roughly `1.23 GiB` above the clean baseline, so this run provides **no evidence of prompt process-RSS return to baseline after `release()`**. Conversely, the metric cannot establish that the retained RSS is live ORT/WebGPU model memory: Chrome allocators may retain reusable pages and the process sum may count shared mappings more than once.
 
 This is deliberately a coarse residency envelope, not a GPU-memory meter. On Apple unified memory, RSS cannot distinguish CPU-only pages from GPU-visible shared allocations; `ps` cannot identify Metal/WebGPU provider allocations; summed per-process RSS can double-count shared pages; and a five-second observation without forced GC or allocator flush cannot prove eventual reclamation or a leak. The diagnostic therefore narrows #223 by showing the measured process-tree envelope and the lack of immediate baseline recovery, but it does not set a production memory budget or select a physical/execution layout.
 

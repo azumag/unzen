@@ -10,10 +10,10 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
-import { homedir, platform, release, totalmem } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { platform, release, tmpdir, totalmem } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -220,13 +220,12 @@ async function runCapture({
   sampleIntervalMs,
   postReportSettleMs,
   timeoutMs,
-  profileDir,
 }) {
   if (!['darwin', 'linux'].includes(platform())) {
     throw new Error('process RSS capture supports only macOS/Linux ps semantics');
   }
   mkdirSync(dirname(outputPath), { recursive: true });
-  rmSync(profileDir, { recursive: true, force: true });
+  const profileDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-poststage-rss-'));
   await assertPortAvailable(serverPort, 'harness server');
   await assertPortAvailable(debugPort, 'Chrome DevTools');
 
@@ -393,10 +392,6 @@ function parseArgs(argv) {
     sampleIntervalMs: Number(process.env.UNZEN_RSS_SAMPLE_INTERVAL_MS ?? DEFAULT_INTERVAL_MS),
     postReportSettleMs: Number(process.env.UNZEN_RSS_POST_REPORT_SETTLE_MS ?? DEFAULT_POST_REPORT_SETTLE_MS),
     timeoutMs: Number(process.env.UNZEN_RSS_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
-    profileDir: resolve(
-      process.env.UNZEN_CHROME_PROFILE_DIR
-        ?? `${homedir()}/tmp/unzen-endpoint-poststage-rss-chrome-profile`,
-    ),
   };
 }
 
