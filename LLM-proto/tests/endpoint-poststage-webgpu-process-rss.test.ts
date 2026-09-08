@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyChromeProcess,
   descendantRows,
+  mergeMinimum,
   mergePeak,
   parsePsRows,
   summarizeProcessRows,
@@ -53,6 +54,15 @@ describe('endpoint post-stage WebGPU process RSS diagnostic helpers', () => {
     expect(peak).not.toBe(high);
     expect(mergePeak(peak, low)).toBe(peak);
   });
+
+  it('retains the lowest summed RSS sample for teardown recovery evidence', () => {
+    const low = { processCount: 1, totalRssKiB: 100, roles: { browser: { processCount: 1, rssKiB: 100 } } };
+    const high = { processCount: 2, totalRssKiB: 250, roles: { browser: { processCount: 1, rssKiB: 120 } } };
+    const minimum = mergeMinimum(high, low);
+    expect(minimum).toEqual(low);
+    expect(minimum).not.toBe(low);
+    expect(mergeMinimum(minimum, high)).toBe(minimum);
+  });
 });
 
 it('keeps the browser phase marker and committed diagnostic evidence fail-closed', () => {
@@ -87,5 +97,38 @@ it('keeps the browser phase marker and committed diagnostic evidence fail-closed
     .toBeGreaterThan(0);
   expect(evidence.limitations).toContain(
     'RSS is an OS process metric, not a WebGPU/Metal allocation metric.',
+  );
+});
+
+it('records document-teardown recovery separately from session-release settling', () => {
+  const evidence = JSON.parse(readFileSync(
+    new URL('../docs/evidence/endpoint-poststage-webgpu-process-rss-teardown-20260908.json', import.meta.url),
+    'utf8',
+  ));
+  expect(evidence).toMatchObject({
+    schemaVersion: '1.1.0',
+    kind: 'unzen-endpoint-poststage-webgpu-process-rss-diagnostic',
+    status: 'pass',
+    decisionStatus: 'diagnostic-only',
+    evidenceLevel: 'captured-os-process-rss',
+  });
+  expect(evidence.capturedAtUtc).toMatch(/^2026-09-08T/);
+  expect(evidence.measurement.postReportSettleMs).toBe(5000);
+  expect(evidence.measurement.postDocumentTeardownSettleMs).toBe(30000);
+  expect(evidence.runtimeReport).toMatchObject({
+    status: 'pass',
+    decisionStatus: 'diagnostic-only',
+    sessionReleaseApiCompleted: true,
+  });
+  const baseline = evidence.measurement.baseline.totalRssKiB;
+  const teardown = evidence.measurement.afterDocumentTeardown;
+  expect(teardown.baselineRssKiB).toBe(baseline);
+  expect(teardown.firstAtOrBelowBaseline).not.toBeNull();
+  expect(teardown.firstAtOrBelowBaseline.elapsedMs).toBeGreaterThan(0);
+  expect(teardown.firstAtOrBelowBaseline.totalRssKiB).toBeLessThanOrEqual(baseline);
+  expect(teardown.minimumDuringSettle.totalRssKiB).toBeLessThanOrEqual(baseline);
+  expect(teardown.finalAfterSettle.totalRssKiB).toBeGreaterThan(0);
+  expect(evidence.limitations).toContain(
+    'Navigating to about:blank tears down the measured document context but Chrome may retain renderer processes, reusable allocator pages, driver caches, or shared mappings.',
   );
 });
