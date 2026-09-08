@@ -36,6 +36,7 @@ function validReport() {
       globalTokenIds: structuredClone(tile.globalTokenIds),
       localTokenIds: structuredClone(tile.localTokenIds),
       graphVariant: tile.graphVariant,
+      graphSha256: expected.graphVariants[tile.graphVariant].sha256,
       comparison: { exactEqual: true, maxAbsDiff: 0 },
       sessionCreateMs: 1,
       runMs: 1,
@@ -74,6 +75,8 @@ describe('endpoint embedding WebGPU capture report validator', () => {
     ['payload digest drift', (report: any) => { report.verifiedPhysicalArtifacts[2].sha256 = '0'.repeat(64); }],
     ['missing tile', (report: any) => { report.executedTiles.pop(); }],
     ['tile routing drift', (report: any) => { report.executedTiles[6].physicalArtifactIndex = 2; }],
+    ['tile graph digest drift', (report: any) => { report.executedTiles[5].graphSha256 = '0'.repeat(64); }],
+    ['missing tile graph digest', (report: any) => { delete report.executedTiles[1].graphSha256; }],
     ['numerical mismatch', (report: any) => { report.executedTiles[4].comparison.maxAbsDiff = 1e-5; }],
     ['incomplete release', (report: any) => { report.sessionReleaseApiCompleted = false; }],
   ])('fails closed on %s', (_name, mutate) => {
@@ -96,6 +99,7 @@ describe('captured endpoint embedding WebGPU evidence validator', () => {
     ['Chrome/CDP version mismatch', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Chrome/151.0.0.0'; }],
     ['malformed Node version', (evidence: any) => { evidence.captureEnvironment.nodeVersion = 'node-current'; }],
     ['runtime payload drift inside capture', (evidence: any) => { evidence.verifiedPhysicalArtifacts[0].bytes += 1; }],
+    ['runtime graph digest drift inside capture', (evidence: any) => { evidence.executedTiles[7].graphSha256 = 'f'.repeat(64); }],
     ['runtime numerical mismatch inside capture', (evidence: any) => { evidence.completeEmbeddingComparison.exactEqual = false; }],
   ])('fails closed on %s', (_name, mutate) => {
     const evidence = validCapturedEvidence();
@@ -149,6 +153,19 @@ describe('offline captured endpoint embedding evidence verifier', () => {
       evidence.executedTiles[3].globalTokenIds[1] -= 1;
       writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
       expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a persisted tile graph digest is removed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-verifier-test-'));
+    const evidencePath = join(dir, 'evidence.json');
+    try {
+      const evidence = validCapturedEvidence();
+      delete evidence.executedTiles[2].graphSha256;
+      writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
+      expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow('graph SHA-256 drift');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

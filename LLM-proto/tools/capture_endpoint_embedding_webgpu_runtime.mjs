@@ -42,6 +42,8 @@ export function validateEndpointEmbeddingRuntimeReport(report) {
     for (const field of ['positions', 'globalTokenIds', 'localTokenIds']) {
       if (!exact(tile?.[field], expectedTile[field])) throw new Error(`tile ${i} ${field} drift`);
     }
+    const expectedGraph = EXPECTED.graphVariants[expectedTile.graphVariant];
+    if (!expectedGraph || tile?.graphSha256 !== expectedGraph.sha256) throw new Error(`tile ${i} graph SHA-256 drift`);
     if (tile?.comparison?.exactEqual !== true || tile?.comparison?.maxAbsDiff !== 0) throw new Error(`tile ${i} numerical mismatch`);
     if (!(tile?.sessionCreateMs >= 0) || !(tile?.runMs >= 0) || !(tile?.sessionReleaseMs >= 0)) throw new Error(`tile ${i} timing/release evidence missing`);
   }
