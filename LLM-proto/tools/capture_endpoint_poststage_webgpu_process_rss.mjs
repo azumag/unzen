@@ -10,7 +10,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -88,6 +88,180 @@ export function summarizeProcessRows(rootPid, rows) {
     roles[role] = current;
   }
   return { processCount: descendants.length, totalRssKiB, roles };
+}
+
+function normalizeFootprintMessages(value) {
+  if (Array.isArray(value)) return value.map((entry) => String(entry));
+  if (value === null || value === undefined || value === '') return [];
+  if (typeof value === 'object') return [JSON.stringify(value)];
+  return [String(value)];
+}
+
+function addFootprintCategories(totals, categories) {
+  if (!categories || typeof categories !== 'object' || Array.isArray(categories)) return;
+  for (const [name, value] of Object.entries(categories)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const current = totals.get(name) ?? {
+      dirty: 0,
+      swapped: 0,
+      clean: 0,
+      reclaimable: 0,
+      wired: 0,
+      regions: 0,
+    };
+    for (const key of ['dirty', 'swapped', 'clean', 'reclaimable', 'wired', 'regions']) {
+      const parsed = Number(value[key] ?? 0);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`footprint JSON category ${JSON.stringify(name)} has invalid ${key}`);
+      }
+      current[key] += parsed;
+    }
+    totals.set(name, current);
+  }
+}
+
+export function summarizeFootprintReport(rootPid, psRows, report) {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    throw new Error('footprint JSON report must be an object');
+  }
+  const targetRows = descendantRows(rootPid, psRows);
+  const targetRoleByPid = new Map(
+    targetRows.map((row) => [row.pid, classifyChromeProcess(row, rootPid)]),
+  );
+  const errors = normalizeFootprintMessages(report.errors);
+  const warnings = normalizeFootprintMessages(report.warnings);
+  const processes = Array.isArray(report.processes) ? report.processes : [];
+  const processesByPid = new Map();
+  for (const proc of processes) {
+    const pid = Number(proc?.pid);
+    if (!Number.isSafeInteger(pid)) {
+      errors.push('footprint JSON contains a process with an invalid pid');
+      continue;
+    }
+    if (processesByPid.has(pid)) {
+      errors.push(`footprint JSON contains duplicate process pid ${pid}`);
+      continue;
+    }
+    processesByPid.set(pid, proc);
+  }
+
+  const roles = {};
+  const categoryTotals = new Map();
+  const missingPids = [];
+  let measuredProcessCount = 0;
+  let totalFootprintBytes = 0;
+  for (const row of targetRows) {
+    const proc = processesByPid.get(row.pid);
+    if (!proc) {
+      missingPids.push(row.pid);
+      continue;
+    }
+    const footprintBytes = Number(proc.footprint);
+    if (!Number.isSafeInteger(footprintBytes) || footprintBytes < 0) {
+      errors.push(`pid ${row.pid}: invalid process footprint`);
+      continue;
+    }
+    measuredProcessCount += 1;
+    totalFootprintBytes += footprintBytes;
+    const role = targetRoleByPid.get(row.pid);
+    const current = roles[role] ?? { processCount: 0, footprintBytes: 0 };
+    current.processCount += 1;
+    current.footprintBytes += footprintBytes;
+    roles[role] = current;
+    addFootprintCategories(categoryTotals, proc.categories);
+  }
+
+  const missingProcesses = targetRows
+    .filter((row) => !processesByPid.has(row.pid))
+    .map((row) => ({ pid: row.pid, role: targetRoleByPid.get(row.pid) }));
+  const unexpectedPids = [...processesByPid.keys()].filter((pid) => !targetRoleByPid.has(pid));
+  if (unexpectedPids.length > 0) {
+    errors.push(`footprint JSON contains unexpected pids: ${unexpectedPids.join(',')}`);
+  }
+  const categoryRows = [...categoryTotals.entries()].map(([name, metrics]) => ({
+    name,
+    ...metrics,
+    dirtyPlusSwappedBytes: metrics.dirty + metrics.swapped,
+  }));
+  categoryRows.sort((a, b) => b.dirtyPlusSwappedBytes - a.dirtyPlusSwappedBytes || a.name.localeCompare(b.name));
+  return {
+    targetProcessCount: targetRows.length,
+    measuredProcessCount,
+    missingProcessCount: missingPids.length,
+    missingPids,
+    missingProcesses,
+    unexpectedPids,
+    complete: missingPids.length === 0 && measuredProcessCount === targetRows.length && errors.length === 0,
+    totalFootprintBytes,
+    roles,
+    topCategoriesByDirtyPlusSwappedBytes: categoryRows.slice(0, 12),
+    graphicsCategories: categoryRows.filter((entry) => /gpu|graphics|metal|ioaccelerator|iosurface/i.test(entry.name)),
+    errors,
+    warnings,
+  };
+}
+
+function currentProcessTree(rootPid) {
+  const text = execFileSync('ps', ['-Ao', 'pid=,ppid=,rss=,command='], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  const psRows = parsePsRows(text);
+  return { psRows, targetRows: descendantRows(rootPid, psRows) };
+}
+
+function sameProcessIdentitySet(leftRows, rightRows) {
+  if (leftRows.length !== rightRows.length) return false;
+  const rightByPid = new Map(rightRows.map((row) => [row.pid, row.command]));
+  return leftRows.every((row) => rightByPid.get(row.pid) === row.command);
+}
+
+function footprintSnapshot(rootPid) {
+  if (platform() !== 'darwin') return null;
+  let lastError = null;
+  let processChurnObserved = false;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const scratchDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-poststage-footprint-'));
+    const startedAt = Date.now();
+    try {
+      const before = currentProcessTree(rootPid);
+      if (before.targetRows.length === 0) {
+        throw new Error('Chrome process tree disappeared before footprint capture');
+      }
+      const reportPath = join(scratchDir, `footprint-${attempt}.json`);
+      const args = ['-j', reportPath];
+      for (const row of before.targetRows) args.push('--pid', String(row.pid));
+      execFileSync('/usr/bin/footprint', args, {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const after = currentProcessTree(rootPid);
+      if (!sameProcessIdentitySet(before.targetRows, after.targetRows)) {
+        processChurnObserved = true;
+        lastError = new Error('Chrome process identity set changed during footprint capture');
+        continue;
+      }
+      const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+      const summary = summarizeFootprintReport(rootPid, after.psRows, report);
+      return {
+        captureDurationMs: Date.now() - startedAt,
+        collectionMode: 'single-footprint-invocation-multi-pid',
+        sweepIsAtomic: false,
+        attempts: attempt,
+        initialProcessCount: before.targetRows.length,
+        finalProcessCount: after.targetRows.length,
+        processChurnObserved,
+        ...summary,
+      };
+    } catch (error) {
+      lastError = error;
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+    if (attempt < 3) execFileSync('/bin/sleep', ['0.25']);
+  }
+  throw new Error(`macOS footprint capture failed after 3 attempts: ${lastError}`);
 }
 
 export function mergePeak(current, sample) {
@@ -306,6 +480,7 @@ async function runCapture({
 
     await sleep(500);
     const baseline = psSnapshot(chrome.pid);
+    const baselineFootprint = footprintSnapshot(chrome.pid);
     let globalPeak = structuredClone(baseline);
     const phasePeaks = new Map();
     recordPhasePeak(phasePeaks, 'baseline-about-blank', baseline);
@@ -343,23 +518,27 @@ async function runCapture({
       throw new Error('browser runtime evidence must remain diagnostic-only');
     }
 
+    const reportObservedAt = Date.now();
+    const immediatePostReportFootprint = footprintSnapshot(chrome.pid);
     let postReportPeak = structuredClone(immediatePostReport);
-    const settleDeadline = Date.now() + postReportSettleMs;
+    const settleDeadline = reportObservedAt + postReportSettleMs;
     let finalPostReport = structuredClone(immediatePostReport);
     while (Date.now() < settleDeadline) {
-      await sleep(sampleIntervalMs);
+      await sleep(Math.min(sampleIntervalMs, Math.max(0, settleDeadline - Date.now())));
       const sample = psSnapshot(chrome.pid);
       sampleCount += 1;
       finalPostReport = sample;
       postReportPeak = mergePeak(postReportPeak, sample);
       globalPeak = mergePeak(globalPeak, sample);
     }
+    const finalPostReportFootprint = footprintSnapshot(chrome.pid);
 
     await cdp.send('Page.navigate', { url: 'about:blank' });
     await waitForPageUrl(cdp, 'about:blank', 10000);
     const teardownStartedAt = Date.now();
     const immediatePostTeardown = psSnapshot(chrome.pid);
     sampleCount += 1;
+    const immediatePostTeardownFootprint = footprintSnapshot(chrome.pid);
     let postTeardownPeak = structuredClone(immediatePostTeardown);
     let postTeardownMinimum = structuredClone(immediatePostTeardown);
     let finalPostTeardown = structuredClone(immediatePostTeardown);
@@ -385,14 +564,30 @@ async function runCapture({
       globalPeak = mergePeak(globalPeak, sample);
       recordPhasePeak(phasePeaks, 'post-teardown-about-blank', sample);
     }
+    const finalPostTeardownFootprint = footprintSnapshot(chrome.pid);
 
     const chromeVersion = execFileSync(chromeBinary, ['--version'], { encoding: 'utf8' }).trim();
+    const footprintMilestones = [
+      baselineFootprint,
+      immediatePostReportFootprint,
+      finalPostReportFootprint,
+      immediatePostTeardownFootprint,
+      finalPostTeardownFootprint,
+    ].filter(Boolean);
+    const completeFootprintMilestoneCount = footprintMilestones.filter((snapshot) => snapshot.complete).length;
+    const allFootprintMilestonesComplete = footprintMilestones.length > 0
+      && completeFootprintMilestoneCount === footprintMilestones.length;
+    const footprintEvidenceLevel = baselineFootprint
+      ? (allFootprintMilestonesComplete
+        ? 'captured-os-process-rss+macos-physical-footprint'
+        : 'captured-os-process-rss+partial-macos-physical-footprint')
+      : 'captured-os-process-rss';
     const evidence = {
-      schemaVersion: '1.1.0',
+      schemaVersion: '1.2.0',
       kind: 'unzen-endpoint-poststage-webgpu-process-rss-diagnostic',
       status: 'pass',
       decisionStatus: 'diagnostic-only',
-      evidenceLevel: 'captured-os-process-rss',
+      evidenceLevel: footprintEvidenceLevel,
       capturedAtUtc: new Date().toISOString(),
       environment: {
         platform: platform(),
@@ -427,11 +622,32 @@ async function runCapture({
           firstAtOrBelowBaseline,
           finalAfterSettle: finalPostTeardown,
         },
+        macosPhysicalFootprint: baselineFootprint ? {
+          metric: 'macOS physical footprint reported by /usr/bin/footprint',
+          unit: 'bytes',
+          aggregation: 'one /usr/bin/footprint invocation with repeated --pid arguments for the Chrome root and descendants from one ps identity set; the snapshot is marked incomplete if footprint omits any stable target pid',
+          milestoneCount: footprintMilestones.length,
+          completeMilestoneCount: completeFootprintMilestoneCount,
+          completeAcrossMilestones: allFootprintMilestonesComplete,
+          baseline: baselineFootprint,
+          afterAllSessionReleaseApisReturned: {
+            immediate: immediatePostReportFootprint,
+            finalAfterSettle: finalPostReportFootprint,
+          },
+          afterDocumentTeardown: {
+            immediateAfterBlankReady: immediatePostTeardownFootprint,
+            finalAfterSettle: finalPostTeardownFootprint,
+          },
+        } : null,
       },
       runtimeReport,
-      conclusion: 'The complete diagnostic post-stage WebGPU run was observed with OS process RSS sampling before, during, and after its nine InferenceSession.release() calls, then through a same-page-target navigation to about:blank. This bounds the sampled Chrome process-tree residency for this run only and separates release-settle behavior from document teardown behavior. It does not measure provider allocations directly or prove GPU/Metal/driver reclamation.',
+      conclusion: 'The complete diagnostic post-stage WebGPU run was observed with OS process RSS sampling before, during, and after its nine InferenceSession.release() calls, then through a same-page-target navigation to about:blank. On macOS, milestone snapshots additionally capture kernel physical-footprint accounting and per-process-role/category attribution. These metrics bound this isolated run only; neither directly measures ORT/WebGPU/Metal allocations or proves provider/driver reclamation.',
       limitations: [
-        'RSS is an OS process metric, not a WebGPU/Metal allocation metric.',
+        'RSS and macOS physical footprint are OS process metrics, not ORT/WebGPU/Metal allocation metrics.',
+        'The macOS footprint command is sampled only at milestones, so it does not identify the physical-footprint peak during tile execution and its inspection can perturb process timing.',
+        'macOS footprint can omit a stable sandboxed Chrome child without an error; each milestone records completeness and missing process roles, and partial snapshots are not promoted to whole-tree footprint evidence.',
+        'Footprint category names such as IOAccelerator, IOSurface, or graphics are kernel VM accounting labels and must not be interpreted as exact live WebGPU allocation sizes.',
+        'Category ranking uses dirty + swapped bytes; wired bytes are reported separately and are not added because wired accounting can overlap dirty pages.',
         'Summing process RSS can double-count shared pages and shared-memory mappings.',
         'On Apple unified memory, RSS cannot distinguish CPU-resident pages from GPU-visible shared allocations.',
         'A decrease after release is observational only; no GC, memory-pressure, or allocator flush was forced.',
