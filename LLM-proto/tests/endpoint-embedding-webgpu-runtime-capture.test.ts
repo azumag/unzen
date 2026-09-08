@@ -6,6 +6,7 @@ import { ENDPOINT_EMBEDDING_WEBGPU_EXPECTED } from '../browser-harness/endpoint-
 import {
   assertDistinctCapturePorts,
   reserveEvidenceOutput,
+  validateCapturedEndpointEmbeddingRuntimeEvidence,
   validateEndpointEmbeddingRuntimeReport,
 } from '../tools/capture_endpoint_embedding_webgpu_runtime.mjs';
 
@@ -46,6 +47,20 @@ function validReport() {
   };
 }
 
+function validCapturedEvidence() {
+  return {
+    ...validReport(),
+    evidenceLevel: 'captured-browser-runtime',
+    capturedAtUtc: '2026-09-09T00:00:00.000Z',
+    captureEnvironment: {
+      chromeVersion: 'Google Chrome 152.0.7977.83',
+      cdpBrowser: 'Chrome/152.0.7977.83',
+      nodeVersion: 'v24.8.0',
+      platform: 'darwin',
+    },
+  };
+}
+
 describe('endpoint embedding WebGPU capture report validator', () => {
   it('accepts the pinned complete embedding runtime report', () => {
     const report = validReport();
@@ -64,6 +79,27 @@ describe('endpoint embedding WebGPU capture report validator', () => {
     const report = validReport();
     mutate(report);
     expect(() => validateEndpointEmbeddingRuntimeReport(report)).toThrow();
+  });
+});
+
+describe('captured endpoint embedding WebGPU evidence validator', () => {
+  it('accepts a capture envelope only when runtime and capture metadata both pass', () => {
+    const evidence = validCapturedEvidence();
+    expect(validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)).toBe(evidence);
+  });
+
+  it.each([
+    ['self-reported evidence level', (evidence: any) => { evidence.evidenceLevel = 'self-reported-runtime'; }],
+    ['non-canonical timestamp', (evidence: any) => { evidence.capturedAtUtc = '2026-09-09T00:00:00Z'; }],
+    ['missing capture environment', (evidence: any) => { delete evidence.captureEnvironment; }],
+    ['Chrome/CDP version mismatch', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Chrome/151.0.0.0'; }],
+    ['malformed Node version', (evidence: any) => { evidence.captureEnvironment.nodeVersion = 'node-current'; }],
+    ['runtime payload drift inside capture', (evidence: any) => { evidence.verifiedPhysicalArtifacts[0].bytes += 1; }],
+    ['runtime numerical mismatch inside capture', (evidence: any) => { evidence.completeEmbeddingComparison.exactEqual = false; }],
+  ])('fails closed on %s', (_name, mutate) => {
+    const evidence = validCapturedEvidence();
+    mutate(evidence);
+    expect(() => validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)).toThrow();
   });
 });
 
@@ -86,11 +122,12 @@ describe('endpoint embedding WebGPU capture preflight', () => {
   });
 });
 
-it('keeps the capture helper isolated-profile, WebGPU-enabled, and reserved-output-only for evidence', () => {
+it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope-validated, and reserved-output-only for evidence', () => {
   const source = readFileSync(new URL('../tools/capture_endpoint_embedding_webgpu_runtime.mjs', import.meta.url), 'utf8');
   expect(source).toContain("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))");
   expect(source).toContain("'--enable-unsafe-webgpu'");
   expect(source).toContain("openSync(outputPath, 'wx', 0o600)");
+  expect(source).toContain('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)');
   expect(source).toContain('writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\\n`)');
   expect(source).toContain('fsyncSync(outputFd)');
   expect(source).toContain('if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }');
@@ -99,4 +136,12 @@ it('keeps the capture helper isolated-profile, WebGPU-enabled, and reserved-outp
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
   expect(source.indexOf('outputFd = reserveEvidenceOutput(outputPath)'))
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
+  expect(source.indexOf('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)'))
+    .toBeLessThan(source.indexOf('writeFileSync(outputFd'));
+});
+
+it('keeps an offline verifier wired to the captured-evidence validator', () => {
+  const source = readFileSync(new URL('../tools/verify_endpoint_embedding_webgpu_runtime_evidence.mjs', import.meta.url), 'utf8');
+  expect(source).toContain('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)');
+  expect(source).toContain("usage: verify_endpoint_embedding_webgpu_runtime_evidence.mjs EVIDENCE_JSON");
 });
