@@ -422,3 +422,11 @@ It does **not** prove:
 - that a normal short-lived visitor should run endpoint stages.
 
 Those remain explicit #223 decision and S0 feasibility gates. Runtime, manifest, loader, cache, residency, dispatcher, and artifact-policy behavior remain unchanged by these probes.
+
+### 2026-09-08 complete embedding pre-stage CPU equivalence
+
+`tools/probe_llama_1b_endpoint_embedding_composition_ort_cpu.py` closes the complementary embedding-side S0 question without selecting an endpoint architecture. It binds the pinned Llama-3.2-1B q4 source graph/external-data identity and the four already-materialized preferred physical payloads, then compares one full tied-weight `Gather` reference against an 8-way vocabulary-tile routed composition.
+
+The diagnostic token set contains both ends of every execution tile (`0`, `16031`, `16032`, ..., `128255`), so all eight tiles and every tile boundary are exercised in one ordered `[16, 2048]` embedding result. Under pinned ONNX Runtime `1.22.0` `CPUExecutionProvider`, the routed composition was **byte-exact** with the full tied-weight reference (`maxAbsDiff=0.0`). The machine-readable report is committed as [`docs/evidence/endpoint-embedding-composition-ort-cpu-20260908.json`](./evidence/endpoint-embedding-composition-ort-cpu-20260908.json).
+
+This establishes only complete embedding pre-stage composition for the measured pinned CPU ORT path. It does **not** select the 4-way physical / 8-way execution candidate, prove decoder/KV/checkpoint relay equivalence, establish browser/WebGPU embedding execution or memory behavior, or change manifest/cache/loader/runtime/dispatcher semantics. Together with the existing complete final-norm + tiled-lm-head probe, it narrows the remaining full-model staged-equivalence work to composition through the decoder segments, KV state, and Coordinator checkpoint boundaries.
