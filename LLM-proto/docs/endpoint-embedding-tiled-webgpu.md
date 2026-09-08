@@ -40,13 +40,13 @@ DATA_DIR=/tmp/unzen-endpoint-embedding-webgpu-data PORT=8796 \
 
 Open `http://127.0.0.1:8796/` in a WebGPU-capable Chrome instance. The browser contract is validated before execution. Physical artifacts are loaded and SHA-256 verified in order `0 -> 1 -> 2 -> 3`; each payload backs exactly two tile sessions. The ONNX graph always names the external initializer path `payload-0000.bin`, while the harness supplies the currently verified physical payload bytes through ORT Web's `externalData` override. This deliberately reuses the two already pinned zero/non-zero-offset graph byte sequences rather than generating eight semantically duplicate graphs.
 
-For each tile, the browser reconstructs the expected embedding rows directly from the verified payload bytes, executes `Gather` through the WebGPU provider, requires byte-exact equality, and awaits `InferenceSession.release()`. It then assembles all sixteen rows in original token order and requires the complete `[16, 2048]` result to remain byte-exact.
+For each tile, the browser reconstructs the expected embedding rows directly from the verified payload bytes, executes `Gather` through the WebGPU provider, requires byte-exact equality, and awaits `InferenceSession.release()`. It then assembles all sixteen rows in original token order and requires the complete `[16, 2048]` result to remain byte-exact. Each tile report also records the SHA-256 of the exact ONNX graph bytes that were loaded for that session.
 
 A successful self-reported runtime object is exposed as `window.__unzenEndpointEmbeddingWebGpuReport`.
 
 ## Captured runtime evidence
 
-`tools/capture_endpoint_embedding_webgpu_runtime.mjs` turns the manual browser step into a repeatable diagnostic capture. It launches the existing harness server and an isolated temporary Chrome profile, connects through Chrome DevTools Protocol, waits for the runtime report, and validates the pinned source identity, ORT Web version, all four physical artifacts, all eight tile routes, byte-exact tile/complete comparisons, and release-API completion before writing evidence.
+`tools/capture_endpoint_embedding_webgpu_runtime.mjs` turns the manual browser step into a repeatable diagnostic capture. It launches the existing harness server and an isolated temporary Chrome profile, connects through Chrome DevTools Protocol, waits for the runtime report, and validates the pinned source identity, ORT Web version, all four physical artifacts, all eight tile routes, each tile's loaded graph SHA-256, byte-exact tile/complete comparisons, and release-API completion before writing evidence.
 
 Before Chrome is launched, the helper requires distinct/free harness and DevTools ports and atomically reserves the output path with create-only permissions. This makes an existing evidence path fail immediately instead of wasting a complete browser run, and removes the reserved path if capture fails before a valid report is committed. The successful evidence write is flushed before the reserved descriptor is closed, so a concurrent writer cannot replace the target between validation and commit.
 
@@ -57,7 +57,7 @@ node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
 
-On macOS the default Chrome binary is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`; elsewhere set `CHROME_BINARY` or pass the optional final CLI argument. The helper uses a tool-owned `mkdtemp` profile only and deletes that profile at exit. A passing captured report is promoted only from `self-reported-runtime` to `captured-browser-runtime`; its `decisionStatus` remains `diagnostic-only`. Before the reserved evidence file is written, the promoted capture envelope is validated again: the original pinned runtime fields must still pass, `capturedAtUtc` must be a canonical UTC timestamp, capture-environment fields must be present, and the Chrome version reported by the executable must agree with the Chrome DevTools Protocol browser version.
+On macOS the default Chrome binary is `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`; elsewhere set `CHROME_BINARY` or pass the optional final CLI argument. The helper uses a tool-owned `mkdtemp` profile only and deletes that profile at exit. A passing captured report is promoted only from `self-reported-runtime` to `captured-browser-runtime`; its `decisionStatus` remains `diagnostic-only`. Before the reserved evidence file is written, the promoted capture envelope is validated again: the original pinned runtime fields must still pass, every executed tile must remain bound to the SHA-256 of its expected graph variant, `capturedAtUtc` must be a canonical UTC timestamp, capture-environment fields must be present, and the Chrome version reported by the executable must agree with the Chrome DevTools Protocol browser version.
 
 Captured evidence can be revalidated independently after copying, review, or before committing it:
 
@@ -67,7 +67,7 @@ node tools/verify_endpoint_embedding_webgpu_runtime_evidence.mjs \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
 
-The verifier is read-only and fails closed on runtime-contract drift, evidence-level promotion/demotion, malformed or missing capture metadata, Chrome/CDP version disagreement, payload/tile drift, numerical mismatch, or incomplete release evidence. A passing verifier result confirms only that the JSON still satisfies the pinned diagnostic capture contract; it does not independently prove that the browser execution happened or provide cryptographic attestation of the host.
+The verifier is read-only and fails closed on runtime-contract drift, evidence-level promotion/demotion, malformed or missing capture metadata, Chrome/CDP version disagreement, payload/tile drift, missing or mismatched tile graph digests, numerical mismatch, or incomplete release evidence. A passing verifier result confirms only that the JSON still satisfies the pinned diagnostic capture contract; it does not independently prove that the browser execution happened or provide cryptographic attestation of the host.
 
 This capture records browser/environment identity but does not independently trace WebGPU provider assignment at each node or measure GPU allocation ownership.
 
