@@ -115,6 +115,12 @@ export function validateCaptureChromeCdpIdentity(preflight, cdpVersion) {
   if (cdpVersionMatch[1] !== preflightVersion) {
     throw new Error(`capture preflight/CDP Chrome version mismatch: ${preflightVersion} != ${cdpVersionMatch[1]}`);
   }
+  const cdpUserAgent = requireNonEmptyString(cdpVersion['User-Agent'], 'Chrome DevTools User-Agent identity');
+  const cdpUserAgentMajor = chromeMajorFromUserAgent(cdpUserAgent);
+  const cdpBrowserMajor = Number(cdpVersionMatch[1].split('.')[0]);
+  if (cdpUserAgentMajor !== cdpBrowserMajor) {
+    throw new Error(`Chrome DevTools User-Agent/Browser major mismatch: ${cdpUserAgentMajor} != ${cdpBrowserMajor}`);
+  }
   return cdpBrowser;
 }
 
@@ -128,6 +134,13 @@ export function validateEndpointEmbeddingWebGpuDeviceContextFields(evidence) {
     evidence.captureEnvironment?.cdpBrowser,
     'captureEnvironment.cdpBrowser',
   );
+  const cdpUserAgent = requireNonEmptyString(
+    evidence.captureEnvironment?.cdpUserAgent,
+    'captureEnvironment.cdpUserAgent',
+  );
+  if (userAgent !== cdpUserAgent) {
+    throw new Error('runtime userAgent/CDP User-Agent identity mismatch');
+  }
   const userAgentMajor = chromeMajorFromUserAgent(userAgent);
   const cdpMajor = chromeMajorFromCdpBrowser(cdpBrowser);
   if (userAgentMajor !== cdpMajor) {
@@ -311,6 +324,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
       captureEnvironment: {
         chromeVersion: preflight.chrome.raw,
         cdpBrowser: version.Browser,
+        cdpUserAgent: version['User-Agent'],
         nodeVersion: process.version,
         platform: platform(),
       },
