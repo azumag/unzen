@@ -53,6 +53,18 @@ function validCapturedEvidence() {
   return {
     ...validReport(),
     evidenceLevel: 'captured-browser-runtime',
+    userAgent: 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36',
+    adapterInfo: {
+      vendor: 'apple',
+      architecture: 'metal-3',
+      device: '',
+      description: '',
+    },
+    adapterLimits: {
+      maxBufferSize: 1_073_741_824,
+      maxStorageBufferBindingSize: 1_073_741_824,
+      maxComputeWorkgroupStorageSize: 32_768,
+    },
     capturedAtUtc: '2026-09-09T00:00:00.000Z',
     captureEnvironment: {
       chromeVersion: 'Google Chrome 152.0.7977.83',
@@ -90,7 +102,7 @@ describe('endpoint embedding WebGPU capture report validator', () => {
 });
 
 describe('captured endpoint embedding WebGPU evidence validator', () => {
-  it('accepts a capture envelope only when runtime and capture metadata both pass', () => {
+  it('accepts a capture envelope only when runtime, device context, and capture metadata all pass', () => {
     const evidence = validCapturedEvidence();
     expect(validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)).toBe(evidence);
   });
@@ -101,6 +113,11 @@ describe('captured endpoint embedding WebGPU evidence validator', () => {
     ['missing capture environment', (evidence: any) => { delete evidence.captureEnvironment; }],
     ['Chrome/CDP version mismatch', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Chrome/151.0.0.0'; }],
     ['malformed Node version', (evidence: any) => { evidence.captureEnvironment.nodeVersion = 'node-current'; }],
+    ['missing user agent', (evidence: any) => { delete evidence.userAgent; }],
+    ['user-agent/CDP major mismatch', (evidence: any) => { evidence.userAgent = 'Mozilla/5.0 Chrome/151.0.0.0 Safari/537.36'; }],
+    ['malformed adapter info', (evidence: any) => { evidence.adapterInfo.vendor = 1234; }],
+    ['missing adapter limits', (evidence: any) => { delete evidence.adapterLimits; }],
+    ['zero adapter limit', (evidence: any) => { evidence.adapterLimits.maxBufferSize = 0; }],
     ['runtime payload drift inside capture', (evidence: any) => { evidence.verifiedPhysicalArtifacts[0].bytes += 1; }],
     ['runtime graph digest drift inside capture', (evidence: any) => { evidence.executedTiles[7].graphSha256 = 'f'.repeat(64); }],
     ['runtime numerical mismatch inside capture', (evidence: any) => { evidence.completeEmbeddingComparison.exactEqual = false; }],
@@ -187,6 +204,19 @@ describe('offline captured endpoint embedding evidence verifier', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('fails closed when persisted WebGPU device context is missing or malformed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-verifier-test-'));
+    const evidencePath = join(dir, 'evidence.json');
+    try {
+      const evidence = validCapturedEvidence();
+      delete evidence.adapterLimits.maxStorageBufferBindingSize;
+      writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
+      expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow('positive safe integer');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope-validated, and reserved-output-only for evidence', () => {
@@ -195,6 +225,7 @@ it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope
   expect(source).toContain("'--enable-unsafe-webgpu'");
   expect(source).toContain("openSync(outputPath, 'wx', 0o600)");
   expect(source).toContain('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)');
+  expect(source).toContain('validateEndpointEmbeddingWebGpuDeviceContextFields(evidence)');
   expect(source).toContain('writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\\n`)');
   expect(source).toContain('fsyncSync(outputFd)');
   expect(source).toContain('if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }');
