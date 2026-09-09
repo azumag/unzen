@@ -4,9 +4,11 @@ import {
   validateEndpointEmbeddingWebGpuDeviceContextFields,
 } from '../tools/verify_endpoint_embedding_webgpu_device_context.mjs';
 
+const VALID_USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36';
+
 function validDeviceContext() {
   return {
-    userAgent: 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36',
+    userAgent: VALID_USER_AGENT,
     adapterInfo: {
       vendor: 'apple',
       architecture: 'metal-3',
@@ -20,6 +22,7 @@ function validDeviceContext() {
     },
     captureEnvironment: {
       cdpBrowser: 'Chrome/152.0.7977.83',
+      cdpUserAgent: VALID_USER_AGENT,
     },
   };
 }
@@ -37,6 +40,8 @@ describe('endpoint embedding WebGPU device-context fields', () => {
 
   it.each([
     ['missing user agent', (evidence: any) => { delete evidence.userAgent; }],
+    ['missing CDP user agent', (evidence: any) => { delete evidence.captureEnvironment.cdpUserAgent; }],
+    ['runtime/CDP user-agent drift', (evidence: any) => { evidence.captureEnvironment.cdpUserAgent += ' drift'; }],
     ['Chrome major drift', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Chrome/151.0.0.0'; }],
     ['malformed user agent', (evidence: any) => { evidence.userAgent = 'SyntheticBrowser/1.0'; }],
     ['array adapter info', (evidence: any) => { evidence.adapterInfo = []; }],
