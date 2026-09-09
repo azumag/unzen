@@ -67,7 +67,8 @@ if (!versionOutput.includes(WRANGLER_VERSION)) {
 
 const outdir = await mkdtemp(join(tmpdir(), 'unzen-wasm-canary-'));
 try {
-  const output = runWrangler(['deploy', '--config', configPath, '--dry-run', '--outdir', outdir]);
+  const deployDryRunOutput = runWrangler(['deploy', '--config', configPath, '--dry-run', '--outdir', outdir]);
+  const deleteDryRunOutput = runWrangler(['delete', '--config', configPath, '--name', CANARY_NAME, '--dry-run']);
   const files = await walkFiles(outdir);
   const evidence = [];
   const wasmModules = [];
@@ -131,7 +132,10 @@ try {
     emittedJavaScriptModuleCount: jsModules.length,
     emittedWasmModuleCount: wasmModules.length,
     emittedFiles: evidence,
-    wranglerOutputContainsDryRun: /dry[- ]?run/i.test(output),
+    deployDryRunCommandSucceeded: true,
+    deleteDryRunCommandSucceeded: true,
+    deployOutputContainsDryRun: /dry[- ]?run/i.test(deployDryRunOutput),
+    deleteOutputContainsDryRun: /dry[- ]?run/i.test(deleteDryRunOutput),
   }, null, 2)}\n`);
 } finally {
   await rm(outdir, { recursive: true, force: true });
