@@ -10,13 +10,13 @@ export const COLD_START_PREFLIGHT_EXIT = Object.freeze({
 });
 
 function finiteTimestampOrNull(value) {
-  if (value === null || value === undefined) return null;
+  if (value === null) return null;
   if (!Number.isSafeInteger(value) || value < 0) return undefined;
   return value;
 }
 
 function normalizedRunId(value) {
-  if (value === null || value === undefined) return null;
+  if (value === null) return null;
   if (typeof value !== 'string' || value.length === 0) return undefined;
   return value;
 }
@@ -36,17 +36,18 @@ export function classifyContinuousAssuranceEngineState(state) {
     };
   }
 
+  const scope = typeof state.scope === 'string' && state.scope.length > 0 ? state.scope : undefined;
   const currentRunId = normalizedRunId(state.currentRunId);
   const snapshotUpdatedAtMs = finiteTimestampOrNull(state.snapshotUpdatedAtMs);
   const nextDueAtMs = finiteTimestampOrNull(state.nextDueAtMs);
   const normalized = {
-    scope: typeof state.scope === 'string' && state.scope.length > 0 ? state.scope : null,
+    scope: scope ?? null,
     currentRunId: currentRunId === undefined ? null : currentRunId,
     snapshotUpdatedAtMs: snapshotUpdatedAtMs === undefined ? null : snapshotUpdatedAtMs,
     nextDueAtMs: nextDueAtMs === undefined ? null : nextDueAtMs,
   };
 
-  if (currentRunId === undefined || snapshotUpdatedAtMs === undefined || nextDueAtMs === undefined) {
+  if (scope === undefined || currentRunId === undefined || snapshotUpdatedAtMs === undefined || nextDueAtMs === undefined) {
     return {
       ...base,
       status: 'invalid',
