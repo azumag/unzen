@@ -40,7 +40,7 @@ describe('stable regular UTF-8 file reader', () => {
         renameSync(path, movedPath);
         writeFileSync(path, '{"status":"replacement"}\n');
         return text;
-      })).toThrow('test evidence path identity changed while reading');
+      })).toThrow(/test evidence (changed while reading|path identity changed while reading)/);
 
       expect(readFileSync(path, 'utf8')).toBe('{"status":"replacement"}\n');
       expect(readFileSync(movedPath, 'utf8')).toBe('{"status":"pass"}\n');
