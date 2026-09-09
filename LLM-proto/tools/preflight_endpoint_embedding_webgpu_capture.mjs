@@ -90,11 +90,14 @@ export function parseChromeVersion(versionOutput) {
   if (typeof versionOutput !== 'string' || versionOutput.trim().length === 0) {
     throw new Error('Chrome version output must be a non-empty string');
   }
-  const match = versionOutput.match(/\d+\.\d+\.\d+\.\d+/);
-  if (!match) throw new Error(`Chrome version output does not contain a four-part version: ${versionOutput.trim()}`);
+  const raw = versionOutput.trim();
+  const match = raw.match(/^(?:Google Chrome(?: for Testing)?|Chromium)\s+(\d+\.\d+\.\d+\.\d+)\b/);
+  if (!match) {
+    throw new Error(`Chrome version output must identify Google Chrome/Chromium with a four-part version: ${raw}`);
+  }
   return {
-    raw: versionOutput.trim(),
-    version: match[0],
+    raw,
+    version: match[1],
   };
 }
 
