@@ -6,7 +6,7 @@ Tracking: parent #301, Step 2 #304. Step 1 evidence: #302 / PR #303.
 
 Step 1 proved the repository-pinned Miniflare/workerd path for importing a binary `.wasm` dependency as `WebAssembly.Module` and instantiating it at module scope. This step verifies the **Wrangler upload packaging shape** without deploying anything to Cloudflare.
 
-The check deliberately uses `wrangler deploy --dry-run --outdir ...`. Cloudflare documents `--dry-run --outdir` as the way to inspect exactly what Wrangler would upload, and documents `.wasm` / `.wasm?module` as non-JavaScript modules imported as `WebAssembly.Module` rather than being inlined into the JavaScript bundle.
+The check deliberately uses `wrangler deploy --dry-run --outdir ...`. Cloudflare documents `--dry-run --outdir` as the way to inspect what Wrangler would upload, and documents `.wasm` / `.wasm?module` as non-JavaScript modules imported as `WebAssembly.Module` rather than being inlined into the JavaScript bundle.
 
 References:
 
@@ -55,10 +55,25 @@ A passing probe establishes all of the following for the pinned Wrangler release
 2. Wrangler emits at least one JavaScript module and a separate Wasm module.
 3. The emitted Wasm payload preserves the 41-byte fixture identity.
 4. The generated JavaScript references a `.wasm` module and does not contain the complete fixture as a base64 inline payload.
-5. Wrangler's `Total Upload` value is parsed into byte counts for machine-readable evidence.
-6. The emitted module count, JavaScript module count, Wasm module count, per-file byte length, and SHA-256 are recorded in the JSON report.
+5. Exact per-file bytes and SHA-256 values are measured directly from the dry-run output directory.
+6. JavaScript/Wasm upload-module counts and exact module byte totals are recorded separately from auxiliary dry-run files such as source maps and README output.
+7. Wrangler's human-readable `Total Upload` / gzip values are also captured, but are explicitly labeled **approximate** because the CLI rounds the displayed KiB values.
 
 Cloudflare's documented default import contract supplies the semantic mapping `.wasm` -> `WebAssembly.Module`; the dry-run evidence verifies that this input is packaged as a distinct Wasm upload module rather than being hidden inside the JavaScript bundle.
+
+## Observed CI baseline
+
+The first green Step 2 CI run (#526) produced the following dry-run output shape with Wrangler 4.129.1:
+
+- JavaScript upload module: `wasm-esm-compat-worker.js`, exactly `943` bytes
+- Wasm upload module: hashed `add-i32.wasm`, exactly `41` bytes with the fixture SHA-256 above
+- exact JavaScript + Wasm module bytes: `984` bytes
+- upload module count: `2` (one JavaScript, one Wasm)
+- auxiliary dry-run files: `README.md` (`131` bytes) and source map (`1509` bytes)
+- generated JavaScript contained no full Wasm base64 payload and referenced the emitted Wasm module
+- full repository CI also passed: 208 Python tests and 1116 Vitest tests
+
+The auxiliary README/source-map files are part of the inspected `--outdir` evidence and must not be confused with upload modules. Likewise, Wrangler's rounded `Total Upload` display is useful as a CLI sanity signal but is not treated as an exact byte counter; exact sizes come from the emitted files themselves.
 
 ## Run locally
 
