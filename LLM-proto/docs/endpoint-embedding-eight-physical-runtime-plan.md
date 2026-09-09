@@ -42,17 +42,18 @@ The generated `manifest.json` must remain:
 - expected payload byte length and generated SHA-256
 - source byte range
 - graph file `embedding-offset-0.onnx`
+- pinned graph identity: 260 bytes / SHA-256 `70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50`
 - graph external-data name `payload-0000.bin`
 - `artifactByteOffset=0`
 
 Because each 8-physical payload is exactly one execution tile, the already-generated zero-offset embedding graph can be reused for all eight tiles. No `embedding-offset-131334144.onnx` graph is needed for this diagnostic candidate.
 
-A future browser harness should hash each loaded payload before ORT session creation, compare it with the generated manifest identity, and then supply those bytes via ORT Web `externalData` for the graph's `payload-0000.bin` initializer path.
+A future browser harness should hash both the graph and each loaded payload before ORT session creation, compare them with the runtime-plan identities, and then supply the verified payload bytes via ORT Web `externalData` for the graph's `payload-0000.bin` initializer path.
 
 ## Evidence boundary
 
 This change does **not** establish browser/WebGPU range-supply evidence by itself. It only makes the runtime routing deterministic and fail-closed before the real browser measurement.
 
-The generated manifest records payload hashes after the generator verifies the pinned full source external-data. The browser capture must still record the payload hashes it actually loaded; a CI fixture or structurally valid manifest is not a substitute for real 1B payload evidence.
+The generated manifest records payload hashes after the generator verifies the pinned full source external-data. The browser capture must still record the graph and payload hashes it actually loaded; a CI fixture or structurally valid manifest is not a substitute for real 1B payload evidence.
 
 The remaining decision evidence includes real ORT Web/WebGPU execution, host/GPU peak working set, cold/warm and first-useful-work timing, release/cancel lag, and numerical equivalence. Until those are captured, #167's permanent segment/cache/runtime policy remains unchanged.
