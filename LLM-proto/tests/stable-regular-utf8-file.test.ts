@@ -1,8 +1,18 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readStableRegularUtf8File } from '../tools/read_stable_regular_utf8_file.mjs';
+import {
+  readStableRegularUtf8File,
+  readStableRegularUtf8FileWithReader,
+} from '../tools/read_stable_regular_utf8_file.mjs';
 
 describe('stable regular UTF-8 file reader', () => {
   it('reads a stable regular file from the opened snapshot', () => {
@@ -14,6 +24,26 @@ describe('stable regular UTF-8 file reader', () => {
         resolvedPath: path,
         text: '{"status":"pass"}\n',
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when the evidence pathname is replaced during the read window', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-stable-file-test-'));
+    const path = join(dir, 'evidence.json');
+    const movedPath = join(dir, 'evidence-moved.json');
+    try {
+      writeFileSync(path, '{"status":"pass"}\n');
+      expect(() => readStableRegularUtf8FileWithReader(path, 'test evidence', (fd) => {
+        const text = readFileSync(fd, 'utf8');
+        renameSync(path, movedPath);
+        writeFileSync(path, '{"status":"replacement"}\n');
+        return text;
+      })).toThrow('test evidence path identity changed while reading');
+
+      expect(readFileSync(path, 'utf8')).toBe('{"status":"replacement"}\n');
+      expect(readFileSync(movedPath, 'utf8')).toBe('{"status":"pass"}\n');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
