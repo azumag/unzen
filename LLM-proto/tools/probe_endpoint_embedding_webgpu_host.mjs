@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Probe a Chrome host for the lightweight WebGPU capability required by endpoint embedding capture. */
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -13,6 +14,14 @@ const LIMIT_FIELDS = [
   'maxStorageBufferBindingSize',
   'maxComputeWorkgroupStorageSize',
 ];
+
+export function createEndpointEmbeddingWebGpuHostProbeChallenge() {
+  const token = randomBytes(32).toString('hex');
+  return {
+    probePath: `/probe/${token}`,
+    resultPath: `/result/${token}`,
+  };
+}
 
 function requireNonEmptyString(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -73,7 +82,8 @@ export function validateEndpointEmbeddingWebGpuHostProbeResult(result) {
   return result;
 }
 
-function probeHtml() {
+function probeHtml(resultPath) {
+  const resultPathLiteral = JSON.stringify(resultPath);
   return `<!doctype html><meta charset="utf-8"><title>Unzen WebGPU host probe</title><script>
 (async () => {
   const limits = (value) => ({
@@ -128,7 +138,7 @@ function probeHtml() {
     };
   }
   try {
-    await fetch('/result', {
+    await fetch(${resultPathLiteral}, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(result),
@@ -169,6 +179,7 @@ export async function probeEndpointEmbeddingWebGpuHost({ chromeBinary, timeoutMs
     throw new Error('WebGPU host probe timeout must be an integer in [1000, 60000]');
   }
 
+  const { probePath, resultPath } = createEndpointEmbeddingWebGpuHostProbeChallenge();
   let resolveResult;
   let rejectResult;
   let settled = false;
@@ -189,12 +200,12 @@ export async function probeEndpointEmbeddingWebGpuHost({ chromeBinary, timeoutMs
   };
 
   const server = createServer((request, response) => {
-    if (request.method === 'GET' && request.url === '/') {
+    if (request.method === 'GET' && request.url === probePath) {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      response.end(probeHtml());
+      response.end(probeHtml(resultPath));
       return;
     }
-    if (request.method === 'POST' && request.url === '/result') {
+    if (request.method === 'POST' && request.url === resultPath) {
       const chunks = [];
       request.on('data', (chunk) => {
         bodyBytes += chunk.length;
@@ -227,7 +238,7 @@ export async function probeEndpointEmbeddingWebGpuHost({ chromeBinary, timeoutMs
   try {
     const port = await listen(server);
     profileDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-host-probe-'));
-    const url = `http://127.0.0.1:${port}/`;
+    const url = `http://127.0.0.1:${port}${probePath}`;
     chrome = spawn(chromeBinary, [
       '--headless=new',
       `--user-data-dir=${profileDir}`,
@@ -266,7 +277,7 @@ export async function probeEndpointEmbeddingWebGpuHost({ chromeBinary, timeoutMs
       deviceLimits: result.deviceLimits,
       deviceCreated: result.deviceCreated,
       deviceDestroyed: result.deviceDestroyed,
-      conclusion: 'Chrome created and destroyed a WebGPU device on a loopback secure context with the same headless/WebGPU flags used by the diagnostic capture. This is host-capability readiness evidence only, not ORT WebGPU inference evidence.',
+      conclusion: 'Chrome created and destroyed a WebGPU device on a loopback secure context with the same headless/WebGPU flags used by the diagnostic capture. The probe page/result routes are bound to one random per-run challenge to avoid cross-run or unrelated loopback submissions. This is host-capability readiness evidence only, not ORT WebGPU inference evidence.',
     };
   } finally {
     if (timeout) clearTimeout(timeout);
