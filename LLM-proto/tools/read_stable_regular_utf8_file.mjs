@@ -6,9 +6,12 @@ import {
   fstatSync,
   lstatSync,
   openSync,
-  readFileSync,
+  readSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
+
+export const DEFAULT_MAX_STABLE_UTF8_BYTES = 16 * 1024 * 1024;
+const READ_CHUNK_BYTES = 64 * 1024;
 
 function snapshotIdentity(stat) {
   return {
@@ -36,6 +39,45 @@ function requireRegularPathSnapshot(path, label) {
   if (stat.isSymbolicLink()) throw new Error(`${label} must not be a symlink`);
   if (!stat.isFile()) throw new Error(`${label} must be a regular file`);
   return snapshotIdentity(stat);
+}
+
+function requireMaximumBytes(value) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('stable UTF-8 file maximumBytes must be a positive safe integer');
+  }
+  return value;
+}
+
+function readBoundedUtf8FromFd(fd, label, maximumBytes) {
+  const initialSize = fstatSync(fd, { bigint: true }).size;
+  if (initialSize > BigInt(maximumBytes)) {
+    throw new Error(`${label} exceeds ${maximumBytes} byte limit`);
+  }
+
+  const chunks = [];
+  let totalBytes = 0;
+  const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, maximumBytes));
+  while (totalBytes < maximumBytes) {
+    const bytesRead = readSync(
+      fd,
+      buffer,
+      0,
+      Math.min(buffer.length, maximumBytes - totalBytes),
+      null,
+    );
+    if (bytesRead === 0) break;
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    totalBytes += bytesRead;
+  }
+
+  if (totalBytes === maximumBytes) {
+    const probe = Buffer.allocUnsafe(1);
+    if (readSync(fd, probe, 0, 1, null) !== 0) {
+      throw new Error(`${label} exceeds ${maximumBytes} byte limit`);
+    }
+  }
+
+  return Buffer.concat(chunks, totalBytes).toString('utf8');
 }
 
 export function readStableRegularUtf8FileWithReader(filePath, label, readFromFd) {
@@ -70,6 +112,15 @@ export function readStableRegularUtf8FileWithReader(filePath, label, readFromFd)
   }
 }
 
-export function readStableRegularUtf8File(filePath, label = 'evidence file') {
-  return readStableRegularUtf8FileWithReader(filePath, label, (fd) => readFileSync(fd, 'utf8'));
+export function readStableRegularUtf8File(
+  filePath,
+  label = 'evidence file',
+  maximumBytes = DEFAULT_MAX_STABLE_UTF8_BYTES,
+) {
+  const boundedMaximumBytes = requireMaximumBytes(maximumBytes);
+  return readStableRegularUtf8FileWithReader(
+    filePath,
+    label,
+    (fd) => readBoundedUtf8FromFd(fd, label, boundedMaximumBytes),
+  );
 }
