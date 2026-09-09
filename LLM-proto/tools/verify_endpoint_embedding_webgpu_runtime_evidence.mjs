@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /** Revalidate a captured endpoint embedding ORT Web/WebGPU evidence JSON file. */
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCapturedEndpointEmbeddingRuntimeEvidence } from './capture_endpoint_embedding_webgpu_runtime.mjs';
+import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 export function verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath) {
-  const resolvedPath = resolve(evidencePath);
-  const evidence = JSON.parse(readFileSync(resolvedPath, 'utf8'));
+  const { text } = readStableRegularUtf8File(evidencePath, 'captured endpoint embedding evidence');
+  const evidence = JSON.parse(text);
   validateCapturedEndpointEmbeddingRuntimeEvidence(evidence);
   return {
     status: 'pass',
