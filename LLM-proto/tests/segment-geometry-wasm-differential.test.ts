@@ -12,6 +12,12 @@ interface GeometrySegment {
   readonly layerEnd: number;
 }
 
+interface ManifestGeometrySegment {
+  readonly index: unknown;
+  readonly layerStart: unknown;
+  readonly layerEnd: unknown;
+}
+
 interface WasmGeometryResult {
   readonly status: 'valid' | 'invalid';
   readonly reason?: string | null;
@@ -38,7 +44,10 @@ function createRuntime(): Miniflare {
   });
 }
 
-function manifestFor(totalLayers: unknown, segments: readonly Record<string, unknown>[]): Record<string, unknown> {
+function manifestFor(
+  totalLayers: unknown,
+  segments: readonly ManifestGeometrySegment[],
+): Record<string, unknown> {
   return {
     schemaVersion: '1.0.0',
     modelId: 'segment-geometry-differential-fixture',
@@ -58,7 +67,9 @@ function manifestFor(totalLayers: unknown, segments: readonly Record<string, unk
     manifestDigest: 'b'.repeat(64),
     source: 'fixture',
     segments: segments.map((segment, arrayIndex) => ({
-      ...segment,
+      index: segment.index,
+      layerStart: segment.layerStart,
+      layerEnd: segment.layerEnd,
       byteSize: 1,
       sha256: String.fromCharCode(97 + (arrayIndex % 6)).repeat(64),
       contentType: 'application/octet-stream',
@@ -86,7 +97,7 @@ async function wasmResult(
     body: JSON.stringify({ totalLayers, segments }),
   });
   expect(response.status).toBe(200);
-  return await response.json<WasmGeometryResult>();
+  return (await response.json()) as WasmGeometryResult;
 }
 
 const curatedCases: ReadonlyArray<{
@@ -160,9 +171,12 @@ const curatedCases: ReadonlyArray<{
     segments: [{ index: 0, layerStart: 0, layerEnd: 2 }],
   },
   {
-    name: 'reversed range',
+    name: 'reversed range inside the numeric domain',
     totalLayers: 4,
-    segments: [{ index: 0, layerStart: 0, layerEnd: -1 }],
+    segments: [
+      { index: 0, layerStart: 0, layerEnd: 1 },
+      { index: 1, layerStart: 2, layerEnd: 1 },
+    ],
   },
   {
     name: 'inclusive one-layer range is valid under current semantics',
@@ -197,6 +211,59 @@ describe('segment geometry JS/Wasm differential spike', () => {
         const actual = await wasmResult(mf, vector.totalLayers, vector.segments);
         expect(actual.moduleType, vector.name).toBe('WebAssembly.Module');
         expect(actual.status === 'valid', vector.name).toBe(expected);
+      }
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('returns deterministic compact reason codes for each Wasm geometry branch', async () => {
+    const mf = createRuntime();
+    try {
+      await mf.ready;
+      const cases: ReadonlyArray<{
+        readonly reasonCode: number;
+        readonly totalLayers: number;
+        readonly segments: readonly GeometrySegment[];
+      }> = [
+        {
+          reasonCode: 1,
+          totalLayers: 4,
+          segments: [{ index: 1, layerStart: 0, layerEnd: 3 }],
+        },
+        {
+          reasonCode: 2,
+          totalLayers: 4,
+          segments: [
+            { index: 0, layerStart: 0, layerEnd: 1 },
+            { index: 1, layerStart: 3, layerEnd: 3 },
+          ],
+        },
+        {
+          reasonCode: 3,
+          totalLayers: 4,
+          segments: [
+            { index: 0, layerStart: 0, layerEnd: 1 },
+            { index: 1, layerStart: 2, layerEnd: 1 },
+          ],
+        },
+        {
+          reasonCode: 4,
+          totalLayers: 4,
+          segments: [{ index: 0, layerStart: 0, layerEnd: 4 }],
+        },
+        {
+          reasonCode: 5,
+          totalLayers: 4,
+          segments: [{ index: 0, layerStart: 0, layerEnd: 2 }],
+        },
+      ];
+
+      for (const vector of cases) {
+        const actual = await wasmResult(mf, vector.totalLayers, vector.segments);
+        expect(actual.status).toBe('invalid');
+        expect(actual.reasonCode).toBe(vector.reasonCode);
+        expect(actual.wasmCalled).toBe(true);
       }
     } finally {
       await mf.dispose();
