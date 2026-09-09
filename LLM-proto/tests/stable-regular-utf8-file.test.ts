@@ -29,6 +29,39 @@ describe('stable regular UTF-8 file reader', () => {
     }
   });
 
+  it('accepts a file exactly at the configured byte limit', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-stable-file-test-'));
+    const path = join(dir, 'evidence.json');
+    try {
+      writeFileSync(path, '12345678');
+      expect(readStableRegularUtf8File(path, 'test evidence', 8)).toEqual({
+        resolvedPath: path,
+        text: '12345678',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed before returning an oversized evidence file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-stable-file-test-'));
+    const path = join(dir, 'evidence.json');
+    try {
+      writeFileSync(path, '123456789');
+      expect(() => readStableRegularUtf8File(path, 'test evidence', 8)).toThrow(
+        'test evidence exceeds 8 byte limit',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid byte limits', () => {
+    expect(() => readStableRegularUtf8File('/unused', 'test evidence', 0)).toThrow(
+      'stable UTF-8 file maximumBytes must be a positive safe integer',
+    );
+  });
+
   it('fails closed when the evidence pathname is replaced during the read window', () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-stable-file-test-'));
     const path = join(dir, 'evidence.json');
