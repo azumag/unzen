@@ -67,10 +67,18 @@ describe('Cloudflare Wasm ESM module compatibility spike', () => {
       compatibilityDate: COMPATIBILITY_DATE,
     });
 
+    let startupError: unknown;
     try {
-      await expect(mf.ready).rejects.toThrow(/wasm-esm-compat: imported \.wasm is not a WebAssembly\.Module/);
+      await mf.ready;
+    } catch (error) {
+      startupError = error;
     } finally {
       await mf.dispose();
     }
+
+    expect(startupError).toBeInstanceOf(Error);
+    expect(String(startupError)).toContain(
+      'wasm-esm-compat: imported .wasm is not a WebAssembly.Module',
+    );
   });
 });
