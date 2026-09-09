@@ -53,19 +53,19 @@ describe('Cloudflare Workers Wasm adoption policy', () => {
       'pinned-wasm-identity',
       'pinned-toolchain',
     ]));
-    expect(policy.allowedScopes).toEqual(expect.arrayContaining([
+    expect(policy.allowedScopes).toEqual([
       'small-integer-verification-kernel',
-      'small-binary-format-verification-kernel',
       'isolated-worker-canary',
-    ]));
+    ]);
   });
 
-  it('keeps production orchestration and performance-only migration blocked', async () => {
+  it('keeps unproven expansion, production orchestration, and performance-only migration blocked', async () => {
     const policy = await readPolicy();
     expect(policy.blockedScopes).toEqual(expect.arrayContaining([
       'production-validator-replacement',
       'coordinator-stateful-orchestration',
       'network-or-storage-orchestration',
+      'binary-format-verification-without-candidate-specific-differential-evidence',
       'performance-only-adoption-without-production-evidence',
       'rust-c-toolchain-wide-migration',
       'browser-webgpu-architecture-substitute',
@@ -116,6 +116,7 @@ describe('Cloudflare Workers Wasm adoption policy', () => {
       'JavaScript reference',
       'differential test',
       'fail-close',
+      'candidate-specific differential evidence',
       'Phase B',
       '未確認',
       'policy/cloudflare-wasm-adoption.json',
