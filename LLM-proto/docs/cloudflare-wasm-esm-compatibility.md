@@ -18,11 +18,13 @@ It does **not** select Wasm for the unzen production architecture and does not c
 
 The current lockfile resolves Miniflare `4.20260730.0`.
 
-The compatibility spike uses `compatibilityDate: 2026-09-09` and Miniflare module mode with this explicit rule:
+The compatibility spike uses `compatibilityDate: 2026-08-06` and Miniflare module mode with this explicit rule:
 
 ```ts
 { type: 'CompiledWasm', include: ['**/*.wasm'] }
 ```
+
+`2026-08-06` is pinned intentionally: the repository-pinned workerd binary used by Miniflare reported this as its newest supported compatibility date in CI. The first spike attempt used `2026-09-09` and failed before module loading with that exact runtime ceiling, so this test records the runtime/toolchain actually present rather than assuming the wall-clock date is supported.
 
 The Worker uses the Cloudflare-documented module form:
 
