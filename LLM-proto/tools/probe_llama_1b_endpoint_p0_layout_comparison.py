@@ -55,6 +55,60 @@ def _bool(value: object, *, field: str) -> bool:
     return value
 
 
+def _sha256(value: object, *, field: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise RuntimeError(f"{field} must be a lowercase SHA-256 hex digest")
+    return value
+
+
+def _external_identity(value: object, *, field: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{field} must be an object")
+    location = value.get("location")
+    if not isinstance(location, str) or not location:
+        raise RuntimeError(f"{field}.location must be a non-empty string")
+    byte_length = _positive_int(value.get("bytes"), field=f"{field}.bytes")
+    sha256 = _sha256(value.get("sha256"), field=f"{field}.sha256")
+    return {"location": location, "bytes": byte_length, "sha256": sha256}
+
+
+def _candidate_policy(value: object, *, field: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{field} must be an object")
+    counts = value.get("physicalArtifactCounts")
+    if not isinstance(counts, list) or not counts:
+        raise RuntimeError(f"{field}.physicalArtifactCounts must be a non-empty array")
+    parsed_counts = [
+        _positive_int(count, field=f"{field}.physicalArtifactCounts") for count in counts
+    ]
+    if len(set(parsed_counts)) != len(parsed_counts):
+        raise RuntimeError(f"{field}.physicalArtifactCounts must be unique")
+    if any(count not in parsed_counts for count in CANDIDATE_COUNTS):
+        raise RuntimeError(f"{field} must include the 4 and 8 physical candidates")
+
+    execution_tile_count = _positive_int(
+        value.get("executionTileCount"), field=f"{field}.executionTileCount"
+    )
+    if execution_tile_count != EXPECTED_EXECUTION_TILE_COUNT:
+        raise RuntimeError(f"{field}.executionTileCount drifted")
+
+    preferred_limit = _positive_int(
+        value.get("preferredPhysicalArtifactLimitBytes"),
+        field=f"{field}.preferredPhysicalArtifactLimitBytes",
+    )
+    target_bytes = _positive_int(value.get("targetBytes"), field=f"{field}.targetBytes")
+    return {
+        "physicalArtifactCounts": parsed_counts,
+        "executionTileCount": execution_tile_count,
+        "preferredPhysicalArtifactLimitBytes": preferred_limit,
+        "targetBytes": target_bytes,
+    }
+
+
 def _candidate_map(items: object, *, field: str) -> dict[int, dict[str, object]]:
     if not isinstance(items, list) or not items:
         raise RuntimeError(f"{field} must be a non-empty array")
@@ -212,18 +266,42 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         raise RuntimeError("unexpected endpoint dependency report kind")
     if closure.get("schemaVersion") != closure_probe.REPORT_SCHEMA_VERSION:
         raise RuntimeError("unexpected endpoint dependency report schema version")
+    if layout.get("status") != "pass":
+        raise RuntimeError("endpoint layout report must have status=pass")
+    if closure.get("status") != "pass":
+        raise RuntimeError("endpoint dependency report must have status=pass")
     if layout.get("decisionStatus") != "diagnostic-only":
         raise RuntimeError("endpoint layout report must remain diagnostic-only")
     if closure.get("decisionStatus") != "diagnostic-only":
         raise RuntimeError("endpoint dependency report must remain diagnostic-only")
 
-    if layout.get("sourceGraphSha256") != closure.get("sourceGraphSha256"):
+    layout_source_sha = _sha256(
+        layout.get("sourceGraphSha256"), field="layout.sourceGraphSha256"
+    )
+    closure_source_sha = _sha256(
+        closure.get("sourceGraphSha256"), field="dependency.sourceGraphSha256"
+    )
+    if layout_source_sha != closure_source_sha:
         raise RuntimeError("layout/dependency source graph identity mismatch")
-    if layout.get("pinnedSourceExternalDataIdentity") != closure.get(
-        "pinnedSourceExternalDataIdentity"
-    ):
+
+    layout_external_identity = _external_identity(
+        layout.get("pinnedSourceExternalDataIdentity"),
+        field="layout.pinnedSourceExternalDataIdentity",
+    )
+    closure_external_identity = _external_identity(
+        closure.get("pinnedSourceExternalDataIdentity"),
+        field="dependency.pinnedSourceExternalDataIdentity",
+    )
+    if layout_external_identity != closure_external_identity:
         raise RuntimeError("layout/dependency external-data identity mismatch")
-    if layout.get("candidatePolicy") != closure.get("candidatePolicy"):
+
+    layout_policy = _candidate_policy(
+        layout.get("candidatePolicy"), field="layout.candidatePolicy"
+    )
+    closure_policy = _candidate_policy(
+        closure.get("candidatePolicy"), field="dependency.candidatePolicy"
+    )
+    if layout_policy != closure_policy:
         raise RuntimeError("layout/dependency candidate policy mismatch")
 
     layout_candidates = _candidate_map(layout.get("candidates"), field="layout.candidates")
@@ -272,10 +350,8 @@ def build_report(source_model_path: Path) -> dict[str, object]:
         "status": "pass",
         "decisionStatus": "diagnostic-only",
         "selectedPhysicalArtifactCount": None,
-        "sourceGraphSha256": layout.get("sourceGraphSha256"),
-        "pinnedSourceExternalDataIdentity": layout.get(
-            "pinnedSourceExternalDataIdentity"
-        ),
+        "sourceGraphSha256": layout_source_sha,
+        "pinnedSourceExternalDataIdentity": layout_external_identity,
         "upstream": {
             "layout": {
                 "kind": layout.get("kind"),
