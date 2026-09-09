@@ -100,16 +100,21 @@ export function validateCaptureChromeCdpIdentity(preflight, cdpVersion) {
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(preflightVersion)) {
     throw new Error('capture preflight Chrome version must be four-part');
   }
+  const preflightRaw = requireNonEmptyString(preflight.chrome?.raw, 'capture preflight Chrome raw identity');
+  const preflightRawVersionMatch = preflightRaw.match(/\d+\.\d+\.\d+\.\d+/);
+  if (!preflightRawVersionMatch || preflightRawVersionMatch[0] !== preflightVersion) {
+    throw new Error('capture preflight Chrome raw/version identity mismatch');
+  }
   if (!cdpVersion || typeof cdpVersion !== 'object' || Array.isArray(cdpVersion)) {
     throw new Error('Chrome DevTools version response must be an object');
   }
   const cdpBrowser = requireNonEmptyString(cdpVersion.Browser, 'Chrome DevTools Browser identity');
-  const cdpVersionMatch = cdpBrowser.match(/\d+\.\d+\.\d+\.\d+/);
+  const cdpVersionMatch = cdpBrowser.match(/(?:HeadlessChrome|Chrome)\/(\d+\.\d+\.\d+\.\d+)\b/);
   if (!cdpVersionMatch) {
-    throw new Error('Chrome DevTools Browser identity must contain a four-part version');
+    throw new Error('Chrome DevTools Browser identity must identify Chrome/HeadlessChrome with a four-part version');
   }
-  if (cdpVersionMatch[0] !== preflightVersion) {
-    throw new Error(`capture preflight/CDP Chrome version mismatch: ${preflightVersion} != ${cdpVersionMatch[0]}`);
+  if (cdpVersionMatch[1] !== preflightVersion) {
+    throw new Error(`capture preflight/CDP Chrome version mismatch: ${preflightVersion} != ${cdpVersionMatch[1]}`);
   }
   return cdpBrowser;
 }
