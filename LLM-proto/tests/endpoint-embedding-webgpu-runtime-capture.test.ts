@@ -112,6 +112,8 @@ describe('captured endpoint embedding WebGPU evidence validator', () => {
     ['non-canonical timestamp', (evidence: any) => { evidence.capturedAtUtc = '2026-09-09T00:00:00Z'; }],
     ['missing capture environment', (evidence: any) => { delete evidence.captureEnvironment; }],
     ['Chrome/CDP version mismatch', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Chrome/151.0.0.0'; }],
+    ['non-Chrome executable identity', (evidence: any) => { evidence.captureEnvironment.chromeVersion = 'Mozilla Firefox 152.0.7977.83'; }],
+    ['non-Chrome CDP identity', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Firefox/152.0.7977.83'; }],
     ['malformed Node version', (evidence: any) => { evidence.captureEnvironment.nodeVersion = 'node-current'; }],
     ['missing user agent', (evidence: any) => { delete evidence.userAgent; }],
     ['user-agent/CDP major mismatch', (evidence: any) => { evidence.userAgent = 'Mozilla/5.0 Chrome/151.0.0.0 Safari/537.36'; }],
