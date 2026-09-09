@@ -44,13 +44,13 @@ function runWrangler(args) {
   return `${result.stdout ?? ''}${result.stderr ?? ''}`;
 }
 
-async function walkFiles(root, current = root) {
+async function walkFiles(current) {
   const entries = await readdir(current, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     const path = join(current, entry.name);
     if (entry.isDirectory()) {
-      files.push(...await walkFiles(root, path));
+      files.push(...await walkFiles(path));
     } else if (entry.isFile()) {
       files.push(path);
     }
@@ -58,19 +58,21 @@ async function walkFiles(root, current = root) {
   return files;
 }
 
-function parseByteValue(value, unit) {
+function parseApproxByteValue(value, unit) {
   const scale = unit === 'MiB' ? 1024 * 1024 : unit === 'KiB' ? 1024 : 1;
   return Math.round(Number(value) * scale);
 }
 
-function parseUploadBytes(output) {
+function parseReportedUploadApproxBytes(output) {
   const match = output.match(/Total Upload:\s*([0-9.]+)\s*(B|KiB|MiB)(?:\s*\/\s*gzip:\s*([0-9.]+)\s*(B|KiB|MiB))?/i);
   if (!match) {
     throw new Error(`Could not parse Wrangler Total Upload output:\n${output}`);
   }
   return {
-    totalUploadBytes: parseByteValue(match[1], match[2]),
-    gzipBytes: match[3] ? parseByteValue(match[3], match[4]) : null,
+    reportedTotalUploadApproxBytes: parseApproxByteValue(match[1], match[2]),
+    reportedGzipApproxBytes: match[3] ? parseApproxByteValue(match[3], match[4]) : null,
+    reportedTotalUploadDisplay: `${match[1]} ${match[2]}`,
+    reportedGzipDisplay: match[3] ? `${match[3]} ${match[4]}` : null,
   };
 }
 
@@ -89,7 +91,7 @@ try {
     '--outdir',
     outdir,
   ]);
-  const upload = parseUploadBytes(deployOutput);
+  const reportedUpload = parseReportedUploadApproxBytes(deployOutput);
   const files = await walkFiles(outdir);
 
   const evidence = [];
@@ -140,6 +142,9 @@ try {
     );
   }
 
+  const exactJavaScriptModuleBytes = jsModules.reduce((sum, module) => sum + module.bytes, 0);
+  const exactWasmModuleBytes = wasmModules.reduce((sum, module) => sum + module.bytes, 0);
+
   const report = {
     status: 'pass',
     wranglerVersion: WRANGLER_VERSION,
@@ -157,11 +162,15 @@ try {
       wasmIdentityPreserved: true,
       generatedJsContainsFullWasmBase64: false,
       generatedJsReferencesWasmModule: true,
-      emittedModuleCount: evidence.length,
+      emittedFileCount: evidence.length,
+      uploadModuleCount: jsModules.length + wasmModules.length,
       emittedJavaScriptModuleCount: jsModules.length,
       emittedWasmModuleCount: wasmModules.length,
-      totalUploadBytes: upload.totalUploadBytes,
-      gzipBytes: upload.gzipBytes,
+      exactJavaScriptModuleBytes,
+      exactWasmModuleBytes,
+      exactJavaScriptPlusWasmModuleBytes: exactJavaScriptModuleBytes + exactWasmModuleBytes,
+      ...reportedUpload,
+      reportedUploadByteValuesAreApproximate: true,
       modules: evidence,
     },
   };
