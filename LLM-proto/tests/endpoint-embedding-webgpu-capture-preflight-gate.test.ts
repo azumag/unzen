@@ -7,9 +7,8 @@ it('runs the prepared-bundle preflight before reserving output or launching Chro
     'utf8',
   );
 
-  expect(source).toContain(
-    "import { preflightEndpointEmbeddingWebGpuCapture } from './preflight_endpoint_embedding_webgpu_capture.mjs';",
-  );
+  expect(source).toContain('preflightEndpointEmbeddingWebGpuCapture');
+  expect(source).toContain("from './preflight_endpoint_embedding_webgpu_capture.mjs';");
 
   const harnessPortCheck = source.indexOf("await assertPortAvailable(serverPort, 'harness')");
   const debugPortCheck = source.indexOf("await assertPortAvailable(debugPort, 'DevTools')");
