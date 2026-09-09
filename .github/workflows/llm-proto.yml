@@ -69,6 +69,10 @@ jobs:
           node --check browser-harness/endpoint-embedding-tiled-webgpu/contract.js
           node --check browser-harness/endpoint-embedding-tiled-webgpu/runner.js
           node --check tools/capture_endpoint_poststage_webgpu_process_rss.mjs
+          node --check tools/check_wrangler_wasm_packaging.mjs
+
+      - name: Verify Wrangler Wasm dry-run packaging
+        run: npm run verify:wrangler-wasm-packaging
 
       - name: Probe pinned SmolLM2 P0 graph contract
         run: |

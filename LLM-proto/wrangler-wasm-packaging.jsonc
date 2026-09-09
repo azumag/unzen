@@ -1,0 +1,5 @@
+{
+  "name": "unzen-wasm-esm-packaging-spike",
+  "main": "worker-runtime/wasm-esm-compat-worker.mjs",
+  "compatibility_date": "2026-08-06"
+}
