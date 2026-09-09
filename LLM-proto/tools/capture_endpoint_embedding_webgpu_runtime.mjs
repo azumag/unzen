@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Capture the diagnostic-only endpoint embedding ORT Web/WebGPU runtime report. */
 import { spawn } from 'node:child_process';
-import { closeSync, fsyncSync, mkdirSync, mkdtempSync, openSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
@@ -208,6 +208,33 @@ export function reserveEvidenceOutput(outputPath) {
   return openSync(outputPath, 'wx', 0o600);
 }
 
+function evidenceOutputPathMatchesFd(outputFd, outputPath) {
+  let fdStat;
+  let pathStat;
+  try {
+    fdStat = fstatSync(outputFd, { bigint: true });
+    pathStat = lstatSync(outputPath, { bigint: true });
+  } catch {
+    return false;
+  }
+  return fdStat.isFile()
+    && pathStat.isFile()
+    && fdStat.dev === pathStat.dev
+    && fdStat.ino === pathStat.ino;
+}
+
+export function assertEvidenceOutputPathIdentity(outputFd, outputPath) {
+  if (!evidenceOutputPathMatchesFd(outputFd, outputPath)) {
+    throw new Error('evidence output path identity changed after reservation');
+  }
+}
+
+export function cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted) {
+  if (outputCommitted || !evidenceOutputPathMatchesFd(outputFd, outputPath)) return false;
+  if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }
+  return true;
+}
+
 class CdpClient {
   constructor(url) { this.url = url; this.socket = null; this.nextId = 1; this.pending = new Map(); }
   async connect() {
@@ -332,6 +359,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
     validateCapturedEndpointEmbeddingRuntimeEvidence(evidence);
     writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\n`);
     fsyncSync(outputFd);
+    assertEvidenceOutputPathIdentity(outputFd, outputPath);
     outputCommitted = true;
     return evidence;
   } finally {
@@ -340,8 +368,8 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
     if (server?.pid) { try { process.kill(server.pid, 'SIGTERM'); } catch {} }
     if (profileDir) rmSync(profileDir, { recursive: true, force: true });
     if (outputFd !== undefined) {
+      cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted);
       try { closeSync(outputFd); } catch {}
-      if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }
     }
   }
 }
