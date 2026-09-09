@@ -7,6 +7,7 @@ import {
   buildEndpointEmbeddingEightPhysicalRuntimePlan,
   validateEndpointEmbeddingEightPhysicalPreflightReport,
 } from '../browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js';
+import { compareFloat32Bytes } from '../browser-harness/endpoint-embedding-eight-physical-webgpu/comparison.js';
 
 function validManifest() {
   const expected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED;
@@ -131,6 +132,33 @@ describe('8-physical endpoint embedding ORT WebGPU browser contract', () => {
   });
 });
 
+describe('8-physical endpoint byte-exact comparison', () => {
+  it('accepts byte-identical Float32 output', () => {
+    const actual = new Float32Array([1.25, -3.5, 0]);
+    const expected = new Float32Array(actual);
+    expect(compareFloat32Bytes(actual, expected)).toEqual({
+      exactEqual: true,
+      firstByteMismatch: -1,
+      maxAbsDiff: 0,
+      worstIndex: -1,
+    });
+  });
+
+  it('rejects +0 versus -0 even though numeric equality would accept them', () => {
+    const comparison = compareFloat32Bytes(new Float32Array([0]), new Float32Array([-0]));
+    expect(comparison.exactEqual).toBe(false);
+    expect(comparison.firstByteMismatch).toBeGreaterThanOrEqual(0);
+    expect(comparison.maxAbsDiff).toBe(0);
+  });
+
+  it('fails closed on comparison geometry or type drift', () => {
+    expect(() => compareFloat32Bytes(new Float32Array([1]), new Float32Array([1, 2])))
+      .toThrow(/length mismatch/);
+    expect(() => compareFloat32Bytes(new Float32Array([1]), [1] as any))
+      .toThrow(/Float32Array inputs/);
+  });
+});
+
 it('keeps the 8-physical browser runner WebGPU-only, re-verifying bytes, exact, and release-aware', () => {
   const runner = readFileSync(
     new URL('../browser-harness/endpoint-embedding-eight-physical-webgpu/runner.js', import.meta.url),
@@ -141,20 +169,24 @@ it('keeps the 8-physical browser runner WebGPU-only, re-verifying bytes, exact, 
   expect(runner).toContain('buildEndpointEmbeddingEightPhysicalBrowserPlan(preflight)');
   expect(runner).toContain('loadVerified(');
   expect(runner).toContain('referenceEmbedding(');
+  expect(runner).toContain('compareFloat32Bytes(');
   expect(runner).toContain('await session.release();');
   expect(runner).toContain('completeEmbeddingComparison');
   expect(runner).toContain('window.__unzenEndpointEmbeddingEightPhysicalWebGpuReport = report;');
   expect(runner).not.toContain('offsetHalf');
 });
 
-it('refuses to start the diagnostic server without a validated preflight report', () => {
+it('refuses to start the diagnostic server before validating the preflight report', () => {
   const server = readFileSync(
     new URL('../browser-harness/endpoint-embedding-eight-physical-webgpu/serve.mjs', import.meta.url),
     'utf8',
   );
   expect(server).toContain("if (!PREFLIGHT_REPORT) throw new Error('PREFLIGHT_REPORT is required')");
   expect(server).toContain("if (!GRAPH_PATH) throw new Error('GRAPH_PATH is required')");
-  expect(server).toContain('validateEndpointEmbeddingEightPhysicalPreflightReport(');
-  expect(server.indexOf('validateEndpointEmbeddingEightPhysicalPreflightReport('))
-    .toBeLessThan(server.indexOf('createServer('));
+  const validation = server.indexOf(
+    'const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(',
+  );
+  const listenableServer = server.indexOf('const server = createServer(');
+  expect(validation).toBeGreaterThanOrEqual(0);
+  expect(listenableServer).toBeGreaterThan(validation);
 });
