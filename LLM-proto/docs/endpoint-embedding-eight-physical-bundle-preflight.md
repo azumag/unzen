@@ -23,6 +23,7 @@ npm run ops:preflight-endpoint-embedding-eight-physical -- \
 The command fails before any browser work when:
 
 - the generated manifest drifts from the diagnostic #323 contract, is not a regular file, or is a symlink
+- the manifest's `payloadSetSha256` no longer matches the Python generator's canonical serialization of its eight `physicalArtifacts`
 - the reused graph is not exactly 260 bytes with SHA-256 `70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50`
 - the payload directory itself is missing, not a directory, or a symlink
 - any of the eight payload files is missing, a symlink, not a regular file, has the wrong byte count, or hashes differently from the generated manifest
@@ -38,6 +39,7 @@ On success the command prints a machine-readable JSON report containing:
 - `decisionStatus=diagnostic-only`
 - `selectedPhysicalArtifactCount=null`
 - pinned source graph / full external-data identity
+- verified manifest payload-set digest
 - actual graph file bytes / SHA-256
 - actual bytes / SHA-256 for all eight payload files
 - the eight-entry runtime plan from #323
