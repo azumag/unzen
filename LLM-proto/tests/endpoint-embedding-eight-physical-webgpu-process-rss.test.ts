@@ -9,13 +9,15 @@ function makeRuntimeReport() {
     index,
     file: `payload-${String(index).padStart(4, '0')}.bin`,
     bytes: 131_334_144,
-    sha256: String(index).repeat(64).slice(0, 64),
+    sha256: index.toString(16).repeat(64).slice(0, 64),
   }));
   const executedTiles = verifiedPhysicalArtifacts.map((artifact, index) => ({
     tileIndex: index,
     physicalArtifactIndex: index,
     payloadFile: artifact.file,
     payloadSha256: artifact.sha256,
+    artifactByteOffset: 0,
+    byteLength: 131_334_144,
     comparison: {
       exactEqual: true,
       firstByteMismatch: -1,
@@ -33,6 +35,13 @@ function makeRuntimeReport() {
     decisionStatus: 'diagnostic-only',
     selectedPhysicalArtifactCount: null,
     evidenceLevel: 'self-reported-runtime',
+    onnxruntimeWebVersion: '1.22.0',
+    manifestPayloadSetSha256: 'a'.repeat(64),
+    verifiedGraph: {
+      file: 'embedding-offset-0.onnx',
+      bytes: 260,
+      sha256: 'b'.repeat(64),
+    },
     verifiedPhysicalArtifacts,
     executedTiles,
     completeEmbeddingComparison: {
@@ -56,15 +65,27 @@ describe('8-physical WebGPU RSS runtime evidence validation', () => {
   });
 
   it.each([
+    ['schemaVersion', '2.0.0'],
     ['status', 'fail'],
     ['decisionStatus', 'selected'],
     ['selectedPhysicalArtifactCount', 8],
     ['evidenceLevel', 'captured-os-process-rss'],
+    ['onnxruntimeWebVersion', '1.23.0'],
     ['sessionReleaseApiCompleted', false],
   ])('rejects invalid top-level %s', (field, value) => {
     const report = makeRuntimeReport() as Record<string, unknown>;
     report[field] = value;
     expect(() => validateEightPhysicalRuntimeReport(report)).toThrow();
+  });
+
+  it('rejects non-canonical payload-set and graph hashes', () => {
+    const badPayloadSet = makeRuntimeReport();
+    badPayloadSet.manifestPayloadSetSha256 = 'ABC';
+    expect(() => validateEightPhysicalRuntimeReport(badPayloadSet)).toThrow(/canonical lowercase SHA-256/);
+
+    const badGraph = makeRuntimeReport();
+    badGraph.verifiedGraph.sha256 = 'g'.repeat(64);
+    expect(() => validateEightPhysicalRuntimeReport(badGraph)).toThrow(/canonical lowercase SHA-256/);
   });
 
   it('rejects missing or extra physical artifacts and tiles', () => {
@@ -77,7 +98,7 @@ describe('8-physical WebGPU RSS runtime evidence validation', () => {
     expect(() => validateEightPhysicalRuntimeReport(extraTile)).toThrow(/exactly 8/);
   });
 
-  it('rejects reordered or cross-routed payload evidence', () => {
+  it('rejects reordered, malformed, or cross-routed payload evidence', () => {
     const reordered = makeRuntimeReport();
     [reordered.verifiedPhysicalArtifacts[0], reordered.verifiedPhysicalArtifacts[1]] = [
       reordered.verifiedPhysicalArtifacts[1],
@@ -85,9 +106,27 @@ describe('8-physical WebGPU RSS runtime evidence validation', () => {
     ];
     expect(() => validateEightPhysicalRuntimeReport(reordered)).toThrow(/identity mismatch/);
 
+    const wrongGeometry = makeRuntimeReport();
+    wrongGeometry.verifiedPhysicalArtifacts[2].bytes -= 4;
+    expect(() => validateEightPhysicalRuntimeReport(wrongGeometry)).toThrow(/geometry mismatch/);
+
+    const wrongHash = makeRuntimeReport();
+    wrongHash.verifiedPhysicalArtifacts[2].sha256 = 'not-a-hash';
+    expect(() => validateEightPhysicalRuntimeReport(wrongHash)).toThrow(/canonical lowercase SHA-256/);
+
     const crossRouted = makeRuntimeReport();
     crossRouted.executedTiles[3].payloadFile = crossRouted.verifiedPhysicalArtifacts[4].file;
     expect(() => validateEightPhysicalRuntimeReport(crossRouted)).toThrow(/payload identity mismatch/);
+  });
+
+  it('rejects non-zero offsets and wrong tile byte geometry', () => {
+    const badOffset = makeRuntimeReport();
+    badOffset.executedTiles[1].artifactByteOffset = 4;
+    expect(() => validateEightPhysicalRuntimeReport(badOffset)).toThrow(/byte geometry mismatch/);
+
+    const badLength = makeRuntimeReport();
+    badLength.executedTiles[1].byteLength -= 4;
+    expect(() => validateEightPhysicalRuntimeReport(badLength)).toThrow(/byte geometry mismatch/);
   });
 
   it('rejects non-byte-exact tile and complete comparisons', () => {
