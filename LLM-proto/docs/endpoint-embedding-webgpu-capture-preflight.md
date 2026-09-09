@@ -4,13 +4,13 @@ Status: **diagnostic-only / #223 S0 support**. This preflight does not select th
 
 ## Purpose
 
-The complete endpoint embedding browser harness is intentionally strict and processes four prepared physical payloads totaling about 1 GiB before it can produce real browser/WebGPU evidence. `tools/preflight_endpoint_embedding_webgpu_capture.mjs` provides a fail-fast check for the prepared bundle and Chrome executable before spending time on the browser run.
+The complete endpoint embedding browser harness is intentionally strict and processes four prepared physical payloads totaling about 1 GiB before it can produce real browser/WebGPU evidence. `tools/preflight_endpoint_embedding_webgpu_capture.mjs` provides a fail-fast check for the prepared bundle, Chrome executable, and basic Chrome/WebGPU host capability before spending time hashing the full bundle or running ORT Web.
 
-It validates the exact pinned preparation manifest through the same `validateEndpointEmbeddingWebGpuManifest()` contract used by the harness, then streams every required ONNX graph and physical payload through SHA-256 verification. It rejects symlinked artifacts, non-regular files, byte-length drift, digest drift, or a file whose identity changes while it is being hashed. The payloads are streamed instead of being read into one large Node.js buffer.
+The preflight first validates the exact pinned preparation manifest through the same `validateEndpointEmbeddingWebGpuManifest()` contract used by the harness and executes the selected Chrome binary with `--version`, requiring a four-part browser version. It then launches a short-lived isolated headless Chrome against a loopback secure context and requires `navigator.gpu`, a WebGPU adapter, and successful `adapter.requestDevice()`. The probe records adapter/device limits, destroys the probe device, and exits before the large prepared payload files are streamed. A host with no usable WebGPU device therefore fails before roughly 1 GiB of SHA-256 work.
 
-The preflight also executes the selected Chrome binary with `--version` and requires a four-part browser version. This catches a missing or obviously incompatible browser command before the capture helper is started.
+Only after the lightweight host probe passes does the preflight stream every required ONNX graph and physical payload through SHA-256 verification. It rejects symlinked artifacts, non-regular files, byte-length drift, digest drift, or a file whose identity changes while it is being hashed. The payloads are streamed instead of being read into one large Node.js buffer.
 
-The capture helper now runs this same preflight automatically after its cheap local port-availability checks and before it reserves the evidence output path, creates a temporary Chrome profile, starts the harness, or launches Chrome. Running the standalone command remains useful when an operator wants a bounded readiness report without starting the browser capture, but it is no longer a correctness prerequisite that can be accidentally skipped.
+The capture helper runs this same preflight automatically after its cheap local port-availability checks and before it reserves the evidence output path, creates the capture Chrome profile, starts the harness, or launches the ORT Web browser run. Running the standalone command remains useful when an operator wants a bounded readiness report without starting the full capture, but it is no longer a correctness prerequisite that can be accidentally skipped.
 
 ## Run
 
@@ -36,9 +36,9 @@ node tools/preflight_endpoint_embedding_webgpu_capture.mjs \
   /path/to/google-chrome
 ```
 
-A passing JSON summary reports `decisionStatus=diagnostic-only`, the pinned manifest identity, the Chrome version, the six verified prepared files (two graph variants plus four physical payloads), and the total verified byte count.
+A passing JSON summary reports `decisionStatus=diagnostic-only`, the pinned manifest identity, the Chrome version, the lightweight `hostProbe` result, the six verified prepared files (two graph variants plus four physical payloads), and the total verified byte count. The host probe is intentionally small: it uses the same headless/WebGPU flags as the capture, binds only to `127.0.0.1` on an ephemeral port, uses a temporary Chrome profile, creates one default WebGPU device, records bounded capability context, destroys the device, and cleans up the profile/server.
 
-The actual capture can be invoked directly; it repeats the same prepared-bundle and Chrome preflight automatically before any browser process is launched:
+The actual capture can be invoked directly; it repeats the same mandatory preflight automatically before the ORT Web browser process is launched:
 
 ```bash
 node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
@@ -46,10 +46,10 @@ node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
 
-This deliberate duplicate verification is defense in depth: the standalone preflight is optional operator feedback, while the capture helper itself enforces the gate at the execution boundary.
+The standalone preflight remains optional operator feedback, while the capture helper itself enforces the gate at the execution boundary.
 
 ## What a pass means
 
-A pass means the local prepared input bundle still matches the exact #223 diagnostic contract and that the chosen Chrome executable can report a normal four-part version. It is a readiness check only.
+A pass means the local prepared input bundle still matches the exact #223 diagnostic contract, the chosen Chrome executable reports a normal four-part version, and a short-lived Chrome page on a loopback secure context can obtain a WebGPU adapter, create a default device, expose sane positive limits, and destroy that device. This closes the previous readiness gap where a host without usable WebGPU could spend time hashing the full prepared payload set before failing during the browser run.
 
-It does **not** prove that WebGPU is available, that ONNX Runtime Web assigns every node to WebGPU, that the browser run succeeds, that `InferenceSession.release()` reclaims GPU memory immediately, or that decoder/KV/checkpoint full-model staged equivalence is established. Only the captured runtime evidence from the browser helper can close the narrow embedding-side browser execution check.
+It still does **not** prove that ONNX Runtime Web assigns every model node to WebGPU, that the complete embedding ORT run succeeds, that `InferenceSession.release()` reclaims GPU memory immediately, or that decoder/KV/checkpoint full-model staged equivalence is established. Only the captured runtime evidence from the browser helper can close the narrow embedding-side browser execution check.
