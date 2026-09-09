@@ -65,6 +65,13 @@ describe('8-physical endpoint embedding runtime-plan contract', () => {
       Array.from({ length: 8 }, (_, index) => `payload-${String(index).padStart(4, '0')}.bin`),
     );
     expect(plan.every((entry) => entry.graphFile === 'embedding-offset-0.onnx')).toBe(true);
+    expect(plan.every((entry) => entry.expectedGraphBytes === 260)).toBe(true);
+    expect(
+      plan.every(
+        (entry) => entry.expectedGraphSha256
+          === '70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50',
+      ),
+    ).toBe(true);
     expect(plan.every((entry) => entry.graphExternalDataPath === 'payload-0000.bin')).toBe(true);
     expect(plan.every((entry) => entry.artifactByteOffset === 0)).toBe(true);
     expect(plan.every((entry) => entry.byteLength === 131_334_144)).toBe(true);
