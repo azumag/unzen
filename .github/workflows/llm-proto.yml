@@ -68,6 +68,7 @@ jobs:
           node --check browser-harness/endpoint-embedding-tiled-webgpu/serve.mjs
           node --check browser-harness/endpoint-embedding-tiled-webgpu/contract.js
           node --check browser-harness/endpoint-embedding-tiled-webgpu/runner.js
+          node --check browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js
           node --check tools/capture_endpoint_poststage_webgpu_process_rss.mjs
           node --check tools/check_wrangler_wasm_packaging.mjs
           node --check worker-runtime/wasm-canary-worker.mjs
