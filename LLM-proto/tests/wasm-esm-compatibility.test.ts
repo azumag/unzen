@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -56,28 +57,32 @@ describe('Cloudflare Wasm ESM module compatibility spike', () => {
     }
   });
 
-  it('fails closed when the .wasm module is wired as non-Wasm data', async () => {
-    const mf = new Miniflare({
-      modules: true,
-      modulesRoot: projectRoot,
-      modulesRules: [
-        { type: 'Data', include: ['**/*.wasm'] },
-      ],
-      scriptPath,
-      compatibilityDate: COMPATIBILITY_DATE,
-    });
-
-    let startupError: unknown;
-    try {
+  it('fails closed when the .wasm module is wired as non-Wasm data', () => {
+    const childScript = `
+      import { Miniflare } from 'miniflare';
+      const mf = new Miniflare({
+        modules: true,
+        modulesRoot: ${JSON.stringify(projectRoot)},
+        modulesRules: [{ type: 'Data', include: ['**/*.wasm'] }],
+        scriptPath: ${JSON.stringify(scriptPath)},
+        compatibilityDate: ${JSON.stringify(COMPATIBILITY_DATE)},
+      });
       await mf.ready;
-    } catch (error) {
-      startupError = error;
-    } finally {
-      await mf.dispose();
-    }
+    `;
 
-    expect(startupError).toBeInstanceOf(Error);
-    expect(String(startupError)).toContain(
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '--eval', childScript],
+      {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        timeout: 5_000,
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
       'wasm-esm-compat: imported .wasm is not a WebAssembly.Module',
     );
   });
