@@ -6,6 +6,7 @@ import { ENDPOINT_EMBEDDING_WEBGPU_EXPECTED } from '../browser-harness/endpoint-
 import {
   assertDistinctCapturePorts,
   reserveEvidenceOutput,
+  validateCaptureChromeCdpIdentity,
   validateCapturedEndpointEmbeddingRuntimeEvidence,
   validateEndpointEmbeddingRuntimeReport,
 } from '../tools/capture_endpoint_embedding_webgpu_runtime.mjs';
@@ -69,6 +70,7 @@ function validCapturedEvidence() {
     captureEnvironment: {
       chromeVersion: 'Google Chrome 152.0.7977.83',
       cdpBrowser: 'Chrome/152.0.7977.83',
+      cdpUserAgent: 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36',
       nodeVersion: 'v24.8.0',
       platform: 'darwin',
     },
@@ -114,6 +116,8 @@ describe('captured endpoint embedding WebGPU evidence validator', () => {
     ['Chrome/CDP version mismatch', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Chrome/151.0.0.0'; }],
     ['non-Chrome executable identity', (evidence: any) => { evidence.captureEnvironment.chromeVersion = 'Mozilla Firefox 152.0.7977.83'; }],
     ['non-Chrome CDP identity', (evidence: any) => { evidence.captureEnvironment.cdpBrowser = 'Firefox/152.0.7977.83'; }],
+    ['missing CDP user agent', (evidence: any) => { delete evidence.captureEnvironment.cdpUserAgent; }],
+    ['runtime/CDP user-agent identity mismatch', (evidence: any) => { evidence.captureEnvironment.cdpUserAgent += ' drift'; }],
     ['malformed Node version', (evidence: any) => { evidence.captureEnvironment.nodeVersion = 'node-current'; }],
     ['missing user agent', (evidence: any) => { delete evidence.userAgent; }],
     ['user-agent/CDP major mismatch', (evidence: any) => { evidence.userAgent = 'Mozilla/5.0 Chrome/151.0.0.0 Safari/537.36'; }],
@@ -135,6 +139,23 @@ describe('endpoint embedding WebGPU capture preflight', () => {
   it('rejects a shared harness and DevTools port before launch', () => {
     expect(() => assertDistinctCapturePorts(8796, 8796)).toThrow('must be distinct');
     expect(() => assertDistinctCapturePorts(8796, 9228)).not.toThrow();
+  });
+
+  it('binds the live CDP Browser and User-Agent identities before harness navigation', () => {
+    const preflight = {
+      chrome: {
+        raw: 'Google Chrome 152.0.7977.83',
+        version: '152.0.7977.83',
+      },
+    };
+    const cdpVersion = {
+      Browser: 'Chrome/152.0.7977.83',
+      'User-Agent': 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36',
+    };
+    expect(validateCaptureChromeCdpIdentity(preflight, cdpVersion)).toBe(cdpVersion.Browser);
+
+    cdpVersion['User-Agent'] = 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/151.0.0.0 Safari/537.36';
+    expect(() => validateCaptureChromeCdpIdentity(preflight, cdpVersion)).toThrow('User-Agent/Browser major mismatch');
   });
 
   it('atomically reserves an evidence path and refuses an existing path', () => {
@@ -219,6 +240,19 @@ describe('offline captured endpoint embedding evidence verifier', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('fails closed when persisted runtime userAgent drifts from the captured CDP User-Agent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-verifier-test-'));
+    const evidencePath = join(dir, 'evidence.json');
+    try {
+      const evidence = validCapturedEvidence();
+      evidence.captureEnvironment.cdpUserAgent += ' tampered';
+      writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
+      expect(() => verifyCapturedEndpointEmbeddingEvidenceFile(evidencePath)).toThrow('runtime userAgent/CDP User-Agent identity mismatch');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope-validated, and reserved-output-only for evidence', () => {
@@ -228,6 +262,7 @@ it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope
   expect(source).toContain("openSync(outputPath, 'wx', 0o600)");
   expect(source).toContain('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)');
   expect(source).toContain('validateEndpointEmbeddingWebGpuDeviceContextFields(evidence)');
+  expect(source).toContain("cdpUserAgent: version['User-Agent']");
   expect(source).toContain('writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\\n`)');
   expect(source).toContain('fsyncSync(outputFd)');
   expect(source).toContain('if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }');
@@ -236,6 +271,8 @@ it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
   expect(source.indexOf('outputFd = reserveEvidenceOutput(outputPath)'))
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
+  expect(source.indexOf('validateCaptureChromeCdpIdentity(preflight, version)'))
+    .toBeLessThan(source.indexOf("await cdp.send('Page.navigate', { url: harnessUrl })"));
   expect(source.indexOf('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)'))
     .toBeLessThan(source.indexOf('writeFileSync(outputFd'));
 });
