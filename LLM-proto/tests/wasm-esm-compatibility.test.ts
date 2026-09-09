@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = join(projectRoot, 'worker-runtime', 'wasm-esm-compat-worker.mjs');
 const wasmPath = join(projectRoot, 'worker-runtime', 'wasm-fixtures', 'add-i32.wasm');
-const COMPATIBILITY_DATE = '2026-09-09';
+const COMPATIBILITY_DATE = '2026-08-06';
 const WASM_BYTES = 41;
 const WASM_SHA256 = 'f61fd62f57c41269c3c23f360eeaf1090b1db9c38651106674d48bc65dba88ba';
 
