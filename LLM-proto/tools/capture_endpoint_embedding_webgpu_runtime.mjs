@@ -7,7 +7,7 @@ import { platform, tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENDPOINT_EMBEDDING_WEBGPU_EXPECTED } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
-import { preflightEndpointEmbeddingWebGpuCapture } from './preflight_endpoint_embedding_webgpu_capture.mjs';
+import { parseChromeVersion, preflightEndpointEmbeddingWebGpuCapture } from './preflight_endpoint_embedding_webgpu_capture.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SCRIPT_DIR, '..');
@@ -86,9 +86,8 @@ function chromeMajorFromUserAgent(userAgent) {
 }
 
 function chromeMajorFromCdpBrowser(cdpBrowser) {
-  const match = cdpBrowser.match(/(?:HeadlessChrome|Chrome)\/(\d+)\./)
-    ?? cdpBrowser.match(/\b(\d+)\.\d+\.\d+\.\d+\b/);
-  if (!match) throw new Error('captureEnvironment.cdpBrowser must contain a Chrome major version');
+  const match = cdpBrowser.match(/^(?:HeadlessChrome|Chrome)\/(\d+)\./);
+  if (!match) throw new Error('captureEnvironment.cdpBrowser must identify Chrome/HeadlessChrome with a major version');
   return Number(match[1]);
 }
 
@@ -101,15 +100,15 @@ export function validateCaptureChromeCdpIdentity(preflight, cdpVersion) {
     throw new Error('capture preflight Chrome version must be four-part');
   }
   const preflightRaw = requireNonEmptyString(preflight.chrome?.raw, 'capture preflight Chrome raw identity');
-  const preflightRawVersionMatch = preflightRaw.match(/\d+\.\d+\.\d+\.\d+/);
-  if (!preflightRawVersionMatch || preflightRawVersionMatch[0] !== preflightVersion) {
+  const parsedPreflightRaw = parseChromeVersion(preflightRaw);
+  if (parsedPreflightRaw.version !== preflightVersion) {
     throw new Error('capture preflight Chrome raw/version identity mismatch');
   }
   if (!cdpVersion || typeof cdpVersion !== 'object' || Array.isArray(cdpVersion)) {
     throw new Error('Chrome DevTools version response must be an object');
   }
   const cdpBrowser = requireNonEmptyString(cdpVersion.Browser, 'Chrome DevTools Browser identity');
-  const cdpVersionMatch = cdpBrowser.match(/(?:HeadlessChrome|Chrome)\/(\d+\.\d+\.\d+\.\d+)\b/);
+  const cdpVersionMatch = cdpBrowser.match(/^(?:HeadlessChrome|Chrome)\/(\d+\.\d+\.\d+\.\d+)\b/);
   if (!cdpVersionMatch) {
     throw new Error('Chrome DevTools Browser identity must identify Chrome/HeadlessChrome with a four-part version');
   }
@@ -176,9 +175,9 @@ export function validateCapturedEndpointEmbeddingRuntimeEvidence(evidence) {
   requireNonEmptyString(environment.platform, 'captureEnvironment.platform');
   if (!/^v\d+\.\d+\.\d+/.test(nodeVersion)) throw new Error('captureEnvironment.nodeVersion format drift');
 
-  const chromeVersionMatch = chromeVersion.match(/\d+\.\d+\.\d+\.\d+/);
-  const cdpVersionMatch = cdpBrowser.match(/\d+\.\d+\.\d+\.\d+/);
-  if (!chromeVersionMatch || !cdpVersionMatch || chromeVersionMatch[0] !== cdpVersionMatch[0]) {
+  const parsedChromeVersion = parseChromeVersion(chromeVersion).version;
+  const cdpVersionMatch = cdpBrowser.match(/^(?:HeadlessChrome|Chrome)\/(\d+\.\d+\.\d+\.\d+)\b/);
+  if (!cdpVersionMatch || parsedChromeVersion !== cdpVersionMatch[1]) {
     throw new Error('captureEnvironment Chrome/CDP version mismatch');
   }
 
