@@ -13,6 +13,10 @@ import {
 import { probeEndpointEmbeddingWebGpuHost } from './probe_endpoint_embedding_webgpu_host.mjs';
 
 const EXPECTED = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
+const DEFAULT_DEVICE_BUDGET_LIMIT_FIELDS = [
+  'maxBufferSize',
+  'maxStorageBufferBindingSize',
+];
 
 function snapshotIdentity(stat) {
   return {
@@ -130,6 +134,43 @@ export function validateChromeHostProbeIdentity(chrome, hostProbe) {
   return hostProbe;
 }
 
+export function evaluateEndpointEmbeddingWebGpuDefaultDeviceTileBudget(hostProbe) {
+  if (!hostProbe || typeof hostProbe !== 'object' || Array.isArray(hostProbe)) {
+    throw new Error('WebGPU host probe must be an object');
+  }
+  const deviceLimits = hostProbe.deviceLimits;
+  if (!deviceLimits || typeof deviceLimits !== 'object' || Array.isArray(deviceLimits)) {
+    throw new Error('WebGPU host probe deviceLimits must be an object');
+  }
+  const maximumExecutionTileBytes = Math.max(...EXPECTED.tiles.map((tile) => tile.byteLength));
+  const checks = Object.fromEntries(DEFAULT_DEVICE_BUDGET_LIMIT_FIELDS.map((field) => {
+    const availableBytes = deviceLimits[field];
+    if (!Number.isSafeInteger(availableBytes) || availableBytes <= 0) {
+      throw new Error(`WebGPU host probe deviceLimits.${field} must be a positive safe integer`);
+    }
+    const headroomBytes = availableBytes - maximumExecutionTileBytes;
+    return [field, {
+      availableBytes,
+      requiredBytes: maximumExecutionTileBytes,
+      headroomBytes,
+      pass: headroomBytes >= 0,
+    }];
+  }));
+  const status = DEFAULT_DEVICE_BUDGET_LIMIT_FIELDS.every((field) => checks[field].pass) ? 'pass' : 'fail';
+  return {
+    status,
+    decisionStatus: 'diagnostic-only',
+    kind: 'unzen-endpoint-embedding-webgpu-default-device-tile-budget',
+    schemaVersion: '1.0.0',
+    maximumExecutionTileBytes,
+    checks,
+    gating: false,
+    conclusion: status === 'pass'
+      ? 'The lightweight host probe default requestDevice() limits are at least as large as the pinned execution tile. This is a non-gating diagnostic because ONNX Runtime Web creates its own GPUDevice and may request a different limit set.'
+      : 'The lightweight host probe default requestDevice() limits are below the pinned execution tile. This does not fail preflight by itself because ONNX Runtime Web creates its own GPUDevice and may request higher adapter-supported limits; the real captured ORT execution remains authoritative.',
+  };
+}
+
 export function defaultChromeBinary() {
   if (process.env.CHROME_BINARY) return process.env.CHROME_BINARY;
   if (platform() === 'darwin') return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -165,6 +206,7 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
   const chrome = probeChromeVersion(chromeBinary);
   const hostProbe = await probeEndpointEmbeddingWebGpuHost({ chromeBinary });
   validateChromeHostProbeIdentity(chrome, hostProbe);
+  const defaultDeviceTileBudget = evaluateEndpointEmbeddingWebGpuDefaultDeviceTileBudget(hostProbe);
 
   const verifiedFiles = [];
   for (const [variantName, variant] of Object.entries(EXPECTED.graphVariants)) {
@@ -205,10 +247,11 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
     },
     chrome,
     hostProbe,
+    defaultDeviceTileBudget,
     verifiedFiles,
     verifiedFileCount: verifiedFiles.length,
     verifiedBytes: verifiedFiles.reduce((sum, file) => sum + file.bytes, 0),
-    conclusion: 'The prepared endpoint embedding browser bundle, Chrome executable, and a lightweight loopback WebGPU adapter/device probe satisfy the pinned diagnostic capture preflight. The host-probe Chrome major is bound to the selected executable identity. This does not constitute browser/WebGPU execution evidence or ORT WebGPU inference evidence.',
+    conclusion: 'The prepared endpoint embedding browser bundle, Chrome executable, and a lightweight loopback WebGPU adapter/device probe satisfy the pinned diagnostic capture preflight. The host-probe Chrome major is bound to the selected executable identity. A separate non-gating default-device tile-budget diagnostic is reported without treating that probe device as ONNX Runtime Web\'s internal GPUDevice. This does not constitute browser/WebGPU execution evidence or ORT WebGPU inference evidence.',
   };
 }
 
