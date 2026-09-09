@@ -53,6 +53,7 @@ await requireNonSymlinkDirectory(DATA_DIR, 'DATA_DIR');
 const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(
   await readNonSymlinkJson(PREFLIGHT_REPORT, 'PREFLIGHT_REPORT'),
 );
+const preflightBody = Buffer.from(`${JSON.stringify(preflight)}\n`, 'utf8');
 await requireNonSymlinkFile(GRAPH_PATH, 'GRAPH_PATH');
 if (basename(GRAPH_PATH) !== preflight.graph.file) {
   throw new Error(`GRAPH_PATH basename must be ${preflight.graph.file}`);
@@ -61,10 +62,18 @@ if (basename(GRAPH_PATH) !== preflight.graph.file) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
-    let path;
     if (url.pathname === '/data/preflight.json') {
-      path = PREFLIGHT_REPORT;
-    } else if (url.pathname === `/data/${preflight.graph.file}`) {
+      res.writeHead(200, {
+        'Content-Type': MIME['.json'],
+        'Content-Length': preflightBody.byteLength,
+        'Cache-Control': 'no-store',
+      });
+      res.end(preflightBody);
+      return;
+    }
+
+    let path;
+    if (url.pathname === `/data/${preflight.graph.file}`) {
       path = GRAPH_PATH;
     } else if (url.pathname.startsWith('/data/')) {
       path = safePath(DATA_DIR, url.pathname.slice('/data/'.length));
