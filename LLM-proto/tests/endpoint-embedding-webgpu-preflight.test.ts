@@ -77,7 +77,7 @@ describe('endpoint embedding WebGPU capture preflight file identity', () => {
 });
 
 describe('endpoint embedding WebGPU capture preflight Chrome parsing', () => {
-  it('extracts the exact four-part Chrome version while retaining raw identity', () => {
+  it('extracts the exact four-part Chrome version while retaining raw product identity', () => {
     expect(parseChromeVersion('Google Chrome 152.0.7977.83\n')).toEqual({
       raw: 'Google Chrome 152.0.7977.83',
       version: '152.0.7977.83',
@@ -86,6 +86,15 @@ describe('endpoint embedding WebGPU capture preflight Chrome parsing', () => {
       raw: 'Chromium 151.0.7890.12',
       version: '151.0.7890.12',
     });
+    expect(parseChromeVersion('Google Chrome for Testing 153.0.8000.1')).toEqual({
+      raw: 'Google Chrome for Testing 153.0.8000.1',
+      version: '153.0.8000.1',
+    });
+  });
+
+  it('fails closed when the executable output is not a supported Chrome product identity', () => {
+    expect(() => parseChromeVersion('Mozilla Firefox 152.0.7977.83')).toThrow('Google Chrome/Chromium');
+    expect(() => parseChromeVersion('Browser 152.0.7977.83')).toThrow('Google Chrome/Chromium');
   });
 
   it('fails closed when a four-part browser version is unavailable', () => {
