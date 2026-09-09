@@ -398,11 +398,11 @@ async function waitForPageUrl(cdp, expectedUrl, timeoutMs) {
   throw new Error(`page did not settle at ${expectedUrl}${lastError ? `: ${lastError}` : ''}`);
 }
 
-function chromeDefault() {
+function chromeDefault(env = process.env) {
   if (platform() === 'darwin') {
     return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   }
-  return process.env.CHROME_BINARY || 'google-chrome';
+  return env.CHROME_BINARY || 'google-chrome';
 }
 
 function recordPhasePeak(phasePeaks, phase, sample) {
@@ -666,28 +666,58 @@ async function runCapture({
   }
 }
 
-function parseArgs(argv) {
+function parseIntegerSetting(rawValue, name, minimum, maximum = Number.MAX_SAFE_INTEGER) {
+  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+    throw new Error(`${name} must be an integer in ${minimum}..${maximum}; received an empty value`);
+  }
+  const value = Number(rawValue);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer in ${minimum}..${maximum}; received ${JSON.stringify(rawValue)}`);
+  }
+  return value;
+}
+
+export function parseCaptureArgs(argv, env = process.env) {
   if (argv.length < 2) {
     throw new Error('usage: capture_endpoint_poststage_webgpu_process_rss.mjs DATA_DIR OUTPUT_JSON');
   }
-  const dataDir = resolve(argv[0]);
-  const outputPath = resolve(argv[1]);
+  const serverPort = parseIntegerSetting(env.UNZEN_HARNESS_PORT ?? 8796, 'UNZEN_HARNESS_PORT', 1, 65535);
+  const debugPort = parseIntegerSetting(env.UNZEN_CDP_PORT ?? 9336, 'UNZEN_CDP_PORT', 1, 65535);
+  if (serverPort === debugPort) {
+    throw new Error('UNZEN_HARNESS_PORT and UNZEN_CDP_PORT must be distinct');
+  }
   return {
-    dataDir,
-    outputPath,
-    chromeBinary: process.env.CHROME_BINARY || chromeDefault(),
-    serverPort: Number(process.env.UNZEN_HARNESS_PORT ?? 8796),
-    debugPort: Number(process.env.UNZEN_CDP_PORT ?? 9336),
-    sampleIntervalMs: Number(process.env.UNZEN_RSS_SAMPLE_INTERVAL_MS ?? DEFAULT_INTERVAL_MS),
-    postReportSettleMs: Number(process.env.UNZEN_RSS_POST_REPORT_SETTLE_MS ?? DEFAULT_POST_REPORT_SETTLE_MS),
-    postTeardownSettleMs: Number(process.env.UNZEN_RSS_POST_TEARDOWN_SETTLE_MS ?? DEFAULT_POST_TEARDOWN_SETTLE_MS),
-    timeoutMs: Number(process.env.UNZEN_RSS_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
+    dataDir: resolve(argv[0]),
+    outputPath: resolve(argv[1]),
+    chromeBinary: env.CHROME_BINARY || chromeDefault(env),
+    serverPort,
+    debugPort,
+    sampleIntervalMs: parseIntegerSetting(
+      env.UNZEN_RSS_SAMPLE_INTERVAL_MS ?? DEFAULT_INTERVAL_MS,
+      'UNZEN_RSS_SAMPLE_INTERVAL_MS',
+      1,
+    ),
+    postReportSettleMs: parseIntegerSetting(
+      env.UNZEN_RSS_POST_REPORT_SETTLE_MS ?? DEFAULT_POST_REPORT_SETTLE_MS,
+      'UNZEN_RSS_POST_REPORT_SETTLE_MS',
+      0,
+    ),
+    postTeardownSettleMs: parseIntegerSetting(
+      env.UNZEN_RSS_POST_TEARDOWN_SETTLE_MS ?? DEFAULT_POST_TEARDOWN_SETTLE_MS,
+      'UNZEN_RSS_POST_TEARDOWN_SETTLE_MS',
+      0,
+    ),
+    timeoutMs: parseIntegerSetting(
+      env.UNZEN_RSS_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS,
+      'UNZEN_RSS_TIMEOUT_MS',
+      1,
+    ),
   };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const evidence = await runCapture(parseArgs(process.argv.slice(2)));
+    const evidence = await runCapture(parseCaptureArgs(process.argv.slice(2)));
     console.log(JSON.stringify({
       status: evidence.status,
       baselineRssKiB: evidence.measurement.baseline.totalRssKiB,
