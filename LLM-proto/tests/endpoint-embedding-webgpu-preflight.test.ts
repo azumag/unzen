@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   parseChromeVersion,
+  validateChromeHostProbeIdentity,
   verifyPreparedFileIdentity,
 } from '../tools/preflight_endpoint_embedding_webgpu_capture.mjs';
 
@@ -93,14 +94,47 @@ describe('endpoint embedding WebGPU capture preflight Chrome parsing', () => {
   });
 });
 
-it('keeps the real preflight bound to the pinned manifest and every prepared graph/payload', () => {
+describe('endpoint embedding WebGPU capture preflight Chrome/host-probe binding', () => {
+  it('accepts a host-probe UA with the selected Chrome executable major', () => {
+    const hostProbe = {
+      userAgent: 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36',
+    };
+    expect(validateChromeHostProbeIdentity({
+      raw: 'Google Chrome 152.0.7977.83',
+      version: '152.0.7977.83',
+    }, hostProbe)).toBe(hostProbe);
+  });
+
+  it('fails closed before payload hashing when the launched host-probe Chrome major drifts', () => {
+    expect(() => validateChromeHostProbeIdentity({
+      raw: 'Google Chrome 152.0.7977.83',
+      version: '152.0.7977.83',
+    }, {
+      userAgent: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/151.0.0.0 Safari/537.36',
+    })).toThrow('Chrome executable/host-probe major mismatch');
+  });
+
+  it('fails closed on malformed executable or host-probe identity', () => {
+    expect(() => validateChromeHostProbeIdentity({ version: '152' }, {
+      userAgent: 'Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36',
+    })).toThrow('four-part version');
+    expect(() => validateChromeHostProbeIdentity({ version: '152.0.7977.83' }, {
+      userAgent: 'not-a-browser',
+    })).toThrow('must identify Chrome/HeadlessChrome');
+  });
+});
+
+it('keeps the real preflight bound to the pinned manifest, selected Chrome, and every prepared graph/payload', () => {
   const source = readFileSync(
     new URL('../tools/preflight_endpoint_embedding_webgpu_capture.mjs', import.meta.url),
     'utf8',
   );
   expect(source).toContain('validateEndpointEmbeddingWebGpuManifest(manifest)');
+  expect(source).toContain('validateChromeHostProbeIdentity(chrome, hostProbe)');
   expect(source).toContain('Object.entries(EXPECTED.graphVariants)');
   expect(source).toContain('for (const artifact of EXPECTED.physicalArtifacts)');
   expect(source).toContain("decisionStatus: 'diagnostic-only'");
   expect(source).toContain('does not constitute browser/WebGPU execution evidence');
+  expect(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)'))
+    .toBeLessThan(source.indexOf('Object.entries(EXPECTED.graphVariants)'));
 });
