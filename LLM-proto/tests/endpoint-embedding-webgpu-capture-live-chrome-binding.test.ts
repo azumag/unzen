@@ -42,6 +42,13 @@ describe('endpoint embedding capture live Chrome identity binding', () => {
     expect(() => validateCaptureChromeCdpIdentity(preflight, { Browser: 'Chrome/152.0.7977.83' }))
       .toThrow('raw/version identity mismatch');
   });
+
+  it('rejects a non-Chrome preflight raw identity even when the numeric version matches', () => {
+    const preflight = validPreflight();
+    preflight.chrome.raw = 'Mozilla Firefox 152.0.7977.83';
+    expect(() => validateCaptureChromeCdpIdentity(preflight, { Browser: 'Chrome/152.0.7977.83' }))
+      .toThrow('Google Chrome/Chromium');
+  });
 });
 
 it('binds the live CDP browser before navigating the expensive ORT Web harness and persists the preflight identity', () => {
