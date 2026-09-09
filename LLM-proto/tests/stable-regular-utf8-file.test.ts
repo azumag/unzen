@@ -56,6 +56,23 @@ describe('stable regular UTF-8 file reader', () => {
     }
   });
 
+  it('rejects invalid UTF-8 instead of decoding replacement characters', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-stable-file-test-'));
+    const path = join(dir, 'evidence.json');
+    try {
+      writeFileSync(path, Buffer.from([
+        0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22,
+        0xc3, 0x28,
+        0x22, 0x7d,
+      ]));
+      expect(() => readStableRegularUtf8File(path, 'test evidence')).toThrow(
+        'test evidence must contain valid UTF-8',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects invalid byte limits', () => {
     expect(() => readStableRegularUtf8File('/unused', 'test evidence', 0)).toThrow(
       'stable UTF-8 file maximumBytes must be a positive safe integer',
