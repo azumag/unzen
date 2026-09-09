@@ -23,6 +23,14 @@ For the exact uninitialized engine state (`currentRunId=null`, `snapshotUpdatedA
 
 That response is an operational diagnostic, not a bypass. A partial/corrupt existing snapshot is deliberately not classified as this known cold-start state and continues to fail closed with the generic snapshot-not-ready error.
 
+Before attempting #145 with a captured engine canary-state response, run the repository preflight documented in [`continuous-assurance-cold-start-preflight.md`](./continuous-assurance-cold-start-preflight.md):
+
+```bash
+npm run ops:preflight-continuous-assurance-cold-start -- ./engine-state.json
+```
+
+Exit `0` means only that the required snapshot timestamp fields are structurally ready for the existing canary gates. Exit `2` is the known #190 empty-state HOLD. Exit `1` means malformed or partially initialized state and must not be treated as the known cold-start cycle. The preflight reads local non-secret JSON only; it neither authenticates to Cloudflare nor mutates/bootstrap engine state.
+
 `plan`, `dry-run`, and deployment preparation may still be used within their documented safety boundaries, but **do not invoke #145 -> #149 -> #152 on a fresh/empty engine expecting it to converge**. There is currently no approved genesis bootstrap authorization or staged deployment-identity exception. The #190 architecture/authorization decision must be made before a genuine empty-state production rollout can proceed. Existing-state procedures below apply only when their prerequisite verified evidence and engine bootstrap state already exist.
 
 ## What this harness does
