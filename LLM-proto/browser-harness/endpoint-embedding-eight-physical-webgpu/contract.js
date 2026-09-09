@@ -25,6 +25,15 @@ export const ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED = Object.freeze({
   graphExternalDataPath: 'payload-0000.bin',
 });
 
+export const ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED = Object.freeze({
+  preflightKind: 'unzen-pinned-llama-1b-endpoint-embedding-eight-physical-bundle-preflight',
+  browserPlanKind: 'unzen-pinned-llama-1b-endpoint-embedding-eight-physical-ort-webgpu-plan',
+  runtimeReportKind: 'unzen-pinned-llama-1b-endpoint-embedding-eight-physical-ort-webgpu-runtime',
+  schemaVersion: '1.0.0',
+  onnxruntimeWebVersion: '1.22.0',
+  evidenceBoundary: 'actual-file-integrity-preflight-only',
+});
+
 const CANONICAL_SHA256 = /^[0-9a-f]{64}$/;
 
 function requireEqual(actual, expected, field) {
@@ -171,5 +180,139 @@ export function buildEndpointEmbeddingEightPhysicalRuntimePlan(manifest) {
       artifactByteOffset: 0,
       byteLength: expected.tileBytes,
     });
+  });
+}
+
+export function validateEndpointEmbeddingEightPhysicalPreflightReport(report) {
+  const expected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED;
+  const browserExpected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED;
+  requireObject(report, 'preflight');
+  requireEqual(report.kind, browserExpected.preflightKind, 'preflight.kind');
+  requireEqual(report.schemaVersion, browserExpected.schemaVersion, 'preflight.schemaVersion');
+  requireEqual(report.status, 'pass', 'preflight.status');
+  requireEqual(report.decisionStatus, 'diagnostic-only', 'preflight.decisionStatus');
+  requireEqual(report.selectedPhysicalArtifactCount, null, 'preflight.selectedPhysicalArtifactCount');
+  requireEqual(
+    report.candidatePhysicalArtifactCount,
+    expected.candidatePhysicalArtifactCount,
+    'preflight.candidatePhysicalArtifactCount',
+  );
+  requireEqual(report.sourceGraphSha256, expected.sourceGraphSha256, 'preflight.sourceGraphSha256');
+  requireExactObject(report.sourceExternalData, expected.sourceExternalData, 'preflight.sourceExternalData');
+  requireCanonicalSha256(report.manifestPayloadSetSha256, 'preflight.manifestPayloadSetSha256');
+  requireEqual(report.evidenceBoundary, browserExpected.evidenceBoundary, 'preflight.evidenceBoundary');
+
+  const graph = requireObject(report.graph, 'preflight.graph');
+  requireEqual(graph.file, expected.graphFile, 'preflight.graph.file');
+  requireEqual(graph.bytes, expected.graphBytes, 'preflight.graph.bytes');
+  requireEqual(graph.sha256, expected.graphSha256, 'preflight.graph.sha256');
+
+  const payloads = requireArray(
+    report.payloads,
+    'preflight.payloads',
+    expected.candidatePhysicalArtifactCount,
+  );
+  const runtimePlan = requireArray(
+    report.runtimePlan,
+    'preflight.runtimePlan',
+    expected.executionTileCount,
+  );
+
+  for (let index = 0; index < expected.executionTileCount; index += 1) {
+    const payload = requireObject(payloads[index], `preflight.payloads[${index}]`);
+    const plan = requireObject(runtimePlan[index], `preflight.runtimePlan[${index}]`);
+    const expectedFile = `payload-${String(index).padStart(4, '0')}.bin`;
+    const expectedSourceOffset = index * expected.tileBytes;
+    const expectedStartRow = index * expected.rowsPerTile;
+
+    requireEqual(payload.index, index, `preflight.payloads[${index}].index`);
+    requireEqual(payload.file, expectedFile, `preflight.payloads[${index}].file`);
+    requireEqual(payload.bytes, expected.tileBytes, `preflight.payloads[${index}].bytes`);
+    requireCanonicalSha256(payload.sha256, `preflight.payloads[${index}].sha256`);
+    requireEqual(payload.sourceOffsetBytes, expectedSourceOffset, `preflight.payloads[${index}].sourceOffsetBytes`);
+    requireEqual(
+      payload.sourceEndOffsetBytesExclusive,
+      expectedSourceOffset + expected.tileBytes,
+      `preflight.payloads[${index}].sourceEndOffsetBytesExclusive`,
+    );
+
+    requireEqual(plan.tileIndex, index, `preflight.runtimePlan[${index}].tileIndex`);
+    requireEqual(plan.startRow, expectedStartRow, `preflight.runtimePlan[${index}].startRow`);
+    requireEqual(
+      plan.endRowExclusive,
+      expectedStartRow + expected.rowsPerTile,
+      `preflight.runtimePlan[${index}].endRowExclusive`,
+    );
+    requireEqual(plan.physicalArtifactIndex, index, `preflight.runtimePlan[${index}].physicalArtifactIndex`);
+    requireEqual(plan.payloadFile, payload.file, `preflight.runtimePlan[${index}].payloadFile`);
+    requireEqual(plan.expectedPayloadBytes, payload.bytes, `preflight.runtimePlan[${index}].expectedPayloadBytes`);
+    requireEqual(plan.expectedPayloadSha256, payload.sha256, `preflight.runtimePlan[${index}].expectedPayloadSha256`);
+    requireEqual(plan.sourceOffsetBytes, payload.sourceOffsetBytes, `preflight.runtimePlan[${index}].sourceOffsetBytes`);
+    requireEqual(
+      plan.sourceEndOffsetBytesExclusive,
+      payload.sourceEndOffsetBytesExclusive,
+      `preflight.runtimePlan[${index}].sourceEndOffsetBytesExclusive`,
+    );
+    requireEqual(plan.graphFile, expected.graphFile, `preflight.runtimePlan[${index}].graphFile`);
+    requireEqual(plan.expectedGraphBytes, expected.graphBytes, `preflight.runtimePlan[${index}].expectedGraphBytes`);
+    requireEqual(plan.expectedGraphSha256, expected.graphSha256, `preflight.runtimePlan[${index}].expectedGraphSha256`);
+    requireEqual(
+      plan.graphExternalDataPath,
+      expected.graphExternalDataPath,
+      `preflight.runtimePlan[${index}].graphExternalDataPath`,
+    );
+    requireEqual(plan.artifactByteOffset, 0, `preflight.runtimePlan[${index}].artifactByteOffset`);
+    requireEqual(plan.byteLength, expected.tileBytes, `preflight.runtimePlan[${index}].byteLength`);
+  }
+
+  return report;
+}
+
+export function buildEndpointEmbeddingEightPhysicalBrowserPlan(preflightReport) {
+  validateEndpointEmbeddingEightPhysicalPreflightReport(preflightReport);
+  const expected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED;
+  const browserExpected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED;
+  const tokenIds = [];
+  const tiles = preflightReport.runtimePlan.map((entry, index) => {
+    const rowCount = entry.endRowExclusive - entry.startRow;
+    const positions = [index * 2, index * 2 + 1];
+    const globalTokenIds = [entry.startRow, entry.endRowExclusive - 1];
+    const localTokenIds = [0, rowCount - 1];
+    tokenIds.push(...globalTokenIds);
+    return Object.freeze({
+      ...entry,
+      rowCount,
+      positions: Object.freeze(positions),
+      globalTokenIds: Object.freeze(globalTokenIds),
+      localTokenIds: Object.freeze(localTokenIds),
+    });
+  });
+
+  return Object.freeze({
+    kind: browserExpected.browserPlanKind,
+    runtimeReportKind: browserExpected.runtimeReportKind,
+    schemaVersion: browserExpected.schemaVersion,
+    status: 'pass',
+    decisionStatus: 'diagnostic-only',
+    selectedPhysicalArtifactCount: null,
+    candidatePhysicalArtifactCount: expected.candidatePhysicalArtifactCount,
+    executionTileCount: expected.executionTileCount,
+    hiddenSize: expected.embeddingInitializer.hiddenSize,
+    onnxruntimeWebVersion: browserExpected.onnxruntimeWebVersion,
+    sourceGraphSha256: expected.sourceGraphSha256,
+    sourceExternalData: Object.freeze({ ...expected.sourceExternalData }),
+    embeddingInitializer: Object.freeze({ ...expected.embeddingInitializer }),
+    manifestPayloadSetSha256: preflightReport.manifestPayloadSetSha256,
+    graph: Object.freeze({ ...preflightReport.graph }),
+    graphExternalDataPath: expected.graphExternalDataPath,
+    physicalArtifacts: Object.freeze(preflightReport.payloads.map((payload) => Object.freeze({ ...payload }))),
+    tokenIds: Object.freeze(tokenIds),
+    tiles: Object.freeze(tiles),
+    sequentialExecution: Object.freeze({
+      physicalArtifactOrder: Object.freeze(Array.from({ length: expected.candidatePhysicalArtifactCount }, (_, index) => index)),
+      tilesPerPhysicalArtifact: 1,
+      maximumWholePhysicalPayloadBytesPerStep: expected.tileBytes,
+      totalPhysicalPayloadBytesVerifiedAcrossRun: expected.totalEmbeddingBytes,
+    }),
   });
 }
