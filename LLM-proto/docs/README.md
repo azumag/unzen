@@ -15,6 +15,10 @@
 11. [`../browser-harness/webgpu-2b/`](../browser-harness/webgpu-2b/) — 単一ブラウザWebGPU 実測harness（transformers.js + WebGPU）
 12. [`../browser-harness/webgpu-2b-split/`](../browser-harness/webgpu-2b-split/) — #165 の2ブラウザ実segment relay harness（ディレクトリ名はhistorical）
 
+## 設計判断
+
+- [`cloudflare-wasm-adoption-decision.md`](./cloudflare-wasm-adoption-decision.md) — #301/#312 のCloudflare Workers Wasm採否。現時点は **limited-adoption** で、small pure deterministic kernelのみ条件付き許可し、production validator/Coordinator置換と性能根拠なしの移行は禁止
+
 ## 読み方
 
 ファイル名、type名、script名に`real`または`production`が含まれていても、それだけで実環境検証済みとは判断しません。各reportの入力evidence、artifact provenance、environment、verification stateを確認してください。
