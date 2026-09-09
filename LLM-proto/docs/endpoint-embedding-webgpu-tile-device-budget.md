@@ -13,7 +13,25 @@ The focused device-budget gate requires the captured adapter's:
 - `maxBufferSize >= maximumExecutionTileBytes`
 - `maxStorageBufferBindingSize >= maximumExecutionTileBytes`
 
-For the current pinned geometry, `maximumExecutionTileBytes` is `131,334,144`. A `128 MiB` (`134,217,728` byte) storage-binding limit therefore leaves only `2,883,584` bytes of numerical headroom over the tile initializer. The check deliberately reports the `262,668,288`-byte maximum physical artifact separately and does **not** require that host/cache unit to fit one GPU storage binding.
+For the current pinned geometry, `maximumExecutionTileBytes` is `131,334,144`. A `128 MiB` (`134,217,728` byte) storage-binding limit therefore leaves only `2,883,584` bytes of numerical headroom over the tile initializer.
+
+The report now also computes a **non-gating single-binding diagnostic** for the `262,668,288`-byte maximum physical artifact using those same two adapter limits. This makes the resource split machine-readable instead of merely documenting it: an adapter can pass the pinned `125.25 MiB` execution-tile gate while correctly reporting that a whole `250.5 MiB` physical cache/download artifact would not fit one storage binding. That secondary result never turns an otherwise valid tiled capture into a failure and must not be interpreted as choosing a production physical-artifact layout.
+
+For example, with `maxBufferSize=256 MiB` and `maxStorageBufferBindingSize=128 MiB`, the current pinned geometry reports:
+
+```text
+execution tile:
+  maxBufferSize headroom              +137,101,312 bytes
+  maxStorageBufferBindingSize headroom  +2,883,584 bytes
+  status: pass
+
+whole physical artifact as one binding:
+  maxBufferSize headroom                +5,767,168 bytes
+  maxStorageBufferBindingSize headroom -128,450,560 bytes
+  status: fail (diagnostic only)
+```
+
+This is the intended distinction: the physical artifact remains a host/cache unit, while the pinned graph binds only one `125.25 MiB` initializer tile at a time.
 
 ## Run
 
@@ -25,12 +43,12 @@ node tools/verify_endpoint_embedding_webgpu_tile_device_budget.mjs \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
 
-A passing report records the pinned physical-artifact/tile counts, maximum physical-artifact bytes, maximum execution-tile bytes, captured adapter identity/limits, and per-limit available/required/headroom bytes. If either relevant adapter limit is below the largest tile, verification fails closed.
+A passing report records the pinned physical-artifact/tile counts, maximum physical-artifact bytes, maximum execution-tile bytes, captured adapter identity/limits, per-limit available/required/headroom bytes for the actual tiled execution gate, and the separate whole-physical-artifact single-binding diagnostic. If either relevant adapter limit is below the largest execution tile, verification fails closed. Failure of only the single-binding diagnostic is reported but does not fail the tiled gate.
 
 ## Interpretation boundary
 
 This is a necessary capability/accounting check, not proof of GPU memory safety. `adapterLimits` describe the WebGPU adapter observed by the harness. The report does not prove the exact limits requested or granted to ONNX Runtime Web's internal `GPUDevice`, does not prove that every model node executed on WebGPU, and does not measure allocator overhead, upload staging, scratch buffers, peak host/GPU memory, or post-`release()` reclamation. A positive `2,883,584`-byte storage-binding margin is therefore not treated as a memory-performance margin.
 
-Likewise, the check does not reinterpret the four `250.5 MiB` physical payloads as GPU buffers. The existing harness supplies verified payload bytes to ORT's external-data override while the pinned graph selects one `125.25 MiB` initializer range per tile. Whether a future production loader should keep four physical artifacts, use eight smaller physical artifacts, or adopt another B1 layout remains a maintainer decision under #223/#167.
+Likewise, the single-binding diagnostic does not reinterpret the four `250.5 MiB` physical payloads as GPU buffers or make direct physical binding a requirement. The existing harness supplies verified payload bytes to ORT's external-data override while the pinned graph selects one `125.25 MiB` initializer range per tile. Whether a future production loader should keep four physical artifacts, use eight smaller physical artifacts, or adopt another B1 layout remains a maintainer decision under #223/#167.
 
 A pass only strengthens S0 evidence interpretation: the captured adapter advertises limits large enough for the pinned execution-tile geometry, while `decisionStatus` remains `diagnostic-only`.

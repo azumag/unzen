@@ -24,6 +24,23 @@ function maximumBytes(values, label) {
   return Math.max(...values.map((value, index) => requirePositiveSafeInteger(value, `${label}[${index}]`)));
 }
 
+function buildLimitChecks(adapterLimits, requiredBytes) {
+  return Object.fromEntries(REQUIRED_LIMIT_FIELDS.map((field) => {
+    const availableBytes = requirePositiveSafeInteger(adapterLimits[field], `adapterLimits.${field}`);
+    const headroomBytes = availableBytes - requiredBytes;
+    return [field, {
+      availableBytes,
+      requiredBytes,
+      headroomBytes,
+      pass: headroomBytes >= 0,
+    }];
+  }));
+}
+
+function checksPass(checks) {
+  return REQUIRED_LIMIT_FIELDS.every((field) => checks[field].pass);
+}
+
 export function evaluateEndpointEmbeddingWebGpuTileDeviceBudget(adapterLimits) {
   if (!adapterLimits || typeof adapterLimits !== 'object' || Array.isArray(adapterLimits)) {
     throw new Error('adapterLimits must be an object');
@@ -38,28 +55,29 @@ export function evaluateEndpointEmbeddingWebGpuTileDeviceBudget(adapterLimits) {
     'physical artifact byte lengths',
   );
 
-  const checks = Object.fromEntries(REQUIRED_LIMIT_FIELDS.map((field) => {
-    const availableBytes = requirePositiveSafeInteger(adapterLimits[field], `adapterLimits.${field}`);
-    const headroomBytes = availableBytes - maximumExecutionTileBytes;
-    return [field, {
-      availableBytes,
-      requiredBytes: maximumExecutionTileBytes,
-      headroomBytes,
-      pass: headroomBytes >= 0,
-    }];
-  }));
-  const status = REQUIRED_LIMIT_FIELDS.every((field) => checks[field].pass) ? 'pass' : 'fail';
+  const checks = buildLimitChecks(adapterLimits, maximumExecutionTileBytes);
+  const status = checksPass(checks) ? 'pass' : 'fail';
+  const physicalArtifactSingleBindingChecks = buildLimitChecks(adapterLimits, maximumPhysicalArtifactBytes);
+  const physicalArtifactSingleBindingStatus = checksPass(physicalArtifactSingleBindingChecks) ? 'pass' : 'fail';
 
   return {
     status,
     decisionStatus: 'diagnostic-only',
     kind: 'unzen-endpoint-embedding-webgpu-tile-device-budget',
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     physicalArtifactCount: EXPECTED.physicalArtifactCount,
     executionTileCount: EXPECTED.executionTileCount,
     maximumPhysicalArtifactBytes,
     maximumExecutionTileBytes,
     checks,
+    physicalArtifactSingleBindingDiagnostic: {
+      status: physicalArtifactSingleBindingStatus,
+      requiredBytes: maximumPhysicalArtifactBytes,
+      checks: physicalArtifactSingleBindingChecks,
+      conclusion: physicalArtifactSingleBindingStatus === 'pass'
+        ? 'The captured adapter reports limits large enough to bind the largest pinned physical artifact as one storage buffer. This is diagnostic only; the current pinned execution path still uses smaller execution tiles.'
+        : 'The captured adapter cannot bind the largest pinned physical artifact as one storage buffer under at least one captured limit. This does not fail the pinned tiled execution gate because physical cache/download artifacts and GPU execution bindings are intentionally separate resource boundaries.',
+    },
     conclusion: status === 'pass'
       ? 'The captured adapter reports maxBufferSize and maxStorageBufferBindingSize at least as large as every pinned execution tile. This is a necessary device-limit check only; it does not prove ORT GPU-device limit negotiation, allocation success, peak memory, or production suitability.'
       : 'The captured adapter reports a maxBufferSize or maxStorageBufferBindingSize below the largest pinned execution tile. Treat this capture/device profile as incompatible with the pinned tile geometry until the mismatch is explained.',
