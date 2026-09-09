@@ -22,12 +22,13 @@ npm run ops:preflight-endpoint-embedding-eight-physical -- \
 
 The command fails before any browser work when:
 
-- the generated manifest drifts from the diagnostic #323 contract
+- the generated manifest drifts from the diagnostic #323 contract, is not a regular file, or is a symlink
 - the reused graph is not exactly 260 bytes with SHA-256 `70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50`
+- the payload directory itself is missing, not a directory, or a symlink
 - any of the eight payload files is missing, a symlink, not a regular file, has the wrong byte count, or hashes differently from the generated manifest
 - the payload/tile geometry is no longer 1:1, contiguous, zero-offset, or diagnostic-only
 
-Large payload files are hashed through a bounded 1 MiB buffer rather than being loaded into memory as one `Buffer`.
+Regular files are opened with no-follow semantics where the host provides them and are re-statted through the open file descriptor. Large payload files are hashed through a bounded 1 MiB buffer rather than being loaded into memory as one `Buffer`.
 
 ## Output
 
