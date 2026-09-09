@@ -5,6 +5,7 @@ import {
   descendantRows,
   mergeMinimum,
   mergePeak,
+  parseCaptureArgs,
   parsePsRows,
   summarizeProcessRows,
   summarizeFootprintReport,
@@ -123,6 +124,69 @@ describe('endpoint post-stage WebGPU process RSS diagnostic helpers', () => {
     expect(minimum).toEqual(low);
     expect(minimum).not.toBe(low);
     expect(mergeMinimum(minimum, high)).toBe(minimum);
+  });
+});
+
+describe('endpoint post-stage WebGPU process RSS capture configuration', () => {
+  it('keeps the existing defaults with a pure environment input', () => {
+    const config = parseCaptureArgs(['relative-data', 'relative-output.json'], {});
+    expect(config.serverPort).toBe(8796);
+    expect(config.debugPort).toBe(9336);
+    expect(config.sampleIntervalMs).toBe(100);
+    expect(config.postReportSettleMs).toBe(5000);
+    expect(config.postTeardownSettleMs).toBe(30000);
+    expect(config.timeoutMs).toBe(120000);
+    expect(config.dataDir).toMatch(/relative-data$/);
+    expect(config.outputPath).toMatch(/relative-output\.json$/);
+  });
+
+  it('accepts explicit integer overrides including zero settle windows', () => {
+    const config = parseCaptureArgs(['data', 'output.json'], {
+      CHROME_BINARY: '/custom/chrome',
+      UNZEN_HARNESS_PORT: '12001',
+      UNZEN_CDP_PORT: '12002',
+      UNZEN_RSS_SAMPLE_INTERVAL_MS: '25',
+      UNZEN_RSS_POST_REPORT_SETTLE_MS: '0',
+      UNZEN_RSS_POST_TEARDOWN_SETTLE_MS: '45000',
+      UNZEN_RSS_TIMEOUT_MS: '180000',
+    });
+    expect(config).toMatchObject({
+      chromeBinary: '/custom/chrome',
+      serverPort: 12001,
+      debugPort: 12002,
+      sampleIntervalMs: 25,
+      postReportSettleMs: 0,
+      postTeardownSettleMs: 45000,
+      timeoutMs: 180000,
+    });
+  });
+
+  it.each([
+    ['UNZEN_HARNESS_PORT', '0'],
+    ['UNZEN_HARNESS_PORT', '65536'],
+    ['UNZEN_CDP_PORT', 'not-a-number'],
+    ['UNZEN_RSS_SAMPLE_INTERVAL_MS', '0'],
+    ['UNZEN_RSS_SAMPLE_INTERVAL_MS', '1.5'],
+    ['UNZEN_RSS_POST_REPORT_SETTLE_MS', '-1'],
+    ['UNZEN_RSS_POST_TEARDOWN_SETTLE_MS', ''],
+    ['UNZEN_RSS_TIMEOUT_MS', 'NaN'],
+    ['UNZEN_RSS_TIMEOUT_MS', '-10'],
+  ])('rejects malformed %s=%j before capture startup', (name, value) => {
+    expect(() => parseCaptureArgs(['data', 'output.json'], { [name]: value }))
+      .toThrow(new RegExp(name));
+  });
+
+  it('rejects a harness/CDP port collision before opening sockets', () => {
+    expect(() => parseCaptureArgs(['data', 'output.json'], {
+      UNZEN_HARNESS_PORT: '12001',
+      UNZEN_CDP_PORT: '12001',
+    })).toThrow(/must be distinct/);
+  });
+
+  it('rejects missing positional paths before reading environment overrides', () => {
+    expect(() => parseCaptureArgs(['only-data'], {
+      UNZEN_HARNESS_PORT: 'not-a-number',
+    })).toThrow(/usage:/);
   });
 });
 
