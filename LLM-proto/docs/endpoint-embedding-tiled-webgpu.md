@@ -31,6 +31,22 @@ python tools/prepare_llama_1b_endpoint_embedding_tiled_ort_webgpu.py \
 
 The output directory must be empty and must not be a symlink. Preparation fail-closes on pinned source drift, payload digest drift, graph serialization drift, tile geometry drift, or token-routing drift.
 
+### 8-physical payload identity preparation
+
+#320 adds a separate pre-decision preparation step for the **8 physical / 8 execution tile** candidate. It does not replace the existing 4-physical browser harness. The helper verifies the same pinned source graph and the complete 1,692,672,000-byte source external-data identity first, then copies the eight exact embedding ranges from the upstream pinned layout report into eight independent `131,334,144`-byte payloads.
+
+```bash
+cd LLM-proto
+python tools/prepare_llama_1b_endpoint_embedding_eight_physical_payloads.py \
+  /absolute/path/to/model_q4.onnx \
+  /absolute/path/to/model_q4.onnx_data \
+  /tmp/unzen-endpoint-embedding-eight-physical
+```
+
+The generated `manifest.json` records each payload's SHA-256, exact source byte range, a deterministic `payloadSetSha256`, and the 1:1 tile-to-physical-artifact mapping. It also keeps `decisionStatus=diagnostic-only`, sets `selectedPhysicalArtifactCount=null`, and records `candidatePhysicalArtifactCount=8`. This closes only the `generated-8-physical-payload-identity` evidence gap from the 4/8-vs-8/8 comparison. It is **not** browser/WebGPU evidence and does not establish ORT Web range supply, adapter/device limits, peak host/GPU memory, first-useful-work timing, release/cancel reclamation, or numerical equivalence. Those remain explicit follow-up evidence requirements before any layout decision.
+
+The 8-physical helper fail-closes if the upstream layout no longer contains exactly eight contiguous physical ranges covering 1,050,673,152 embedding bytes, if any execution tile does not map 1:1 to the same-index physical artifact at byte offset zero, or if pinned source identities drift. No Cloudflare deployment, credential, production state, or external paid service is involved.
+
 ## Browser run
 
 ```bash
