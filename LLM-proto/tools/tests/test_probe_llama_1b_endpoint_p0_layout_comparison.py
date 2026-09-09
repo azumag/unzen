@@ -65,13 +65,19 @@ class ProbeLlama1BEndpointP0LayoutComparisonTest(unittest.TestCase):
         }
         return layout, closure
 
-    def _build(self) -> dict[str, object]:
-        layout, closure = self._fake_reports()
+    @staticmethod
+    def _build_with_reports(
+        layout: dict[str, object], closure: dict[str, object]
+    ) -> dict[str, object]:
         with patch.object(p0_probe.layout_probe, "build_report", return_value=layout):
             with patch.object(
                 p0_probe.closure_probe, "build_report", return_value=closure
             ):
                 return p0_probe.build_report(Path("model_q4.onnx"))
+
+    def _build(self) -> dict[str, object]:
+        layout, closure = self._fake_reports()
+        return self._build_with_reports(layout, closure)
 
     def test_pins_exact_four_vs_eight_comparison_without_selecting_a_layout(self) -> None:
         report = self._build()
@@ -142,23 +148,46 @@ class ProbeLlama1BEndpointP0LayoutComparisonTest(unittest.TestCase):
         layout, closure = self._fake_reports()
         layout["decisionStatus"] = "approved"
 
-        with patch.object(p0_probe.layout_probe, "build_report", return_value=layout):
-            with patch.object(
-                p0_probe.closure_probe, "build_report", return_value=closure
-            ):
-                with self.assertRaisesRegex(RuntimeError, "must remain diagnostic-only"):
-                    p0_probe.build_report(Path("model_q4.onnx"))
+        with self.assertRaisesRegex(RuntimeError, "must remain diagnostic-only"):
+            self._build_with_reports(layout, closure)
+
+    def test_rejects_nonpassing_upstream_status(self) -> None:
+        layout, closure = self._fake_reports()
+        layout["status"] = "fail"
+
+        with self.assertRaisesRegex(RuntimeError, "status=pass"):
+            self._build_with_reports(layout, closure)
 
     def test_rejects_source_identity_drift_between_upstreams(self) -> None:
         layout, closure = self._fake_reports()
         closure["sourceGraphSha256"] = "c" * 64
 
-        with patch.object(p0_probe.layout_probe, "build_report", return_value=layout):
-            with patch.object(
-                p0_probe.closure_probe, "build_report", return_value=closure
-            ):
-                with self.assertRaisesRegex(RuntimeError, "source graph identity mismatch"):
-                    p0_probe.build_report(Path("model_q4.onnx"))
+        with self.assertRaisesRegex(RuntimeError, "source graph identity mismatch"):
+            self._build_with_reports(layout, closure)
+
+    def test_rejects_missing_source_identity_even_when_both_upstreams_match(self) -> None:
+        layout, closure = self._fake_reports()
+        layout["sourceGraphSha256"] = None
+        closure["sourceGraphSha256"] = None
+
+        with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+            self._build_with_reports(layout, closure)
+
+    def test_rejects_missing_external_identity_even_when_both_upstreams_match(self) -> None:
+        layout, closure = self._fake_reports()
+        layout["pinnedSourceExternalDataIdentity"] = None
+        closure["pinnedSourceExternalDataIdentity"] = None
+
+        with self.assertRaisesRegex(RuntimeError, "must be an object"):
+            self._build_with_reports(layout, closure)
+
+    def test_rejects_missing_candidate_policy_even_when_both_upstreams_match(self) -> None:
+        layout, closure = self._fake_reports()
+        layout["candidatePolicy"] = None
+        closure["candidatePolicy"] = None
+
+        with self.assertRaisesRegex(RuntimeError, "must be an object"):
+            self._build_with_reports(layout, closure)
 
     def test_rejects_missing_eight_physical_candidate(self) -> None:
         layout, closure = self._fake_reports()
@@ -168,12 +197,8 @@ class ProbeLlama1BEndpointP0LayoutComparisonTest(unittest.TestCase):
             if item["physicalArtifactCount"] != 8
         ]
 
-        with patch.object(p0_probe.layout_probe, "build_report", return_value=layout):
-            with patch.object(
-                p0_probe.closure_probe, "build_report", return_value=closure
-            ):
-                with self.assertRaisesRegex(RuntimeError, "comparison candidates missing"):
-                    p0_probe.build_report(Path("model_q4.onnx"))
+        with self.assertRaisesRegex(RuntimeError, "comparison candidates missing"):
+            self._build_with_reports(layout, closure)
 
     def test_rejects_execution_tile_byte_drift_even_when_both_upstreams_agree(self) -> None:
         layout, closure = self._fake_reports()
@@ -184,12 +209,8 @@ class ProbeLlama1BEndpointP0LayoutComparisonTest(unittest.TestCase):
         )
         eight["maximumExecutionTileBytes"] += 8_192
 
-        with patch.object(p0_probe.layout_probe, "build_report", return_value=layout):
-            with patch.object(
-                p0_probe.closure_probe, "build_report", return_value=closure
-            ):
-                with self.assertRaisesRegex(RuntimeError, "execution tile bytes drifted"):
-                    p0_probe.build_report(Path("model_q4.onnx"))
+        with self.assertRaisesRegex(RuntimeError, "execution tile bytes drifted"):
+            self._build_with_reports(layout, closure)
 
     def test_rejects_eight_way_nonzero_unused_whole_artifact_bytes(self) -> None:
         layout, closure = self._fake_reports()
@@ -202,12 +223,8 @@ class ProbeLlama1BEndpointP0LayoutComparisonTest(unittest.TestCase):
             "maximumUnusedBytesWithinRequiredFullArtifactsPerExecutionTile"
         ] = 1
 
-        with patch.object(p0_probe.layout_probe, "build_report", return_value=layout):
-            with patch.object(
-                p0_probe.closure_probe, "build_report", return_value=closure
-            ):
-                with self.assertRaisesRegex(RuntimeError, "must remain 1:1"):
-                    p0_probe.build_report(Path("model_q4.onnx"))
+        with self.assertRaisesRegex(RuntimeError, "must remain 1:1"):
+            self._build_with_reports(layout, closure)
 
 
 if __name__ == "__main__":
