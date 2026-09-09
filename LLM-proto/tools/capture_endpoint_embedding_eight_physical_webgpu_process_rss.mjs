@@ -11,7 +11,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, release, tmpdir, totalmem } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   mergeMinimum,
@@ -28,8 +28,12 @@ const HARNESS_SERVER = resolve(
 );
 const EXPECTED_RUNTIME_KIND =
   'unzen-pinned-llama-1b-endpoint-embedding-eight-physical-ort-webgpu-runtime';
+const EXPECTED_SCHEMA_VERSION = '1.0.0';
+const EXPECTED_ORT_WEB_VERSION = '1.22.0';
 const EXPECTED_ARTIFACT_COUNT = 8;
+const EXPECTED_ARTIFACT_BYTES = 131_334_144;
 const EXPECTED_OUTPUT_SHAPE = Object.freeze([16, 2048]);
+const CANONICAL_SHA256 = /^[0-9a-f]{64}$/;
 const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_POST_REPORT_SETTLE_MS = 5000;
 const DEFAULT_POST_TEARDOWN_SETTLE_MS = 30000;
@@ -53,8 +57,18 @@ function requireArray(value, field, length) {
   return value;
 }
 
+function requireCanonicalSha256(value, field) {
+  if (typeof value !== 'string' || !CANONICAL_SHA256.test(value)) {
+    throw new Error(`${field} must be a canonical lowercase SHA-256`);
+  }
+  return value;
+}
+
 export function validateEightPhysicalRuntimeReport(report) {
   requireObject(report, 'runtimeReport');
+  if (report.schemaVersion !== EXPECTED_SCHEMA_VERSION) {
+    throw new Error(`runtimeReport.schemaVersion must be ${EXPECTED_SCHEMA_VERSION}`);
+  }
   if (report.kind !== EXPECTED_RUNTIME_KIND) {
     throw new Error(`runtimeReport.kind must be ${EXPECTED_RUNTIME_KIND}`);
   }
@@ -68,9 +82,14 @@ export function validateEightPhysicalRuntimeReport(report) {
   if (report.evidenceLevel !== 'self-reported-runtime') {
     throw new Error('runtimeReport.evidenceLevel must be self-reported-runtime');
   }
+  if (report.onnxruntimeWebVersion !== EXPECTED_ORT_WEB_VERSION) {
+    throw new Error(`runtimeReport.onnxruntimeWebVersion must be ${EXPECTED_ORT_WEB_VERSION}`);
+  }
   if (report.sessionReleaseApiCompleted !== true) {
     throw new Error('runtimeReport.sessionReleaseApiCompleted must be true');
   }
+  requireCanonicalSha256(report.manifestPayloadSetSha256, 'runtimeReport.manifestPayloadSetSha256');
+  requireCanonicalSha256(report.verifiedGraph?.sha256, 'runtimeReport.verifiedGraph.sha256');
 
   const artifacts = requireArray(
     report.verifiedPhysicalArtifacts,
@@ -87,14 +106,22 @@ export function validateEightPhysicalRuntimeReport(report) {
   for (let index = 0; index < EXPECTED_ARTIFACT_COUNT; index += 1) {
     const artifact = requireObject(artifacts[index], `runtimeReport.verifiedPhysicalArtifacts[${index}]`);
     const tile = requireObject(tiles[index], `runtimeReport.executedTiles[${index}]`);
+    const expectedFile = `payload-${String(index).padStart(4, '0')}.bin`;
     if (artifact.index !== index || seenArtifactIndexes.has(artifact.index)) {
       throw new Error(`runtimeReport verified artifact ${index} identity mismatch`);
     }
+    if (artifact.file !== expectedFile || artifact.bytes !== EXPECTED_ARTIFACT_BYTES) {
+      throw new Error(`runtimeReport verified artifact ${index} geometry mismatch`);
+    }
+    requireCanonicalSha256(artifact.sha256, `runtimeReport.verifiedPhysicalArtifacts[${index}].sha256`);
     if (tile.tileIndex !== index || tile.physicalArtifactIndex !== index || seenTileIndexes.has(tile.tileIndex)) {
       throw new Error(`runtimeReport tile ${index} routing mismatch`);
     }
     if (tile.payloadFile !== artifact.file || tile.payloadSha256 !== artifact.sha256) {
       throw new Error(`runtimeReport tile ${index} payload identity mismatch`);
+    }
+    if (tile.byteLength !== EXPECTED_ARTIFACT_BYTES || tile.artifactByteOffset !== 0) {
+      throw new Error(`runtimeReport tile ${index} byte geometry mismatch`);
     }
     if (tile.comparison?.exactEqual !== true || tile.comparison?.firstByteMismatch !== -1) {
       throw new Error(`runtimeReport tile ${index} comparison must be byte-exact`);
@@ -278,19 +305,25 @@ async function evaluateState(cdp) {
 
 async function waitForPageUrl(cdp, expectedUrl, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
+  let lastError;
   while (Date.now() < deadline) {
-    const result = await cdp.send('Runtime.evaluate', {
-      expression: 'JSON.stringify({ href: location.href, readyState: document.readyState })',
-      returnByValue: true,
-    });
-    const raw = result?.result?.value;
-    if (typeof raw === 'string') {
-      const state = JSON.parse(raw);
-      if (state.href === expectedUrl && state.readyState === 'complete') return;
+    try {
+      const result = await cdp.send('Runtime.evaluate', {
+        expression: 'JSON.stringify({ href: location.href, readyState: document.readyState })',
+        returnByValue: true,
+      });
+      const raw = result?.result?.value;
+      if (typeof raw === 'string') {
+        const state = JSON.parse(raw);
+        if (state.href === expectedUrl && state.readyState === 'complete') return;
+      }
+    } catch (error) {
+      // The navigation can destroy the previous execution context between polls.
+      lastError = error;
     }
     await sleep(100);
   }
-  throw new Error(`page did not settle at ${expectedUrl}`);
+  throw new Error(`page did not settle at ${expectedUrl}${lastError ? `: ${lastError}` : ''}`);
 }
 
 function recordPhasePeak(phasePeaks, phase, sample) {
@@ -307,7 +340,7 @@ async function runCapture(config) {
     throw new Error('process RSS capture supports only macOS/Linux ps semantics');
   }
   mkdirSync(dirname(config.outputPath), { recursive: true });
-  const profileDir = mkdtempSync(resolve(tmpdir(), 'unzen-eight-physical-rss-XXXXXX'));
+  const profileDir = mkdtempSync(join(tmpdir(), 'unzen-eight-physical-rss-'));
   await assertPortAvailable(config.serverPort, 'harness server');
   await assertPortAvailable(config.debugPort, 'Chrome DevTools');
 
@@ -351,6 +384,7 @@ async function runCapture(config) {
       'Chrome DevTools',
     );
     const cdpVersion = await versionResponse.json();
+    if (chrome.exitCode !== null) throw new Error(`Chrome exited early with ${chrome.exitCode}`);
     const targets = await (await fetch(`http://127.0.0.1:${config.debugPort}/json/list`)).json();
     const page = targets.find((target) => target.type === 'page' && target.url === 'about:blank');
     if (!page?.webSocketDebuggerUrl) throw new Error('about:blank CDP page target unavailable');
@@ -372,6 +406,7 @@ async function runCapture(config) {
     let runtimeReport = null;
     let immediatePostReport = null;
     while (Date.now() < deadline) {
+      if (chrome.exitCode !== null) throw new Error(`Chrome exited during capture with ${chrome.exitCode}`);
       const sample = psSnapshot(chrome.pid);
       sampleCount += 1;
       globalPeak = mergePeak(globalPeak, sample);
@@ -399,8 +434,10 @@ async function runCapture(config) {
     const reportObservedAt = Date.now();
     let postReportPeak = structuredClone(immediatePostReport);
     let finalPostReport = structuredClone(immediatePostReport);
-    while (Date.now() < reportObservedAt + config.postReportSettleMs) {
-      await sleep(Math.min(config.sampleIntervalMs, reportObservedAt + config.postReportSettleMs - Date.now()));
+    const reportSettleDeadline = reportObservedAt + config.postReportSettleMs;
+    while (Date.now() < reportSettleDeadline) {
+      const remainingMs = reportSettleDeadline - Date.now();
+      if (remainingMs > 0) await sleep(Math.min(config.sampleIntervalMs, remainingMs));
       const sample = psSnapshot(chrome.pid);
       sampleCount += 1;
       finalPostReport = sample;
@@ -422,8 +459,10 @@ async function runCapture(config) {
       : null;
     globalPeak = mergePeak(globalPeak, immediatePostTeardown);
     recordPhasePeak(phasePeaks, 'post-teardown-about-blank', immediatePostTeardown);
-    while (Date.now() < teardownStartedAt + config.postTeardownSettleMs) {
-      await sleep(config.sampleIntervalMs);
+    const teardownDeadline = teardownStartedAt + config.postTeardownSettleMs;
+    while (Date.now() < teardownDeadline) {
+      const remainingMs = teardownDeadline - Date.now();
+      if (remainingMs > 0) await sleep(Math.min(config.sampleIntervalMs, remainingMs));
       const sample = psSnapshot(chrome.pid);
       sampleCount += 1;
       finalPostTeardown = sample;
