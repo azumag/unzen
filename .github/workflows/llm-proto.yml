@@ -70,9 +70,20 @@ jobs:
           node --check browser-harness/endpoint-embedding-tiled-webgpu/runner.js
           node --check tools/capture_endpoint_poststage_webgpu_process_rss.mjs
           node --check tools/check_wrangler_wasm_packaging.mjs
+          node --check worker-runtime/wasm-canary-worker.mjs
+          node --check tools/wasm_canary_contract.mjs
+          node --check tools/wasm_canary_deploy_gate.mjs
+          node --check tools/check_wrangler_wasm_canary.mjs
+          node --check tools/check_wasm_canary_remote.mjs
 
       - name: Verify Wrangler Wasm dry-run packaging
         run: npm run verify:wrangler-wasm-packaging
+
+      - name: Verify isolated Wasm canary dry-run package
+        run: node tools/check_wrangler_wasm_canary.mjs
+
+      - name: Verify Wasm canary deploy gate defaults to non-execution
+        run: node tools/wasm_canary_deploy_gate.mjs deploy
 
       - name: Probe pinned SmolLM2 P0 graph contract
         run: |
