@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { validateEndpointEmbeddingWebGpuHostProbeResult } from '../tools/probe_endpoint_embedding_webgpu_host.mjs';
+import {
+  createEndpointEmbeddingWebGpuHostProbeChallenge,
+  validateEndpointEmbeddingWebGpuHostProbeResult,
+} from '../tools/probe_endpoint_embedding_webgpu_host.mjs';
 
 function validResult() {
   return {
@@ -50,12 +53,24 @@ describe('endpoint embedding WebGPU lightweight host probe result', () => {
   });
 });
 
-it('keeps the host probe lightweight, isolated, loopback-only, and aligned with capture WebGPU flags', () => {
+it('creates challenge-bound probe/result routes from one unpredictable per-run token', () => {
+  const { probePath, resultPath } = createEndpointEmbeddingWebGpuHostProbeChallenge();
+  expect(probePath).toMatch(/^\/probe\/[0-9a-f]{64}$/);
+  expect(resultPath).toMatch(/^\/result\/[0-9a-f]{64}$/);
+  expect(probePath.slice('/probe/'.length)).toBe(resultPath.slice('/result/'.length));
+});
+
+it('keeps the host probe lightweight, isolated, loopback-only, challenge-bound, and aligned with capture WebGPU flags', () => {
   const source = readFileSync(
     new URL('../tools/probe_endpoint_embedding_webgpu_host.mjs', import.meta.url),
     'utf8',
   );
   expect(source).toContain("server.listen({ host: '127.0.0.1', port: 0, exclusive: true }");
+  expect(source).toContain('randomBytes(32)');
+  expect(source).toContain("request.method === 'GET' && request.url === probePath");
+  expect(source).toContain('response.end(probeHtml(resultPath))');
+  expect(source).toContain("request.method === 'POST' && request.url === resultPath");
+  expect(source).toContain('const url = `http://127.0.0.1:${port}${probePath}`');
   expect(source).toContain("'--headless=new'");
   expect(source).toContain("'--disable-gpu-sandbox'");
   expect(source).toContain("'--enable-unsafe-webgpu'");
