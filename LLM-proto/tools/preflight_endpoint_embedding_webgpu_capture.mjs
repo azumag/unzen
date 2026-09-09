@@ -10,6 +10,7 @@ import {
   ENDPOINT_EMBEDDING_WEBGPU_EXPECTED,
   validateEndpointEmbeddingWebGpuManifest,
 } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
+import { probeEndpointEmbeddingWebGpuHost } from './probe_endpoint_embedding_webgpu_host.mjs';
 
 const EXPECTED = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
 
@@ -128,6 +129,10 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
   requireDataDirectory(resolvedDataDir);
   const manifest = readPinnedManifest(resolvedDataDir);
 
+  // Fail fast on browser/WebGPU host capability before streaming the ~1 GiB prepared payload set.
+  const chrome = probeChromeVersion(chromeBinary);
+  const hostProbe = await probeEndpointEmbeddingWebGpuHost({ chromeBinary });
+
   const verifiedFiles = [];
   for (const [variantName, variant] of Object.entries(EXPECTED.graphVariants)) {
     verifiedFiles.push({
@@ -151,7 +156,6 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
     });
   }
 
-  const chrome = probeChromeVersion(chromeBinary);
   return {
     status: 'pass',
     decisionStatus: 'diagnostic-only',
@@ -167,10 +171,11 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
       executionTileCount: manifest.executionTileCount,
     },
     chrome,
+    hostProbe,
     verifiedFiles,
     verifiedFileCount: verifiedFiles.length,
     verifiedBytes: verifiedFiles.reduce((sum, file) => sum + file.bytes, 0),
-    conclusion: 'The prepared endpoint embedding browser bundle and Chrome executable satisfy the pinned diagnostic capture preflight. This does not constitute browser/WebGPU execution evidence.',
+    conclusion: 'The prepared endpoint embedding browser bundle, Chrome executable, and a lightweight loopback WebGPU adapter/device probe satisfy the pinned diagnostic capture preflight. This does not constitute browser/WebGPU execution evidence or ORT WebGPU inference evidence.',
   };
 }
 
