@@ -14,7 +14,9 @@ The loopback host probe also binds its HTML route and result POST route to one r
 
 Only after the lightweight host probe and Chrome-identity binding pass does the preflight stream every required ONNX graph and physical payload through SHA-256 verification. It rejects symlinked artifacts, non-regular files, byte-length drift, digest drift, or a file whose identity changes while it is being hashed. The payloads are streamed instead of being read into one large Node.js buffer.
 
-The capture helper runs this same preflight automatically after its cheap local port-availability checks and before it reserves the evidence output path, creates the capture Chrome profile, starts the harness, or launches the ORT Web browser run. Running the standalone command remains useful when an operator wants a bounded readiness report without starting the full capture, but it is no longer a correctness prerequisite that can be accidentally skipped.
+The capture helper runs this same preflight automatically after its cheap local port-availability checks and before it reserves the evidence output path, creates the capture Chrome profile, starts the harness, or launches the ORT Web browser run. It now also carries the preflight's exact four-part Chrome identity into the real capture launch. As soon as the live DevTools `/json/version` endpoint becomes available, the helper requires the live `Browser` four-part version to match the preflight version exactly **before navigating the ORT Web harness**. A wrapper, path replacement, or launch-mode drift between preflight and the real capture therefore fails before model execution. The final evidence records the preflight Chrome version snapshot rather than re-running `--version` after inference, so the evidence is bound to the executable identity that was actually gated and matched to the running CDP process.
+
+Running the standalone command remains useful when an operator wants a bounded readiness report without starting the full capture, but it is no longer a correctness prerequisite that can be accidentally skipped.
 
 ## Run
 
@@ -50,10 +52,10 @@ node tools/capture_endpoint_embedding_webgpu_runtime.mjs \
   /tmp/endpoint-embedding-webgpu-runtime.json
 ```
 
-The standalone preflight remains optional operator feedback, while the capture helper itself enforces the gate at the execution boundary.
+After the real Chrome process starts, the capture additionally checks the exact preflight/CDP four-part version match before loading the harness. The standalone preflight remains optional operator feedback, while the capture helper itself enforces both the readiness gate and the live-browser identity gate at the execution boundary.
 
 ## What a pass means
 
-A pass means the local prepared input bundle still matches the exact #223 diagnostic contract, the chosen Chrome executable reports a normal four-part version, the lightweight WebGPU probe ran under the same Chrome major, and a short-lived Chrome page on a challenge-bound loopback secure context can obtain a WebGPU adapter, create a default device, expose sane positive limits, and destroy that device. This closes the previous readiness gap where a host without usable WebGPU—or a version-reporting wrapper that launches a different Chrome major—could spend time hashing the full prepared payload set before failing during the browser run, while also preventing stale/concurrent probe traffic from satisfying the current run's result route accidentally.
+A pass means the local prepared input bundle still matches the exact #223 diagnostic contract, the chosen Chrome executable reports a normal four-part version, the lightweight WebGPU probe ran under the same Chrome major, the real capture process reports the same exact four-part version through CDP before ORT execution begins, and a short-lived Chrome page on a challenge-bound loopback secure context can obtain a WebGPU adapter, create a default device, expose sane positive limits, and destroy that device. This closes the previous readiness gap where a host without usable WebGPU—or a version-reporting wrapper that launches a different Chrome—could spend time hashing or executing against the full prepared payload set before the mismatch was discovered, while also preventing stale/concurrent probe traffic from satisfying the current run's result route accidentally.
 
 It still does **not** prove that ONNX Runtime Web assigns every model node to WebGPU, that the complete embedding ORT run succeeds, that `InferenceSession.release()` reclaims GPU memory immediately, or that decoder/KV/checkpoint full-model staged equivalence is established. Only the captured runtime evidence from the browser helper can close the narrow embedding-side browser execution check.
