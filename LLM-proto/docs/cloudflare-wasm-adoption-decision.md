@@ -69,7 +69,7 @@ A new Wasm candidate is acceptable only when all of the following remain true:
 - the implementation is isolated from network, storage, secret, and stateful orchestration concerns;
 - module-scope instantiation is used unless a measured requirement justifies another lifecycle.
 
-Current examples are small integer geometry checks, small binary-format verification kernels, and the isolated feasibility canary itself.
+The only currently proven implementation scope is the small integer segment-geometry style kernel, plus the isolated feasibility canary. A binary-format parser or other new kernel is **not automatically covered** by this decision; it needs candidate-specific differential evidence before it can be added to the allowed scope.
 
 ## Blocked scope
 
@@ -79,6 +79,7 @@ The following are not approved by this decision:
 - moving Coordinator state machines or Durable Object orchestration into Wasm;
 - moving network/storage orchestration into Wasm;
 - moving JSON parsing, locators, digests, signatures, or trust-boundary policy wholesale into Wasm;
+- treating a new binary-format verifier as approved without candidate-specific differential evidence;
 - adopting Wasm only because it is assumed to be faster without measured production evidence;
 - introducing a repository-wide Rust/C build chain or large native-code migration;
 - treating Cloudflare Worker Wasm as a substitute for browser WebGPU / #223 architecture work.
@@ -93,7 +94,7 @@ A larger candidate should first demonstrate a reproducible source-to-Wasm build,
 
 ## Security and reliability boundary
 
-Wasm provides a deterministic numeric execution boundary, but it does not replace application-level validation or Cloudflare Worker isolation policy. JavaScript remains responsible for validating external structures and values before entering the Wasm kernel.
+Within the tested integer-only contract, Wasm provides a compact deterministic numeric execution boundary, but it does not replace application-level validation or Cloudflare Worker isolation policy. JavaScript remains responsible for validating external structures and values before entering the Wasm kernel.
 
 The Step 5 deploy gate is a separate safety mechanism and is **not authorization**. The presence of Cloudflare credentials or the approval environment variable alone must not be interpreted as permission to run Phase B.
 
