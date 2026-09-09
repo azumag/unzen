@@ -4,6 +4,25 @@ Issue #163 closes the execution gap between the bounded #149 production provider
 
 The #152 module remains the only authority that can return `steady-state-enabled`. This harness does not introduce another readiness gate. It performs the authorized phase actions, captures independently verifiable evidence, and then passes that evidence back through #152.
 
+## Cold-start HOLD — Issue #190
+
+This harness is **not a genesis/bootstrap procedure for an empty production engine**. Before its phase sequence is usable, the engine must already have a valid bootstrap state and a genuine independently verified #149 provider-canary evidence chain.
+
+A fresh engine is currently blocked by the known fail-closed cycle tracked in #190:
+
+```text
+#145 deployment canary
+  -> requires engine bootstrap
+  -> bootstrap requires verified #152 steady-state evidence
+  -> every #152 rollout phase requires #149 provider-canary evidence
+  -> #149 requires verified #145 deployment-canary evidence
+  -> cycle
+```
+
+For the exact uninitialized engine state (`currentRunId=null`, `snapshotUpdatedAtMs=null`, `nextDueAtMs=null`), the deployment-canary path reports HTTP 503 with non-secret diagnostic markers including `issue=190`, `kind=cold-start-bootstrap-cycle`, and `status=design-decision-required`. These markers identify the known blocker; they do not authorize a bypass.
+
+There is currently no approved genesis bootstrap authorization or staged deployment-identity exception. Do not fabricate fixture/self-reported #145/#149/#152 evidence to enter this phase sequence. Resolve the #190 design decision before attempting a genuine empty-state production rollout. A partially initialized or corrupt snapshot remains a separate fail-close condition and must not be treated as the known empty-state cycle.
+
 ## Operator model
 
 The rollout controller is an internal Cloudflare Worker:
@@ -39,6 +58,8 @@ The harness accepts only:
 2. `maintenance-enabled`
 3. `dr-exercise-enabled`
 4. `steady-state-enabled`
+
+This order applies only after the #190 cold-start blocker is not in effect and genuine prerequisite evidence exists. It must not be interpreted as `#145 -> #149 -> #152` bootstrap guidance for an empty engine.
 
 Before any current-phase provider action, the runner invokes the existing #152 gate against the previously verified prefix. Missing future phases are the only expected hold reasons. A prior semantic failure prevents the next phase from starting.
 
@@ -102,11 +123,13 @@ The original #160/#161 deployment result remains the source of truth for the sev
 
 The manual production workflow runs the derived helper in `plan`, `dry-run`, and `deploy` modes after the base helper. `ROLLOUT_CONTROLLER_SECRET` is scoped only to the deploy step and is provisioned to Wrangler via stdin.
 
+Deployment does not solve #190 by itself. A deployed empty engine remains unable to manufacture the verified prerequisite evidence chain; the genesis design must be explicitly resolved first.
+
 ## What repository CI proves
 
-Repository tests prove sequencing, fail-close behavior, idempotency contracts, evidence capture/verifier contracts, internal-only configuration, secret redaction, and integration with the existing #152 terminal gate.
+Repository tests prove sequencing, fail-close behavior, idempotency contracts, evidence capture/verifier contracts, internal-only configuration, secret redaction, integration with the existing #152 terminal gate, and visibility of the known #190 cold-start blocker in operator documentation.
 
-They do **not** prove that Cloudflare Workers were deployed, that an external provider/pager was contacted, or that a genuine four-phase production rollout completed. Those claims require real external artifacts under Issue #158.
+They do **not** prove that Cloudflare Workers were deployed, that an external provider/pager was contacted, that #190 was resolved, or that a genuine four-phase production rollout completed. Those claims require real external artifacts under Issue #158 after the cold-start design is resolved.
 
 ## Focused test
 

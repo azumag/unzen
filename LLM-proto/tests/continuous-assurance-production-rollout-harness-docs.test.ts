@@ -21,4 +21,26 @@ describe('production rollout execution harness docs', () => {
     expect(doc).toContain(COMMAND);
     expect(pkg).toContain(COMMAND);
   });
+
+  it('keeps the known #190 empty-state bootstrap cycle explicit in both operator runbooks', async () => {
+    const root = decodeURIComponent(new URL('..', import.meta.url).pathname);
+    const [ops, doc] = await Promise.all([
+      readFile(join(root, 'docs', 'continuous-assurance-production-ops-harness.md'), 'utf8'),
+      readFile(join(root, 'docs', DOC), 'utf8'),
+    ]);
+
+    for (const runbook of [ops, doc]) {
+      expect(runbook).toContain('#190');
+      expect(runbook).toContain('currentRunId=null');
+      expect(runbook).toContain('cold-start-bootstrap-cycle');
+      expect(runbook).toContain('design-decision-required');
+      expect(runbook).toContain('#145');
+      expect(runbook).toContain('#149');
+      expect(runbook).toContain('#152');
+    }
+
+    expect(ops).toContain('do not invoke #145 -> #149 -> #152 on a fresh/empty engine expecting it to converge');
+    expect(doc).toContain('not a genesis/bootstrap procedure for an empty production engine');
+    expect(doc).toContain('Do not fabricate fixture/self-reported #145/#149/#152 evidence');
+  });
 });
