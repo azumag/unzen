@@ -68,11 +68,17 @@ describe('continuous assurance cold-start preflight', () => {
   });
 
   it.each([
+    {},
+    { currentRunId: null, snapshotUpdatedAtMs: null, nextDueAtMs: null },
+    { ...readyState(), scope: '' },
+    { ...readyState(), currentRunId: undefined },
     { ...readyState(), currentRunId: '' },
+    { ...readyState(), snapshotUpdatedAtMs: undefined },
     { ...readyState(), snapshotUpdatedAtMs: '1000' },
+    { ...readyState(), nextDueAtMs: undefined },
     { ...readyState(), nextDueAtMs: -1 },
     { ...readyState(), nextDueAtMs: 1.5 },
-  ])('fails closed on malformed state fields: %j', (state) => {
+  ])('fails closed on missing or malformed state fields: %j', (state) => {
     expect(classifyContinuousAssuranceEngineState(state)).toMatchObject({
       status: 'invalid',
       decision: 'repair-engine-state-before-canary',
