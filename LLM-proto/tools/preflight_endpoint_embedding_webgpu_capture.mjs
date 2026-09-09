@@ -98,6 +98,35 @@ export function parseChromeVersion(versionOutput) {
   };
 }
 
+export function validateChromeHostProbeIdentity(chrome, hostProbe) {
+  if (!chrome || typeof chrome !== 'object' || Array.isArray(chrome)) {
+    throw new Error('Chrome executable identity must be an object');
+  }
+  if (typeof chrome.version !== 'string' || !/^\d+\.\d+\.\d+\.\d+$/.test(chrome.version)) {
+    throw new Error('Chrome executable identity must contain a four-part version');
+  }
+  if (!hostProbe || typeof hostProbe !== 'object' || Array.isArray(hostProbe)) {
+    throw new Error('WebGPU host probe identity must be an object');
+  }
+  if (typeof hostProbe.userAgent !== 'string' || hostProbe.userAgent.trim().length === 0) {
+    throw new Error('WebGPU host probe userAgent must be a non-empty string');
+  }
+  const userAgentMatch = hostProbe.userAgent.match(/(?:HeadlessChrome|Chrome)\/(\d+)\./);
+  if (!userAgentMatch) {
+    throw new Error('WebGPU host probe userAgent must identify Chrome/HeadlessChrome with a major version');
+  }
+
+  const executableMajor = Number(chrome.version.split('.')[0]);
+  const hostProbeMajor = Number(userAgentMatch[1]);
+  if (!Number.isSafeInteger(executableMajor) || !Number.isSafeInteger(hostProbeMajor)) {
+    throw new Error('Chrome executable/host-probe major version is invalid');
+  }
+  if (executableMajor !== hostProbeMajor) {
+    throw new Error(`Chrome executable/host-probe major mismatch: ${executableMajor} != ${hostProbeMajor}`);
+  }
+  return hostProbe;
+}
+
 export function defaultChromeBinary() {
   if (process.env.CHROME_BINARY) return process.env.CHROME_BINARY;
   if (platform() === 'darwin') return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -132,6 +161,7 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
   // Fail fast on browser/WebGPU host capability before streaming the ~1 GiB prepared payload set.
   const chrome = probeChromeVersion(chromeBinary);
   const hostProbe = await probeEndpointEmbeddingWebGpuHost({ chromeBinary });
+  validateChromeHostProbeIdentity(chrome, hostProbe);
 
   const verifiedFiles = [];
   for (const [variantName, variant] of Object.entries(EXPECTED.graphVariants)) {
@@ -175,7 +205,7 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
     verifiedFiles,
     verifiedFileCount: verifiedFiles.length,
     verifiedBytes: verifiedFiles.reduce((sum, file) => sum + file.bytes, 0),
-    conclusion: 'The prepared endpoint embedding browser bundle, Chrome executable, and a lightweight loopback WebGPU adapter/device probe satisfy the pinned diagnostic capture preflight. This does not constitute browser/WebGPU execution evidence or ORT WebGPU inference evidence.',
+    conclusion: 'The prepared endpoint embedding browser bundle, Chrome executable, and a lightweight loopback WebGPU adapter/device probe satisfy the pinned diagnostic capture preflight. The host-probe Chrome major is bound to the selected executable identity. This does not constitute browser/WebGPU execution evidence or ORT WebGPU inference evidence.',
   };
 }
 
