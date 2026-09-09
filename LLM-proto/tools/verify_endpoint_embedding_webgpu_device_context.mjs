@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /** Verify browser/WebGPU device context preserved in captured endpoint embedding evidence. */
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   validateCapturedEndpointEmbeddingRuntimeEvidence,
   validateEndpointEmbeddingWebGpuDeviceContextFields,
 } from './capture_endpoint_embedding_webgpu_runtime.mjs';
+import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 export { validateEndpointEmbeddingWebGpuDeviceContextFields };
 
@@ -16,8 +16,8 @@ export function validateCapturedEndpointEmbeddingWebGpuDeviceContext(evidence) {
 }
 
 export function verifyCapturedEndpointEmbeddingWebGpuDeviceContextFile(evidencePath) {
-  const resolvedPath = resolve(evidencePath);
-  const evidence = JSON.parse(readFileSync(resolvedPath, 'utf8'));
+  const { text } = readStableRegularUtf8File(evidencePath, 'captured endpoint embedding evidence');
+  const evidence = JSON.parse(text);
   validateCapturedEndpointEmbeddingWebGpuDeviceContext(evidence);
   return {
     status: evidence.status,
