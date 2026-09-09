@@ -20,6 +20,8 @@ export const ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED = Object.freeze({
   tileBytes: 131334144,
   totalEmbeddingBytes: 1050673152,
   graphFile: 'embedding-offset-0.onnx',
+  graphBytes: 260,
+  graphSha256: '70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50',
   graphExternalDataPath: 'payload-0000.bin',
 });
 
@@ -163,6 +165,8 @@ export function buildEndpointEmbeddingEightPhysicalRuntimePlan(manifest) {
       sourceOffsetBytes: artifact.sourceOffsetBytes,
       sourceEndOffsetBytesExclusive: artifact.sourceEndOffsetBytesExclusive,
       graphFile: expected.graphFile,
+      expectedGraphBytes: expected.graphBytes,
+      expectedGraphSha256: expected.graphSha256,
       graphExternalDataPath: expected.graphExternalDataPath,
       artifactByteOffset: 0,
       byteLength: expected.tileBytes,
