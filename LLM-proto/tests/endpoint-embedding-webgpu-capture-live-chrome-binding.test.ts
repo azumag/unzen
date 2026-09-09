@@ -22,6 +22,7 @@ describe('endpoint embedding capture live Chrome identity binding', () => {
   it.each([
     ['different build', { Browser: 'Chrome/152.0.7978.1' }],
     ['different major', { Browser: 'HeadlessChrome/151.0.7977.83' }],
+    ['non-Chrome Browser identity', { Browser: 'Firefox/152.0.7977.83' }],
     ['missing Browser field', {}],
     ['malformed Browser version', { Browser: 'Chrome/current' }],
   ])('fails closed on %s', (_name, cdpVersion) => {
@@ -33,6 +34,13 @@ describe('endpoint embedding capture live Chrome identity binding', () => {
     preflight.chrome.version = '152';
     expect(() => validateCaptureChromeCdpIdentity(preflight, { Browser: 'Chrome/152.0.7977.83' }))
       .toThrow('four-part');
+  });
+
+  it('rejects drift between the preflight raw identity and parsed four-part version', () => {
+    const preflight = validPreflight();
+    preflight.chrome.raw = 'Google Chrome 152.0.7978.1';
+    expect(() => validateCaptureChromeCdpIdentity(preflight, { Browser: 'Chrome/152.0.7977.83' }))
+      .toThrow('raw/version identity mismatch');
   });
 });
 
