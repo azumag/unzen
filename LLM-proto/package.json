@@ -50,6 +50,7 @@
     "test:workers-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-rollout-harness": "vitest run tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout-runner.test.ts tests/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-production-operations-rollout-verifier.test.ts tests/continuous-assurance-production-rollout-harness.test.ts",
     "verify:wrangler-wasm-packaging": "node tools/check_wrangler_wasm_packaging.mjs",
     "ops:preflight-continuous-assurance-cold-start": "node tools/continuous-assurance-cold-start-preflight.mjs",
+    "ops:preflight-endpoint-embedding-eight-physical": "node tools/preflight_endpoint_embedding_eight_physical_bundle.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
