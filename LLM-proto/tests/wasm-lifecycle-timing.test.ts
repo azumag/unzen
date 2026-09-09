@@ -78,6 +78,18 @@ async function measure(
   }
 }
 
+async function firstModuleResponseAfterTwoRequests(): Promise<LifecycleResponse> {
+  const mf = createRuntime(moduleScriptPath);
+  try {
+    await mf.ready;
+    const first = (await timedRequest(mf)).body;
+    expect((await timedRequest(mf)).body.requestCount).toBe(2);
+    return first;
+  } finally {
+    await mf.dispose();
+  }
+}
+
 function expectTimingEvidence(evidence: TimingEvidence): void {
   for (const value of [
     evidence.startupMs,
@@ -123,34 +135,20 @@ describe('Cloudflare Wasm instantiate lifecycle measurement', () => {
   });
 
   it('re-instantiates module scope after Miniflare restart without changing correctness', async () => {
-    const firstRuntime = createRuntime(moduleScriptPath);
-    let first: LifecycleResponse;
-    try {
-      await firstRuntime.ready;
-      first = (await timedRequest(firstRuntime)).body;
-      expect((await timedRequest(firstRuntime)).body.requestCount).toBe(2);
-    } finally {
-      await firstRuntime.dispose();
-    }
+    const first = await firstModuleResponseAfterTwoRequests();
+    const restarted = await firstModuleResponseAfterTwoRequests();
 
-    const restartedRuntime = createRuntime(moduleScriptPath);
-    try {
-      await restartedRuntime.ready;
-      const restarted = (await timedRequest(restartedRuntime)).body;
-      expect(first).toMatchObject({
-        scope: 'module',
-        result: 0,
-        requestCount: 1,
-        instantiationCount: 1,
-      });
-      expect(restarted).toMatchObject({
-        scope: 'module',
-        result: 0,
-        requestCount: 1,
-        instantiationCount: 1,
-      });
-    } finally {
-      await restartedRuntime.dispose();
-    }
+    expect(first).toMatchObject({
+      scope: 'module',
+      result: 0,
+      requestCount: 1,
+      instantiationCount: 1,
+    });
+    expect(restarted).toMatchObject({
+      scope: 'module',
+      result: 0,
+      requestCount: 1,
+      instantiationCount: 1,
+    });
   });
 });
