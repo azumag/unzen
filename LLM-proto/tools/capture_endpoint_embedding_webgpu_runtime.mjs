@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Capture the diagnostic-only endpoint embedding ORT Web/WebGPU runtime report. */
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { closeSync, fsyncSync, mkdirSync, mkdtempSync, openSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, tmpdir } from 'node:os';
@@ -90,6 +90,33 @@ function chromeMajorFromCdpBrowser(cdpBrowser) {
     ?? cdpBrowser.match(/\b(\d+)\.\d+\.\d+\.\d+\b/);
   if (!match) throw new Error('captureEnvironment.cdpBrowser must contain a Chrome major version');
   return Number(match[1]);
+}
+
+export function validateCaptureChromeCdpIdentity(preflight, cdpVersion) {
+  if (!preflight || typeof preflight !== 'object' || Array.isArray(preflight)) {
+    throw new Error('capture preflight must be an object');
+  }
+  const preflightVersion = requireNonEmptyString(preflight.chrome?.version, 'capture preflight Chrome version');
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(preflightVersion)) {
+    throw new Error('capture preflight Chrome version must be four-part');
+  }
+  const preflightRaw = requireNonEmptyString(preflight.chrome?.raw, 'capture preflight Chrome raw identity');
+  const preflightRawVersionMatch = preflightRaw.match(/\d+\.\d+\.\d+\.\d+/);
+  if (!preflightRawVersionMatch || preflightRawVersionMatch[0] !== preflightVersion) {
+    throw new Error('capture preflight Chrome raw/version identity mismatch');
+  }
+  if (!cdpVersion || typeof cdpVersion !== 'object' || Array.isArray(cdpVersion)) {
+    throw new Error('Chrome DevTools version response must be an object');
+  }
+  const cdpBrowser = requireNonEmptyString(cdpVersion.Browser, 'Chrome DevTools Browser identity');
+  const cdpVersionMatch = cdpBrowser.match(/(?:HeadlessChrome|Chrome)\/(\d+\.\d+\.\d+\.\d+)\b/);
+  if (!cdpVersionMatch) {
+    throw new Error('Chrome DevTools Browser identity must identify Chrome/HeadlessChrome with a four-part version');
+  }
+  if (cdpVersionMatch[1] !== preflightVersion) {
+    throw new Error(`capture preflight/CDP Chrome version mismatch: ${preflightVersion} != ${cdpVersionMatch[1]}`);
+  }
+  return cdpBrowser;
 }
 
 export function validateEndpointEmbeddingWebGpuDeviceContextFields(evidence) {
@@ -233,7 +260,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
   assertDistinctCapturePorts(serverPort, debugPort);
   await assertPortAvailable(serverPort, 'harness');
   await assertPortAvailable(debugPort, 'DevTools');
-  await preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeBinary });
+  const preflight = await preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeBinary });
   let outputFd;
   let outputCommitted = false;
   let profileDir;
@@ -252,6 +279,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
 
     chrome = spawn(chromeBinary, ['--headless=new', `--user-data-dir=${profileDir}`, '--disable-gpu-sandbox', '--enable-unsafe-webgpu', '--no-first-run', '--no-default-browser-check', `--remote-debugging-port=${debugPort}`, 'about:blank'], { stdio: 'ignore' });
     const version = await (await waitFor(`http://127.0.0.1:${debugPort}/json/version`, 10000, 'Chrome DevTools')).json();
+    validateCaptureChromeCdpIdentity(preflight, version);
     if (chrome.exitCode !== null) throw new Error(`Chrome exited early with ${chrome.exitCode}`);
     const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
     const page = targets.find((target) => target.type === 'page' && target.url === 'about:blank');
@@ -282,7 +310,7 @@ async function runCapture({ dataDir, outputPath, chromeBinary, serverPort, debug
       evidenceLevel: 'captured-browser-runtime',
       capturedAtUtc: new Date().toISOString(),
       captureEnvironment: {
-        chromeVersion: execFileSync(chromeBinary, ['--version'], { encoding: 'utf8' }).trim(),
+        chromeVersion: preflight.chrome.raw,
         cdpBrowser: version.Browser,
         nodeVersion: process.version,
         platform: platform(),
