@@ -38,7 +38,8 @@ function requireRegularPathSnapshot(path, label) {
   return snapshotIdentity(stat);
 }
 
-export function readStableRegularUtf8File(filePath, label = 'evidence file') {
+export function readStableRegularUtf8FileWithReader(filePath, label, readFromFd) {
+  if (typeof readFromFd !== 'function') throw new Error('stable file reader callback must be a function');
   const resolvedPath = resolve(filePath);
   const pathBefore = requireRegularPathSnapshot(resolvedPath, label);
   let fd;
@@ -51,7 +52,8 @@ export function readStableRegularUtf8File(filePath, label = 'evidence file') {
       throw new Error(`${label} path identity changed before opening`);
     }
 
-    const text = readFileSync(fd, 'utf8');
+    const text = readFromFd(fd);
+    if (typeof text !== 'string') throw new Error('stable file reader callback must return UTF-8 text');
     const fdAfter = snapshotIdentity(fstatSync(fd, { bigint: true }));
     if (!sameSnapshot(fdBefore, fdAfter)) {
       throw new Error(`${label} changed while reading`);
@@ -66,4 +68,8 @@ export function readStableRegularUtf8File(filePath, label = 'evidence file') {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+export function readStableRegularUtf8File(filePath, label = 'evidence file') {
+  return readStableRegularUtf8FileWithReader(filePath, label, (fd) => readFileSync(fd, 'utf8'));
 }
