@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, readFile } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -41,6 +41,23 @@ function validateInspection(inspection, field) {
     throw new Error(`${field}.sha256 must be a canonical lowercase SHA-256`);
   }
   return value;
+}
+
+async function openRegularFileNoFollow(resolvedPath) {
+  const pathStat = await lstat(resolvedPath);
+  if (pathStat.isSymbolicLink()) throw new Error(`${resolvedPath} must not be a symbolic link`);
+  if (!pathStat.isFile()) throw new Error(`${resolvedPath} must be a regular file`);
+
+  const noFollow = constants.O_NOFOLLOW ?? 0;
+  const handle = await open(resolvedPath, constants.O_RDONLY | noFollow);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new Error(`${resolvedPath} must remain a regular file`);
+    return { handle, before };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
 }
 
 export function evaluateEndpointEmbeddingEightPhysicalBundle(manifest, inspections) {
@@ -95,16 +112,8 @@ export function evaluateEndpointEmbeddingEightPhysicalBundle(manifest, inspectio
 
 export async function inspectRegularFile(filePath) {
   const resolvedPath = resolve(filePath);
-  const pathStat = await lstat(resolvedPath);
-  if (pathStat.isSymbolicLink()) throw new Error(`${resolvedPath} must not be a symbolic link`);
-  if (!pathStat.isFile()) throw new Error(`${resolvedPath} must be a regular file`);
-
-  const noFollow = constants.O_NOFOLLOW ?? 0;
-  const handle = await open(resolvedPath, constants.O_RDONLY | noFollow);
+  const { handle, before } = await openRegularFileNoFollow(resolvedPath);
   try {
-    const before = await handle.stat();
-    if (!before.isFile()) throw new Error(`${resolvedPath} must remain a regular file`);
-
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT.hashBufferBytes);
     let totalBytes = 0;
@@ -129,11 +138,34 @@ export async function inspectRegularFile(filePath) {
   }
 }
 
+export async function readRegularJsonFile(filePath) {
+  const resolvedPath = resolve(filePath);
+  const { handle, before } = await openRegularFileNoFollow(resolvedPath);
+  try {
+    const text = await handle.readFile({ encoding: 'utf8' });
+    const after = await handle.stat();
+    if (after.size !== before.size || Buffer.byteLength(text, 'utf8') !== before.size) {
+      throw new Error(`${resolvedPath} changed while reading`);
+    }
+    return JSON.parse(text);
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function assertNonSymlinkDirectory(directoryPath) {
+  const resolvedPath = resolve(directoryPath);
+  const pathStat = await lstat(resolvedPath);
+  if (pathStat.isSymbolicLink()) throw new Error(`${resolvedPath} must not be a symbolic link`);
+  if (!pathStat.isDirectory()) throw new Error(`${resolvedPath} must be a directory`);
+  return resolvedPath;
+}
+
 export async function preflightEndpointEmbeddingEightPhysicalBundle({ manifestPath, graphPath, payloadDir }) {
   const resolvedManifest = resolve(manifestPath);
   const resolvedGraph = resolve(graphPath);
-  const resolvedPayloadDir = resolve(payloadDir);
-  const manifest = JSON.parse(await readFile(resolvedManifest, 'utf8'));
+  const resolvedPayloadDir = await assertNonSymlinkDirectory(payloadDir);
+  const manifest = await readRegularJsonFile(resolvedManifest);
   const runtimePlan = buildEndpointEmbeddingEightPhysicalRuntimePlan(manifest);
 
   const graph = await inspectRegularFile(resolvedGraph);
