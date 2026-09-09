@@ -7,6 +7,7 @@ import { ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED } from '../browser-harness/e
 import {
   ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT,
   assertNonSymlinkDirectory,
+  calculateEndpointEmbeddingPayloadSetSha256,
   evaluateEndpointEmbeddingEightPhysicalBundle,
   inspectRegularFile,
   parseEndpointEmbeddingEightPhysicalPreflightArgs,
@@ -15,6 +16,14 @@ import {
 
 function validManifest() {
   const expected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED;
+  const physicalArtifacts = Array.from({ length: 8 }, (_, index) => ({
+    index,
+    file: `payload-${String(index).padStart(4, '0')}.bin`,
+    bytes: expected.tileBytes,
+    sha256: (index + 1).toString(16).repeat(64),
+    sourceOffsetBytes: index * expected.tileBytes,
+    sourceEndOffsetBytesExclusive: (index + 1) * expected.tileBytes,
+  }));
   return {
     schemaVersion: expected.schemaVersion,
     kind: expected.manifestKind,
@@ -26,15 +35,8 @@ function validManifest() {
     sourceGraphSha256: expected.sourceGraphSha256,
     sourceExternalData: { ...expected.sourceExternalData },
     embeddingInitializer: { ...expected.embeddingInitializer },
-    physicalArtifacts: Array.from({ length: 8 }, (_, index) => ({
-      index,
-      file: `payload-${String(index).padStart(4, '0')}.bin`,
-      bytes: expected.tileBytes,
-      sha256: (index + 1).toString(16).repeat(64),
-      sourceOffsetBytes: index * expected.tileBytes,
-      sourceEndOffsetBytesExclusive: (index + 1) * expected.tileBytes,
-    })),
-    payloadSetSha256: 'f'.repeat(64),
+    physicalArtifacts,
+    payloadSetSha256: calculateEndpointEmbeddingPayloadSetSha256(physicalArtifacts),
     tiles: Array.from({ length: 8 }, (_, index) => ({
       tileIndex: index,
       startRow: index * expected.rowsPerTile,
@@ -82,6 +84,9 @@ describe('8-physical endpoint embedding bundle preflight', () => {
     expect(report.payloads).toHaveLength(8);
     expect(report.runtimePlan).toHaveLength(8);
     expect(report.graph.sha256).toBe(ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED.graphSha256);
+    expect(report.manifestPayloadSetSha256).toBe(
+      calculateEndpointEmbeddingPayloadSetSha256(manifest.physicalArtifacts),
+    );
     expect(report.evidenceBoundary).toBe('actual-file-integrity-preflight-only');
   });
 
@@ -97,6 +102,29 @@ describe('8-physical endpoint embedding bundle preflight', () => {
     const inspections = validInspections(manifest);
     mutate(inspections);
     expect(() => evaluateEndpointEmbeddingEightPhysicalBundle(manifest, inspections)).toThrow();
+  });
+
+  it('fails closed when the generated payload-set digest does not match artifact metadata', () => {
+    const manifest = validManifest();
+    manifest.payloadSetSha256 = '0'.repeat(64);
+    expect(() => evaluateEndpointEmbeddingEightPhysicalBundle(manifest, validInspections(manifest)))
+      .toThrow(/manifest\.payloadSetSha256 mismatch/);
+  });
+
+  it('matches the Python generator canonical payload-set serialization contract', () => {
+    const artifacts = [{
+      index: 0,
+      file: 'payload-0000.bin',
+      bytes: 3,
+      sha256: 'a'.repeat(64),
+      sourceOffsetBytes: 0,
+      sourceEndOffsetBytesExclusive: 3,
+    }];
+    const pythonCanonical = '[{"bytes":3,"file":"payload-0000.bin","index":0,"sha256":"'
+      + `${'a'.repeat(64)}","sourceEndOffsetBytesExclusive":3,"sourceOffsetBytes":0}]`;
+    expect(calculateEndpointEmbeddingPayloadSetSha256(artifacts)).toBe(
+      createHash('sha256').update(pythonCanonical).digest('hex'),
+    );
   });
 
   it('hashes files without loading the whole file as one buffer', async () => {
