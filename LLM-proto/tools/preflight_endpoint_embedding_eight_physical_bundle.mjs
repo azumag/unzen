@@ -43,6 +43,22 @@ function validateInspection(inspection, field) {
   return value;
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function calculateEndpointEmbeddingPayloadSetSha256(artifacts) {
+  if (!Array.isArray(artifacts)) throw new Error('manifest.physicalArtifacts must be an array');
+  return createHash('sha256').update(canonicalJson(artifacts), 'utf8').digest('hex');
+}
+
 async function openRegularFileNoFollow(resolvedPath) {
   const pathStat = await lstat(resolvedPath);
   if (pathStat.isSymbolicLink()) throw new Error(`${resolvedPath} must not be a symbolic link`);
@@ -63,6 +79,12 @@ async function openRegularFileNoFollow(resolvedPath) {
 export function evaluateEndpointEmbeddingEightPhysicalBundle(manifest, inspections) {
   const expected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED;
   const runtimePlan = buildEndpointEmbeddingEightPhysicalRuntimePlan(manifest);
+  requireEqual(
+    manifest.payloadSetSha256,
+    calculateEndpointEmbeddingPayloadSetSha256(manifest.physicalArtifacts),
+    'manifest.payloadSetSha256',
+  );
+
   const evidence = requireObject(inspections, 'inspections');
   const graph = validateInspection(evidence.graph, 'inspections.graph');
   requireEqual(graph.file, expected.graphFile, 'inspections.graph.file');
