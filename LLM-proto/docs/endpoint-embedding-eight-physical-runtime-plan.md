@@ -1,6 +1,6 @@
 # 8-physical endpoint embedding runtime plan
 
-Tracking: #167, focused follow-up #322. Generated payload identities are produced by #320 / PR #321.
+Tracking: #167, focused follow-up #322. Generated payload identities are produced by #320 / PR #321. Before browser execution, validate the actual files with `endpoint-embedding-eight-physical-bundle-preflight.md` (#324).
 
 ## Purpose
 
