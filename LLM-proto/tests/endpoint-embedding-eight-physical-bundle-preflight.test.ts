@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED } from '../browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js';
 import {
   ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT,
+  assertNonSymlinkDirectory,
   evaluateEndpointEmbeddingEightPhysicalBundle,
   inspectRegularFile,
   parseEndpointEmbeddingEightPhysicalPreflightArgs,
+  readRegularJsonFile,
 } from '../tools/preflight_endpoint_embedding_eight_physical_bundle.mjs';
 
 function validManifest() {
@@ -123,6 +125,34 @@ describe('8-physical endpoint embedding bundle preflight', () => {
       await writeFile(target, 'target');
       await symlink(target, link);
       await expect(inspectRegularFile(link)).rejects.toThrow(/symbolic link/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a regular JSON manifest but rejects a manifest symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'unzen-eight-physical-preflight-manifest-'));
+    try {
+      const target = join(dir, 'manifest-target.json');
+      const link = join(dir, 'manifest.json');
+      await writeFile(target, JSON.stringify({ status: 'pass' }));
+      await expect(readRegularJsonFile(target)).resolves.toEqual({ status: 'pass' });
+      await symlink(target, link);
+      await expect(readRegularJsonFile(link)).rejects.toThrow(/symbolic link/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('requires a real payload directory and rejects a symlinked directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'unzen-eight-physical-preflight-dir-'));
+    try {
+      const target = join(dir, 'payloads-real');
+      const link = join(dir, 'payloads');
+      await mkdir(target);
+      await expect(assertNonSymlinkDirectory(target)).resolves.toBe(target);
+      await symlink(target, link, 'dir');
+      await expect(assertNonSymlinkDirectory(link)).rejects.toThrow(/symbolic link/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
