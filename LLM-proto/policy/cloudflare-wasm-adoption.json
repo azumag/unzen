@@ -15,7 +15,6 @@
   ],
   "allowedScopes": [
     "small-integer-verification-kernel",
-    "small-binary-format-verification-kernel",
     "isolated-worker-canary"
   ],
   "blockedScopes": [
@@ -23,6 +22,7 @@
     "coordinator-stateful-orchestration",
     "network-or-storage-orchestration",
     "digest-signature-locator-validation-migration",
+    "binary-format-verification-without-candidate-specific-differential-evidence",
     "performance-only-adoption-without-production-evidence",
     "rust-c-toolchain-wide-migration",
     "browser-webgpu-architecture-substitute"
