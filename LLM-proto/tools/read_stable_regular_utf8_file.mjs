@@ -9,9 +9,11 @@ import {
   readSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
+import { TextDecoder } from 'node:util';
 
 export const DEFAULT_MAX_STABLE_UTF8_BYTES = 16 * 1024 * 1024;
 const READ_CHUNK_BYTES = 64 * 1024;
+const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 
 function snapshotIdentity(stat) {
   return {
@@ -48,6 +50,14 @@ function requireMaximumBytes(value) {
   return value;
 }
 
+function decodeFatalUtf8(bytes, label) {
+  try {
+    return FATAL_UTF8_DECODER.decode(bytes);
+  } catch (error) {
+    throw new Error(`${label} must contain valid UTF-8`, { cause: error });
+  }
+}
+
 function readBoundedUtf8FromFd(fd, label, maximumBytes) {
   const initialSize = fstatSync(fd, { bigint: true }).size;
   if (initialSize > BigInt(maximumBytes)) {
@@ -77,7 +87,7 @@ function readBoundedUtf8FromFd(fd, label, maximumBytes) {
     }
   }
 
-  return Buffer.concat(chunks, totalBytes).toString('utf8');
+  return decodeFatalUtf8(Buffer.concat(chunks, totalBytes), label);
 }
 
 export function readStableRegularUtf8FileWithReader(filePath, label, readFromFd) {
