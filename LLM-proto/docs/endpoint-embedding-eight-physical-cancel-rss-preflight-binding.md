@@ -11,16 +11,17 @@ The original cancellation RSS evidence intentionally stops the page while an `ex
 The wrapper closes that provenance gap without changing the browser/runtime contract:
 
 1. read and validate the supplied 8-physical preflight report;
-2. reserve the bound-output path before the expensive browser run, failing closed if it already exists;
-3. write the validated report to a private temporary snapshot;
-4. invoke the existing cancellation capture with the temporary snapshot path, so the harness server cannot accidentally observe a later edit to the operator's original preflight file;
-5. re-read the snapshot after the capture and require its canonical SHA-256 to be unchanged;
-6. run the existing fail-close cancellation RSS verifier;
-7. emit a sidecar containing canonical source-document digests plus a normalized preflight-declared runtime identity for the graph and all eight physical payloads.
+2. recompute the preflight payload-set digest from its eight declared payload identities and require it to match `manifestPayloadSetSha256`;
+3. reserve the bound-output path before the expensive browser run, failing closed if it already exists;
+4. write the validated report to a private temporary snapshot;
+5. invoke the existing cancellation capture with the temporary snapshot path, so the harness server cannot accidentally observe a later edit to the operator's original preflight file;
+6. re-read the snapshot after the capture and require its canonical SHA-256 to be unchanged;
+7. run the existing fail-close cancellation RSS verifier;
+8. emit a sidecar containing canonical source-document digests plus a normalized preflight-declared runtime identity for the graph and all eight physical payloads.
 
 The temporary snapshot is mode `0400` and lives in a process-private temporary directory. This is designed to prevent accidental drift during a capture; it is not claimed as an adversarial same-user filesystem isolation boundary. If the capture fails, the reserved bound-output file is removed instead of leaving a partial sidecar.
 
-## Usage
+## Capture
 
 From `LLM-proto/`:
 
@@ -42,13 +43,37 @@ A successful sidecar contains:
 - canonical SHA-256 of the validated preflight snapshot JSON;
 - pinned ORT Web version from the browser-harness contract;
 - source graph and source external-data identity declared by the preflight;
-- manifest payload-set SHA-256;
+- internally rechecked manifest payload-set SHA-256;
 - executable embedding graph file/bytes/SHA-256 declared by the preflight;
 - all eight physical payload index/file/bytes/SHA-256/source ranges declared by the preflight;
 - cancellation target tile and observed phase;
 - Chrome/CDP/platform identity.
 
 The normalized `runtimeIdentity` intentionally matches the core shape used by the normal-completion GPU-process RSS proxy where possible. That makes a later same-preflight comparison mechanical instead of relying on filenames or operator recollection.
+
+## Offline verification
+
+Persist the raw cancellation envelope, the bound sidecar, and the preflight report together. Revalidate all three without launching Chrome or WebGPU:
+
+```bash
+node tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs \
+  /path/to/cancel-rss-bound.json \
+  /path/to/cancel-rss.json \
+  /path/to/preflight.json
+```
+
+The verifier re-runs the raw cancellation verifier and preflight contract, rechecks the payload-set digest, deterministically rebuilds the expected bound sidecar, and requires its canonical JSON digest to match the persisted sidecar exactly. A modified sidecar or mismatching source document therefore fails closed.
+
+To derive the Chrome `gpu-process` RSS proxy without losing the bound preflight identity:
+
+```bash
+node tools/derive_endpoint_embedding_eight_physical_bound_gpu_process_rss_proxy.mjs \
+  /path/to/cancel-rss.json \
+  /path/to/cancel-rss-bound.json \
+  /path/to/preflight.json
+```
+
+That report retains `diagnostic-only`, embeds the validated `runtimeIdentity`, and still treats GPU-process RSS only as an OS-resident-memory proxy.
 
 ## Evidence boundary
 
