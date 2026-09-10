@@ -167,13 +167,14 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
   );
   endpointEmbeddingEightPhysicalPreflightIdentity(preflight);
   const preflightDigest = canonicalJsonSha256(preflight);
-  const snapshotDir = mkdtempSync(join(tmpdir(), 'unzen-cancel-rss-preflight-'));
-  const snapshotPath = join(snapshotDir, 'preflight.snapshot.json');
   const boundFd = reserveExclusiveOutput(config.boundOutputPath);
   let boundOutputCommitted = false;
   let boundFdOpen = true;
+  let snapshotDir = null;
 
   try {
+    snapshotDir = mkdtempSync(join(tmpdir(), 'unzen-cancel-rss-preflight-'));
+    const snapshotPath = join(snapshotDir, 'preflight.snapshot.json');
     writeFileSync(snapshotPath, `${JSON.stringify(preflight, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     chmodSync(snapshotPath, 0o400);
 
@@ -210,7 +211,7 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
   } finally {
     if (boundFdOpen) closeSync(boundFd);
     if (!boundOutputCommitted) rmSync(config.boundOutputPath, { force: true });
-    rmSync(snapshotDir, { recursive: true, force: true });
+    if (snapshotDir !== null) rmSync(snapshotDir, { recursive: true, force: true });
   }
 }
 
