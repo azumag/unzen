@@ -19,9 +19,25 @@ Use the same preflight-approved real 8-physical bundle required by the isolated 
 
 The harness server remains responsible for validating the preflight snapshot and serving only the approved graph/payload paths.
 
-## Run
+## Recommended provenance-bound run
 
-From `LLM-proto/`:
+For new #167 evidence, prefer the provenance-bound wrapper so the saved cancellation envelope can later be associated mechanically with the exact validated preflight snapshot supplied to the harness invocation:
+
+```bash
+node tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs \
+  /path/to/eight-physical-data \
+  /path/to/preflight.json \
+  /path/to/embedding-offset-0.onnx \
+  /path/to/cancel-rss.json \
+  3 \
+  /path/to/cancel-rss-bound.json
+```
+
+The wrapper freezes the validated preflight into a private temporary snapshot, passes that snapshot to the existing capture, rechecks its canonical digest after the run, validates the raw cancellation envelope, and writes a separate provenance sidecar. It does not independently re-hash the full payload set and does not claim that tiles after the cancellation target were loaded by the browser. See `docs/endpoint-embedding-eight-physical-cancel-rss-preflight-binding.md` for the exact boundary.
+
+## Raw capture
+
+The lower-level capture remains available when only the RSS envelope is required:
 
 ```bash
 node tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs \
@@ -73,7 +89,7 @@ This prevents a fast successful run or missed sampling window from being mislabe
 
 ## Evidence fields
 
-The output JSON records:
+The raw output JSON records:
 
 - the exact configured and observed cancellation phase,
 - the coarse cancellation method and navigation-to-blank latency,
@@ -89,7 +105,7 @@ RSS is summed across only the launched Chrome root process and descendants disco
 
 ## Offline verification
 
-Before promoting a persisted capture as #167 diagnostic evidence, revalidate it without launching Chrome or WebGPU:
+Before promoting a persisted raw capture as #167 diagnostic evidence, revalidate it without launching Chrome or WebGPU:
 
 ```bash
 node tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs \
@@ -108,6 +124,7 @@ This evidence is intentionally narrower than a production or architecture decisi
 - The configured sampling interval can miss shorter peaks.
 - Chrome may retain renderer processes, driver caches, allocator pages, or shared mappings after the document is destroyed.
 - Reaching or dropping below the initial RSS baseline is useful observational evidence, not proof of exact GPU allocator reclamation.
+- The provenance-bound wrapper binds to a validated preflight snapshot; it does not independently establish that every declared payload was loaded before cancellation.
 - This does not cover decoder/KV/checkpoint state, full-model equivalence, worker-loss resume, or production layout selection.
 
 A real capture should therefore be attached to #167 as one input alongside normal-completion RSS evidence, GPU-side measurements where available, and later full-model relay/cancellation evidence.
