@@ -48,8 +48,12 @@ verifier は最初に既存の capture bundle verifier を再実行し、`run-su
 
 source external-data は manifest に記録された全locationについて、relative-path安全性、重複、実byte数、canonical lowercase SHA-256 を確認し、実ファイルを再hashする。manifest の identity と embedded numerical verification の `sourceModel.externalData[]` も完全一致させる。`allExternalDataHashed=true` は必須である。
 
-1B q4 の weight blob はhash中にも差し替えられ得るため、各source fileはhash前後の device / inode / byte size / mtime を比較し、検証途中のreplacementやmutationも fail-close する。
+1B q4 の graph / weight blob はhash中にも差し替えられ得るため、source artifact は final symlink と非regular file を拒否し、すでにopenした file descriptor から直接 SHA-256 を計算する。対応OSでは `O_NOFOLLOW` / `O_CLOEXEC` / `O_NONBLOCK` を用い、`lstat -> open -> fstat -> fd hash -> fstat -> lstat` の全区間で device / inode / byte size / mtime / ctime が変わっていないことを要求する。これにより、同じ内容を持つ別inodeへのpathname replacementもdigest一致だけで通過しない。
+
+external-data の最終componentはpath解決時に意図的にdereferenceせず、stable file checkがsymlink自体を観測できるようにしている。parent directoryはsource root配下に解決されることを確認するため、`../` や中間symlink経由のroot外escapeは引き続き拒否する。
 
 ## Evidence boundary
 
 この verifier の `status=pass` が意味するのは「published host-side capture bundle が、現在指定された original full-model artifact と同一identityを持つ」ということだけである。numerical capture 自体の pass/fail は `captureStatus` を保持し、real multi-browser WebGPU、Coordinator relay、cold/warm cache、worker-loss resume、SpanPipeline の実機evidenceを代替しない。
+
+file descriptor からhashするため、hash中にpathnameを一時的に別fileへ向けても読み取るbytesはopen済みinodeに固定される。ただしこの verifier はsource artifactの署名やevidence authorの真正性を証明するものではなく、production physical layoutやartifact policyを採用する判断にも使わない。
