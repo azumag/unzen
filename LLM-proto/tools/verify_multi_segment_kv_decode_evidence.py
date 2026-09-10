@@ -114,6 +114,9 @@ def read_stable_regular_file(path: Path, *, max_bytes: int | None = None) -> byt
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
+    # If an attacker swaps the regular path for a FIFO/device between lstat and
+    # open, do not let open itself block before the post-open fstat can reject it.
+    flags |= getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(candidate, flags)
     except OSError as error:
