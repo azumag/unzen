@@ -26,6 +26,8 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
             "runSummarySha256": "c" * 64,
             "evidenceSha256": "d" * 64,
             "verificationSha256": "e" * 64,
+            "captureSnapshotPathResolutionMode": "component-anchored-dirfd",
+            "auditSnapshotPathResolutionMode": "component-anchored-dirfd",
         }
         value.update(overrides)
         return value
@@ -72,10 +74,112 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["captureStatus"], "pass")
         self.assertEqual(report["manifestSha256"], "a" * 64)
+        self.assertEqual(
+            report["captureSnapshotPathResolutionMode"],
+            "component-anchored-dirfd",
+        )
+        self.assertEqual(
+            report["auditSnapshotPathResolutionMode"],
+            "component-anchored-dirfd",
+        )
         self.assertEqual(report["sourceGraphSha256"], "b" * 64)
         self.assertEqual(report["sourcePathResolutionMode"], "component-anchored-dirfd")
         self.assertEqual(report["segmentCount"], 6)
         self.assertEqual([item[0] for item in calls], ["bundle", "source"])
+
+    def test_legacy_capture_snapshot_mode_is_preserved_as_unknown(self) -> None:
+        report = audit_module.audit_capture(
+            Path("capture"),
+            Path("model.onnx"),
+            bundle_verifier=lambda _capture: self._bundle(
+                captureSnapshotPathResolutionMode=None
+            ),
+            source_verifier=lambda _capture, _full_model: self._source(),
+        )
+
+        self.assertIsNone(report["captureSnapshotPathResolutionMode"])
+        self.assertEqual(
+            report["auditSnapshotPathResolutionMode"],
+            "component-anchored-dirfd",
+        )
+
+    def test_portable_artifact_audit_mode_is_reported_by_default(self) -> None:
+        report = audit_module.audit_capture(
+            Path("capture"),
+            Path("model.onnx"),
+            bundle_verifier=lambda _capture: self._bundle(
+                auditSnapshotPathResolutionMode="final-component-only"
+            ),
+            source_verifier=lambda _capture, _full_model: self._source(),
+        )
+
+        self.assertEqual(
+            report["auditSnapshotPathResolutionMode"],
+            "final-component-only",
+        )
+
+    def test_component_anchored_artifact_requirement_rejects_portable_fallback(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "artifact snapshot verification did not use component-anchored-dirfd path resolution",
+        ):
+            audit_module.audit_capture(
+                Path("capture"),
+                Path("model.onnx"),
+                require_component_anchored_artifacts=True,
+                bundle_verifier=lambda _capture: self._bundle(
+                    auditSnapshotPathResolutionMode="final-component-only"
+                ),
+                source_verifier=lambda _capture, _full_model: self._source(),
+            )
+
+    def test_component_anchored_artifact_requirement_accepts_strong_mode(self) -> None:
+        report = audit_module.audit_capture(
+            Path("capture"),
+            Path("model.onnx"),
+            require_component_anchored_artifacts=True,
+            bundle_verifier=lambda _capture: self._bundle(),
+            source_verifier=lambda _capture, _full_model: self._source(
+                sourcePathResolutionMode="final-component-only"
+            ),
+        )
+
+        self.assertEqual(
+            report["auditSnapshotPathResolutionMode"],
+            "component-anchored-dirfd",
+        )
+        self.assertEqual(report["sourcePathResolutionMode"], "final-component-only")
+
+    def test_unknown_or_missing_artifact_audit_mode_is_rejected(self) -> None:
+        cases = (None, "unknown-mode")
+        for audit_mode in cases:
+            with self.subTest(audit_mode=audit_mode):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "bundle.auditSnapshotPathResolutionMode must be one of",
+                ):
+                    audit_module.audit_capture(
+                        Path("capture"),
+                        Path("model.onnx"),
+                        bundle_verifier=lambda _capture, mode=audit_mode: self._bundle(
+                            auditSnapshotPathResolutionMode=mode
+                        ),
+                        source_verifier=lambda _capture, _full_model: self._source(),
+                    )
+
+    def test_unknown_capture_snapshot_mode_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "bundle.captureSnapshotPathResolutionMode must be one of",
+        ):
+            audit_module.audit_capture(
+                Path("capture"),
+                Path("model.onnx"),
+                bundle_verifier=lambda _capture: self._bundle(
+                    captureSnapshotPathResolutionMode="unknown-mode"
+                ),
+                source_verifier=lambda _capture, _full_model: self._source(),
+            )
 
     def test_portable_source_mode_is_reported_by_default(self) -> None:
         report = audit_module.audit_capture(
@@ -92,7 +196,7 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
     def test_component_anchored_requirement_rejects_portable_fallback(self) -> None:
         with self.assertRaisesRegex(
             RuntimeError,
-            "did not use component-anchored-dirfd path resolution",
+            "source verification did not use component-anchored-dirfd path resolution",
         ):
             audit_module.audit_capture(
                 Path("capture"),
@@ -109,11 +213,17 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
             Path("capture"),
             Path("model.onnx"),
             require_component_anchored_source=True,
-            bundle_verifier=lambda _capture: self._bundle(),
+            bundle_verifier=lambda _capture: self._bundle(
+                auditSnapshotPathResolutionMode="final-component-only"
+            ),
             source_verifier=lambda _capture, _full_model: self._source(),
         )
 
         self.assertEqual(report["sourcePathResolutionMode"], "component-anchored-dirfd")
+        self.assertEqual(
+            report["auditSnapshotPathResolutionMode"],
+            "final-component-only",
+        )
 
     def test_unknown_or_missing_source_mode_is_rejected(self) -> None:
         cases = (None, "unknown-mode")
