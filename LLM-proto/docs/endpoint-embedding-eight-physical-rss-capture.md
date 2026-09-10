@@ -76,6 +76,19 @@ The output records:
 
 RSS is the sum of the launched Chrome root process and descendants discovered by PPID. Unrelated Chrome instances are not intentionally included.
 
+## Offline re-validation
+
+A persisted normal-completion capture can be re-validated without launching Chrome or WebGPU again:
+
+```bash
+node tools/verify_endpoint_embedding_eight_physical_webgpu_process_rss.mjs \
+  /absolute/path/to/eight-physical-rss.json
+```
+
+The verifier re-checks the diagnostic schema/decision boundary, Chrome executable versus CDP browser identity, RSS role totals and milestone ordering, the embedded 8-physical runtime report, and the release/teardown phase-peak relationships. Input is read as a stable non-symlink regular-file snapshot with a default 16 MiB bound, fatal UTF-8 decoding, and pathname/device/inode/size/mtime/ctime consistency checks across the read. Set `UNZEN_PROCESS_RSS_EVIDENCE_MAX_BYTES` only when a larger trusted evidence envelope is intentionally required; accepted values are `1..268435456` bytes.
+
+A passing offline verification only proves that the persisted evidence is internally consistent with the capture contract. It is not a substitute for performing the real WebGPU capture on the intended host.
+
 ## Evidence boundary
 
 The generated JSON uses:
