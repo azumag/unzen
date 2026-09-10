@@ -8,6 +8,7 @@ import {
   canonicalJsonSha256,
   endpointEmbeddingEightPhysicalPreflightIdentity,
 } from '../tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs';
+import { calculateEndpointEmbeddingPayloadSetSha256 } from '../tools/preflight_endpoint_embedding_eight_physical_bundle.mjs';
 
 function snapshot(totalRssKiB: number) {
   return {
@@ -122,7 +123,7 @@ function validPreflightReport() {
     candidatePhysicalArtifactCount: expected.candidatePhysicalArtifactCount,
     sourceGraphSha256: expected.sourceGraphSha256,
     sourceExternalData: { ...expected.sourceExternalData },
-    manifestPayloadSetSha256: 'a'.repeat(64),
+    manifestPayloadSetSha256: calculateEndpointEmbeddingPayloadSetSha256(payloads),
     graph: {
       file: expected.graphFile,
       bytes: expected.graphBytes,
@@ -151,8 +152,9 @@ describe('8-physical cancellation RSS preflight provenance binding', () => {
         expectedPhase: 'executing embedding tile 3',
       },
       runtimeIdentity: {
+        identitySource: 'validated-preflight-report-snapshot-supplied-to-harness',
         onnxruntimeWebVersion: '1.22.0',
-        manifestPayloadSetSha256: 'a'.repeat(64),
+        manifestPayloadSetSha256: preflight.manifestPayloadSetSha256,
         graph: {
           file: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED.graphFile,
           bytes: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED.graphBytes,
@@ -177,7 +179,7 @@ describe('8-physical cancellation RSS preflight provenance binding', () => {
     );
   });
 
-  it('fails closed when preflight graph or payload identity drifts', () => {
+  it('fails closed when preflight graph, payload, or payload-set identity drifts', () => {
     const badGraph: any = validPreflightReport();
     badGraph.graph.sha256 = 'b'.repeat(64);
     expect(() => endpointEmbeddingEightPhysicalPreflightIdentity(badGraph)).toThrow(/preflight.graph.sha256 contract mismatch/);
@@ -186,6 +188,12 @@ describe('8-physical cancellation RSS preflight provenance binding', () => {
     badPayload.payloads[2].sha256 = 'NOT-A-DIGEST';
     expect(() => buildBoundCancellationRssEvidence(validCancellationEvidence(), badPayload)).toThrow(
       /canonical lowercase SHA-256/,
+    );
+
+    const badPayloadSet: any = validPreflightReport();
+    badPayloadSet.manifestPayloadSetSha256 = 'f'.repeat(64);
+    expect(() => endpointEmbeddingEightPhysicalPreflightIdentity(badPayloadSet)).toThrow(
+      /manifestPayloadSetSha256 does not match preflight.payloads/,
     );
   });
 
