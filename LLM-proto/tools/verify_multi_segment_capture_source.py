@@ -10,7 +10,9 @@ evidence still names the exact source artifacts on disk.
 This verifier is stdlib-only. It first reuses the published-bundle verifier, then
 binds the same bundle snapshot to the caller-supplied full model and every source
 external-data file recorded in the split manifest. ONNX Runtime is never loaded.
-Source artifacts are hashed through already-open file descriptors and are
+The run summary, split manifest, and numerical evidence are reparsed from bounded
+stable regular-file snapshots whose exact read digests are bound to the bundle
+report. Source artifacts are hashed through already-open file descriptors and are
 required to remain the same non-symlink regular files for the entire read. On
 platforms with dir_fd + O_NOFOLLOW support, the source root is anchored once and
 all graph/external-data path components are opened relative to that descriptor.
@@ -28,6 +30,10 @@ import stat
 
 from verify_multi_segment_artifacts import sha256_file
 from verify_multi_segment_capture_bundle import verify_capture_bundle
+from verify_multi_segment_capture_source_provenance import (
+    _capture_path,
+    _stable_json_object,
+)
 
 
 REPORT_KIND = "unzen-budgeted-multi-segment-capture-source-verification"
@@ -416,17 +422,16 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
     bundle_verification_sha = _canonical_sha256(bundle.get("verificationSha256"), field="bundle.verificationSha256")
 
     summary_path = root / "run-summary.json"
-    summary = _json_object(summary_path, field="run summary")
+    summary, summary_sha = _stable_json_object(summary_path, field="run summary")
     summary_artifacts = _require_mapping(summary.get("artifacts"), field="run-summary.artifacts")
-    manifest_path = _safe_relative_path(root, summary_artifacts.get("manifest"), field="run-summary.artifacts.manifest")
+    manifest_path = _capture_path(root, summary_artifacts.get("manifest"), field="run-summary.artifacts.manifest")
     summary_evidence = _require_mapping(summary.get("evidence"), field="run-summary.evidence")
-    evidence_path = _safe_relative_path(root, summary_evidence.get("path"), field="run-summary.evidence.path")
+    evidence_path = _capture_path(root, summary_evidence.get("path"), field="run-summary.evidence.path")
 
-    _require_equal(bundle_run_summary_sha, sha256_file(summary_path), field="bundle run-summary snapshot")
-    _require_equal(bundle_manifest_sha, sha256_file(manifest_path), field="bundle manifest snapshot")
-    _require_equal(bundle_evidence_sha, sha256_file(evidence_path), field="bundle evidence snapshot")
+    _require_equal(bundle_run_summary_sha, summary_sha, field="bundle run-summary snapshot")
+    manifest, manifest_sha = _stable_json_object(manifest_path, field="split manifest")
+    _require_equal(bundle_manifest_sha, manifest_sha, field="bundle manifest snapshot")
 
-    manifest = _json_object(manifest_path, field="split manifest")
     manifest_source = _require_mapping(manifest.get("sourceModel"), field="split-manifest.sourceModel")
     expected_graph_sha = _canonical_sha256(manifest_source.get("sha256"), field="split-manifest.sourceModel.sha256")
     manifest_external = _normalized_external_entries(
@@ -487,7 +492,8 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
         if source_root_fd is not None:
             os.close(source_root_fd)
 
-    evidence = _json_object(evidence_path, field="same-machine evidence")
+    evidence, evidence_sha = _stable_json_object(evidence_path, field="same-machine evidence")
+    _require_equal(bundle_evidence_sha, evidence_sha, field="bundle evidence snapshot")
     verification = _require_mapping(evidence.get("verification"), field="evidence.verification")
     verification_source = _require_mapping(
         verification.get("sourceModel"), field="evidence.verification.sourceModel"
