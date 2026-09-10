@@ -3,9 +3,10 @@
  * Run the existing 8-physical page-teardown cancellation RSS capture against a
  * validated immutable preflight snapshot, then emit a provenance-bound sidecar.
  *
- * The sidecar binds the cancellation envelope to the exact prepared graph and
- * eight payload identities used by the harness invocation. It remains
- * diagnostic-only and does not turn process RSS into GPU device-memory evidence.
+ * The sidecar binds the cancellation envelope to the exact preflight-declared
+ * graph and eight payload identities supplied to the harness invocation. It
+ * remains diagnostic-only and does not turn process RSS into GPU device-memory
+ * evidence.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -56,6 +57,7 @@ export function canonicalJsonSha256(value) {
 export function endpointEmbeddingEightPhysicalPreflightIdentity(preflightReport) {
   const report = validateEndpointEmbeddingEightPhysicalPreflightReport(preflightReport);
   return {
+    identitySource: 'validated-preflight-report-snapshot-supplied-to-harness',
     preflightKind: report.kind,
     preflightSchemaVersion: report.schemaVersion,
     evidenceBoundary: report.evidenceBoundary,
@@ -109,15 +111,16 @@ export function buildBoundCancellationRssEvidence(cancellationEvidence, prefligh
     },
     runtimeIdentity,
     conclusion: (
-      'The page-teardown cancellation RSS envelope is paired with the exact validated preflight '
+      'The page-teardown cancellation RSS envelope is bound to the exact validated preflight '
       + 'snapshot supplied to the harness invocation. The graph, payload-set digest, and all eight '
-      + 'physical payload identities are therefore preserved for later same-bundle comparison.'
+      + 'preflight-declared physical payload identities are preserved for later same-bundle comparison.'
     ),
     limitations: [
-      'This sidecar binds invocation provenance; it does not prove GPU device-memory peak or allocator reclamation.',
+      'This sidecar binds invocation provenance; it does not independently re-hash every prepared payload or prove GPU device-memory peak or allocator reclamation.',
       'The cancellation boundary remains coarse page teardown after observing a runner phase, not an ORT/WebGPU in-flight cancellation API.',
       'The ORT Web version is the pinned browser-harness contract version; the cancellation intentionally happens before a complete runtime report exists.',
       'The temporary preflight snapshot prevents accidental source-file drift during this wrapper invocation but is not an adversarial same-user filesystem isolation mechanism.',
+      'Payloads after the cancellation target may not have been loaded by the browser; their identities are preserved from the validated preflight snapshot, not claimed as runtime-verified by this cancelled run.',
       'This evidence does not select the 8-physical layout or establish decoder/KV/checkpoint full-model equivalence or resume correctness.',
     ],
   };
@@ -145,14 +148,9 @@ function parseArgs(argv) {
   };
 }
 
-function writeExclusiveJson(outputPath, value) {
+function reserveExclusiveOutput(outputPath) {
   mkdirSync(dirname(outputPath), { recursive: true });
-  const fd = openSync(outputPath, 'wx', 0o600);
-  try {
-    writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  } finally {
-    closeSync(fd);
-  }
+  return openSync(outputPath, 'wx', 0o600);
 }
 
 export async function runBoundCancellationRssCapture(argv, env = process.env) {
@@ -163,6 +161,9 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
   const preflightDigest = canonicalJsonSha256(preflight);
   const snapshotDir = mkdtempSync(join(tmpdir(), 'unzen-cancel-rss-preflight-'));
   const snapshotPath = join(snapshotDir, 'preflight.snapshot.json');
+  const boundFd = reserveExclusiveOutput(config.boundOutputPath);
+  let boundOutputCommitted = false;
+  let boundFdOpen = true;
 
   try {
     writeFileSync(snapshotPath, `${JSON.stringify(preflight, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -192,9 +193,14 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
 
     const cancellation = readStableCancellationRssEvidence(config.cancellationOutputPath);
     const bound = buildBoundCancellationRssEvidence(cancellation, snapshotAfter);
-    writeExclusiveJson(config.boundOutputPath, bound);
+    writeFileSync(boundFd, `${JSON.stringify(bound, null, 2)}\n`, 'utf8');
+    closeSync(boundFd);
+    boundFdOpen = false;
+    boundOutputCommitted = true;
     return bound;
   } finally {
+    if (boundFdOpen) closeSync(boundFd);
+    if (!boundOutputCommitted) rmSync(config.boundOutputPath, { force: true });
     rmSync(snapshotDir, { recursive: true, force: true });
   }
 }
