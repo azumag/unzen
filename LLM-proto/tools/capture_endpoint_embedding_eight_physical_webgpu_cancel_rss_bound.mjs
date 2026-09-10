@@ -27,7 +27,10 @@ import {
   ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED,
   validateEndpointEmbeddingEightPhysicalPreflightReport,
 } from '../browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js';
-import { readRegularJsonFile } from './preflight_endpoint_embedding_eight_physical_bundle.mjs';
+import {
+  calculateEndpointEmbeddingPayloadSetSha256,
+  readRegularJsonFile,
+} from './preflight_endpoint_embedding_eight_physical_bundle.mjs';
 import {
   readStableCancellationRssEvidence,
   validateCancellationRssEvidence,
@@ -56,6 +59,10 @@ export function canonicalJsonSha256(value) {
 
 export function endpointEmbeddingEightPhysicalPreflightIdentity(preflightReport) {
   const report = validateEndpointEmbeddingEightPhysicalPreflightReport(preflightReport);
+  const calculatedPayloadSetSha256 = calculateEndpointEmbeddingPayloadSetSha256(report.payloads);
+  if (calculatedPayloadSetSha256 !== report.manifestPayloadSetSha256) {
+    throw new Error('preflight.manifestPayloadSetSha256 does not match preflight.payloads');
+  }
   return {
     identitySource: 'validated-preflight-report-snapshot-supplied-to-harness',
     preflightKind: report.kind,
@@ -158,6 +165,7 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
   const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(
     await readRegularJsonFile(config.preflightReport),
   );
+  endpointEmbeddingEightPhysicalPreflightIdentity(preflight);
   const preflightDigest = canonicalJsonSha256(preflight);
   const snapshotDir = mkdtempSync(join(tmpdir(), 'unzen-cancel-rss-preflight-'));
   const snapshotPath = join(snapshotDir, 'preflight.snapshot.json');
@@ -187,6 +195,7 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
     const snapshotAfter = validateEndpointEmbeddingEightPhysicalPreflightReport(
       await readRegularJsonFile(snapshotPath),
     );
+    endpointEmbeddingEightPhysicalPreflightIdentity(snapshotAfter);
     if (canonicalJsonSha256(snapshotAfter) !== preflightDigest) {
       throw new Error('validated preflight snapshot changed during cancellation capture');
     }
