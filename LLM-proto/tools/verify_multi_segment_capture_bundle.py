@@ -9,10 +9,10 @@ The one-shot capture runner publishes three layers of evidence together:
 
 This verifier re-hashes those files after publication and checks that the
 summary, evidence envelope, embedded numerical report, and measured artifact
-preflight all refer to one identical snapshot. It intentionally depends only on
-the Python standard library plus the existing stdlib-only artifact verifier, so
-operators can audit a multi-gigabyte capture without loading ONNX Runtime or the
-full model.
+preflight all refer to one identical byte-level snapshot. It intentionally
+depends only on the Python standard library plus the existing stdlib-only
+artifact/snapshot verifiers, so operators can audit a multi-gigabyte capture
+without loading ONNX Runtime or the full model.
 """
 
 from __future__ import annotations
@@ -23,11 +23,18 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 
-from verify_multi_segment_artifacts import sha256_file, verify_artifact_integrity
+from verify_multi_segment_artifact_snapshot import (
+    PATH_RESOLUTION_COMPONENT_ANCHORED,
+    PATH_RESOLUTION_FINAL_ONLY,
+    REPORT_KIND as SNAPSHOT_REPORT_KIND,
+    REPORT_SCHEMA_VERSION as SNAPSHOT_REPORT_SCHEMA_VERSION,
+    verify_artifact_snapshot,
+)
+from verify_multi_segment_artifacts import sha256_file
 
 
 RUN_KIND = "unzen-budgeted-multi-segment-capture-run"
-RUN_SCHEMA_VERSION = "1.0.0"
+RUN_SCHEMA_VERSION = "1.1.0"
 EVIDENCE_KIND = "unzen-budgeted-multi-segment-evidence-bundle"
 EVIDENCE_SCHEMA_VERSION = "1.0.0"
 VERIFICATION_KIND = "unzen-budgeted-multi-segment-same-machine-verification"
@@ -119,6 +126,110 @@ def _require_status(raw: object, *, field: str) -> str:
 def _require_equal(left: object, right: object, *, field: str) -> None:
     if left != right:
         raise ValueError(f"{field} mismatch: expected={left!r}, observed={right!r}")
+
+
+def _bind_snapshot_preflight(
+    summary_artifacts: dict[str, object],
+    snapshot: dict[str, object],
+) -> tuple[dict[str, object], str, str]:
+    """Validate capture-time snapshot metadata against a fresh stable audit.
+
+    ``pathResolutionMode`` is intentionally not required to match between the
+    capture and audit hosts. A capture may have used the stronger dirfd mode and
+    later be audited on a portable fallback platform (or vice versa). Both modes
+    are reported so downstream interpretation can preserve that distinction.
+    """
+
+    if snapshot.get("status") != "pass":
+        raise RuntimeError("measured artifact snapshot verification did not pass")
+    if snapshot.get("schemaVersion") != SNAPSHOT_REPORT_SCHEMA_VERSION:
+        raise ValueError(
+            "unexpected measured artifact snapshot schemaVersion: "
+            f"{snapshot.get('schemaVersion')!r}"
+        )
+    if snapshot.get("kind") != SNAPSHOT_REPORT_KIND:
+        raise ValueError(
+            f"unexpected measured artifact snapshot kind: {snapshot.get('kind')!r}"
+        )
+    if snapshot.get("decisionStatus") != "diagnostic-only":
+        raise ValueError("measured artifact snapshot must remain diagnostic-only")
+
+    audit_mode = _non_empty_string(
+        snapshot.get("pathResolutionMode"),
+        field="measured artifact snapshot.pathResolutionMode",
+    )
+    if audit_mode not in {
+        PATH_RESOLUTION_COMPONENT_ANCHORED,
+        PATH_RESOLUTION_FINAL_ONLY,
+    }:
+        raise ValueError(
+            "measured artifact snapshot has unsupported pathResolutionMode: "
+            f"{audit_mode!r}"
+        )
+
+    summary_snapshot = _require_mapping(
+        summary_artifacts.get("snapshotPreflight"),
+        field="run-summary.artifacts.snapshotPreflight",
+    )
+    _require_equal(
+        summary_snapshot.get("schemaVersion"),
+        SNAPSHOT_REPORT_SCHEMA_VERSION,
+        field="run-summary snapshot schemaVersion vs verifier contract",
+    )
+    _require_equal(
+        summary_snapshot.get("kind"),
+        SNAPSHOT_REPORT_KIND,
+        field="run-summary snapshot kind vs verifier contract",
+    )
+    _require_equal(
+        summary_snapshot.get("decisionStatus"),
+        "diagnostic-only",
+        field="run-summary snapshot decisionStatus vs verifier contract",
+    )
+    capture_mode = _non_empty_string(
+        summary_snapshot.get("pathResolutionMode"),
+        field="run-summary.artifacts.snapshotPreflight.pathResolutionMode",
+    )
+    if capture_mode not in {
+        PATH_RESOLUTION_COMPONENT_ANCHORED,
+        PATH_RESOLUTION_FINAL_ONLY,
+    }:
+        raise ValueError(
+            "run-summary snapshot has unsupported pathResolutionMode: "
+            f"{capture_mode!r}"
+        )
+
+    captured_file_count = _positive_int(
+        summary_snapshot.get("artifactFileCount"),
+        field="run-summary.artifacts.snapshotPreflight.artifactFileCount",
+    )
+    measured_file_count = _positive_int(
+        snapshot.get("artifactFileCount"),
+        field="measured artifact snapshot.artifactFileCount",
+    )
+    _require_equal(
+        captured_file_count,
+        measured_file_count,
+        field="run-summary snapshot artifactFileCount vs measured snapshot",
+    )
+
+    integrity = _require_mapping(
+        snapshot.get("integrity"),
+        field="measured artifact snapshot.integrity",
+    )
+    if integrity.get("status") != "pass":
+        raise RuntimeError("measured artifact integrity did not pass")
+    _require_equal(
+        snapshot.get("manifestSha256"),
+        integrity.get("manifestSha256"),
+        field="measured snapshot manifestSha256 vs nested integrity",
+    )
+    _require_equal(
+        snapshot.get("segmentCount"),
+        integrity.get("segmentCount"),
+        field="measured snapshot segmentCount vs nested integrity",
+    )
+    return integrity, capture_mode, audit_mode
 
 
 def _bind_artifact_identity(
@@ -244,9 +355,12 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
         summary_artifacts.get("manifest"),
         field="run-summary.artifacts.manifest",
     )
-    integrity = verify_artifact_integrity(manifest_path)
-    if integrity.get("status") != "pass":
-        raise RuntimeError("measured artifact integrity did not pass")
+    snapshot = verify_artifact_snapshot(manifest_path)
+    if not isinstance(snapshot, dict):
+        raise ValueError("measured artifact snapshot must be an object")
+    integrity, capture_path_resolution_mode, audit_path_resolution_mode = (
+        _bind_snapshot_preflight(summary_artifacts, snapshot)
+    )
 
     summary_evidence = _require_mapping(
         summary.get("evidence"),
@@ -351,7 +465,7 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
     _bind_run_parameters(summary_parameters, evidence_parameters, verification)
 
     return {
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "1.1.0",
         "kind": "unzen-budgeted-multi-segment-capture-bundle-verification",
         "status": "pass",
         "captureStatus": status,
@@ -371,6 +485,8 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
             integrity.get("effectiveRequiredMaxBytes"),
             field="measured integrity.effectiveRequiredMaxBytes",
         ),
+        "captureSnapshotPathResolutionMode": capture_path_resolution_mode,
+        "auditSnapshotPathResolutionMode": audit_path_resolution_mode,
         "sourceGraphSha256": source_graph_sha256,
     }
 
