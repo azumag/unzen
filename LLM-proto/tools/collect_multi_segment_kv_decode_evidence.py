@@ -332,6 +332,15 @@ def validate_verification_binding(
                 f"boundary={index}, after={after}, before={before}, cut={cut}"
             )
 
+    prompt = verification["prompt"]
+    assert isinstance(prompt, dict)
+    prompt_kv_comparison = prompt["kvComparison"]
+    assert isinstance(prompt_kv_comparison, dict)
+    prompt_kv_bytes = _non_negative_int(
+        prompt_kv_comparison.get("bytes"),
+        field="verification.prompt.kvComparison.bytes",
+    )
+
     decode = verification["decode"]
     assert isinstance(decode, dict)
     full_consumed = _non_negative_int(
@@ -342,6 +351,11 @@ def validate_verification_binding(
         decode.get("splitPastCacheBytesConsumed"),
         field="verification.decode.splitPastCacheBytesConsumed",
     )
+    if split_consumed != prompt_kv_bytes:
+        raise ValueError(
+            "cached-decode verifier splitPastCacheBytesConsumed must equal prompt KV bytes: "
+            f"consumed={split_consumed}, promptKvBytes={prompt_kv_bytes}"
+        )
 
     status = verification.get("status")
     if status not in {"pass", "fail"}:

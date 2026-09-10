@@ -332,10 +332,33 @@ class CollectMultiSegmentKvDecodeEvidenceTest(unittest.TestCase):
 
     def test_rejects_pass_without_consumed_cache(self) -> None:
         verification = valid_verification()
+        prompt = verification["prompt"]
+        assert isinstance(prompt, dict)
+        comparison = prompt["kvComparison"]
+        assert isinstance(comparison, dict)
+        comparison["bytes"] = 0
+        tensors = comparison["tensors"]
+        assert isinstance(tensors, list)
+        for tensor in tensors:
+            assert isinstance(tensor, dict)
+            tensor["bytes"] = 0
         decode = verification["decode"]
         assert isinstance(decode, dict)
         decode["splitPastCacheBytesConsumed"] = 0
         with self.assertRaisesRegex(ValueError, "status contradicts"):
+            evidence_module.validate_verification_binding(
+                verification,
+                provider="CPUExecutionProvider",
+                prompt_token_ids=[11, 22],
+                next_token_id=33,
+            )
+
+    def test_rejects_nonzero_consumed_cache_bytes_that_do_not_match_prompt_kv(self) -> None:
+        verification = valid_verification()
+        decode = verification["decode"]
+        assert isinstance(decode, dict)
+        decode["splitPastCacheBytesConsumed"] = 128
+        with self.assertRaisesRegex(ValueError, "must equal prompt KV bytes"):
             evidence_module.validate_verification_binding(
                 verification,
                 provider="CPUExecutionProvider",
