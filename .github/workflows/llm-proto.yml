@@ -80,6 +80,8 @@ jobs:
           node --check tools/preflight_endpoint_embedding_eight_physical_bundle.mjs
           node --check tools/capture_endpoint_embedding_eight_physical_webgpu_process_rss.mjs
           node --check tools/verify_endpoint_embedding_eight_physical_webgpu_process_rss.mjs
+          node --check tools/capture_endpoint_embedding_eight_physical_webgpu_process_rss_bound.mjs
+          node --check tools/verify_endpoint_embedding_eight_physical_webgpu_process_rss_bound.mjs
           node --check tools/derive_endpoint_embedding_eight_physical_normal_gpu_process_rss_proxy.mjs
           node --check tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs
           node --check tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs
