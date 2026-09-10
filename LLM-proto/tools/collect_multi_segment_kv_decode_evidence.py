@@ -180,6 +180,9 @@ def _validate_kv_comparison(raw: object, *, field: str) -> tuple[bool, tuple[str
     incomplete = {layer: kinds for layer, kinds in identities.items() if kinds != {"key", "value"}}
     if incomplete:
         raise ValueError(f"{field} contains incomplete key/value layer pairs: {incomplete}")
+    layers = sorted(identities)
+    if layers and layers != list(range(layers[-1] + 1)):
+        raise ValueError(f"{field} KV layer identities must be contiguous from layer 0")
     if observed_bytes != reported_bytes:
         raise ValueError(f"{field}.bytes does not match tensor byte sum")
     if matches != all_tensor_matches:
@@ -187,18 +190,51 @@ def _validate_kv_comparison(raw: object, *, field: str) -> tuple[bool, tuple[str
     return matches, tuple(sorted(names))
 
 
+def _boundary_signature(raw: object, *, field: str) -> tuple[tuple[int, int, tuple[str, ...]], ...]:
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be an array")
+    result: list[tuple[int, int, tuple[str, ...]]] = []
+    for index, boundary in enumerate(raw):
+        if not isinstance(boundary, dict):
+            raise ValueError(f"{field}[{index}] must be an object")
+        after = _non_negative_int(boundary.get("afterLayer"), field=f"{field}[{index}].afterLayer")
+        before = _non_negative_int(boundary.get("beforeLayer"), field=f"{field}[{index}].beforeLayer")
+        tensors = boundary.get("tensors")
+        if not isinstance(tensors, list):
+            raise ValueError(f"{field}[{index}].tensors must be an array")
+        names: list[str] = []
+        for tensor_index, tensor in enumerate(tensors):
+            if not isinstance(tensor, dict):
+                raise ValueError(f"{field}[{index}].tensors[{tensor_index}] must be an object")
+            name = tensor.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"{field}[{index}].tensors[{tensor_index}].name must be a non-empty string")
+            names.append(name)
+        result.append((after, before, tuple(names)))
+    return tuple(result)
+
+
 def _validate_step(
     raw: object,
     *,
     field: str,
     segment_count: int,
-) -> tuple[bool, bool, int, int, tuple[str, ...]]:
+) -> tuple[
+    bool,
+    bool,
+    int,
+    int,
+    tuple[str, ...],
+    tuple[tuple[int, int, tuple[str, ...]], ...],
+]:
     if not isinstance(raw, dict):
         raise ValueError(f"{field} must be an object")
+    boundaries = raw.get("boundaries")
     _validate_boundaries(
-        {"boundaries": raw.get("boundaries"), "boundaryBytes": raw.get("boundaryBytes")},
+        {"boundaries": boundaries, "boundaryBytes": raw.get("boundaryBytes")},
         segment_count=segment_count,
     )
+    signature = _boundary_signature(boundaries, field=f"{field}.boundaries")
     logits_match = _validate_logits_comparison(
         raw.get("logitsComparison"), field=f"{field}.logitsComparison"
     )
@@ -207,7 +243,7 @@ def _validate_step(
     )
     full_top1 = _non_negative_int(raw.get("fullTop1TokenId"), field=f"{field}.fullTop1TokenId")
     split_top1 = _non_negative_int(raw.get("splitTop1TokenId"), field=f"{field}.splitTop1TokenId")
-    return logits_match, kv_match, full_top1, split_top1, kv_names
+    return logits_match, kv_match, full_top1, split_top1, kv_names, signature
 
 
 def validate_verification_binding(
@@ -262,16 +298,39 @@ def validate_verification_binding(
         raise ValueError("cached-decode verifier cutLayers must be strictly increasing")
     _validate_source_model(verification.get("sourceModel"))
 
-    prompt_logits, prompt_kv, prompt_full_top1, prompt_split_top1, prompt_names = _validate_step(
+    (
+        prompt_logits,
+        prompt_kv,
+        prompt_full_top1,
+        prompt_split_top1,
+        prompt_names,
+        prompt_boundaries,
+    ) = _validate_step(
         verification.get("prompt"), field="verification.prompt", segment_count=segment_count
     )
-    decode_logits, decode_kv, decode_full_top1, decode_split_top1, decode_names = _validate_step(
+    (
+        decode_logits,
+        decode_kv,
+        decode_full_top1,
+        decode_split_top1,
+        decode_names,
+        decode_boundaries,
+    ) = _validate_step(
         verification.get("decode"), field="verification.decode", segment_count=segment_count
     )
     if not prompt_names or prompt_names != decode_names:
         raise ValueError(
             "cached-decode verifier prompt/decode KV tensor identities must be non-empty and identical"
         )
+    if prompt_boundaries != decode_boundaries:
+        raise ValueError("cached-decode verifier prompt/decode boundary topology must be identical")
+    for index, (after, before, _) in enumerate(prompt_boundaries):
+        cut = cuts[index]
+        if after != cut - 1 or before != cut:
+            raise ValueError(
+                "cached-decode verifier boundary topology disagrees with cutLayers: "
+                f"boundary={index}, after={after}, before={before}, cut={cut}"
+            )
 
     decode = verification["decode"]
     assert isinstance(decode, dict)
