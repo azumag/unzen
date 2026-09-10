@@ -15,23 +15,32 @@ This command intentionally performs both layers of audit:
 
 The source verifier performs its own bundle verification as well, so the combined command observes the capture twice. The final report is emitted only when the `run-summary.json`, split manifest, `same-machine-evidence.json`, embedded numerical verification digest, source graph digest, and capture status remain identical across those measurements. This binds the complete audit to one exact published control-file snapshot rather than only to a manifest-equivalent bundle.
 
-The final report also preserves `sourcePathResolutionMode` from the source audit. It is one of:
+The final report preserves three path-resolution assurance fields:
 
-- `component-anchored-dirfd`: intermediate source-path components were resolved relative to an anchored source-root directory descriptor and replacement-resistant checks were available;
+- `captureSnapshotPathResolutionMode`: the generated artifact snapshot mode recorded by the original capture preflight. Older schema-1.0 bundles may legitimately report `null` because this metadata was not recorded at capture time; the audit never invents a historical mode.
+- `auditSnapshotPathResolutionMode`: the mode actually used by the current post-publication generated-artifact snapshot audit. A passing complete audit always requires one of the known modes.
+- `sourcePathResolutionMode`: the mode used while rebinding the capture to the original source graph and source external-data files.
+
+Known non-null modes are:
+
+- `component-anchored-dirfd`: intermediate path components were resolved relative to an anchored directory descriptor and replacement-resistant checks were available;
 - `final-component-only`: the portable fallback was used, so stable final-file identity is still checked but intermediate-directory replacement resistance is not claimed.
 
-For high-assurance evidence collection where the stronger filesystem guarantee is mandatory, add:
+By default both known modes remain accepted for portability. Missing or unknown current audit modes are never accepted. An unknown historical `captureSnapshotPathResolutionMode` is represented only as `null` for legacy bundles.
+
+For high-assurance evidence collection where stronger filesystem guarantees are mandatory, the generated-artifact audit and source audit can be required independently:
 
 ```bash
 python tools/audit_multi_segment_capture.py \
   --capture-dir /path/to/capture \
   --full-model /path/to/model_q4.onnx \
+  --require-component-anchored-artifacts \
   --require-component-anchored-source
 ```
 
-With this option the complete audit fails closed if the platform can provide only `final-component-only`. Without it, both known modes remain accepted for portability and the actual mode is still recorded in the report. Missing or unknown source path-resolution modes are never accepted as a passing complete audit.
+`--require-component-anchored-artifacts` fails closed unless the **current post-publication artifact snapshot audit** used `component-anchored-dirfd`. It intentionally does not require the historical capture-time mode to be known, so legacy bundles can still be re-audited strongly on a capable host. `--require-component-anchored-source` independently requires the original source-model audit to use the stronger mode. Either option may be used on its own.
 
-A `status: pass` from this command means the stored evidence is internally consistent and still names the same source artifacts. It does **not** upgrade a numerical `captureStatus: fail` to success, and it does not constitute real multi-browser WebGPU evidence. The strict source-path option likewise changes only filesystem audit assurance; it does not authenticate the evidence producer, turn capture execution into a single fd-only transaction, or select a production artifact/runtime layout.
+A `status: pass` from this command means the stored evidence is internally consistent and still names the same source artifacts. It does **not** upgrade a numerical `captureStatus: fail` to success, and it does not constitute real multi-browser WebGPU evidence. The strict path options likewise change only filesystem audit assurance; they do not authenticate the evidence producer, turn capture execution into a single fd-only transaction, prove GPU device-memory behavior, or select a production artifact/runtime layout.
 
 Use the lower-level verifier commands only when debugging a failed audit:
 
