@@ -15,6 +15,13 @@ This command intentionally performs both layers of audit:
 
 The source verifier performs its own bundle verification as well, so the combined command observes the capture twice. The final report is emitted only when the `run-summary.json`, split manifest, `same-machine-evidence.json`, embedded numerical verification digest, source graph digest, and capture status remain identical across those measurements. This binds the complete audit to one exact published control-file snapshot rather than only to a manifest-equivalent bundle.
 
+The complete audit also pins the contracts of both subordinate verifiers before trusting `status` or any digest field. The currently accepted reports are:
+
+- bundle verification: schema `1.1.0`, kind `unzen-budgeted-multi-segment-capture-bundle-verification`;
+- source verification: schema `1.0.0`, kind `unzen-budgeted-multi-segment-capture-source-verification`.
+
+Missing or different `schemaVersion` / `kind` values fail closed. This is intentional: a future subordinate-verifier schema change must be reviewed and the complete audit updated explicitly rather than being accepted only because similarly named fields still exist. The final report records the accepted contracts in `bundleVerificationKind`, `bundleVerificationSchemaVersion`, `sourceVerificationKind`, and `sourceVerificationSchemaVersion`.
+
 The final report preserves three path-resolution assurance fields:
 
 - `captureSnapshotPathResolutionMode`: the generated artifact snapshot mode recorded by the original capture preflight. Older schema-1.0 bundles may legitimately report `null` because this metadata was not recorded at capture time; the audit never invents a historical mode.
@@ -40,7 +47,7 @@ python tools/audit_multi_segment_capture.py \
 
 `--require-component-anchored-artifacts` fails closed unless the **current post-publication artifact snapshot audit** used `component-anchored-dirfd`. It intentionally does not require the historical capture-time mode to be known, so legacy bundles can still be re-audited strongly on a capable host. `--require-component-anchored-source` independently requires the original source-model audit to use the stronger mode. Either option may be used on its own.
 
-A `status: pass` from this command means the stored evidence is internally consistent and still names the same source artifacts. It does **not** upgrade a numerical `captureStatus: fail` to success, and it does not constitute real multi-browser WebGPU evidence. The strict path options likewise change only filesystem audit assurance; they do not authenticate the evidence producer, turn capture execution into a single fd-only transaction, prove GPU device-memory behavior, or select a production artifact/runtime layout.
+A `status: pass` from this command means the stored evidence is internally consistent and still names the same source artifacts under the explicitly pinned verifier contracts. It does **not** upgrade a numerical `captureStatus: fail` to success, and it does not constitute real multi-browser WebGPU evidence. The strict path options likewise change only filesystem audit assurance; they do not authenticate the evidence producer, turn capture execution into a single fd-only transaction, prove GPU device-memory behavior, or select a production artifact/runtime layout.
 
 Use the lower-level verifier commands only when debugging a failed audit:
 
