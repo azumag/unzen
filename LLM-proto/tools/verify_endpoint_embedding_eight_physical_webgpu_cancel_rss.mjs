@@ -101,7 +101,14 @@ function assertAtMost(left, right, label) {
 }
 
 function exactSnapshot(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (left.processCount !== right.processCount || left.totalRssKiB !== right.totalRssKiB) return false;
+  const leftRoles = Object.keys(left.roles).sort();
+  const rightRoles = Object.keys(right.roles).sort();
+  if (leftRoles.length !== rightRoles.length || leftRoles.some((role, index) => role !== rightRoles[index])) return false;
+  return leftRoles.every((role) => (
+    left.roles[role].processCount === right.roles[role].processCount
+    && left.roles[role].rssKiB === right.roles[role].rssKiB
+  ));
 }
 
 export function validateCancellationRssEvidence(evidence) {
@@ -169,6 +176,9 @@ export function validateCancellationRssEvidence(evidence) {
   if (!phases.has('baseline-about-blank') || !exactSnapshot(phases.get('baseline-about-blank'), baseline)) {
     throw new Error('baseline phase peak does not match baseline snapshot');
   }
+  const targetPhasePeak = phases.get(expectedPhase);
+  if (!targetPhasePeak) throw new Error('cancellation target phase peak is missing');
+  assertAtLeast(targetPhasePeak, beforeCancel, 'cancellation target phase peak/immediatelyBeforeCancellation');
 
   const after = requireObject(measurement.afterDocumentCancellation, 'measurement.afterDocumentCancellation');
   if (after.action !== EXPECTED.postCancelAction) throw new Error('post-cancel action drift');
