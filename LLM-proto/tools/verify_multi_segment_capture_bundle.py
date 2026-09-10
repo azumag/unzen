@@ -34,7 +34,7 @@ from verify_multi_segment_artifacts import sha256_file
 
 
 RUN_KIND = "unzen-budgeted-multi-segment-capture-run"
-RUN_SCHEMA_VERSION = "1.1.0"
+RUN_SCHEMA_VERSION = "1.0.0"
 EVIDENCE_KIND = "unzen-budgeted-multi-segment-evidence-bundle"
 EVIDENCE_SCHEMA_VERSION = "1.0.0"
 VERIFICATION_KIND = "unzen-budgeted-multi-segment-same-machine-verification"
@@ -57,9 +57,6 @@ def canonical_json_bytes(value: object) -> bytes:
 
 
 def _non_empty_string(raw: object, *, field: str) -> str:
-    # Published evidence is an exact JSON contract. Do not stringify numbers,
-    # booleans, or other JSON values into identities/paths: a 64-digit integer,
-    # for example, could otherwise be accepted as a syntactically valid digest.
     if not isinstance(raw, str) or not raw:
         raise ValueError(f"{field} must be a non-empty string")
     return raw
@@ -103,9 +100,6 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
 
 
 def _positive_int(raw: object, *, field: str) -> int:
-    # Published count/byte fields are immutable evidence, not permissive CLI
-    # input. Reject floats, booleans, and numeric strings rather than normalizing
-    # them with int(), because Python equality would otherwise let 2.0 == 2 pass.
     if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
         raise ValueError(f"{field} must be a positive integer")
     return raw
@@ -131,13 +125,17 @@ def _require_equal(left: object, right: object, *, field: str) -> None:
 def _bind_snapshot_preflight(
     summary_artifacts: dict[str, object],
     snapshot: dict[str, object],
-) -> tuple[dict[str, object], str, str]:
+) -> tuple[dict[str, object], str | None, str]:
     """Validate capture-time snapshot metadata against a fresh stable audit.
 
-    ``pathResolutionMode`` is intentionally not required to match between the
-    capture and audit hosts. A capture may have used the stronger dirfd mode and
-    later be audited on a portable fallback platform (or vice versa). Both modes
-    are reported so downstream interpretation can preserve that distinction.
+    Older schema-1.0 capture bundles did not record ``snapshotPreflight``. They
+    remain auditable: the current verifier still performs a fresh stable snapshot
+    check, but reports the capture-time path-resolution mode as unknown instead of
+    inventing evidence that was never recorded.
+
+    When snapshot metadata is present, capture and audit ``pathResolutionMode``
+    values are intentionally allowed to differ because the two operations may run
+    on different platforms.
     """
 
     if snapshot.get("status") != "pass":
@@ -167,8 +165,29 @@ def _bind_snapshot_preflight(
             f"{audit_mode!r}"
         )
 
+    integrity = _require_mapping(
+        snapshot.get("integrity"),
+        field="measured artifact snapshot.integrity",
+    )
+    if integrity.get("status") != "pass":
+        raise RuntimeError("measured artifact integrity did not pass")
+    _require_equal(
+        snapshot.get("manifestSha256"),
+        integrity.get("manifestSha256"),
+        field="measured snapshot manifestSha256 vs nested integrity",
+    )
+    _require_equal(
+        snapshot.get("segmentCount"),
+        integrity.get("segmentCount"),
+        field="measured snapshot segmentCount vs nested integrity",
+    )
+
+    raw_summary_snapshot = summary_artifacts.get("snapshotPreflight")
+    if raw_summary_snapshot is None:
+        return integrity, None, audit_mode
+
     summary_snapshot = _require_mapping(
-        summary_artifacts.get("snapshotPreflight"),
+        raw_summary_snapshot,
         field="run-summary.artifacts.snapshotPreflight",
     )
     _require_equal(
@@ -211,23 +230,6 @@ def _bind_snapshot_preflight(
         captured_file_count,
         measured_file_count,
         field="run-summary snapshot artifactFileCount vs measured snapshot",
-    )
-
-    integrity = _require_mapping(
-        snapshot.get("integrity"),
-        field="measured artifact snapshot.integrity",
-    )
-    if integrity.get("status") != "pass":
-        raise RuntimeError("measured artifact integrity did not pass")
-    _require_equal(
-        snapshot.get("manifestSha256"),
-        integrity.get("manifestSha256"),
-        field="measured snapshot manifestSha256 vs nested integrity",
-    )
-    _require_equal(
-        snapshot.get("segmentCount"),
-        integrity.get("segmentCount"),
-        field="measured snapshot segmentCount vs nested integrity",
     )
     return integrity, capture_mode, audit_mode
 
