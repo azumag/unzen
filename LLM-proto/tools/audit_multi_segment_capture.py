@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from typing import Callable
 
@@ -40,6 +40,7 @@ BUNDLE_REPORT_SCHEMA_VERSION = "1.1.0"
 SOURCE_REPORT_KIND = "unzen-budgeted-multi-segment-capture-source-verification"
 SOURCE_REPORT_SCHEMA_VERSION = "1.0.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+CAPTURE_STATUSES = frozenset({"pass", "fail"})
 PATH_RESOLUTION_MODES = frozenset(
     {
         PATH_RESOLUTION_COMPONENT_ANCHORED,
@@ -74,10 +75,74 @@ def _require_report_contract(
         )
 
 
+def _require_mapping(raw: object, *, field: str) -> dict[str, object]:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field} must be an object")
+    return raw
+
+
+def _non_empty_string(raw: object, *, field: str) -> str:
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{field} must be a non-empty string")
+    return raw
+
+
 def _canonical_sha256(raw: object, *, field: str) -> str:
     if not isinstance(raw, str) or not SHA256_RE.fullmatch(raw):
         raise ValueError(f"{field} must be a canonical lowercase SHA-256 digest")
     return raw
+
+
+def _non_negative_int(raw: object, *, field: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return raw
+
+
+def _positive_int(raw: object, *, field: str) -> int:
+    value = _non_negative_int(raw, field=field)
+    if value == 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
+
+
+def _capture_status(raw: object, *, field: str) -> str:
+    if not isinstance(raw, str) or raw not in CAPTURE_STATUSES:
+        expected = ", ".join(sorted(CAPTURE_STATUSES))
+        raise ValueError(f"{field} must be one of: {expected}")
+    return raw
+
+
+def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be an array")
+
+    entries: list[dict[str, object]] = []
+    seen_locations: set[str] = set()
+    for index, raw_entry in enumerate(raw):
+        prefix = f"{field}[{index}]"
+        entry = _require_mapping(raw_entry, field=prefix)
+        location = _non_empty_string(entry.get("location"), field=f"{prefix}.location")
+        posix = PurePosixPath(location)
+        windows = PureWindowsPath(location)
+        if (
+            posix.is_absolute()
+            or windows.is_absolute()
+            or ".." in posix.parts
+            or ".." in windows.parts
+        ):
+            raise ValueError(f"unsafe {prefix}.location: {location}")
+        if location in seen_locations:
+            raise ValueError(f"duplicate external-data location in {field}: {location}")
+        seen_locations.add(location)
+        entries.append(
+            {
+                "location": location,
+                "bytes": _non_negative_int(entry.get("bytes"), field=f"{prefix}.bytes"),
+                "sha256": _canonical_sha256(entry.get("sha256"), field=f"{prefix}.sha256"),
+            }
+        )
+    return entries
 
 
 def _path_resolution_mode(raw: object, *, field: str) -> str:
@@ -128,6 +193,23 @@ def audit_capture(
     )
     _require_pass(first_bundle.get("status"), field="bundle verification")
 
+    capture_status = _capture_status(
+        first_bundle.get("captureStatus"),
+        field="bundle.captureStatus",
+    )
+    segment_count = _positive_int(
+        first_bundle.get("segmentCount"),
+        field="bundle.segmentCount",
+    )
+    maximum_segment_artifact_bytes = _positive_int(
+        first_bundle.get("maximumSegmentArtifactBytes"),
+        field="bundle.maximumSegmentArtifactBytes",
+    )
+    effective_required_max_bytes = _positive_int(
+        first_bundle.get("effectiveRequiredMaxBytes"),
+        field="bundle.effectiveRequiredMaxBytes",
+    )
+
     if "captureSnapshotPathResolutionMode" not in first_bundle:
         raise ValueError(
             "bundle.captureSnapshotPathResolutionMode must be present; "
@@ -155,6 +237,40 @@ def audit_capture(
         expected_schema_version=SOURCE_REPORT_SCHEMA_VERSION,
     )
     _require_pass(source.get("status"), field="source verification")
+
+    source_capture_status = _capture_status(
+        source.get("captureStatus"),
+        field="source.captureStatus",
+    )
+    source_graph_bytes = _non_negative_int(
+        source.get("sourceGraphBytes"),
+        field="source.sourceGraphBytes",
+    )
+    source_external_data = _source_external_data(
+        source.get("sourceExternalData"),
+        field="source.sourceExternalData",
+    )
+    source_external_data_count = _non_negative_int(
+        source.get("sourceExternalDataCount"),
+        field="source.sourceExternalDataCount",
+    )
+    source_external_data_bytes = _non_negative_int(
+        source.get("sourceExternalDataBytes"),
+        field="source.sourceExternalDataBytes",
+    )
+    if source_external_data_count != len(source_external_data):
+        raise ValueError(
+            "source.sourceExternalDataCount must equal the number of "
+            f"source.sourceExternalData entries: count={source_external_data_count}, "
+            f"entries={len(source_external_data)}"
+        )
+    measured_external_data_bytes = sum(int(item["bytes"]) for item in source_external_data)
+    if source_external_data_bytes != measured_external_data_bytes:
+        raise ValueError(
+            "source.sourceExternalDataBytes must equal the sum of "
+            f"source.sourceExternalData bytes: total={source_external_data_bytes}, "
+            f"entries={measured_external_data_bytes}"
+        )
 
     source_path_resolution_mode = _path_resolution_mode(
         source.get("sourcePathResolutionMode"),
@@ -199,8 +315,8 @@ def audit_capture(
     )
 
     _require_equal(
-        first_bundle.get("captureStatus"),
-        source.get("captureStatus"),
+        capture_status,
+        source_capture_status,
         field="capture status",
     )
 
@@ -208,7 +324,7 @@ def audit_capture(
         "schemaVersion": REPORT_SCHEMA_VERSION,
         "kind": REPORT_KIND,
         "status": "pass",
-        "captureStatus": source.get("captureStatus"),
+        "captureStatus": source_capture_status,
         "bundleVerificationKind": BUNDLE_REPORT_KIND,
         "bundleVerificationSchemaVersion": BUNDLE_REPORT_SCHEMA_VERSION,
         "sourceVerificationKind": SOURCE_REPORT_KIND,
@@ -218,13 +334,13 @@ def audit_capture(
         "auditSnapshotPathResolutionMode": audit_snapshot_path_resolution_mode,
         "sourceGraphSha256": source_graph,
         "sourcePathResolutionMode": source_path_resolution_mode,
-        "sourceGraphBytes": source.get("sourceGraphBytes"),
-        "sourceExternalDataCount": source.get("sourceExternalDataCount"),
-        "sourceExternalDataBytes": source.get("sourceExternalDataBytes"),
-        "sourceExternalData": source.get("sourceExternalData"),
-        "segmentCount": first_bundle.get("segmentCount"),
-        "maximumSegmentArtifactBytes": first_bundle.get("maximumSegmentArtifactBytes"),
-        "effectiveRequiredMaxBytes": first_bundle.get("effectiveRequiredMaxBytes"),
+        "sourceGraphBytes": source_graph_bytes,
+        "sourceExternalDataCount": source_external_data_count,
+        "sourceExternalDataBytes": source_external_data_bytes,
+        "sourceExternalData": source_external_data,
+        "segmentCount": segment_count,
+        "maximumSegmentArtifactBytes": maximum_segment_artifact_bytes,
+        "effectiveRequiredMaxBytes": effective_required_max_bytes,
         "runSummarySha256": snapshot_digests["runSummarySha256"],
         "evidenceSha256": snapshot_digests["evidenceSha256"],
         "verificationSha256": snapshot_digests["verificationSha256"],
