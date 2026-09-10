@@ -87,6 +87,17 @@ The output JSON records:
 
 RSS is summed across only the launched Chrome root process and descendants discovered through PPID relationships. Existing unrelated Chrome processes are not included because the diagnostic starts a fresh Chrome profile and tracks the newly launched root PID.
 
+## Offline verification
+
+Before promoting a persisted capture as #167 diagnostic evidence, revalidate it without launching Chrome or WebGPU:
+
+```bash
+node tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs \
+  /path/to/cancel-rss.json
+```
+
+The verifier checks the cancellation/measurement contract and RSS summary relationships, then reads the input through a bounded stable regular-file snapshot. See `docs/endpoint-embedding-eight-physical-webgpu-cancel-rss-verification.md` for the complete fail-close contract and input-integrity boundary.
+
 ## Interpretation limits
 
 This evidence is intentionally narrower than a production or architecture decision:
