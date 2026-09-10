@@ -16,6 +16,8 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
     @staticmethod
     def _bundle(**overrides: object) -> dict[str, object]:
         value: dict[str, object] = {
+            "schemaVersion": "1.1.0",
+            "kind": "unzen-budgeted-multi-segment-capture-bundle-verification",
             "status": "pass",
             "captureStatus": "pass",
             "manifestSha256": "a" * 64,
@@ -35,6 +37,8 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
     @staticmethod
     def _source(**overrides: object) -> dict[str, object]:
         value: dict[str, object] = {
+            "schemaVersion": "1.0.0",
+            "kind": "unzen-budgeted-multi-segment-capture-source-verification",
             "status": "pass",
             "captureStatus": "pass",
             "manifestSha256": "a" * 64,
@@ -73,6 +77,16 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
 
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["captureStatus"], "pass")
+        self.assertEqual(
+            report["bundleVerificationKind"],
+            "unzen-budgeted-multi-segment-capture-bundle-verification",
+        )
+        self.assertEqual(report["bundleVerificationSchemaVersion"], "1.1.0")
+        self.assertEqual(
+            report["sourceVerificationKind"],
+            "unzen-budgeted-multi-segment-capture-source-verification",
+        )
+        self.assertEqual(report["sourceVerificationSchemaVersion"], "1.0.0")
         self.assertEqual(report["manifestSha256"], "a" * 64)
         self.assertEqual(
             report["captureSnapshotPathResolutionMode"],
@@ -86,6 +100,42 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
         self.assertEqual(report["sourcePathResolutionMode"], "component-anchored-dirfd")
         self.assertEqual(report["segmentCount"], 6)
         self.assertEqual([item[0] for item in calls], ["bundle", "source"])
+
+    def test_bundle_contract_drift_is_rejected_before_status(self) -> None:
+        cases = (
+            ({"kind": None}, "bundle.kind must be"),
+            ({"kind": "other"}, "bundle.kind must be"),
+            ({"schemaVersion": None}, "bundle.schemaVersion must be"),
+            ({"schemaVersion": "2.0.0"}, "bundle.schemaVersion must be"),
+        )
+        for overrides, message in cases:
+            with self.subTest(overrides=overrides):
+                bundle = self._bundle(status="fail", **overrides)
+                with self.assertRaisesRegex(ValueError, message):
+                    audit_module.audit_capture(
+                        Path("capture"),
+                        Path("model.onnx"),
+                        bundle_verifier=lambda _capture, value=bundle: value,
+                        source_verifier=lambda _capture, _full_model: self._source(),
+                    )
+
+    def test_source_contract_drift_is_rejected_before_status(self) -> None:
+        cases = (
+            ({"kind": None}, "source.kind must be"),
+            ({"kind": "other"}, "source.kind must be"),
+            ({"schemaVersion": None}, "source.schemaVersion must be"),
+            ({"schemaVersion": "2.0.0"}, "source.schemaVersion must be"),
+        )
+        for overrides, message in cases:
+            with self.subTest(overrides=overrides):
+                source = self._source(status="fail", **overrides)
+                with self.assertRaisesRegex(ValueError, message):
+                    audit_module.audit_capture(
+                        Path("capture"),
+                        Path("model.onnx"),
+                        bundle_verifier=lambda _capture: self._bundle(),
+                        source_verifier=lambda _capture, _full_model, value=source: value,
+                    )
 
     def test_legacy_capture_snapshot_mode_is_preserved_as_unknown(self) -> None:
         report = audit_module.audit_capture(
