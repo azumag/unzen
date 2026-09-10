@@ -38,6 +38,8 @@ python tools/verify_multi_segment_capture_bundle.py \
 
 `captureSnapshotPathResolutionMode` は capture runner が記録した preflight mode、`auditSnapshotPathResolutionMode` は今回の offline audit host で実際に使えた mode である。capture と audit を別OS/platformで行う場合があるため、この2つは同一である必要はない。`component-anchored-dirfd` は intermediate directory component までdescriptor-basedに辿れたこと、`final-component-only` はportable fallbackを意味する。
 
+capture runner の `run-summary.json` は既存bundleとの互換性を保つため schema `1.0.0` のまま、`artifacts.snapshotPreflight` を additive metadata として追加している。今回の変更より前に取得された schema `1.0.0` bundle にはこのfieldがないが、それらも引き続き監査できる。その場合 verifier は現在のartifactに対してstable snapshot auditを実行し、`captureSnapshotPathResolutionMode: null`、`auditSnapshotPathResolutionMode: <今回実際に使えたmode>` と返す。過去runで記録されていないcapture-time modeを推測・捏造しない。
+
 ## 検証内容
 
 verifier は少なくとも次を fail-close で確認する。
@@ -45,7 +47,7 @@ verifier は少なくとも次を fail-close で確認する。
 1. `run-summary.json` の schema / kind / status。
 2. `artifacts.manifest` と `evidence.path` が capture directory 内の安全な相対pathであること。absolute path、`..`、symlink escape は拒否する。
 3. `verify_multi_segment_artifact_snapshot.py` を再実行し、manifest / segment graph / external-data を stable-read したうえで、内包する integrity verifier により SHA-256、実byte数、artifact budgetを再測定する。
-4. capture時に記録された snapshot verifier schema/kind/decisionStatus/pathResolutionMode/artifactFileCount が contract上妥当で、artifactFileCount が今回の再測定とも一致すること。
+4. `snapshotPreflight` が記録されている新しいcaptureでは、snapshot verifier schema/kind/decisionStatus/pathResolutionMode/artifactFileCount が contract上妥当で、artifactFileCount が今回の再測定とも一致すること。fieldがないlegacy captureは拒否せず、capture-time modeをunknownとして扱う。
 5. 再測定した manifest SHA-256、segment count、最大segment bytes、effective budget が `run-summary.json` と embedded numerical verification の両方に一致すること。
 6. `same-machine-evidence.json` 自体の SHA-256 が `run-summary.json` に記録された値と一致すること。
 7. embedded `verification` の canonical JSON SHA-256 が、evidence envelope と run summary の `verificationSha256` に一致すること。
@@ -57,7 +59,7 @@ verifier は少なくとも次を fail-close で確認する。
 
 ## Evidence boundary
 
-この verifier が証明するのは published host-side bundle の post-publication integrity と cross-file identity binding である。capture時の `pathResolutionMode` は run summary に記録された metadata であり、署名された独立snapshot reportではない。また、capture preflightから numerical verification 全体まで同じ file descriptor を保持するtransactionでもないため、capture中のあらゆる same-content inode replacement を証明対象にはしない。
+この verifier が証明するのは published host-side bundle の post-publication integrity と cross-file identity binding である。capture時の `pathResolutionMode` は run summary に記録された metadata であり、署名された独立snapshot reportではない。また、capture preflightから numerical verification 全体まで同じ file descriptor を保持するtransactionでもないため、capture中のあらゆる same-content inode replacement を証明対象にはしない。legacy bundleで `captureSnapshotPathResolutionMode=null` の場合、現在のoffline auditが強いmodeで成功しても、過去のcapture時にも同じmodeが使われたとは扱わない。
 
 実 `Llama-3.2-1B-Instruct` q4 の numerical correctnessそのものは元の capture resultに従い、real multi-browser WebGPU、Coordinator relay、cold/warm cache、worker-loss resume、SpanPipeline の実機 evidence は別途必要になる。
 
