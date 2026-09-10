@@ -35,6 +35,10 @@ from verify_multi_segment_capture_source import verify_capture_source
 
 REPORT_KIND = "unzen-budgeted-multi-segment-complete-capture-audit"
 REPORT_SCHEMA_VERSION = "1.0.0"
+BUNDLE_REPORT_KIND = "unzen-budgeted-multi-segment-capture-bundle-verification"
+BUNDLE_REPORT_SCHEMA_VERSION = "1.1.0"
+SOURCE_REPORT_KIND = "unzen-budgeted-multi-segment-capture-source-verification"
+SOURCE_REPORT_SCHEMA_VERSION = "1.0.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PATH_RESOLUTION_MODES = frozenset(
     {
@@ -48,6 +52,26 @@ STRONG_PATH_RESOLUTION_MODE = PATH_RESOLUTION_COMPONENT_ANCHORED
 def _require_pass(raw: object, *, field: str) -> None:
     if raw != "pass":
         raise RuntimeError(f"{field} did not pass: {raw!r}")
+
+
+def _require_report_contract(
+    report: dict[str, object],
+    *,
+    field: str,
+    expected_kind: str,
+    expected_schema_version: str,
+) -> None:
+    kind = report.get("kind")
+    if kind != expected_kind:
+        raise ValueError(
+            f"{field}.kind must be {expected_kind!r}: {kind!r}"
+        )
+    schema_version = report.get("schemaVersion")
+    if schema_version != expected_schema_version:
+        raise ValueError(
+            f"{field}.schemaVersion must be {expected_schema_version!r}: "
+            f"{schema_version!r}"
+        )
 
 
 def _canonical_sha256(raw: object, *, field: str) -> str:
@@ -96,6 +120,12 @@ def audit_capture(
     full_model = full_model_path.expanduser().absolute()
 
     first_bundle = bundle_verifier(capture)
+    _require_report_contract(
+        first_bundle,
+        field="bundle",
+        expected_kind=BUNDLE_REPORT_KIND,
+        expected_schema_version=BUNDLE_REPORT_SCHEMA_VERSION,
+    )
     _require_pass(first_bundle.get("status"), field="bundle verification")
 
     if "captureSnapshotPathResolutionMode" not in first_bundle:
@@ -118,6 +148,12 @@ def audit_capture(
         )
 
     source = source_verifier(capture, full_model)
+    _require_report_contract(
+        source,
+        field="source",
+        expected_kind=SOURCE_REPORT_KIND,
+        expected_schema_version=SOURCE_REPORT_SCHEMA_VERSION,
+    )
     _require_pass(source.get("status"), field="source verification")
 
     source_path_resolution_mode = _path_resolution_mode(
@@ -173,6 +209,10 @@ def audit_capture(
         "kind": REPORT_KIND,
         "status": "pass",
         "captureStatus": source.get("captureStatus"),
+        "bundleVerificationKind": BUNDLE_REPORT_KIND,
+        "bundleVerificationSchemaVersion": BUNDLE_REPORT_SCHEMA_VERSION,
+        "sourceVerificationKind": SOURCE_REPORT_KIND,
+        "sourceVerificationSchemaVersion": SOURCE_REPORT_SCHEMA_VERSION,
         "manifestSha256": snapshot_digests["manifestSha256"],
         "captureSnapshotPathResolutionMode": capture_snapshot_path_resolution_mode,
         "auditSnapshotPathResolutionMode": audit_snapshot_path_resolution_mode,
