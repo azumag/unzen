@@ -64,6 +64,24 @@ function recoveryRatio(peakRssKiB, baselineRssKiB, recoveredRssKiB) {
     : null;
 }
 
+function runtimeIdentity(runtimeReport) {
+  return {
+    onnxruntimeWebVersion: runtimeReport.onnxruntimeWebVersion,
+    manifestPayloadSetSha256: runtimeReport.manifestPayloadSetSha256,
+    graph: {
+      file: runtimeReport.verifiedGraph.file,
+      bytes: runtimeReport.verifiedGraph.bytes,
+      sha256: runtimeReport.verifiedGraph.sha256,
+    },
+    physicalArtifacts: runtimeReport.verifiedPhysicalArtifacts.map((artifact) => ({
+      index: artifact.index,
+      file: artifact.file,
+      bytes: artifact.bytes,
+      sha256: artifact.sha256,
+    })),
+  };
+}
+
 export function deriveNormalGpuProcessRssProxy(sourceEvidence) {
   const evidence = validateProcessRssEvidence(sourceEvidence);
   const measurement = evidence.measurement;
@@ -123,13 +141,14 @@ export function deriveNormalGpuProcessRssProxy(sourceEvidence) {
       sampleCount: measurement.sampleCount,
       postReportSettleMs: measurement.postReportSettleMs,
       postDocumentTeardownSettleMs: measurement.postDocumentTeardownSettleMs,
+      runtimeIdentity: runtimeIdentity(evidence.runtimeReport),
     },
     measurement: {
       metric: 'Chrome gpu-process resident-set-size proxy',
       unit: 'KiB',
       processRole: GPU_ROLE,
       processCountContract: 'exactly one Chrome process classified by --type=gpu-process at every reported observation point',
-      semantics: 'OS RSS for the launched Chrome GPU process only; not GPU device-memory or WebGPU/driver allocation accounting',
+      semantics: 'OS RSS for the launched Chrome GPU-process role only; not GPU device-memory or WebGPU/driver allocation accounting',
       points: pointsWithDelta,
       baselineRssKiB,
       observedPointPeak: {
@@ -162,6 +181,7 @@ export function deriveNormalGpuProcessRssProxy(sourceEvidence) {
       'Chrome gpu-process RSS is host OS resident memory accounting, not GPU VRAM, WebGPU buffer allocation, driver heap, or device-local working-set accounting.',
       'The source capture samples process RSS at intervals and can miss shorter-lived GPU-process RSS peaks.',
       'The source global/phase peaks are selected by total Chrome-tree RSS, not by gpu-process RSS; observedPointPeak is therefore only the maximum among persisted observation points.',
+      'The normal capture persists role aggregates but not GPU-process PIDs, so this report cannot prove that the same GPU-process instance survived across all observation points.',
       'The normal capture persists release immediate/peak/final but no release-window minimum; this report does not invent a release minimum.',
       'Shared mappings can be charged to process RSS, and unified-memory systems cannot separate CPU-resident and GPU-visible pages using this metric.',
       'A post-release or post-teardown RSS decline does not prove ORT/WebGPU/driver allocator reclamation; Chrome and the driver may retain reusable allocations or caches.',
