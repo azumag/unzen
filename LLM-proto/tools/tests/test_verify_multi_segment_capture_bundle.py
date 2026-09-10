@@ -77,6 +77,7 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
         evidence_path: str = "same-machine-evidence.json",
         summary_manifest_sha: str = "a" * 64,
         capture_path_resolution_mode: str | None = None,
+        include_snapshot_preflight: bool = True,
     ) -> tuple[Path, dict[str, object], dict[str, object]]:
         capture = root / "capture"
         split = capture / "split"
@@ -133,29 +134,32 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
         )
         evidence_sha = bundle_module.sha256_file(evidence_file)
 
+        artifacts: dict[str, object] = {
+            "manifest": "split/split-manifest.json",
+            "manifestSha256": summary_manifest_sha,
+            "segmentCount": 2,
+            "maximumSegmentArtifactBytes": 123,
+            "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
+        }
+        if include_snapshot_preflight:
+            artifacts["snapshotPreflight"] = {
+                "schemaVersion": bundle_module.SNAPSHOT_REPORT_SCHEMA_VERSION,
+                "kind": bundle_module.SNAPSHOT_REPORT_KIND,
+                "decisionStatus": "diagnostic-only",
+                "pathResolutionMode": capture_path_resolution_mode
+                or bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+                "artifactFileCount": 3,
+            }
+
         summary = {
-            "schemaVersion": "1.1.0",
+            "schemaVersion": "1.0.0",
             "kind": "unzen-budgeted-multi-segment-capture-run",
             "status": "pass",
             "parameters": parameters,
             "sourceModel": {
                 "graphSha256": source_sha,
             },
-            "artifacts": {
-                "manifest": "split/split-manifest.json",
-                "manifestSha256": summary_manifest_sha,
-                "segmentCount": 2,
-                "maximumSegmentArtifactBytes": 123,
-                "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
-                "snapshotPreflight": {
-                    "schemaVersion": bundle_module.SNAPSHOT_REPORT_SCHEMA_VERSION,
-                    "kind": bundle_module.SNAPSHOT_REPORT_KIND,
-                    "decisionStatus": "diagnostic-only",
-                    "pathResolutionMode": capture_path_resolution_mode
-                    or bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
-                    "artifactFileCount": 3,
-                },
-            },
+            "artifacts": artifacts,
             "evidence": {
                 "path": evidence_path,
                 "sha256": evidence_sha,
@@ -214,6 +218,27 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
                 report["captureSnapshotPathResolutionMode"],
                 bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
             )
+            self.assertEqual(
+                report["auditSnapshotPathResolutionMode"],
+                bundle_module.PATH_RESOLUTION_FINAL_ONLY,
+            )
+
+    def test_legacy_bundle_without_snapshot_metadata_remains_auditable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, _summary, _evidence = self._write_bundle(
+                Path(raw_dir),
+                include_snapshot_preflight=False,
+            )
+            with patch.object(
+                bundle_module,
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(
+                    path_resolution_mode=bundle_module.PATH_RESOLUTION_FINAL_ONLY
+                ),
+            ):
+                report = bundle_module.verify_capture_bundle(capture)
+
+            self.assertIsNone(report["captureSnapshotPathResolutionMode"])
             self.assertEqual(
                 report["auditSnapshotPathResolutionMode"],
                 bundle_module.PATH_RESOLUTION_FINAL_ONLY,
