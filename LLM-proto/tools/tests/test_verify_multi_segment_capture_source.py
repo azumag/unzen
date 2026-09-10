@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -165,29 +166,85 @@ class VerifyMultiSegmentCaptureSourceTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "source graph SHA-256"):
                     source_module.verify_capture_source(capture, model)
 
-    def test_source_file_mutation_during_hash_is_rejected(self) -> None:
+    def test_source_graph_symlink_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            capture, model, _weights = self._write_fixture(root)
+            bundle = self._bundle_report(capture, model)
+            real_model = model.with_name("real-model.onnx")
+            model.rename(real_model)
+            model.symlink_to(real_model.name)
+
+            with patch.object(source_module, "verify_capture_bundle", return_value=bundle):
+                with self.assertRaisesRegex(ValueError, "full model graph must not be a symlink"):
+                    source_module.verify_capture_source(capture, model)
+
+    def test_source_external_data_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             capture, model, weights = self._write_fixture(root)
             bundle = self._bundle_report(capture, model)
-            real_hasher = source_module.sha256_file
-
-            def mutating_hasher(path: Path) -> str:
-                digest = real_hasher(path)
-                if path.resolve() == weights.resolve():
-                    path.write_bytes(path.read_bytes() + b"!")
-                return digest
+            real_weights = weights.with_name("real-model_q4.onnx_data")
+            weights.rename(real_weights)
+            weights.symlink_to(real_weights.name)
 
             with patch.object(source_module, "verify_capture_bundle", return_value=bundle):
+                with self.assertRaisesRegex(ValueError, "source external data .* must not be a symlink"):
+                    source_module.verify_capture_source(capture, model)
+
+    def test_source_file_mutation_during_fd_hash_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            capture, model, weights = self._write_fixture(root)
+            bundle = self._bundle_report(capture, model)
+            real_fd_hasher = source_module._sha256_fd
+            calls = 0
+
+            def mutating_fd_hasher(fd: int) -> str:
+                nonlocal calls
+                digest = real_fd_hasher(fd)
+                calls += 1
+                if calls == 2:
+                    weights.write_bytes(weights.read_bytes() + b"!")
+                return digest
+
+            with (
+                patch.object(source_module, "verify_capture_bundle", return_value=bundle),
+                patch.object(source_module, "_sha256_fd", side_effect=mutating_fd_hasher),
+            ):
                 with self.assertRaisesRegex(
                     RuntimeError,
                     "changed while it was being hashed",
                 ):
-                    source_module.verify_capture_source(
-                        capture,
-                        model,
-                        file_hasher=mutating_hasher,
-                    )
+                    source_module.verify_capture_source(capture, model)
+
+    def test_same_content_inode_replacement_during_fd_hash_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            capture, model, weights = self._write_fixture(root)
+            bundle = self._bundle_report(capture, model)
+            real_fd_hasher = source_module._sha256_fd
+            calls = 0
+
+            def replacing_fd_hasher(fd: int) -> str:
+                nonlocal calls
+                digest = real_fd_hasher(fd)
+                calls += 1
+                if calls == 2:
+                    replacement = weights.with_name("replacement.bin")
+                    replacement.write_bytes(b"external-weights")
+                    os.replace(replacement, weights)
+                return digest
+
+            with (
+                patch.object(source_module, "verify_capture_bundle", return_value=bundle),
+                patch.object(source_module, "_sha256_fd", side_effect=replacing_fd_hasher),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "changed while it was being hashed",
+                ):
+                    source_module.verify_capture_source(capture, model)
 
 
 if __name__ == "__main__":
