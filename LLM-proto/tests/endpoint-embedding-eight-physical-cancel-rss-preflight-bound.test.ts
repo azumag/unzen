@@ -9,6 +9,7 @@ import {
   endpointEmbeddingEightPhysicalPreflightIdentity,
 } from '../tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs';
 import { calculateEndpointEmbeddingPayloadSetSha256 } from '../tools/preflight_endpoint_embedding_eight_physical_bundle.mjs';
+import { validateBoundCancellationRssEvidence } from '../tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs';
 
 function snapshot(totalRssKiB: number) {
   return {
@@ -137,9 +138,10 @@ function validPreflightReport() {
 }
 
 describe('8-physical cancellation RSS preflight provenance binding', () => {
-  it('preserves an exact same-shape runtime identity for later normal/cancel comparison', () => {
+  it('preserves and revalidates an exact runtime identity for later normal/cancel comparison', () => {
     const preflight = validPreflightReport();
-    const report = buildBoundCancellationRssEvidence(validCancellationEvidence(), preflight);
+    const cancellation = validCancellationEvidence();
+    const report = buildBoundCancellationRssEvidence(cancellation, preflight);
 
     expect(report).toMatchObject({
       schemaVersion: '1.0.0',
@@ -171,6 +173,7 @@ describe('8-physical cancellation RSS preflight provenance binding', () => {
     });
     expect(report.sourceDocuments.cancellationEvidenceCanonicalSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(report.sourceDocuments.preflightReportCanonicalSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(validateBoundCancellationRssEvidence(report, cancellation, preflight)).toBe(report);
   });
 
   it('uses a key-order-independent canonical digest for source-document identity', () => {
@@ -201,5 +204,15 @@ describe('8-physical cancellation RSS preflight provenance binding', () => {
     const cancellation: any = validCancellationEvidence();
     cancellation.cancellation.observedPhase = 'executing embedding tile 4';
     expect(() => buildBoundCancellationRssEvidence(cancellation, validPreflightReport())).toThrow(/phase mismatch/);
+  });
+
+  it('fails closed when a persisted bound sidecar is modified', () => {
+    const preflight = validPreflightReport();
+    const cancellation = validCancellationEvidence();
+    const report: any = buildBoundCancellationRssEvidence(cancellation, preflight);
+    report.runtimeIdentity.physicalArtifacts[0].sha256 = 'f'.repeat(64);
+    expect(() => validateBoundCancellationRssEvidence(report, cancellation, preflight)).toThrow(
+      /does not exactly match validated source documents/,
+    );
   });
 });
