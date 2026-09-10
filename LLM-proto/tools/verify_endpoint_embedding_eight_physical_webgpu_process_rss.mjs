@@ -95,6 +95,14 @@ function exactSnapshot(left, right) {
   ));
 }
 
+function validateReleasePeakSemantics(releaseImmediate, releasePeak, releasePhasePeak) {
+  const settleWon = releasePhasePeak.totalRssKiB > releaseImmediate.totalRssKiB;
+  const expectedPeak = settleWon ? releasePhasePeak : releaseImmediate;
+  if (!exactSnapshot(releasePeak, expectedPeak)) {
+    throw new Error('post-release peak does not match capture merge semantics');
+  }
+}
+
 export function validateProcessRssEvidence(evidence) {
   requireObject(evidence, 'evidence');
   for (const field of ['schemaVersion', 'kind', 'status', 'decisionStatus', 'evidenceLevel']) {
@@ -163,8 +171,12 @@ export function validateProcessRssEvidence(evidence) {
   const releasePhasePeak = phases.get('post-report-release-settle');
   if (measurement.postReportSettleMs === 0) {
     if (releasePhasePeak) throw new Error('zero-length post-release settle must not contain a settle phase peak');
-  } else if (!releasePhasePeak || !exactSnapshot(releasePhasePeak, releasePeak)) {
-    throw new Error('post-release phase peak does not match settle peak');
+    if (!exactSnapshot(releasePeak, releaseImmediate) || !exactSnapshot(releaseFinal, releaseImmediate)) {
+      throw new Error('zero-length post-release settle must retain the immediate snapshot');
+    }
+  } else {
+    if (!releasePhasePeak) throw new Error('post-release settle phase peak is missing');
+    validateReleasePeakSemantics(releaseImmediate, releasePeak, releasePhasePeak);
   }
 
   const afterTeardown = requireObject(measurement.afterDocumentTeardown, 'measurement.afterDocumentTeardown');
