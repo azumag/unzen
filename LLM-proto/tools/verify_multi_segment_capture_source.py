@@ -76,7 +76,7 @@ def _non_negative_int(raw: object, *, field: str) -> int:
     return raw
 
 
-def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
+def _relative_path_text(raw: object, *, field: str) -> str:
     value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
@@ -87,10 +87,24 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
         or ".." in windows.parts
     ):
         raise ValueError(f"unsafe {field}: {value}")
+    return value
 
-    # Keep the final component lexical so _stable_identity() can reject a final
-    # symlink instead of silently resolving it. Resolve only the parent to keep
-    # intermediate symlinks from escaping the caller-supplied source root.
+
+def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
+    """Resolve an ordinary bundle-relative path and reject escapes."""
+
+    value = _relative_path_text(raw, field=field)
+    resolved_root = root.resolve()
+    resolved = (root / Path(value)).resolve()
+    if resolved != resolved_root and resolved_root not in resolved.parents:
+        raise ValueError(f"{field} escapes its root: {value}")
+    return resolved
+
+
+def _safe_source_relative_path(root: Path, raw: object, *, field: str) -> Path:
+    """Validate a source path without dereferencing its final component."""
+
+    value = _relative_path_text(raw, field=field)
     absolute_root = root.expanduser().absolute()
     candidate = (absolute_root / Path(value)).absolute()
     resolved_root = absolute_root.resolve()
@@ -322,7 +336,7 @@ def verify_capture_source(
     observed_external: list[dict[str, object]] = []
     for index, entry in enumerate(manifest_external):
         location = str(entry["location"])
-        source_path = _safe_relative_path(
+        source_path = _safe_source_relative_path(
             full_model.parent,
             location,
             field=f"split-manifest.sourceModel.externalData[{index}].location",
