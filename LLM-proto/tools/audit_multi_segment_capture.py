@@ -32,6 +32,13 @@ from verify_multi_segment_capture_source import verify_capture_source
 REPORT_KIND = "unzen-budgeted-multi-segment-complete-capture-audit"
 REPORT_SCHEMA_VERSION = "1.0.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_PATH_RESOLUTION_MODES = frozenset(
+    {
+        "component-anchored-dirfd",
+        "final-component-only",
+    }
+)
+STRONG_SOURCE_PATH_RESOLUTION_MODE = "component-anchored-dirfd"
 
 
 def _require_pass(raw: object, *, field: str) -> None:
@@ -45,6 +52,13 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
     return raw
 
 
+def _source_path_resolution_mode(raw: object, *, field: str) -> str:
+    if not isinstance(raw, str) or raw not in SOURCE_PATH_RESOLUTION_MODES:
+        expected = ", ".join(sorted(SOURCE_PATH_RESOLUTION_MODES))
+        raise ValueError(f"{field} must be one of: {expected}")
+    return raw
+
+
 def _require_equal(left: object, right: object, *, field: str) -> None:
     if left != right:
         raise RuntimeError(f"{field} changed during complete audit: first={left!r}, second={right!r}")
@@ -54,6 +68,7 @@ def audit_capture(
     capture_dir: Path,
     full_model_path: Path,
     *,
+    require_component_anchored_source: bool = False,
     bundle_verifier: Callable[[Path], dict[str, object]] = verify_capture_bundle,
     source_verifier: Callable[[Path, Path], dict[str, object]] = verify_capture_source,
 ) -> dict[str, object]:
@@ -67,6 +82,19 @@ def audit_capture(
 
     source = source_verifier(capture, full_model)
     _require_pass(source.get("status"), field="source verification")
+
+    source_path_resolution_mode = _source_path_resolution_mode(
+        source.get("sourcePathResolutionMode"),
+        field="source.sourcePathResolutionMode",
+    )
+    if (
+        require_component_anchored_source
+        and source_path_resolution_mode != STRONG_SOURCE_PATH_RESOLUTION_MODE
+    ):
+        raise RuntimeError(
+            "source verification did not use component-anchored-dirfd path resolution: "
+            f"{source_path_resolution_mode!r}"
+        )
 
     snapshot_digests: dict[str, str] = {}
     for key, label in (
@@ -113,6 +141,7 @@ def audit_capture(
         "captureStatus": source.get("captureStatus"),
         "manifestSha256": snapshot_digests["manifestSha256"],
         "sourceGraphSha256": source_graph,
+        "sourcePathResolutionMode": source_path_resolution_mode,
         "sourceGraphBytes": source.get("sourceGraphBytes"),
         "sourceExternalDataCount": source.get("sourceExternalDataCount"),
         "sourceExternalDataBytes": source.get("sourceExternalDataBytes"),
@@ -130,12 +159,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capture-dir", type=Path, required=True)
     parser.add_argument("--full-model", type=Path, required=True)
+    parser.add_argument(
+        "--require-component-anchored-source",
+        action="store_true",
+        help=(
+            "fail unless the source audit used component-anchored-dirfd path "
+            "resolution instead of the portable final-component-only fallback"
+        ),
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    report = audit_capture(args.capture_dir, args.full_model)
+    report = audit_capture(
+        args.capture_dir,
+        args.full_model,
+        require_component_anchored_source=args.require_component_anchored_source,
+    )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
