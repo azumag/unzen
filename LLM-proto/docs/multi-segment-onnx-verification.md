@@ -139,3 +139,44 @@ sidecar.
 A passing same-machine result is automated correctness evidence only; it does
 not replace #167's required real multi-browser WebGPU, Coordinator-relay, cache
 and latency evidence.
+
+## Verify one cached decode step
+
+The single-step gate above starts every `past_key_values.*` input with an empty
+cache. Before treating decoder segmentation as numerically proven, also run one
+real cached decode step after prompt prefill:
+
+```bash
+python tools/verify_multi_segment_kv_decode.py \
+  --full-model /absolute/path/to/Llama-3.2-1B-Instruct/onnx/model_q4.onnx \
+  --manifest /absolute/path/to/llama-1b-budget-split/split-manifest.json \
+  --input-ids '128000,2028,374,264,1296' \
+  --next-token-id 13 \
+  --kv-heads 8 \
+  --head-size 64
+```
+
+This verifier repeats the same artifact-integrity, source-identity and manifest
+checks before executing ONNX Runtime. It first runs the prompt prefill and
+captures every `present.N.key/value` tensor. It then feeds those exact tensors
+back to the matching `past_key_values.N.key/value` inputs for a one-token decode
+step, while extending the attention-mask length and starting `position_ids` at
+the prompt length.
+
+KV ownership remains segment-local. Each split segment only receives the cache
+for decoder layers it owns; KV tensors are not treated as Coordinator relay
+payload. The Coordinator-facing relay remains the hidden-state boundary already
+recorded by the split manifest. The report records prompt/decode boundary bytes
+separately and also records how many KV bytes were actually consumed by the
+cached decode step.
+
+A `status=pass` requires prompt logits, cached-decode logits, prompt KV outputs
+and next-step KV outputs to match the full-model reference within the configured
+tolerances, with identical prompt and decode top-1 token IDs. Missing key/value
+pairs, cross-layer ownership mistakes, or an incomplete `present -> past`
+mapping fail closed instead of silently substituting an empty cache.
+
+This remains `diagnostic-only` same-machine evidence. It does not prove the
+browser/WebGPU execution path, worker-loss resume, production cache/runtime
+semantics, GPU memory behavior, or any physical endpoint-layout choice. Those
+remain separate #167/#223 gates.
