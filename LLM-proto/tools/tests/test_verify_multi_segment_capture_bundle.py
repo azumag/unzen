@@ -30,12 +30,53 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
             "segments": [],
         }
 
+    @classmethod
+    def _snapshot(
+        cls,
+        *,
+        path_resolution_mode: str | None = None,
+    ) -> dict[str, object]:
+        integrity = cls._integrity()
+        return {
+            "schemaVersion": bundle_module.SNAPSHOT_REPORT_SCHEMA_VERSION,
+            "kind": bundle_module.SNAPSHOT_REPORT_KIND,
+            "status": "pass",
+            "decisionStatus": "diagnostic-only",
+            "pathResolutionMode": path_resolution_mode
+            or bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            "manifestSha256": integrity["manifestSha256"],
+            "segmentCount": integrity["segmentCount"],
+            "artifactFileCount": 3,
+            "artifacts": [
+                {
+                    "field": "segments[0].path",
+                    "path": "segment0.onnx",
+                    "bytes": 40,
+                    "sha256": "d" * 64,
+                },
+                {
+                    "field": "segments[0].externalData[0].location",
+                    "path": "segment0.onnx_data",
+                    "bytes": 41,
+                    "sha256": "e" * 64,
+                },
+                {
+                    "field": "segments[1].path",
+                    "path": "segment1.onnx",
+                    "bytes": 42,
+                    "sha256": "f" * 64,
+                },
+            ],
+            "integrity": integrity,
+        }
+
     def _write_bundle(
         self,
         root: Path,
         *,
         evidence_path: str = "same-machine-evidence.json",
         summary_manifest_sha: str = "a" * 64,
+        capture_path_resolution_mode: str | None = None,
     ) -> tuple[Path, dict[str, object], dict[str, object]]:
         capture = root / "capture"
         split = capture / "split"
@@ -93,7 +134,7 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
         evidence_sha = bundle_module.sha256_file(evidence_file)
 
         summary = {
-            "schemaVersion": "1.0.0",
+            "schemaVersion": "1.1.0",
             "kind": "unzen-budgeted-multi-segment-capture-run",
             "status": "pass",
             "parameters": parameters,
@@ -106,6 +147,14 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
                 "segmentCount": 2,
                 "maximumSegmentArtifactBytes": 123,
                 "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
+                "snapshotPreflight": {
+                    "schemaVersion": bundle_module.SNAPSHOT_REPORT_SCHEMA_VERSION,
+                    "kind": bundle_module.SNAPSHOT_REPORT_KIND,
+                    "decisionStatus": "diagnostic-only",
+                    "pathResolutionMode": capture_path_resolution_mode
+                    or bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+                    "artifactFileCount": 3,
+                },
             },
             "evidence": {
                 "path": evidence_path,
@@ -124,8 +173,8 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
             capture, _summary, _evidence = self._write_bundle(Path(raw_dir))
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ) as verify:
                 report = bundle_module.verify_capture_bundle(capture)
 
@@ -134,8 +183,40 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
             self.assertEqual(report["manifestSha256"], "a" * 64)
             self.assertEqual(report["segmentCount"], 2)
             self.assertEqual(report["sourceGraphSha256"], "c" * 64)
+            self.assertEqual(
+                report["captureSnapshotPathResolutionMode"],
+                bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            )
+            self.assertEqual(
+                report["auditSnapshotPathResolutionMode"],
+                bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            )
             verify.assert_called_once_with(
                 (capture / "split" / "split-manifest.json").resolve()
+            )
+
+    def test_capture_and_audit_snapshot_modes_may_differ(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, _summary, _evidence = self._write_bundle(
+                Path(raw_dir),
+                capture_path_resolution_mode=bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            )
+            with patch.object(
+                bundle_module,
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(
+                    path_resolution_mode=bundle_module.PATH_RESOLUTION_FINAL_ONLY
+                ),
+            ):
+                report = bundle_module.verify_capture_bundle(capture)
+
+            self.assertEqual(
+                report["captureSnapshotPathResolutionMode"],
+                bundle_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            )
+            self.assertEqual(
+                report["auditSnapshotPathResolutionMode"],
+                bundle_module.PATH_RESOLUTION_FINAL_ONLY,
             )
 
     def test_tampered_evidence_file_is_rejected_by_summary_digest(self) -> None:
@@ -146,8 +227,8 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ):
                 with self.assertRaisesRegex(ValueError, "evidence SHA-256 mismatch"):
                     bundle_module.verify_capture_bundle(capture)
@@ -167,8 +248,8 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ):
                 with self.assertRaisesRegex(ValueError, "unsafe run-summary.evidence.path"):
                     bundle_module.verify_capture_bundle(capture)
@@ -190,8 +271,8 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ):
                 with self.assertRaisesRegex(ValueError, "verification SHA-256 mismatch"):
                     bundle_module.verify_capture_bundle(capture)
@@ -204,8 +285,8 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
             )
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ):
                 with self.assertRaisesRegex(
                     ValueError,
@@ -224,12 +305,32 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ):
                 with self.assertRaisesRegex(
                     ValueError,
                     "run-summary.artifacts.segmentCount must be a positive integer",
+                ):
+                    bundle_module.verify_capture_bundle(capture)
+
+    def test_snapshot_metadata_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, summary, _evidence = self._write_bundle(Path(raw_dir))
+            summary["artifacts"]["snapshotPreflight"]["artifactFileCount"] = 4
+            (capture / "run-summary.json").write_text(
+                json.dumps(summary) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                bundle_module,
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "snapshot artifactFileCount vs measured snapshot mismatch",
                 ):
                     bundle_module.verify_capture_bundle(capture)
 
@@ -244,8 +345,8 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
             with patch.object(
                 bundle_module,
-                "verify_artifact_integrity",
-                return_value=self._integrity(),
+                "verify_artifact_snapshot",
+                return_value=self._snapshot(),
             ):
                 with self.assertRaisesRegex(
                     ValueError,
