@@ -14,12 +14,14 @@ capture runner は次を固定順序で行う。
 2. `prepare_budgeted_multi_split` で browser-budgeted shard を staging directory に生成する。
 3. source external-data SHA-256 は常に有効化する。skip-digest経路はこのrunnerから利用できない。
 4. 生成manifestの `sourceModel.sha256` と現在のsource graph SHA-256が手順1のdigestに一致することを確認する。生成中にsource graphが変化していれば、この時点でfail-closeし、artifact preflightやONNX Runtimeへ進まない。
-5. `verify_artifact_integrity` で生成物の実byte数・digest・budgetを再測定する。
-6. integrityが `pass` の場合だけ `collect_multi_segment_evidence` 相当の full-vs-multi numerical verification を実行する。
-7. numerical verifier が内部で再取得した `artifactIntegrity` の manifest SHA-256、segment count、最大artifact bytes、effective budget が、手順5のpreflightと完全一致することを確認する。途中でartifact setが変化した場合は保存せずfail-closeする。
+5. `verify_artifact_snapshot` で生成manifest、segment graph、external-dataを stable filesystem snapshot として再測定する。このwrapperは既存の `verify_artifact_integrity` による実byte数・digest・browser budget検証を内包し、対応platformでは manifest directory をdescriptorでanchorして intermediate directory component も `dir_fd` / `O_NOFOLLOW` で辿る。
+6. snapshot preflight が `pass` の場合だけ `collect_multi_segment_evidence` 相当の full-vs-multi numerical verification を実行する。
+7. numerical verifier が内部で再取得した `artifactIntegrity` の manifest SHA-256、segment count、最大artifact bytes、effective budget が、手順5のsnapshot preflight内のintegrity reportと完全一致することを確認する。途中でartifact bytesが変化した場合は保存せずfail-closeする。
 8. split artifacts、`same-machine-evidence.json`、`run-summary.json` を同じcapture directoryとして公開する。
 
-planner / source graph snapshot check / preflight / verifier の例外、または preflight と numerical verifier の artifact identity 不一致では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
+planner / source graph snapshot check / snapshot preflight / verifier の例外、または preflight と numerical verifier の artifact identity 不一致では staging directory を削除し、指定された最終output directoryを残さない。数値比較が tolerance 外になった場合だけは、失敗そのものが調査価値のあるevidenceなので `status=fail` のbundleを公開し、CLI exit codeを非0にする。
+
+snapshot verifier の `pathResolutionMode` は `run-summary.json` に保存する。`component-anchored-dirfd` は intermediate directory component までdescriptor-basedに固定できたrun、`final-component-only` はportable fallbackを意味する。後者を前者と同じ強度のfilesystem race evidenceとして扱わない。
 
 plannerがbudget内のpartitionを作れない場合、errorには全segment-countを探索した `minimum achievable maximum` と、要求上限を超えるsingle-layer span（最大8件）を含める。これにより「cut数を増やせば解決する」のか、endpoint等の最小span自体がbudgetを超えていてgraph/artifact設計の変更が必要なのかを、artifact生成前に区別できる。
 
@@ -65,15 +67,21 @@ segment数はplanner結果による。`run-summary.json` には少なくとも�
 - segment count
 - measured maximum segment artifact bytes
 - effective required max bytes
+- snapshot verifier schema/kind
+- snapshot verifier `decisionStatus`
+- snapshot verifier `pathResolutionMode`
+- snapshot verifierがstable-readしたartifact file count
 - same-machine evidence SHA-256
 - embedded verification SHA-256
 - final `pass` / `fail`
 
-summary内部のpathはcapture rootからの相対pathに限定し、staging directoryの一時pathをevidenceへ残さない。summaryに記録するsource graph identityは生成前・生成manifest・生成直後の再hashが一致した場合だけ公開され、artifact identityは最初のpreflightとnumerical verifier内の再preflightが一致した場合だけ公開される。
+summary内部のpathはcapture rootからの相対pathに限定し、staging directoryの一時pathをevidenceへ残さない。summaryに記録するsource graph identityは生成前・生成manifest・生成直後の再hashが一致した場合だけ公開され、artifact byte identityはsnapshot preflightとnumerical verifier内の再preflightが一致した場合だけ公開される。
 
 ## 判定境界
 
 このrunが `pass` しても、証明できるのは host-side / same-machine のartifact budgetとnumerical equivalenceまでである。
+
+stable snapshot preflight は **preflight実行中** の manifest / graph / external-data replacement raceを強く検出するが、file descriptorを numerical verification 全体にわたって保持するtransactionではない。したがって、preflight完了後に同一内容の別inodeへ差し替え、numerical collectorの再preflight前後でも同じbytesを見せるような競合まで「同一filesystem instanceだった」と証明するものではない。run summaryのdigest/budget bindingは従来どおりbyte-level driftを検出する。
 
 次は別途、実ブラウザWebGPUで以下を取得する必要がある。
 
