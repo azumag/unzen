@@ -98,6 +98,11 @@ def audit_capture(
     first_bundle = bundle_verifier(capture)
     _require_pass(first_bundle.get("status"), field="bundle verification")
 
+    if "captureSnapshotPathResolutionMode" not in first_bundle:
+        raise ValueError(
+            "bundle.captureSnapshotPathResolutionMode must be present; "
+            "legacy capture-time mode must be represented explicitly as null"
+        )
     capture_snapshot_path_resolution_mode = _optional_path_resolution_mode(
         first_bundle.get("captureSnapshotPathResolutionMode"),
         field="bundle.captureSnapshotPathResolutionMode",
