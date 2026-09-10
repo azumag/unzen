@@ -8,15 +8,19 @@ import {
   canonicalJsonSha256,
   endpointEmbeddingEightPhysicalPreflightIdentity,
 } from '../tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs';
+import { deriveBoundGpuProcessRssProxy } from '../tools/derive_endpoint_embedding_eight_physical_bound_gpu_process_rss_proxy.mjs';
 import { calculateEndpointEmbeddingPayloadSetSha256 } from '../tools/preflight_endpoint_embedding_eight_physical_bundle.mjs';
 import { validateBoundCancellationRssEvidence } from '../tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs';
 
 function snapshot(totalRssKiB: number) {
+  const gpuRssKiB = Math.max(1, Math.floor(totalRssKiB / 3));
+  const browserRssKiB = totalRssKiB - gpuRssKiB;
   return {
-    processCount: 1,
+    processCount: 2,
     totalRssKiB,
     roles: {
-      browser: { processCount: 1, rssKiB: totalRssKiB },
+      browser: { processCount: 1, rssKiB: browserRssKiB },
+      'gpu-process': { processCount: 1, rssKiB: gpuRssKiB },
     },
   };
 }
@@ -174,6 +178,19 @@ describe('8-physical cancellation RSS preflight provenance binding', () => {
     expect(report.sourceDocuments.cancellationEvidenceCanonicalSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(report.sourceDocuments.preflightReportCanonicalSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(validateBoundCancellationRssEvidence(report, cancellation, preflight)).toBe(report);
+
+    const gpuProxy = deriveBoundGpuProcessRssProxy(cancellation, report, preflight);
+    expect(gpuProxy).toMatchObject({
+      schemaVersion: '1.1.0',
+      kind: 'unzen-endpoint-embedding-eight-physical-webgpu-preflight-bound-gpu-process-rss-proxy',
+      decisionStatus: 'diagnostic-only',
+      evidenceLevel: 'derived-os-gpu-process-rss-proxy+validated-preflight-bundle-identity',
+      sourceEvidence: {
+        runtimeIdentity: {
+          manifestPayloadSetSha256: preflight.manifestPayloadSetSha256,
+        },
+      },
+    });
   });
 
   it('uses a key-order-independent canonical digest for source-document identity', () => {
