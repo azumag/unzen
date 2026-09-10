@@ -7,7 +7,7 @@ Parent: #167
 
 `tools/derive_endpoint_embedding_eight_physical_normal_gpu_process_rss_proxy.mjs` derives a read-only Chrome `gpu-process` RSS envelope from an already captured and validated **normal-completion** 8-physical endpoint-embedding process-RSS evidence file.
 
-This complements the cancellation-side proxy from #334/#335. It lets an operator inspect the same Chrome GPU-process OS-RSS role across successful execution, all `InferenceSession.release()` calls returning, the post-release settle window, and document teardown.
+This complements the cancellation-side proxy from #334/#335. It lets an operator inspect the Chrome GPU-process OS-RSS role across successful execution, all `InferenceSession.release()` calls returning, the post-release settle window, and document teardown.
 
 The report is **diagnostic-only**. Chrome GPU-process RSS is not GPU device-memory, WebGPU buffer allocation, driver heap accounting, or direct allocator-reclamation evidence.
 
@@ -22,6 +22,10 @@ The analyzer first runs the complete offline validator from `verify_endpoint_emb
 - stable, bounded, non-symlink input-file reading with fatal UTF-8 decoding.
 
 After source validation, every observation point emitted by the proxy must contain exactly one process classified as `--type=gpu-process`. Missing or multiple GPU-process roles fail closed.
+
+The derived report also copies the validated runtime identity needed to bind a memory observation back to the tested artifact set: ORT Web version, payload-set digest, graph file/bytes/SHA-256, and all eight physical payload file/bytes/SHA-256 identities. This prevents a retained proxy report from losing which validated bundle produced the observation.
+
+The source RSS snapshots contain role aggregates, not process IDs. Therefore `processCount=1` at each point proves only that one process was classified as `gpu-process` in each persisted snapshot; it does **not** prove that the same GPU-process instance survived across the entire run.
 
 ## Run
 
@@ -78,6 +82,7 @@ Limitations:
 - unified-memory platforms cannot separate CPU-resident and GPU-visible pages with this metric;
 - sampling can miss short-lived peaks;
 - total-RSS-selected snapshots are not GPU-process-selected peaks;
+- role aggregates do not retain GPU-process PID identity, so cross-snapshot process-instance continuity is not established;
 - a decline after session release or document teardown does not prove ORT/WebGPU/driver allocator reclamation;
 - this analysis does not select the 8-physical layout and does not establish decoder/KV/checkpoint full-model equivalence or resume correctness.
 
