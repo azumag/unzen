@@ -9,12 +9,14 @@ operation:
 3. re-measure the generated artifacts with the stable snapshot preflight;
 4. run the provenance-rich full-vs-multi numerical evidence collector;
 5. bind the numerical verifier's artifact identity back to the preflight result;
-6. publish the split artifacts, evidence JSON, and a compact run summary together.
+6. re-measure the stable artifact snapshot after numerical verification and
+   require the same byte-level artifact set before publication;
+7. publish the split artifacts, evidence JSON, and a compact run summary together.
 
-Generation happens in a sibling staging directory. Tooling/preflight failures
-remove the staging directory and leave the requested destination untouched.
-A numerical mismatch is different: it is useful evidence, so the completed run
-is published with status=fail and the CLI exits non-zero.
+Generation happens in a sibling staging directory. Tooling/preflight/postflight
+failures remove the staging directory and leave the requested destination
+untouched. A numerical mismatch is different: it is useful evidence, so the
+completed run is published with status=fail and the CLI exits non-zero.
 
 The runner never downloads a model and never relaxes the product browser
 artifact ceiling. The operator must provide an already-downloaded source ONNX
@@ -213,11 +215,6 @@ def _require_evidence_matches_preflight(
     verifier identity back to the first preflight keeps one capture directory a
     single auditable artifact-byte snapshot instead of silently mixing two
     different byte-level snapshots.
-
-    The stable-snapshot verifier strengthens the mandatory preflight itself, but
-    it does not keep file descriptors open across the entire numerical run. A
-    same-content inode replacement after preflight remains outside this check's
-    proof boundary and is documented in the runbook.
     """
 
     if not isinstance(evidence, dict):
@@ -246,6 +243,53 @@ def _require_evidence_matches_preflight(
                 f"verification={observed!r}"
             )
     return evidence
+
+
+def _require_postflight_matches_preflight(
+    preflight: dict[str, object],
+    preflight_integrity: dict[str, object],
+    postflight: dict[str, object],
+    postflight_integrity: dict[str, object],
+) -> None:
+    """Reject artifact drift that remains after numerical verification.
+
+    The numerical collector's embedded integrity report binds the bytes observed
+    immediately before ONNX Runtime work. A second stable snapshot after the
+    numerical run closes the remaining persistent-drift window: if the manifest
+    or any declared graph/external-data artifact changed and stayed changed while
+    inference was running, publication is refused.
+
+    This does not make the ONNX Runtime path fd-only. A privileged actor that can
+    swap pathnames after preflight and restore the exact original snapshot before
+    postflight remains outside this proof boundary.
+    """
+
+    for field in (
+        "pathResolutionMode",
+        "manifestSha256",
+        "segmentCount",
+        "artifactFileCount",
+        "artifacts",
+    ):
+        if postflight.get(field) != preflight.get(field):
+            raise ValueError(
+                "artifact snapshot drifted across numerical verification: "
+                f"{field} preflight={preflight.get(field)!r}, "
+                f"postflight={postflight.get(field)!r}"
+            )
+
+    for field in (
+        "manifestSha256",
+        "segmentCount",
+        "maximumSegmentArtifactBytes",
+        "effectiveRequiredMaxBytes",
+    ):
+        if postflight_integrity.get(field) != preflight_integrity.get(field):
+            raise ValueError(
+                "artifact integrity drifted across numerical verification: "
+                f"{field} preflight={preflight_integrity.get(field)!r}, "
+                f"postflight={postflight_integrity.get(field)!r}"
+            )
 
 
 def capture_run(
@@ -313,6 +357,16 @@ def capture_run(
             raise ValueError(
                 f"same-machine evidence returned unsupported status: {status!r}"
             )
+
+        postflight_snapshot, postflight_integrity = _require_snapshot_pass(
+            verify_artifact_snapshot(manifest_path)
+        )
+        _require_postflight_matches_preflight(
+            snapshot,
+            integrity,
+            postflight_snapshot,
+            postflight_integrity,
+        )
 
         evidence_path = staging / "same-machine-evidence.json"
         evidence_sha = write_evidence(evidence_path, evidence)
