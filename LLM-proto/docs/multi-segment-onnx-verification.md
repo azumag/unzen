@@ -176,6 +176,39 @@ tolerances, with identical prompt and decode top-1 token IDs. Missing key/value
 pairs, cross-layer ownership mistakes, or an incomplete `present -> past`
 mapping fail closed instead of silently substituting an empty cache.
 
+For a real pinned 1B run that must be retained as auditable evidence, use the
+collector instead of redirecting verifier stdout:
+
+```bash
+python tools/collect_multi_segment_kv_decode_evidence.py \
+  --full-model /absolute/path/to/Llama-3.2-1B-Instruct/onnx/model_q4.onnx \
+  --manifest /absolute/path/to/llama-1b-budget-split/split-manifest.json \
+  --input-ids '128000,2028,374,264,1296' \
+  --next-token-id 13 \
+  --kv-heads 8 \
+  --head-size 64 \
+  --output /absolute/path/to/evidence/llama-1b-kv-decode-001.json
+```
+
+The cached-decode collector rejects malformed prompt/next-token/KV/tolerance
+parameters and unavailable providers before model execution. Before publication
+it independently revalidates the embedded artifact/source identity, requires at
+least two generated segments, verifies both prompt and decode boundary byte
+accounting, checks logits and every KV tensor's shape/match/digest-independent
+measurement contract, requires complete canonical key/value pairs for every
+observed cache layer, and requires prompt/decode KV identities to be identical.
+A passing report must also show non-zero full-model and split-model past-cache
+bytes consumed during decode, `kvCacheOwnership=segment-local`,
+`coordinatorRelaysKvCache=false`, and sequential segment session loading.
+
+The resulting evidence envelope records all run parameters, Python/numpy/ONNX
+Runtime/platform metadata, the providers actually available at capture time, a
+canonical SHA-256 of the embedded verification report, and the exact verifier
+report itself. Publication reuses the existing atomic no-clobber writer, so an
+existing evidence path is never replaced. A valid failing numerical result may
+also be archived; structurally inconsistent or tampered verifier output is
+rejected instead of being persisted.
+
 This remains `diagnostic-only` same-machine evidence. It does not prove the
 browser/WebGPU execution path, worker-loss resume, production cache/runtime
 semantics, GPU memory behavior, or any physical endpoint-layout choice. Those
