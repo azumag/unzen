@@ -3,7 +3,7 @@
 
 This wrapper persists the diagnostic-only report produced by
 ``verify_multi_segment_kv_decode.py`` together with the exact run parameters and
-runtime metadata needed to reproduce a real 1B q4 capture.  It deliberately
+runtime metadata needed to reproduce a real 1B q4 capture. It deliberately
 revalidates the verifier result before publication so a future verifier refactor
 cannot silently drop the artifact/source identity, KV ownership, comparison, or
 relay-accounting fields on which the evidence claim depends.
@@ -15,7 +15,6 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
-import math
 from pathlib import Path
 import platform
 import re
@@ -58,6 +57,8 @@ def validate_run_parameters(
     atol: float,
     rtol: float,
 ) -> tuple[list[int], int, int, int, float, float]:
+    """Reject malformed run parameters before provider/model work."""
+
     prompt, kv_heads, head_size, atol, rtol = validate_base_run_parameters(
         prompt_token_ids,
         kv_heads=kv_heads,
@@ -69,11 +70,19 @@ def validate_run_parameters(
     return prompt, next_token, kv_heads, head_size, atol, rtol
 
 
+def _normalize_created_at(created_at: datetime | None) -> str:
+    timestamp = created_at or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("created_at must be timezone-aware")
+    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _validate_source_model(raw: object) -> None:
     if not isinstance(raw, dict):
         raise ValueError("cached-decode verifier sourceModel must be an object")
-    if not str(raw.get("path") or ""):
-        raise ValueError("cached-decode verifier sourceModel.path must be non-empty")
+    path = raw.get("path")
+    if not isinstance(path, str) or not path:
+        raise ValueError("cached-decode verifier sourceModel.path must be a non-empty string")
     _non_negative_int(raw.get("graphBytes"), field="verification.sourceModel.graphBytes")
     _canonical_sha256(raw.get("graphSha256"), field="verification.sourceModel.graphSha256")
     if raw.get("allExternalDataHashed") is not True:
@@ -86,9 +95,9 @@ def _validate_source_model(raw: object) -> None:
         if not isinstance(entry, dict):
             raise ValueError(f"verification.sourceModel.externalData[{index}] must be an object")
         prefix = f"verification.sourceModel.externalData[{index}]"
-        location = str(entry.get("location") or "")
-        if not location or location in seen:
-            raise ValueError(f"{prefix}.location must be non-empty and unique")
+        location = entry.get("location")
+        if not isinstance(location, str) or not location or location in seen:
+            raise ValueError(f"{prefix}.location must be a non-empty unique string")
         seen.add(location)
         _non_negative_int(entry.get("bytes"), field=f"{prefix}.bytes")
         _canonical_sha256(entry.get("sha256"), field=f"{prefix}.sha256")
@@ -129,23 +138,31 @@ def _validate_kv_comparison(raw: object, *, field: str) -> tuple[bool, tuple[str
 
     observed_bytes = 0
     identities: dict[int, set[str]] = {}
+    seen_identities: set[tuple[int, str]] = set()
     names: list[str] = []
     all_tensor_matches = True
     for index, tensor in enumerate(tensors):
         if not isinstance(tensor, dict):
             raise ValueError(f"{field}.tensors[{index}] must be an object")
         prefix = f"{field}.tensors[{index}]"
-        name = str(tensor.get("name") or "")
+        name = tensor.get("name")
+        if not isinstance(name, str):
+            raise ValueError(f"{prefix}.name must be a string")
         match = PRESENT_RE.fullmatch(name)
-        if match is None or name in names:
-            raise ValueError(f"{prefix}.name must be a unique present.<layer>.<key|value> tensor")
+        if match is None:
+            raise ValueError(f"{prefix}.name must be present.<layer>.<key|value>")
         layer = int(match.group(1))
         kind = match.group(2)
+        identity = (layer, kind)
+        if name != f"present.{layer}.{kind}" or identity in seen_identities:
+            raise ValueError(f"{prefix}.name must encode a unique canonical KV identity")
+        seen_identities.add(identity)
         identities.setdefault(layer, set()).add(kind)
         names.append(name)
         _shape(tensor.get("shape"), field=f"{prefix}.shape")
-        if not str(tensor.get("dtype") or ""):
-            raise ValueError(f"{prefix}.dtype must be non-empty")
+        dtype = tensor.get("dtype")
+        if not isinstance(dtype, str) or not dtype:
+            raise ValueError(f"{prefix}.dtype must be a non-empty string")
         observed_bytes += _non_negative_int(tensor.get("bytes"), field=f"{prefix}.bytes")
         shape_match = tensor.get("shapeMatch")
         tensor_matches = tensor.get("matches")
@@ -170,7 +187,12 @@ def _validate_kv_comparison(raw: object, *, field: str) -> tuple[bool, tuple[str
     return matches, tuple(sorted(names))
 
 
-def _validate_step(raw: object, *, field: str, segment_count: int) -> tuple[bool, bool, int, int, tuple[str, ...]]:
+def _validate_step(
+    raw: object,
+    *,
+    field: str,
+    segment_count: int,
+) -> tuple[bool, bool, int, int, tuple[str, ...]]:
     if not isinstance(raw, dict):
         raise ValueError(f"{field} must be an object")
     _validate_boundaries(
@@ -195,6 +217,10 @@ def validate_verification_binding(
     prompt_token_ids: Sequence[int],
     next_token_id: int,
 ) -> str:
+    """Fail closed if the verifier result no longer supports its evidence claim."""
+
+    if not isinstance(verification, dict):
+        raise ValueError("cached-decode verifier result must be an object")
     if verification.get("schemaVersion") != VERIFICATION_SCHEMA_VERSION:
         raise ValueError(
             "cached-decode verifier returned an unexpected schemaVersion: "
@@ -228,7 +254,10 @@ def validate_verification_binding(
     raw_cuts = verification.get("cutLayers")
     if not isinstance(raw_cuts, list) or len(raw_cuts) != segment_count - 1:
         raise ValueError("cached-decode verifier cutLayers must match segmentCount")
-    cuts = [_positive_int(value, field=f"verification.cutLayers[{index}]") for index, value in enumerate(raw_cuts)]
+    cuts = [
+        _positive_int(value, field=f"verification.cutLayers[{index}]")
+        for index, value in enumerate(raw_cuts)
+    ]
     if cuts != sorted(set(cuts)):
         raise ValueError("cached-decode verifier cutLayers must be strictly increasing")
     _validate_source_model(verification.get("sourceModel"))
@@ -240,7 +269,9 @@ def validate_verification_binding(
         verification.get("decode"), field="verification.decode", segment_count=segment_count
     )
     if not prompt_names or prompt_names != decode_names:
-        raise ValueError("cached-decode verifier prompt/decode KV tensor identities must be non-empty and identical")
+        raise ValueError(
+            "cached-decode verifier prompt/decode KV tensor identities must be non-empty and identical"
+        )
 
     decode = verification["decode"]
     assert isinstance(decode, dict)
@@ -289,6 +320,8 @@ def collect_evidence(
     rtol: float = 1e-4,
     created_at: datetime | None = None,
 ) -> dict[str, object]:
+    """Run the cached-decode verifier and attach reproduction metadata."""
+
     prompt, next_token, kv_heads, head_size, atol, rtol = validate_run_parameters(
         prompt_token_ids,
         next_token_id,
@@ -297,6 +330,7 @@ def collect_evidence(
         atol=atol,
         rtol=rtol,
     )
+    created_at_utc = _normalize_created_at(created_at)
     available_providers = ensure_provider_available(provider)
     verification = verify_multi_segment_kv_decode(
         full_model_path,
@@ -316,10 +350,6 @@ def collect_evidence(
         next_token_id=next_token,
     )
 
-    timestamp = created_at or datetime.now(timezone.utc)
-    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-        raise ValueError("created_at must be timezone-aware")
-    created_at_utc = timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     verification_sha = hashlib.sha256(canonical_json_bytes(verification)).hexdigest()
     return {
         "schemaVersion": EVIDENCE_SCHEMA_VERSION,
