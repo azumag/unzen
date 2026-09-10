@@ -103,6 +103,21 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
             "component-anchored-dirfd",
         )
 
+    def test_missing_capture_snapshot_mode_contract_is_rejected(self) -> None:
+        bundle = self._bundle()
+        del bundle["captureSnapshotPathResolutionMode"]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "bundle.captureSnapshotPathResolutionMode must be present",
+        ):
+            audit_module.audit_capture(
+                Path("capture"),
+                Path("model.onnx"),
+                bundle_verifier=lambda _capture: bundle,
+                source_verifier=lambda _capture, _full_model: self._source(),
+            )
+
     def test_portable_artifact_audit_mode_is_reported_by_default(self) -> None:
         report = audit_module.audit_capture(
             Path("capture"),
