@@ -147,6 +147,7 @@ function tempDir() {
 
 afterEach(() => {
   while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  delete process.env.UNZEN_PROCESS_RSS_EVIDENCE_MAX_BYTES;
 });
 
 describe('8-physical normal-completion process RSS evidence validation', () => {
@@ -181,11 +182,23 @@ describe('8-physical normal-completion process RSS evidence validation', () => {
     expect(() => validateProcessRssEvidence(badTeardownMinimum)).toThrow(/post-teardown minimum/);
   });
 
-  it('requires persisted phase peaks to match captured settle peaks', () => {
+  it('pins release peak to max(immediate, settle-phase peak) using capture tie semantics', () => {
+    const immediateWins = validEvidence();
+    immediateWins.measurement.afterAllSessionReleaseApisReturned.immediate = snapshot(240);
+    immediateWins.measurement.afterAllSessionReleaseApisReturned.peakDuringSettle = snapshot(240);
+    expect(validateProcessRssEvidence(immediateWins)).toBe(immediateWins);
+
+    const wrongWinner = validEvidence();
+    wrongWinner.measurement.afterAllSessionReleaseApisReturned.immediate = snapshot(240);
+    wrongWinner.measurement.afterAllSessionReleaseApisReturned.peakDuringSettle = snapshot(230);
+    expect(() => validateProcessRssEvidence(wrongWinner)).toThrow(/post-release peak/);
+  });
+
+  it('requires persisted phase peaks to match captured settle semantics', () => {
     const badReleasePhase = validEvidence();
     const entry = badReleasePhase.measurement.phasePeaks.find((item) => item.phase === 'post-report-release-settle')!;
     Object.assign(entry, snapshot(229));
-    expect(() => validateProcessRssEvidence(badReleasePhase)).toThrow(/post-release phase peak/);
+    expect(() => validateProcessRssEvidence(badReleasePhase)).toThrow(/post-release peak/);
 
     const badTeardownPhase = validEvidence();
     const teardownEntry = badTeardownPhase.measurement.phasePeaks.find((item) => item.phase === 'post-teardown-about-blank')!;
@@ -228,6 +241,14 @@ describe('stable normal-completion process RSS evidence file reading', () => {
     const path = join(dir, 'evidence.json');
     writeFileSync(path, `${JSON.stringify(validEvidence())}\n`, 'utf8');
     expect(readStableProcessRssEvidence(path).runtimeReport.sessionReleaseApiCompleted).toBe(true);
+  });
+
+  it('honors the configured environment size bound', () => {
+    const dir = tempDir();
+    const path = join(dir, 'evidence.json');
+    writeFileSync(path, `${JSON.stringify(validEvidence())}\n`, 'utf8');
+    process.env.UNZEN_PROCESS_RSS_EVIDENCE_MAX_BYTES = '32';
+    expect(() => readStableProcessRssEvidence(path)).toThrow(/input size/);
   });
 
   it('rejects symlinks, oversized input, and invalid UTF-8', () => {
