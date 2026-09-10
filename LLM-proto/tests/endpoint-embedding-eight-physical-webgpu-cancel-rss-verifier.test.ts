@@ -134,7 +134,7 @@ describe('8-physical cancellation RSS evidence validation', () => {
     expect(() => validateCancellationRssEvidence(badGlobal)).toThrow(/globalPeak/);
 
     const badMinimum = validEvidence();
-    badMinimum.measurement.afterDocumentCancellation.minimumDuringSettle = snapshot(175);
+    badMinimum.measurement.afterDocumentCancellation.minimumDuringSettle = snapshot(165);
     expect(() => validateCancellationRssEvidence(badMinimum)).toThrow(/post-cancel minimum/);
   });
 
