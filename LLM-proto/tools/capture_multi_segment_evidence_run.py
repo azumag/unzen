@@ -45,7 +45,7 @@ from verify_split_onnx import parse_token_ids
 
 
 RUN_KIND = "unzen-budgeted-multi-segment-capture-run"
-RUN_SCHEMA_VERSION = "1.1.0"
+RUN_SCHEMA_VERSION = "1.0.0"
 DEFAULT_TARGET_BYTES = 200 * 1024 * 1024
 
 
