@@ -47,6 +47,36 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
         }
 
     @classmethod
+    def _snapshot(
+        cls,
+        *,
+        status: str = "pass",
+        integrity: dict[str, object] | None = None,
+        path_resolution_mode: str | None = None,
+    ) -> dict[str, object]:
+        inner = dict(integrity or cls._integrity())
+        return {
+            "schemaVersion": capture_module.SNAPSHOT_REPORT_SCHEMA_VERSION,
+            "kind": capture_module.SNAPSHOT_REPORT_KIND,
+            "status": status,
+            "decisionStatus": "diagnostic-only",
+            "pathResolutionMode": path_resolution_mode
+            or capture_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            "manifestSha256": inner["manifestSha256"],
+            "segmentCount": inner["segmentCount"],
+            "artifactFileCount": 1,
+            "artifacts": [
+                {
+                    "field": "segments[0].path",
+                    "path": "segment0.onnx",
+                    "bytes": 7,
+                    "sha256": "c" * 64,
+                }
+            ],
+            "integrity": inner,
+        }
+
+    @classmethod
     def _evidence(
         cls,
         *,
@@ -80,9 +110,9 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 ) as prepare,
                 patch.object(
                     capture_module,
-                    "verify_artifact_integrity",
-                    return_value=self._integrity(),
-                ),
+                    "verify_artifact_snapshot",
+                    return_value=self._snapshot(),
+                ) as snapshot,
                 patch.object(
                     capture_module,
                     "collect_evidence",
@@ -110,11 +140,28 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             self.assertEqual(persisted["sourceModel"]["graphSha256"], source_sha256)
             self.assertEqual(persisted["artifacts"]["manifestSha256"], "a" * 64)
             self.assertEqual(persisted["artifacts"]["segmentCount"], 1)
+            self.assertEqual(
+                persisted["artifacts"]["snapshotPreflight"]["schemaVersion"],
+                capture_module.SNAPSHOT_REPORT_SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                persisted["artifacts"]["snapshotPreflight"]["kind"],
+                capture_module.SNAPSHOT_REPORT_KIND,
+            )
+            self.assertEqual(
+                persisted["artifacts"]["snapshotPreflight"]["pathResolutionMode"],
+                capture_module.PATH_RESOLUTION_COMPONENT_ANCHORED,
+            )
+            self.assertEqual(
+                persisted["artifacts"]["snapshotPreflight"]["artifactFileCount"],
+                1,
+            )
             self.assertEqual(persisted["evidence"]["verificationSha256"], "b" * 64)
             self.assertNotIn(str(root), json.dumps(persisted))
 
             prepare.assert_called_once()
             self.assertTrue(prepare.call_args.kwargs["hash_source_external_data"])
+            snapshot.assert_called_once()
             collect.assert_called_once()
             self.assertEqual(collect.call_args.args[2], [11, 22])
 
@@ -152,8 +199,8 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 ),
                 patch.object(
                     capture_module,
-                    "verify_artifact_integrity",
-                    return_value=self._integrity(status="fail"),
+                    "verify_artifact_snapshot",
+                    return_value=self._snapshot(status="fail"),
                 ),
                 patch.object(capture_module, "collect_evidence") as collect,
             ):
@@ -172,6 +219,37 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 if path.name.startswith(".capture.") and path.name.endswith(".tmp")
             ]
             self.assertEqual(leftovers, [])
+
+    def test_snapshot_envelope_mismatch_is_rejected_before_numerical_work(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            destination = root / "capture"
+            source = self._source(root)
+            malformed = self._snapshot()
+            malformed["manifestSha256"] = "d" * 64
+
+            with (
+                patch.object(
+                    capture_module,
+                    "prepare_budgeted_multi_split",
+                    side_effect=self._prepare_fixture,
+                ),
+                patch.object(
+                    capture_module,
+                    "verify_artifact_snapshot",
+                    return_value=malformed,
+                ),
+                patch.object(capture_module, "collect_evidence") as collect,
+            ):
+                with self.assertRaisesRegex(ValueError, "envelope disagrees"):
+                    capture_module.capture_run(
+                        source,
+                        destination,
+                        [11],
+                    )
+
+            collect.assert_not_called()
+            self.assertFalse(destination.exists())
 
     def test_source_graph_drift_during_generation_is_rejected_before_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
@@ -194,7 +272,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                     "prepare_budgeted_multi_split",
                     side_effect=prepare_and_mutate,
                 ),
-                patch.object(capture_module, "verify_artifact_integrity") as preflight,
+                patch.object(capture_module, "verify_artifact_snapshot") as preflight,
                 patch.object(capture_module, "collect_evidence") as collect,
             ):
                 with self.assertRaisesRegex(RuntimeError, "source model graph drifted"):
@@ -230,8 +308,8 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 ),
                 patch.object(
                     capture_module,
-                    "verify_artifact_integrity",
-                    return_value=self._integrity(),
+                    "verify_artifact_snapshot",
+                    return_value=self._snapshot(),
                 ),
                 patch.object(
                     capture_module,
@@ -269,8 +347,10 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 ),
                 patch.object(
                     capture_module,
-                    "verify_artifact_integrity",
-                    return_value=self._integrity(),
+                    "verify_artifact_snapshot",
+                    return_value=self._snapshot(
+                        path_resolution_mode=capture_module.PATH_RESOLUTION_FINAL_ONLY
+                    ),
                 ),
                 patch.object(
                     capture_module,
@@ -285,6 +365,10 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 )
 
             self.assertEqual(summary["status"], "fail")
+            self.assertEqual(
+                summary["artifacts"]["snapshotPreflight"]["pathResolutionMode"],
+                capture_module.PATH_RESOLUTION_FINAL_ONLY,
+            )
             self.assertTrue(destination.is_dir())
             persisted = json.loads(
                 (destination / "run-summary.json").read_text(encoding="utf-8")

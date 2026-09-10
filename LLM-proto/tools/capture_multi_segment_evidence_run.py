@@ -6,7 +6,7 @@ operation:
 
 1. bind the source ONNX graph before generation begins;
 2. generate browser-budgeted ONNX shards with source external-data hashing on;
-3. re-measure the generated artifacts with the stdlib-only integrity preflight;
+3. re-measure the generated artifacts with the stable snapshot preflight;
 4. run the provenance-rich full-vs-multi numerical evidence collector;
 5. bind the numerical verifier's artifact identity back to the preflight result;
 6. publish the split artifacts, evidence JSON, and a compact run summary together.
@@ -34,7 +34,13 @@ from typing import Sequence
 from collect_multi_segment_evidence import collect_evidence, write_evidence
 from multi_segment_onnx import PREFERRED_MAX_BYTES, prepare_budgeted_multi_split
 from split_llama_1b_onnx import sha256_file
-from verify_multi_segment_artifacts import verify_artifact_integrity
+from verify_multi_segment_artifact_snapshot import (
+    PATH_RESOLUTION_COMPONENT_ANCHORED,
+    PATH_RESOLUTION_FINAL_ONLY,
+    REPORT_KIND as SNAPSHOT_REPORT_KIND,
+    REPORT_SCHEMA_VERSION as SNAPSHOT_REPORT_SCHEMA_VERSION,
+    verify_artifact_snapshot,
+)
 from verify_split_onnx import parse_token_ids
 
 
@@ -136,6 +142,64 @@ def _require_integrity_pass(report: object) -> dict[str, object]:
     return report
 
 
+def _require_snapshot_pass(
+    report: object,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Validate the stable-snapshot envelope and return its integrity report."""
+
+    if not isinstance(report, dict):
+        raise ValueError("artifact-snapshot preflight must return an object")
+    if report.get("status") != "pass":
+        raise RuntimeError(
+            "artifact-snapshot preflight did not pass; refusing numerical capture"
+        )
+    if report.get("schemaVersion") != SNAPSHOT_REPORT_SCHEMA_VERSION:
+        raise ValueError(
+            "artifact-snapshot preflight has unsupported schemaVersion: "
+            f"{report.get('schemaVersion')!r}"
+        )
+    if report.get("kind") != SNAPSHOT_REPORT_KIND:
+        raise ValueError(
+            "artifact-snapshot preflight has unexpected kind: "
+            f"{report.get('kind')!r}"
+        )
+    if report.get("decisionStatus") != "diagnostic-only":
+        raise ValueError(
+            "artifact-snapshot preflight must remain diagnostic-only"
+        )
+    path_resolution_mode = report.get("pathResolutionMode")
+    if path_resolution_mode not in {
+        PATH_RESOLUTION_COMPONENT_ANCHORED,
+        PATH_RESOLUTION_FINAL_ONLY,
+    }:
+        raise ValueError(
+            "artifact-snapshot preflight has unsupported pathResolutionMode: "
+            f"{path_resolution_mode!r}"
+        )
+    artifact_file_count = report.get("artifactFileCount")
+    artifacts = report.get("artifacts")
+    if (
+        isinstance(artifact_file_count, bool)
+        or not isinstance(artifact_file_count, int)
+        or artifact_file_count <= 0
+    ):
+        raise ValueError("artifact-snapshot preflight has invalid artifactFileCount")
+    if not isinstance(artifacts, list) or len(artifacts) != artifact_file_count:
+        raise ValueError(
+            "artifact-snapshot preflight artifactFileCount does not match artifacts"
+        )
+
+    integrity = _require_integrity_pass(report.get("integrity"))
+    for field in ("manifestSha256", "segmentCount"):
+        if report.get(field) != integrity.get(field):
+            raise ValueError(
+                "artifact-snapshot preflight envelope disagrees with underlying "
+                f"integrity report: {field} snapshot={report.get(field)!r}, "
+                f"integrity={integrity.get(field)!r}"
+            )
+    return report, integrity
+
+
 def _require_evidence_matches_preflight(
     evidence: object,
     integrity: dict[str, object],
@@ -147,7 +211,13 @@ def _require_evidence_matches_preflight(
     changed after the runner's first preflight, both reports could be internally
     valid while referring to different artifact sets. Binding the embedded
     verifier identity back to the first preflight keeps one capture directory a
-    single auditable artifact snapshot instead of silently mixing two snapshots.
+    single auditable artifact-byte snapshot instead of silently mixing two
+    different byte-level snapshots.
+
+    The stable-snapshot verifier strengthens the mandatory preflight itself, but
+    it does not keep file descriptors open across the entire numerical run. A
+    same-content inode replacement after preflight remains outside this check's
+    proof boundary and is documented in the runbook.
     """
 
     if not isinstance(evidence, dict):
@@ -221,8 +291,8 @@ def capture_run(
             manifest_path,
             source_graph_sha256,
         )
-        integrity = _require_integrity_pass(
-            verify_artifact_integrity(manifest_path)
+        snapshot, integrity = _require_snapshot_pass(
+            verify_artifact_snapshot(manifest_path)
         )
 
         evidence = _require_evidence_matches_preflight(
@@ -274,6 +344,13 @@ def capture_run(
                 "effectiveRequiredMaxBytes": integrity[
                     "effectiveRequiredMaxBytes"
                 ],
+                "snapshotPreflight": {
+                    "schemaVersion": snapshot["schemaVersion"],
+                    "kind": snapshot["kind"],
+                    "decisionStatus": snapshot["decisionStatus"],
+                    "pathResolutionMode": snapshot["pathResolutionMode"],
+                    "artifactFileCount": snapshot["artifactFileCount"],
+                },
             },
             "evidence": {
                 "path": "same-machine-evidence.json",
@@ -341,6 +418,9 @@ def main() -> int:
                 "outputDir": str(output_dir),
                 "sourceGraphSha256": summary["sourceModel"]["graphSha256"],
                 "manifestSha256": summary["artifacts"]["manifestSha256"],
+                "snapshotPathResolutionMode": summary["artifacts"]["snapshotPreflight"][
+                    "pathResolutionMode"
+                ],
                 "evidenceSha256": summary["evidence"]["sha256"],
             },
             indent=2,
