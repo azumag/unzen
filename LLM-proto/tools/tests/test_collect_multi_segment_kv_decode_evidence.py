@@ -16,13 +16,13 @@ if str(TOOLS) not in sys.path:
 import collect_multi_segment_kv_decode_evidence as evidence_module  # noqa: E402
 
 
-def _boundary(*, bytes_: int) -> dict[str, object]:
+def _boundary(*, bytes_: int, after: int = 0, before: int = 1, name: str = "hidden_state") -> dict[str, object]:
     return {
-        "afterLayer": 0,
-        "beforeLayer": 1,
+        "afterLayer": after,
+        "beforeLayer": before,
         "tensors": [
             {
-                "name": "hidden_state",
+                "name": name,
                 "shape": [1, 2, 8],
                 "dtype": "float32",
                 "bytes": bytes_,
@@ -206,6 +206,22 @@ class CollectMultiSegmentKvDecodeEvidenceTest(unittest.TestCase):
         provider_check.assert_not_called()
         verify.assert_not_called()
 
+    def test_rejects_naive_created_at_before_provider_or_verifier(self) -> None:
+        with (
+            patch.object(evidence_module, "ensure_provider_available") as provider_check,
+            patch.object(evidence_module, "verify_multi_segment_kv_decode") as verify,
+        ):
+            with self.assertRaisesRegex(ValueError, "timezone-aware"):
+                evidence_module.collect_evidence(
+                    Path("model.onnx"),
+                    Path("manifest.json"),
+                    [11, 22],
+                    33,
+                    created_at=datetime(2026, 9, 10, 9, 30, 0),
+                )
+        provider_check.assert_not_called()
+        verify.assert_not_called()
+
     def test_rejects_unavailable_provider_before_verifier(self) -> None:
         with (
             patch.object(
@@ -255,12 +271,58 @@ class CollectMultiSegmentKvDecodeEvidenceTest(unittest.TestCase):
                 next_token_id=33,
             )
 
+    def test_rejects_non_contiguous_kv_layers(self) -> None:
+        verification = valid_verification()
+        for step_name in ("prompt", "decode"):
+            step = verification[step_name]
+            assert isinstance(step, dict)
+            comparison = step["kvComparison"]
+            assert isinstance(comparison, dict)
+            tensors = comparison["tensors"]
+            assert isinstance(tensors, list)
+            tensors[2]["name"] = "present.2.key"
+            tensors[3]["name"] = "present.2.value"
+        with self.assertRaisesRegex(ValueError, "contiguous from layer 0"):
+            evidence_module.validate_verification_binding(
+                verification,
+                provider="CPUExecutionProvider",
+                prompt_token_ids=[11, 22],
+                next_token_id=33,
+            )
+
     def test_rejects_inconsistent_boundary_byte_accounting(self) -> None:
         verification = valid_verification()
         decode = verification["decode"]
         assert isinstance(decode, dict)
         decode["boundaryBytes"] = 31
         with self.assertRaisesRegex(ValueError, "boundaryBytes"):
+            evidence_module.validate_verification_binding(
+                verification,
+                provider="CPUExecutionProvider",
+                prompt_token_ids=[11, 22],
+                next_token_id=33,
+            )
+
+    def test_rejects_prompt_decode_boundary_topology_drift(self) -> None:
+        verification = valid_verification()
+        decode = verification["decode"]
+        assert isinstance(decode, dict)
+        decode["boundaries"] = [_boundary(bytes_=32, name="other_hidden_state")]
+        with self.assertRaisesRegex(ValueError, "boundary topology must be identical"):
+            evidence_module.validate_verification_binding(
+                verification,
+                provider="CPUExecutionProvider",
+                prompt_token_ids=[11, 22],
+                next_token_id=33,
+            )
+
+    def test_rejects_boundary_topology_that_disagrees_with_cut_layers(self) -> None:
+        verification = valid_verification()
+        for step_name, bytes_ in (("prompt", 64), ("decode", 32)):
+            step = verification[step_name]
+            assert isinstance(step, dict)
+            step["boundaries"] = [_boundary(bytes_=bytes_, after=1, before=2)]
+        with self.assertRaisesRegex(ValueError, "disagrees with cutLayers"):
             evidence_module.validate_verification_binding(
                 verification,
                 provider="CPUExecutionProvider",
@@ -289,8 +351,20 @@ class CollectMultiSegmentKvDecodeEvidenceTest(unittest.TestCase):
         assert isinstance(comparison, dict)
         tensors = comparison["tensors"]
         assert isinstance(tensors, list)
-        tensors[0]["name"] = "present.2.key"
-        tensors[1]["name"] = "present.2.value"
+        for kind in ("key", "value"):
+            tensors.append(
+                {
+                    "name": f"present.2.{kind}",
+                    "shape": [1, 2, 8],
+                    "dtype": "float32",
+                    "bytes": 64,
+                    "shapeMatch": True,
+                    "matches": True,
+                    "maxAbsDiff": 0.0,
+                }
+            )
+        comparison["tensorCount"] = len(tensors)
+        comparison["bytes"] = sum(int(item["bytes"]) for item in tensors)
         with self.assertRaisesRegex(ValueError, "prompt/decode KV tensor identities"):
             evidence_module.validate_verification_binding(
                 verification,
