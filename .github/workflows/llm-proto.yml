@@ -75,6 +75,7 @@ jobs:
           node --check tools/preflight_endpoint_embedding_eight_physical_bundle.mjs
           node --check tools/capture_endpoint_embedding_eight_physical_webgpu_process_rss.mjs
           node --check tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs
+          node --check tools/verify_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs
           node --check tools/capture_endpoint_poststage_webgpu_process_rss.mjs
           node --check tools/check_wrangler_wasm_packaging.mjs
           node --check worker-runtime/wasm-canary-worker.mjs
