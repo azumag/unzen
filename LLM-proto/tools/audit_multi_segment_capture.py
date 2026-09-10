@@ -25,6 +25,10 @@ from pathlib import Path
 import re
 from typing import Callable
 
+from verify_multi_segment_artifact_snapshot import (
+    PATH_RESOLUTION_COMPONENT_ANCHORED,
+    PATH_RESOLUTION_FINAL_ONLY,
+)
 from verify_multi_segment_capture_bundle import verify_capture_bundle
 from verify_multi_segment_capture_source import verify_capture_source
 
@@ -32,13 +36,13 @@ from verify_multi_segment_capture_source import verify_capture_source
 REPORT_KIND = "unzen-budgeted-multi-segment-complete-capture-audit"
 REPORT_SCHEMA_VERSION = "1.0.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-SOURCE_PATH_RESOLUTION_MODES = frozenset(
+PATH_RESOLUTION_MODES = frozenset(
     {
-        "component-anchored-dirfd",
-        "final-component-only",
+        PATH_RESOLUTION_COMPONENT_ANCHORED,
+        PATH_RESOLUTION_FINAL_ONLY,
     }
 )
-STRONG_SOURCE_PATH_RESOLUTION_MODE = "component-anchored-dirfd"
+STRONG_PATH_RESOLUTION_MODE = PATH_RESOLUTION_COMPONENT_ANCHORED
 
 
 def _require_pass(raw: object, *, field: str) -> None:
@@ -52,11 +56,24 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
     return raw
 
 
-def _source_path_resolution_mode(raw: object, *, field: str) -> str:
-    if not isinstance(raw, str) or raw not in SOURCE_PATH_RESOLUTION_MODES:
-        expected = ", ".join(sorted(SOURCE_PATH_RESOLUTION_MODES))
+def _path_resolution_mode(raw: object, *, field: str) -> str:
+    if not isinstance(raw, str) or raw not in PATH_RESOLUTION_MODES:
+        expected = ", ".join(sorted(PATH_RESOLUTION_MODES))
         raise ValueError(f"{field} must be one of: {expected}")
     return raw
+
+
+def _optional_path_resolution_mode(raw: object, *, field: str) -> str | None:
+    if raw is None:
+        return None
+    return _path_resolution_mode(raw, field=field)
+
+
+def _require_strong_path_resolution(mode: str, *, field: str) -> None:
+    if mode != STRONG_PATH_RESOLUTION_MODE:
+        raise RuntimeError(
+            f"{field} did not use {STRONG_PATH_RESOLUTION_MODE} path resolution: {mode!r}"
+        )
 
 
 def _require_equal(left: object, right: object, *, field: str) -> None:
@@ -69,6 +86,7 @@ def audit_capture(
     full_model_path: Path,
     *,
     require_component_anchored_source: bool = False,
+    require_component_anchored_artifacts: bool = False,
     bundle_verifier: Callable[[Path], dict[str, object]] = verify_capture_bundle,
     source_verifier: Callable[[Path, Path], dict[str, object]] = verify_capture_source,
 ) -> dict[str, object]:
@@ -80,20 +98,31 @@ def audit_capture(
     first_bundle = bundle_verifier(capture)
     _require_pass(first_bundle.get("status"), field="bundle verification")
 
+    capture_snapshot_path_resolution_mode = _optional_path_resolution_mode(
+        first_bundle.get("captureSnapshotPathResolutionMode"),
+        field="bundle.captureSnapshotPathResolutionMode",
+    )
+    audit_snapshot_path_resolution_mode = _path_resolution_mode(
+        first_bundle.get("auditSnapshotPathResolutionMode"),
+        field="bundle.auditSnapshotPathResolutionMode",
+    )
+    if require_component_anchored_artifacts:
+        _require_strong_path_resolution(
+            audit_snapshot_path_resolution_mode,
+            field="artifact snapshot verification",
+        )
+
     source = source_verifier(capture, full_model)
     _require_pass(source.get("status"), field="source verification")
 
-    source_path_resolution_mode = _source_path_resolution_mode(
+    source_path_resolution_mode = _path_resolution_mode(
         source.get("sourcePathResolutionMode"),
         field="source.sourcePathResolutionMode",
     )
-    if (
-        require_component_anchored_source
-        and source_path_resolution_mode != STRONG_SOURCE_PATH_RESOLUTION_MODE
-    ):
-        raise RuntimeError(
-            "source verification did not use component-anchored-dirfd path resolution: "
-            f"{source_path_resolution_mode!r}"
+    if require_component_anchored_source:
+        _require_strong_path_resolution(
+            source_path_resolution_mode,
+            field="source verification",
         )
 
     snapshot_digests: dict[str, str] = {}
@@ -140,6 +169,8 @@ def audit_capture(
         "status": "pass",
         "captureStatus": source.get("captureStatus"),
         "manifestSha256": snapshot_digests["manifestSha256"],
+        "captureSnapshotPathResolutionMode": capture_snapshot_path_resolution_mode,
+        "auditSnapshotPathResolutionMode": audit_snapshot_path_resolution_mode,
         "sourceGraphSha256": source_graph,
         "sourcePathResolutionMode": source_path_resolution_mode,
         "sourceGraphBytes": source.get("sourceGraphBytes"),
@@ -167,6 +198,15 @@ def build_parser() -> argparse.ArgumentParser:
             "resolution instead of the portable final-component-only fallback"
         ),
     )
+    parser.add_argument(
+        "--require-component-anchored-artifacts",
+        action="store_true",
+        help=(
+            "fail unless the post-publication artifact snapshot audit used "
+            "component-anchored-dirfd path resolution instead of the portable "
+            "final-component-only fallback"
+        ),
+    )
     return parser
 
 
@@ -176,6 +216,7 @@ def main() -> int:
         args.capture_dir,
         args.full_model,
         require_component_anchored_source=args.require_component_anchored_source,
+        require_component_anchored_artifacts=args.require_component_anchored_artifacts,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
