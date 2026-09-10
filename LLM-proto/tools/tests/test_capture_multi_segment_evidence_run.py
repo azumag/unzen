@@ -161,7 +161,8 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
 
             prepare.assert_called_once()
             self.assertTrue(prepare.call_args.kwargs["hash_source_external_data"])
-            snapshot.assert_called_once()
+            self.assertEqual(snapshot.call_count, 2)
+            self.assertEqual(snapshot.call_args_list[0], snapshot.call_args_list[1])
             collect.assert_called_once()
             self.assertEqual(collect.call_args.args[2], [11, 22])
 
@@ -334,6 +335,56 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
             ]
             self.assertEqual(leftovers, [])
 
+    def test_postflight_snapshot_drift_is_rejected_and_cleaned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            destination = root / "capture"
+            source = self._source(root)
+            preflight = self._snapshot()
+            changed_integrity = self._integrity()
+            changed_integrity["manifestSha256"] = "d" * 64
+            postflight = self._snapshot(integrity=changed_integrity)
+            postflight["artifacts"][0]["sha256"] = "e" * 64
+
+            with (
+                patch.object(
+                    capture_module,
+                    "prepare_budgeted_multi_split",
+                    side_effect=self._prepare_fixture,
+                ),
+                patch.object(
+                    capture_module,
+                    "verify_artifact_snapshot",
+                    side_effect=[preflight, postflight],
+                ) as snapshot,
+                patch.object(
+                    capture_module,
+                    "collect_evidence",
+                    return_value=self._evidence(),
+                ) as collect,
+                patch.object(capture_module, "write_evidence") as write,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "artifact snapshot drifted across numerical verification",
+                ):
+                    capture_module.capture_run(
+                        source,
+                        destination,
+                        [11],
+                    )
+
+            collect.assert_called_once()
+            self.assertEqual(snapshot.call_count, 2)
+            write.assert_not_called()
+            self.assertFalse(destination.exists())
+            leftovers = [
+                path
+                for path in root.iterdir()
+                if path.name.startswith(".capture.") and path.name.endswith(".tmp")
+            ]
+            self.assertEqual(leftovers, [])
+
     def test_numerical_mismatch_is_published_as_useful_failed_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
@@ -351,7 +402,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                     return_value=self._snapshot(
                         path_resolution_mode=capture_module.PATH_RESOLUTION_FINAL_ONLY
                     ),
-                ),
+                ) as snapshot,
                 patch.object(
                     capture_module,
                     "collect_evidence",
@@ -364,6 +415,7 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                     [11],
                 )
 
+            self.assertEqual(snapshot.call_count, 2)
             self.assertEqual(summary["status"], "fail")
             self.assertEqual(
                 summary["artifacts"]["snapshotPreflight"]["pathResolutionMode"],
