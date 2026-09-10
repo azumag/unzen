@@ -40,6 +40,7 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
             "evidenceSha256": "d" * 64,
             "verificationSha256": "e" * 64,
             "sourceGraphSha256": "b" * 64,
+            "sourcePathResolutionMode": "component-anchored-dirfd",
             "sourceGraphBytes": 1234,
             "sourceExternalDataCount": 1,
             "sourceExternalDataBytes": 5678,
@@ -72,8 +73,64 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
         self.assertEqual(report["captureStatus"], "pass")
         self.assertEqual(report["manifestSha256"], "a" * 64)
         self.assertEqual(report["sourceGraphSha256"], "b" * 64)
+        self.assertEqual(report["sourcePathResolutionMode"], "component-anchored-dirfd")
         self.assertEqual(report["segmentCount"], 6)
         self.assertEqual([item[0] for item in calls], ["bundle", "source"])
+
+    def test_portable_source_mode_is_reported_by_default(self) -> None:
+        report = audit_module.audit_capture(
+            Path("capture"),
+            Path("model.onnx"),
+            bundle_verifier=lambda _capture: self._bundle(),
+            source_verifier=lambda _capture, _full_model: self._source(
+                sourcePathResolutionMode="final-component-only"
+            ),
+        )
+
+        self.assertEqual(report["sourcePathResolutionMode"], "final-component-only")
+
+    def test_component_anchored_requirement_rejects_portable_fallback(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "did not use component-anchored-dirfd path resolution",
+        ):
+            audit_module.audit_capture(
+                Path("capture"),
+                Path("model.onnx"),
+                require_component_anchored_source=True,
+                bundle_verifier=lambda _capture: self._bundle(),
+                source_verifier=lambda _capture, _full_model: self._source(
+                    sourcePathResolutionMode="final-component-only"
+                ),
+            )
+
+    def test_component_anchored_requirement_accepts_strong_mode(self) -> None:
+        report = audit_module.audit_capture(
+            Path("capture"),
+            Path("model.onnx"),
+            require_component_anchored_source=True,
+            bundle_verifier=lambda _capture: self._bundle(),
+            source_verifier=lambda _capture, _full_model: self._source(),
+        )
+
+        self.assertEqual(report["sourcePathResolutionMode"], "component-anchored-dirfd")
+
+    def test_unknown_or_missing_source_mode_is_rejected(self) -> None:
+        cases = (None, "unknown-mode")
+        for source_mode in cases:
+            with self.subTest(source_mode=source_mode):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "source.sourcePathResolutionMode must be one of",
+                ):
+                    audit_module.audit_capture(
+                        Path("capture"),
+                        Path("model.onnx"),
+                        bundle_verifier=lambda _capture: self._bundle(),
+                        source_verifier=lambda _capture, _full_model, mode=source_mode: self._source(
+                            sourcePathResolutionMode=mode
+                        ),
+                    )
 
     def test_bundle_failure_stops_before_source_audit(self) -> None:
         source_called = False
