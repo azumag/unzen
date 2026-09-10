@@ -89,6 +89,17 @@ The verifier re-checks the diagnostic schema/decision boundary, Chrome executabl
 
 A passing offline verification only proves that the persisted evidence is internally consistent with the capture contract. It is not a substitute for performing the real WebGPU capture on the intended host.
 
+## GPU-process RSS proxy derivation
+
+After offline verification, derive the Chrome `--type=gpu-process` OS-RSS observations without re-running Chrome:
+
+```bash
+node tools/derive_endpoint_embedding_eight_physical_normal_gpu_process_rss_proxy.mjs \
+  /absolute/path/to/eight-physical-rss.json
+```
+
+See `docs/endpoint-embedding-eight-physical-normal-gpu-process-rss-proxy.md` for the exact observation set and evidence boundary. The derived peak is only the maximum GPU-process RSS among persisted snapshots selected by the source capture; it is not a direct GPU-memory peak measurement.
+
 ## Evidence boundary
 
 The generated JSON uses:
