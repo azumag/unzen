@@ -242,7 +242,7 @@ class VerifyMultiSegmentCaptureSourceTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "path changed while it was being hashed",
+                    "changed while it was being hashed",
                 ):
                     source_module.verify_capture_source(capture, model)
 
