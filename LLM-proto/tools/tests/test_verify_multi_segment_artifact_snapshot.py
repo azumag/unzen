@@ -84,11 +84,33 @@ class VerifyMultiSegmentArtifactSnapshotTest(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         return manifest_path
 
+    def _nest_segment(self, root: Path, manifest_path: Path, index: int = 0) -> Path:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        segment = manifest["segments"][index]
+        nested = root / f"segment{index}-files"
+        nested.mkdir()
+
+        graph_name = segment["path"]
+        (root / graph_name).rename(nested / graph_name)
+        segment["path"] = f"{nested.name}/{graph_name}"
+
+        for external in segment["externalData"]:
+            external_name = external["location"]
+            (root / external_name).rename(nested / external_name)
+            external["location"] = f"{nested.name}/{external_name}"
+
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return nested
+
     def _symlink_or_skip(self, link: Path, target: Path) -> None:
         try:
             link.symlink_to(target)
         except (NotImplementedError, OSError) as error:
             self.skipTest(f"symlink creation is unavailable: {error}")
+
+    def _require_component_walk(self) -> None:
+        if not snapshot_module._component_walk_supported():
+            self.skipTest("dir_fd + O_NOFOLLOW component walking is unavailable")
 
     def test_valid_snapshot_binds_underlying_integrity_to_same_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,6 +129,25 @@ class VerifyMultiSegmentArtifactSnapshotTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["manifestSha256"], report["integrity"]["manifestSha256"]
+            )
+            expected_mode = (
+                snapshot_module.PATH_RESOLUTION_COMPONENT_ANCHORED
+                if snapshot_module._component_walk_supported()
+                else snapshot_module.PATH_RESOLUTION_FINAL_ONLY
+            )
+            self.assertEqual(report["pathResolutionMode"], expected_mode)
+
+    def test_reports_portable_final_component_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = self._fixture(root)
+
+            with patch.object(snapshot_module, "_component_walk_supported", return_value=False):
+                report = snapshot_module.verify_artifact_snapshot(manifest_path)
+
+            self.assertEqual(
+                report["pathResolutionMode"],
+                snapshot_module.PATH_RESOLUTION_FINAL_ONLY,
             )
 
     def test_rejects_manifest_final_symlink(self) -> None:
@@ -146,6 +187,22 @@ class VerifyMultiSegmentArtifactSnapshotTest(unittest.TestCase):
             ):
                 snapshot_module.verify_artifact_snapshot(manifest_path)
 
+    def test_rejects_intermediate_directory_symlink(self) -> None:
+        self._require_component_walk()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = self._fixture(root)
+            nested = self._nest_segment(root, manifest_path)
+            real_nested = root / "segment0-files-real"
+            nested.rename(real_nested)
+            self._symlink_or_skip(nested, real_nested)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"segments\[0\]\.path parent component must not be a symlink",
+            ):
+                snapshot_module.verify_artifact_snapshot(manifest_path)
+
     def test_rejects_same_content_inode_replacement_during_underlying_verifier(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -167,6 +224,33 @@ class VerifyMultiSegmentArtifactSnapshotTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     ValueError, "declared artifact changed across artifact integrity verification"
+                ):
+                    snapshot_module.verify_artifact_snapshot(manifest_path)
+
+    def test_rejects_same_file_instances_under_replaced_parent_directory(self) -> None:
+        self._require_component_walk()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = self._fixture(root)
+            nested = self._nest_segment(root, manifest_path)
+            real_verify = snapshot_module.verify_artifact_integrity
+
+            def replace_parent_then_verify(path: Path) -> dict[str, object]:
+                old_nested = root / "segment0-files-old"
+                nested.rename(old_nested)
+                nested.mkdir()
+                for old_file in old_nested.iterdir():
+                    os.link(old_file, nested / old_file.name)
+                return real_verify(path)
+
+            with patch.object(
+                snapshot_module,
+                "verify_artifact_integrity",
+                side_effect=replace_parent_then_verify,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "declared artifact parent directory changed across artifact integrity verification",
                 ):
                     snapshot_module.verify_artifact_snapshot(manifest_path)
 
