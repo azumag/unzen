@@ -10,15 +10,19 @@ evidence still names the exact source artifacts on disk.
 This verifier is stdlib-only. It first reuses the published-bundle verifier, then
 binds the same bundle snapshot to the caller-supplied full model and every source
 external-data file recorded in the split manifest. ONNX Runtime is never loaded.
+Source artifacts are hashed through already-open file descriptors and are
+required to remain the same non-symlink regular files for the entire read.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
-from typing import Callable
+import stat
 
 from verify_multi_segment_artifacts import sha256_file
 from verify_multi_segment_capture_bundle import verify_capture_bundle
@@ -83,31 +87,85 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
         or ".." in windows.parts
     ):
         raise ValueError(f"unsafe {field}: {value}")
-    resolved_root = root.resolve()
-    resolved = (root / Path(value)).resolve()
-    if resolved != resolved_root and resolved_root not in resolved.parents:
+
+    # Keep the final component lexical so _stable_identity() can reject a final
+    # symlink instead of silently resolving it. Resolve only the parent to keep
+    # intermediate symlinks from escaping the caller-supplied source root.
+    absolute_root = root.expanduser().absolute()
+    candidate = (absolute_root / Path(value)).absolute()
+    resolved_root = absolute_root.resolve()
+    resolved_parent = candidate.parent.resolve()
+    if resolved_parent != resolved_root and resolved_root not in resolved_parent.parents:
         raise ValueError(f"{field} escapes its root: {value}")
-    return resolved
+    return candidate
 
 
-def _stable_identity(
-    path: Path,
-    *,
-    field: str,
-    hasher: Callable[[Path], str] = sha256_file,
-) -> tuple[int, str]:
-    """Hash one file and reject replacement or mutation while hashing it."""
+def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
 
-    if not path.is_file():
-        raise FileNotFoundError(f"{field} not found: {path}")
-    before = path.stat()
-    digest = hasher(path)
-    after = path.stat()
-    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-    if before_identity != after_identity:
-        raise RuntimeError(f"{field} changed while it was being hashed: {path}")
-    return after.st_size, digest
+
+def _sha256_fd(fd: int) -> str:
+    """Hash the bytes of one already-open regular-file descriptor."""
+
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stable_identity(path: Path, *, field: str) -> tuple[int, str]:
+    """Hash one non-symlink regular file and reject replacement or mutation."""
+
+    source = path.expanduser().absolute()
+    try:
+        before = os.lstat(source)
+    except OSError as error:
+        raise FileNotFoundError(f"{field} not found: {source}") from error
+    if stat.S_ISLNK(before.st_mode):
+        raise ValueError(f"{field} must not be a symlink: {source}")
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"{field} must be a regular file: {source}")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(source, flags)
+    except OSError as error:
+        raise ValueError(f"{field} could not be opened safely: {source}: {error}") from error
+
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"{field} must remain a regular file: {source}")
+        if _stat_identity(opened) != _stat_identity(before):
+            raise RuntimeError(f"{field} changed between path check and open: {source}")
+
+        digest = _sha256_fd(fd)
+
+        after_fd = os.fstat(fd)
+        if _stat_identity(after_fd) != _stat_identity(opened):
+            raise RuntimeError(f"{field} changed while it was being hashed: {source}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(source)
+    except OSError as error:
+        raise RuntimeError(f"{field} path disappeared while it was being hashed: {source}") from error
+    if stat.S_ISLNK(after_path.st_mode) or _stat_identity(after_path) != _stat_identity(opened):
+        raise RuntimeError(f"{field} path changed while it was being hashed: {source}")
+
+    return after_path.st_size, digest
 
 
 def _normalized_external_entries(
@@ -165,8 +223,6 @@ def _require_equal(left: object, right: object, *, field: str) -> None:
 def verify_capture_source(
     capture_dir: Path,
     full_model_path: Path,
-    *,
-    file_hasher: Callable[[Path], str] = sha256_file,
 ) -> dict[str, object]:
     """Bind a valid published capture bundle to its original source artifacts."""
 
@@ -248,7 +304,6 @@ def verify_capture_source(
     graph_bytes, observed_graph_sha = _stable_identity(
         full_model,
         field="full model graph",
-        hasher=file_hasher,
     )
     _require_equal(expected_graph_sha, observed_graph_sha, field="source graph SHA-256")
     _require_equal(
@@ -275,7 +330,6 @@ def verify_capture_source(
         observed_bytes, observed_sha = _stable_identity(
             source_path,
             field=f"source external data {location}",
-            hasher=file_hasher,
         )
         _require_equal(
             entry["bytes"],
