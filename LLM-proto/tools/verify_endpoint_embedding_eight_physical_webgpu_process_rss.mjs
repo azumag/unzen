@@ -227,7 +227,10 @@ function parseMaxBytes(value) {
   return parsed;
 }
 
-export function readStableProcessRssEvidence(path, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
+export function readStableProcessRssEvidence(
+  path,
+  { maxBytes = process.env.UNZEN_PROCESS_RSS_EVIDENCE_MAX_BYTES ?? DEFAULT_MAX_BYTES } = {},
+) {
   const resolved = resolve(path);
   const boundedMax = parseMaxBytes(maxBytes);
   const beforePathStat = lstatSync(resolved, { bigint: true });
