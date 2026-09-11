@@ -20,15 +20,14 @@ Issue #386 extended the drive-qualified contract to the split producer itself:
 
 - `multi_segment_onnx.py`
 
-Issue #388 additionally hardens the rooted-but-drive-less edge case. The split producer, `verify_multi_segment_artifacts.py`, `verify_multi_segment_capture_source_provenance.py`, and `verify_multi_segment_onnx.py` now reject relevant locations with either a non-empty Windows `drive` or `root`. The same `root` check still needs to be propagated through the remaining independent downstream validator/auditor boundaries before #388 is complete:
+Issue #388 additionally hardens the rooted-but-drive-less edge case. The split producer, `verify_multi_segment_artifacts.py`, `verify_multi_segment_capture_source_provenance.py`, `verify_multi_segment_onnx.py`, and `audit_multi_segment_capture.py` now reject relevant locations with either a non-empty Windows `drive` or `root`. The same `root` check still needs to be propagated through the remaining independent downstream validator boundaries before #388 is complete:
 
 - `verify_multi_segment_capture_source.py`
-- `audit_multi_segment_capture.py`
 - `verify_multi_segment_capture_bundle.py`
 - `verify_multi_segment_artifact_snapshot.py`
 
 Existing absolute-path and `..` escape checks remain in place. Ordinary relative identities such as `model_q4.onnx_data` and `weights/chunk-0001.bin` remain accepted.
 
-Regression coverage lives in `tools/tests/test_capture_source_windows_drive_paths.py` for the stdlib-only capture/provenance/artifact boundaries, `tools/tests/test_verify_multi_segment_onnx_windows_drive_paths.py` for the numerical verifier boundary, and `tools/tests/test_multi_segment_onnx_windows_drive_paths.py` for the split producer boundary. Rooted-path coverage now exists for the producer, artifact-integrity verifier, source-provenance verifier, and numerical verifier; the remaining downstream rooted-path cases stay tracked by #388.
+Regression coverage lives in `tools/tests/test_capture_source_windows_drive_paths.py` for the stdlib-only capture/provenance/artifact boundaries, `tools/tests/test_verify_multi_segment_onnx_windows_drive_paths.py` for the numerical verifier boundary, and `tools/tests/test_multi_segment_onnx_windows_drive_paths.py` for the split producer boundary. Rooted-path coverage now exists for the producer, artifact-integrity verifier, source-provenance verifier, numerical verifier, and complete capture auditor; the remaining downstream rooted-path cases stay tracked by #388.
 
 This is path-validation hardening only: no artifact budget, split policy, runtime execution policy, source hashing mode, production deployment, credential, external billing, or physical-layout behavior changes.
