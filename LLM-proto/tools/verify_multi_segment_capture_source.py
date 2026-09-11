@@ -89,6 +89,7 @@ def _relative_path_text(raw: object, *, field: str) -> str:
         or windows.is_absolute()
         or bool(windows.drive)
         or bool(windows.root)
+        or any(":" in part for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
@@ -389,6 +390,7 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
             or windows.is_absolute()
             or bool(windows.drive)
             or bool(windows.root)
+            or any(":" in part for part in windows.parts)
             or ".." in posix.parts
             or ".." in windows.parts
         ):
