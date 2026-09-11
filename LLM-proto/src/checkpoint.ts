@@ -13,12 +13,8 @@
 import type { Checkpoint, InferenceRequestId } from './types.js';
 
 export class CheckpointStore {
-  /** Key: `${requestId}:${segmentIndex}` */
-  private readonly store = new Map<string, Checkpoint>();
-
-  private static key(requestId: InferenceRequestId, segmentIndex: number): string {
-    return `${requestId}:${segmentIndex}`;
-  }
+  /** Exact request identity -> segment index -> checkpoint. */
+  private readonly store = new Map<InferenceRequestId, Map<number, Checkpoint>>();
 
   private static assertValidCheckpoint(checkpoint: Checkpoint): void {
     if (!Number.isInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
@@ -79,13 +75,18 @@ export class CheckpointStore {
   /** Save a checkpoint produced by a completed segment. */
   save(checkpoint: Checkpoint): void {
     CheckpointStore.assertValidCheckpoint(checkpoint);
-    const key = CheckpointStore.key(checkpoint.requestId, checkpoint.segmentIndex);
-    this.store.set(key, CheckpointStore.snapshot(checkpoint));
+
+    let checkpoints = this.store.get(checkpoint.requestId);
+    if (!checkpoints) {
+      checkpoints = new Map<number, Checkpoint>();
+      this.store.set(checkpoint.requestId, checkpoints);
+    }
+    checkpoints.set(checkpoint.segmentIndex, CheckpointStore.snapshot(checkpoint));
   }
 
   /** Retrieve a specific checkpoint by request and segment index. */
   get(requestId: InferenceRequestId, segmentIndex: number): Checkpoint | undefined {
-    const checkpoint = this.store.get(CheckpointStore.key(requestId, segmentIndex));
+    const checkpoint = this.store.get(requestId)?.get(segmentIndex);
     return checkpoint ? CheckpointStore.snapshot(checkpoint) : undefined;
   }
 
@@ -108,8 +109,10 @@ export class CheckpointStore {
     if (atOrBeforeSegmentIndex < 0) return undefined;
 
     let latest: Checkpoint | undefined;
-    for (const checkpoint of this.store.values()) {
-      if (checkpoint.requestId !== requestId) continue;
+    const checkpoints = this.store.get(requestId);
+    if (!checkpoints) return undefined;
+
+    for (const checkpoint of checkpoints.values()) {
       if (checkpoint.segmentIndex > atOrBeforeSegmentIndex) continue;
       if (!latest || checkpoint.segmentIndex > latest.segmentIndex) {
         latest = checkpoint;
@@ -118,17 +121,17 @@ export class CheckpointStore {
     return latest ? CheckpointStore.snapshot(latest) : undefined;
   }
 
-  /** Delete all checkpoints for a completed or failed request. */
+  /** Delete all checkpoints for exactly one completed or failed request. */
   deleteAll(requestId: InferenceRequestId): void {
-    for (const key of [...this.store.keys()]) {
-      if (key.startsWith(`${requestId}:`)) {
-        this.store.delete(key);
-      }
-    }
+    this.store.delete(requestId);
   }
 
   /** Number of stored checkpoints (for monitoring). */
   get size(): number {
-    return this.store.size;
+    let count = 0;
+    for (const checkpoints of this.store.values()) {
+      count += checkpoints.size;
+    }
+    return count;
   }
 }
