@@ -36,6 +36,12 @@ class MultiSegmentOnnxWindowsDrivePathTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe external-data location"):
             _external_range(initializer)
 
+    def test_rejects_rooted_drive_less_location(self) -> None:
+        initializer = self._external_initializer(r"\payload.bin")
+
+        with self.assertRaisesRegex(ValueError, "unsafe external-data location"):
+            _external_range(initializer)
+
     def test_accepts_portable_nested_relative_location(self) -> None:
         initializer = self._external_initializer("weights/chunk-0001.bin")
 
