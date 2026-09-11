@@ -39,6 +39,8 @@ from verify_multi_segment_capture_source_provenance import (
 REPORT_KIND = "unzen-budgeted-multi-segment-capture-source-verification"
 REPORT_SCHEMA_VERSION = "1.0.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 PATH_RESOLUTION_COMPONENT_ANCHORED = "component-anchored-dirfd"
 PATH_RESOLUTION_FINAL_ONLY = "final-component-only"
 
@@ -80,6 +82,15 @@ def _non_negative_int(raw: object, *, field: str) -> int:
     return raw
 
 
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
+
+
 def _relative_path_text(raw: object, *, field: str) -> str:
     value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
@@ -90,6 +101,7 @@ def _relative_path_text(raw: object, *, field: str) -> str:
         or bool(windows.drive)
         or bool(windows.root)
         or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
@@ -391,6 +403,7 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
             or bool(windows.drive)
             or bool(windows.root)
             or any(":" in part for part in windows.parts)
+            or any(_unsafe_windows_component(part) for part in windows.parts)
             or ".." in posix.parts
             or ".." in windows.parts
         ):
