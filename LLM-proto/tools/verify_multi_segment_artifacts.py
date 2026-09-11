@@ -20,6 +20,8 @@ MANIFEST_KIND = "unzen-budgeted-multi-segment-onnx"
 MANIFEST_SCHEMA_VERSION = "1.0.0"
 ARTIFACT_LAYOUT = "per-segment-external-data"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL", "CLOCK$"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)[1-9]$")
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -39,6 +41,19 @@ def _non_empty_string(raw: object, *, field: str) -> str:
     return raw
 
 
+def _unsafe_windows_component(part: str) -> bool:
+    # Windows trims trailing dots/spaces from ordinary path components and treats
+    # DOS device basenames as special even when an extension is present. Reject
+    # both forms so a path identity verified on POSIX cannot alias a different
+    # file or device when the same evidence bundle is consumed on Windows.
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
+
+
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
@@ -49,6 +64,7 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
         or bool(windows.drive)
         or bool(windows.root)
         or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
