@@ -10,7 +10,9 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import audit_multi_segment_capture as audit_module  # noqa: E402
+import verify_multi_segment_artifacts as artifacts_module  # noqa: E402
 import verify_multi_segment_capture_source as source_module  # noqa: E402
+import verify_multi_segment_capture_source_provenance as provenance_module  # noqa: E402
 
 
 DIGEST = "0" * 64
@@ -38,17 +40,33 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="source.sourceExternalData",
             )
 
+    def test_source_provenance_rejects_drive_relative_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            provenance_module._safe_relative(
+                "C:payload.bin",
+                field="split-manifest.sourceModel.externalData[0].location",
+            )
+
+    def test_artifact_integrity_rejects_drive_relative_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            artifacts_module._safe_relative_path(
+                Path.cwd(),
+                "C:payload.bin",
+                field="segments[0].path",
+            )
+
     def test_ordinary_relative_path_remains_valid(self) -> None:
+        relative = "weights/chunk-0001.bin"
         self.assertEqual(
             source_module._relative_path_text(
-                "weights/chunk-0001.bin",
+                relative,
                 field="source external-data location",
             ),
-            "weights/chunk-0001.bin",
+            relative,
         )
         expected = [
             {
-                "location": "weights/chunk-0001.bin",
+                "location": relative,
                 "bytes": 1,
                 "sha256": DIGEST,
             }
@@ -66,6 +84,21 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="source.sourceExternalData",
             ),
             expected,
+        )
+        self.assertEqual(
+            provenance_module._safe_relative(
+                relative,
+                field="split-manifest.sourceModel.externalData[0].location",
+            ),
+            relative,
+        )
+        self.assertEqual(
+            artifacts_module._safe_relative_path(
+                Path.cwd(),
+                relative,
+                field="segments[0].path",
+            ),
+            (Path.cwd() / relative).resolve(),
         )
 
 
