@@ -49,6 +49,13 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="split-manifest.sourceModel.externalData[0].location",
             )
 
+    def test_source_provenance_rejects_rooted_drive_less_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            provenance_module._safe_relative(
+                r"\payload.bin",
+                field="split-manifest.sourceModel.externalData[0].location",
+            )
+
     def test_capture_bundle_rejects_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
             bundle_module._safe_relative_path(
