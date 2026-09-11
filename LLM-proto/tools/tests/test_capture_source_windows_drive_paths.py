@@ -81,6 +81,15 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="source.sourceExternalData",
             )
 
+    def test_complete_audit_rejects_windows_alternate_data_stream_path(self) -> None:
+        for value in ("payload.bin:stream", "weights/payload.bin:stream"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "unsafe"):
+                    audit_module._source_external_data(
+                        [{"location": value, "bytes": 1, "sha256": DIGEST}],
+                        field="source.sourceExternalData",
+                    )
+
     def test_source_provenance_rejects_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
             provenance_module._safe_relative(
