@@ -99,7 +99,10 @@ class AuditMultiSegmentCaptureTest(unittest.TestCase):
         self.assertEqual(report["sourceGraphSha256"], "b" * 64)
         self.assertEqual(report["sourcePathResolutionMode"], "component-anchored-dirfd")
         self.assertEqual(report["segmentCount"], 6)
-        self.assertEqual([item[0] for item in calls], ["bundle", "source", "bundle"])
+        self.assertEqual(
+            [item[0] for item in calls],
+            ["bundle", "source", "bundle", "source"],
+        )
 
     def test_bundle_contract_drift_is_rejected_before_status(self) -> None:
         cases = (
