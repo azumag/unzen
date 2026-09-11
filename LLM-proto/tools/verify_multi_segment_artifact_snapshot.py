@@ -349,7 +349,13 @@ def _index(raw: object, *, field: str) -> int:
 def _safe_path(root: Path, raw: object, *, field: str) -> tuple[str, Path, tuple[str, ...]]:
     value = _text(raw, field=field)
     posix, windows = PurePosixPath(value), PureWindowsPath(value)
-    if posix.is_absolute() or windows.is_absolute() or ".." in posix.parts or ".." in windows.parts:
+    if (
+        posix.is_absolute()
+        or windows.is_absolute()
+        or bool(windows.drive)
+        or ".." in posix.parts
+        or ".." in windows.parts
+    ):
         raise ValueError(f"unsafe {field}: {value}")
     parts = tuple(Path(value).parts)
     if not parts or any(part in ("", ".", "..") for part in parts):
