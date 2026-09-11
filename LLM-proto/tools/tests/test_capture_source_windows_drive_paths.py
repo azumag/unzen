@@ -128,6 +128,25 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                         field="source.sourceExternalData",
                     )
 
+    def test_complete_audit_rejects_windows_reserved_or_trimmed_component(self) -> None:
+        for value in (
+            "NUL",
+            "nul.bin",
+            "weights/CON",
+            "weights/com1.onnx",
+            "weights/LPT9",
+            "weights/COM¹.log",
+            "weights/lpt².bin",
+            "weights/payload.",
+            "weights/payload ",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "unsafe"):
+                    audit_module._source_external_data(
+                        [{"location": value, "bytes": 1, "sha256": DIGEST}],
+                        field="source.sourceExternalData",
+                    )
+
     def test_source_provenance_rejects_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
             provenance_module._safe_relative(
