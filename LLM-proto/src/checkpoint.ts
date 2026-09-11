@@ -20,14 +20,44 @@ export class CheckpointStore {
     return `${requestId}:${segmentIndex}`;
   }
 
-  /** Save a checkpoint produced by a completed segment. */
-  save(checkpoint: Checkpoint): void {
+  private static assertValidCheckpoint(checkpoint: Checkpoint): void {
     if (!Number.isInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
       throw new Error(
         `checkpoint segmentIndex must be a non-negative integer; ` +
         `found ${checkpoint.segmentIndex}`,
       );
     }
+    if (!(checkpoint.hiddenStates instanceof Uint8Array) || checkpoint.hiddenStates.byteLength === 0) {
+      throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
+    }
+
+    const metadata = checkpoint.metadata;
+    if (metadata === null || typeof metadata !== 'object') {
+      throw new Error('checkpoint metadata must be an object');
+    }
+    if (
+      !Array.isArray(metadata.shape) ||
+      metadata.shape.length === 0 ||
+      !metadata.shape.every((dimension) => Number.isSafeInteger(dimension) && dimension > 0)
+    ) {
+      throw new Error('checkpoint metadata.shape must contain positive safe integers');
+    }
+    if (typeof metadata.dtype !== 'string' || metadata.dtype.trim().length === 0) {
+      throw new Error('checkpoint metadata.dtype must be a non-empty string');
+    }
+    if (!Number.isSafeInteger(metadata.sequenceLength) || metadata.sequenceLength < 0) {
+      throw new Error(
+        'checkpoint metadata.sequenceLength must be a non-negative safe integer',
+      );
+    }
+    if (!Number.isSafeInteger(metadata.timestamp) || metadata.timestamp < 0) {
+      throw new Error('checkpoint metadata.timestamp must be a non-negative safe integer');
+    }
+  }
+
+  /** Save a checkpoint produced by a completed segment. */
+  save(checkpoint: Checkpoint): void {
+    CheckpointStore.assertValidCheckpoint(checkpoint);
     const key = CheckpointStore.key(checkpoint.requestId, checkpoint.segmentIndex);
     this.store.set(key, checkpoint);
   }
