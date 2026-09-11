@@ -55,16 +55,38 @@ export class CheckpointStore {
     }
   }
 
+  /**
+   * Take an ownership-isolated snapshot of a validated checkpoint.
+   *
+   * `readonly` is only a TypeScript contract; Uint8Array and the shape array remain
+   * mutable at runtime. Copy both mutable payloads whenever state crosses the store
+   * boundary so caller-side mutation cannot silently rewrite a durable resume point.
+   */
+  private static snapshot(checkpoint: Checkpoint): Checkpoint {
+    return {
+      requestId: checkpoint.requestId,
+      segmentIndex: checkpoint.segmentIndex,
+      hiddenStates: checkpoint.hiddenStates.slice(),
+      metadata: {
+        shape: [...checkpoint.metadata.shape],
+        dtype: checkpoint.metadata.dtype,
+        sequenceLength: checkpoint.metadata.sequenceLength,
+        timestamp: checkpoint.metadata.timestamp,
+      },
+    };
+  }
+
   /** Save a checkpoint produced by a completed segment. */
   save(checkpoint: Checkpoint): void {
     CheckpointStore.assertValidCheckpoint(checkpoint);
     const key = CheckpointStore.key(checkpoint.requestId, checkpoint.segmentIndex);
-    this.store.set(key, checkpoint);
+    this.store.set(key, CheckpointStore.snapshot(checkpoint));
   }
 
   /** Retrieve a specific checkpoint by request and segment index. */
   get(requestId: InferenceRequestId, segmentIndex: number): Checkpoint | undefined {
-    return this.store.get(CheckpointStore.key(requestId, segmentIndex));
+    const checkpoint = this.store.get(CheckpointStore.key(requestId, segmentIndex));
+    return checkpoint ? CheckpointStore.snapshot(checkpoint) : undefined;
   }
 
   /**
@@ -93,7 +115,7 @@ export class CheckpointStore {
         latest = checkpoint;
       }
     }
-    return latest;
+    return latest ? CheckpointStore.snapshot(latest) : undefined;
   }
 
   /** Delete all checkpoints for a completed or failed request. */

@@ -105,6 +105,13 @@ positive safe-integer dimensions; `metadata.dtype` must be non-empty; and
 payload therefore cannot become a resume point even if it crossed a TypeScript
 or transport boundary with an asserted `Checkpoint` type.
 
+Validation is followed by an ownership boundary. The store copies the hidden-state
+bytes, metadata object and shape array before saving them, and `get()` / `latest()`
+return fresh snapshots rather than store-owned mutable references. This prevents a
+caller from changing a checkpoint after validation, or from mutating a retrieved
+checkpoint and silently rewriting the durable prototype resume point. TypeScript
+`readonly` annotations alone are not treated as runtime isolation.
+
 If a later browser fails, `SpanPipeline` retains the highest validated non-final
 checkpoint, asks `SpanRouter` to cover only the suffix beginning at the next
 segment, and passes that checkpoint to the replacement worker. Completed prefix
@@ -116,10 +123,10 @@ prevents a stale or malicious final-boundary checkpoint from skipping the only
 span that can return the inference result. Checkpoints are deleted after final
 success or terminal failure, but not between retry attempts.
 
-The payload validation above is deliberately structural. It does not prove a
-cryptographic checkpoint digest, map `dtype` to an exact tensor byte count, or
-replace real browser/WebGPU relay evidence. Those remain separate work under
-#167.
+The payload validation and snapshot isolation above are deliberately structural.
+They do not prove a cryptographic checkpoint digest, map `dtype` to an exact tensor
+byte count, or replace real browser/WebGPU relay evidence. Those remain separate
+work under #167.
 
 ## Invariants
 
@@ -142,6 +149,8 @@ replace real browser/WebGPU relay evidence. Those remain separate work under
 - A durable checkpoint must match the request and exact completed span boundary.
 - A durable checkpoint payload must pass `CheckpointStore` structural validation
   before it can mutate the resume store.
+- Store-owned checkpoint bytes and metadata must not share mutable references with
+  producer inputs or consumer read results.
 - A resumed route begins at `checkpoint.segmentIndex + 1` and never includes an
   already completed prefix segment.
 - Browser workers connect only to the Coordinator and allowlisted artifact
