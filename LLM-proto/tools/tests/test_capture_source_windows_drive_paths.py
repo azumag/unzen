@@ -28,10 +28,24 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="source external-data location",
             )
 
+    def test_source_relative_path_rejects_rooted_drive_less_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            source_module._relative_path_text(
+                r"\payload.bin",
+                field="source external-data location",
+            )
+
     def test_source_external_entries_reject_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
             source_module._normalized_external_entries(
                 [{"location": "C:payload.bin", "bytes": 1, "sha256": DIGEST}],
+                field="split-manifest.sourceModel.externalData",
+            )
+
+    def test_source_external_entries_reject_rooted_drive_less_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            source_module._normalized_external_entries(
+                [{"location": r"\payload.bin", "bytes": 1, "sha256": DIGEST}],
                 field="split-manifest.sourceModel.externalData",
             )
 
