@@ -181,17 +181,107 @@ export class Pipeline {
 
       try {
         const result = await this.executeWithTimeout(worker.id, assignment);
+        // A resolved promise is not enough to trust browser output. Validate the
+        // echoed execution identity and checkpoint/output boundary before the
+        // worker becomes reusable or any state is committed.
+        this.assertSegmentResult(request, worker.id, segmentIndex, result);
         this.workerPool.markIdle(worker.id);
         return result;
       } catch {
-        // Worker failed: mark as DISCONNECTED so it is excluded from future
-        // retry attempts. The checkpoint from the previous segment is still valid,
-        // so no work is lost (only the current segment is retried).
+        // Worker failed or violated the result contract: mark it DISCONNECTED so
+        // the same stale/misrouted browser cannot immediately satisfy the retry.
+        // The checkpoint from the previous segment is still valid, so no work is
+        // lost (only the current segment is retried).
         this.workerPool.markDisconnected(worker.id);
       }
     }
 
     return null;
+  }
+
+  private assertSegmentResult(
+    request: InferenceRequest,
+    workerId: WorkerId,
+    segmentIndex: number,
+    result: SegmentResult,
+  ): void {
+    if (result.requestId !== request.id) {
+      throw new PipelineError(
+        `segment result request ${result.requestId} does not match ${request.id}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (result.segmentIndex !== segmentIndex) {
+      throw new PipelineError(
+        `segment result index ${result.segmentIndex} does not match assignment ${segmentIndex}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (result.workerId !== workerId) {
+      throw new PipelineError(
+        `segment result worker ${result.workerId} does not match assigned worker ${workerId}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (!Number.isFinite(result.processingTimeMs) || result.processingTimeMs < 0) {
+      throw new PipelineError(
+        'segment processingTimeMs must be a non-negative finite number',
+        request.id,
+        segmentIndex,
+      );
+    }
+
+    const isFinalSegment = segmentIndex === request.totalSegments - 1;
+    if (isFinalSegment) {
+      if (result.checkpoint !== undefined) {
+        throw new PipelineError(
+          `final segment ${segmentIndex} must not produce a checkpoint`,
+          request.id,
+          segmentIndex,
+        );
+      }
+      if (result.output === undefined) {
+        throw new PipelineError(
+          'Final segment did not produce output',
+          request.id,
+          segmentIndex,
+        );
+      }
+      return;
+    }
+
+    if (result.output !== undefined) {
+      throw new PipelineError(
+        `non-final segment ${segmentIndex} must not produce output`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (result.checkpoint === undefined) {
+      throw new PipelineError(
+        `non-final segment ${segmentIndex} did not produce a checkpoint`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (result.checkpoint.requestId !== request.id) {
+      throw new PipelineError(
+        `checkpoint request ${result.checkpoint.requestId} does not match ${request.id}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (result.checkpoint.segmentIndex !== segmentIndex) {
+      throw new PipelineError(
+        `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
+        `completed segment ${segmentIndex}`,
+        request.id,
+        segmentIndex,
+      );
+    }
   }
 
   private executeWithTimeout(
