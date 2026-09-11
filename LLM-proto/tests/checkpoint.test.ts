@@ -32,12 +32,17 @@ describe('CheckpointStore', () => {
     expect(store.size).toBe(0);
   });
 
-  it('should save and retrieve a checkpoint', () => {
+  it('should save and retrieve an ownership-isolated checkpoint snapshot', () => {
     const cp = makeCheckpoint(reqId, 0);
     store.save(cp);
 
+    const stored = store.get(reqId, 0);
     expect(store.size).toBe(1);
-    expect(store.get(reqId, 0)).toBe(cp);
+    expect(stored).toEqual(cp);
+    expect(stored).not.toBe(cp);
+    expect(stored?.hiddenStates).not.toBe(cp.hiddenStates);
+    expect(stored?.metadata).not.toBe(cp.metadata);
+    expect(stored?.metadata.shape).not.toBe(cp.metadata.shape);
   });
 
   it('should return undefined for non-existent checkpoint', () => {
@@ -54,20 +59,21 @@ describe('CheckpointStore', () => {
     store.save(cp2);
 
     expect(store.size).toBe(3);
-    expect(store.get(reqId, 0)).toBe(cp0);
-    expect(store.get(reqId, 1)).toBe(cp1);
-    expect(store.get(reqId, 2)).toBe(cp2);
+    expect(store.get(reqId, 0)).toEqual(cp0);
+    expect(store.get(reqId, 1)).toEqual(cp1);
+    expect(store.get(reqId, 2)).toEqual(cp2);
   });
 
   it('should overwrite checkpoint for same request+segment', () => {
     const cp1 = makeCheckpoint(reqId, 0);
     const cp2 = makeCheckpoint(reqId, 0);
+    cp2.hiddenStates[0] = 9;
 
     store.save(cp1);
     store.save(cp2);
 
     expect(store.size).toBe(1);
-    expect(store.get(reqId, 0)).toBe(cp2);
+    expect(store.get(reqId, 0)).toEqual(cp2);
   });
 
   it('should isolate checkpoints between different requests', () => {
@@ -78,8 +84,8 @@ describe('CheckpointStore', () => {
     store.save(cp1);
     store.save(cp2);
 
-    expect(store.get(reqId, 0)).toBe(cp1);
-    expect(store.get(reqId2, 0)).toBe(cp2);
+    expect(store.get(reqId, 0)).toEqual(cp1);
+    expect(store.get(reqId2, 0)).toEqual(cp2);
   });
 
   describe('validation', () => {
@@ -160,6 +166,37 @@ describe('CheckpointStore', () => {
     });
   });
 
+  describe('snapshot isolation', () => {
+    it('does not let caller-owned input mutate a saved resume point', () => {
+      const checkpoint = makeCheckpoint(reqId, 0);
+      store.save(checkpoint);
+
+      checkpoint.hiddenStates[0] = 99;
+      (checkpoint.metadata.shape as number[])[1] = 1;
+      (checkpoint.metadata as { dtype: string }).dtype = 'float32';
+
+      const stored = store.get(reqId, 0);
+      expect(stored?.hiddenStates).toEqual(new Uint8Array([1, 2, 3, 4]));
+      expect(stored?.metadata.shape).toEqual([1, 128, 4096]);
+      expect(stored?.metadata.dtype).toBe('float16');
+    });
+
+    it('does not let a get() result mutate store-owned state', () => {
+      store.save(makeCheckpoint(reqId, 0));
+
+      const firstRead = store.get(reqId, 0);
+      expect(firstRead).toBeDefined();
+      firstRead!.hiddenStates[0] = 99;
+      (firstRead!.metadata.shape as number[])[1] = 1;
+      (firstRead!.metadata as { dtype: string }).dtype = 'float32';
+
+      const secondRead = store.get(reqId, 0);
+      expect(secondRead?.hiddenStates).toEqual(new Uint8Array([1, 2, 3, 4]));
+      expect(secondRead?.metadata.shape).toEqual([1, 128, 4096]);
+      expect(secondRead?.metadata.dtype).toBe('float16');
+    });
+  });
+
   describe('latest', () => {
     it('returns the highest completed segment regardless of insertion order', () => {
       const cp3 = makeCheckpoint(reqId, 3);
@@ -167,7 +204,7 @@ describe('CheckpointStore', () => {
       store.save(makeCheckpoint(reqId, 0));
       store.save(makeCheckpoint(reqId, 2));
 
-      expect(store.latest(reqId)).toBe(cp3);
+      expect(store.latest(reqId)).toEqual(cp3);
     });
 
     it('can stop at a durable upper boundary', () => {
@@ -176,8 +213,21 @@ describe('CheckpointStore', () => {
       store.save(makeCheckpoint(reqId, 4));
       store.save(makeCheckpoint(reqId, 2));
 
-      expect(store.latest(reqId, 1)).toBe(cp1);
+      expect(store.latest(reqId, 1)).toEqual(cp1);
       expect(store.latest(reqId, -1)).toBeUndefined();
+    });
+
+    it('returns a snapshot that cannot mutate the stored resume point', () => {
+      store.save(makeCheckpoint(reqId, 3));
+
+      const firstRead = store.latest(reqId);
+      expect(firstRead).toBeDefined();
+      firstRead!.hiddenStates[0] = 99;
+      (firstRead!.metadata.shape as number[])[1] = 1;
+
+      const secondRead = store.latest(reqId);
+      expect(secondRead?.hiddenStates).toEqual(new Uint8Array([1, 2, 3, 4]));
+      expect(secondRead?.metadata.shape).toEqual([1, 128, 4096]);
     });
 
     it('does not return another request checkpoint', () => {
