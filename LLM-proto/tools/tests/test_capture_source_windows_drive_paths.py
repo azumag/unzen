@@ -73,6 +73,14 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="segments[0].path",
             )
 
+    def test_artifact_integrity_rejects_rooted_drive_less_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            artifacts_module._safe_relative_path(
+                Path.cwd(),
+                r"\payload.bin",
+                field="segments[0].path",
+            )
+
     def test_ordinary_relative_path_remains_valid(self) -> None:
         relative = "weights/chunk-0001.bin"
         self.assertEqual(
