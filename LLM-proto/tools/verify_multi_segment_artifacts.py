@@ -20,8 +20,8 @@ MANIFEST_KIND = "unzen-budgeted-multi-segment-onnx"
 MANIFEST_SCHEMA_VERSION = "1.0.0"
 ARTIFACT_LAYOUT = "per-segment-external-data"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL", "CLOCK$"}
-WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)[1-9]$")
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
