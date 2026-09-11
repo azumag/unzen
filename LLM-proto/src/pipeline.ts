@@ -243,16 +243,19 @@ export class Pipeline {
 
     const isFinalSegment = segmentIndex === request.totalSegments - 1;
     if (isFinalSegment) {
-      if (result.checkpoint !== undefined) {
+      // Preserve the legacy missing-output error when a malformed result violates
+      // both final-boundary rules at once; checkpoint-only final results are still
+      // rejected, and output+checkpoint remains an explicit checkpoint violation.
+      if (result.output === undefined) {
         throw new PipelineError(
-          `final segment ${segmentIndex} must not produce a checkpoint`,
+          'Final segment did not produce output',
           request.id,
           segmentIndex,
         );
       }
-      if (result.output === undefined) {
+      if (result.checkpoint !== undefined) {
         throw new PipelineError(
-          'Final segment did not produce output',
+          `final segment ${segmentIndex} must not produce a checkpoint`,
           request.id,
           segmentIndex,
         );
