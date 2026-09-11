@@ -198,6 +198,8 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
             "weights/CON",
             "weights/com1.onnx",
             "weights/LPT9",
+            "weights/COM¹.log",
+            "weights/lpt².bin",
             "weights/payload.",
             "weights/payload ",
         ):
