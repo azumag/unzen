@@ -84,6 +84,7 @@ export class Pipeline {
     try {
       return await this.executeAllSegments(request, startTime);
     } catch (error) {
+      request.status = InferenceStatus.FAILED;
       // Clean up checkpoints on failure to prevent memory leaks
       this.checkpointStore.deleteAll(request.id);
       throw error;
@@ -154,6 +155,7 @@ export class Pipeline {
     segmentIndex: number,
   ): Promise<SegmentResult | null> {
     const segment = this.segments[segmentIndex];
+    let lastContractError: PipelineError | undefined;
 
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
       const worker = this.workerPool.getAvailableWorker(segment.estimatedVramMB);
@@ -163,6 +165,7 @@ export class Pipeline {
           await delay(this.options.retryDelayMs);
           continue;
         }
+        if (lastContractError) throw lastContractError;
         return null;
       }
 
@@ -187,15 +190,19 @@ export class Pipeline {
         this.assertSegmentResult(request, worker.id, segmentIndex, result);
         this.workerPool.markIdle(worker.id);
         return result;
-      } catch {
+      } catch (error) {
         // Worker failed or violated the result contract: mark it DISCONNECTED so
         // the same stale/misrouted browser cannot immediately satisfy the retry.
-        // The checkpoint from the previous segment is still valid, so no work is
-        // lost (only the current segment is retried).
+        // Preserve a contract failure so, if retries cannot recover, callers get
+        // the boundary violation rather than an unrelated no-worker error.
         this.workerPool.markDisconnected(worker.id);
+        if (error instanceof PipelineError) {
+          lastContractError = error;
+        }
       }
     }
 
+    if (lastContractError) throw lastContractError;
     return null;
   }
 
