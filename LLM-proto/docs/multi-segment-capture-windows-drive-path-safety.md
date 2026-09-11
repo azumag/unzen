@@ -20,10 +20,10 @@ Issue #386 extended the drive-qualified contract to the split producer itself:
 
 - `multi_segment_onnx.py`
 
-Issue #388 additionally hardens the rooted-but-drive-less edge case. The split producer now rejects source external-data locations with either a non-empty Windows `drive` or `root` before planning or generation. The same `root` check still needs to be propagated through the independent downstream validator/auditor boundaries before #388 is complete.
+Issue #388 additionally hardens the rooted-but-drive-less edge case. The split producer and `verify_multi_segment_artifacts.py` now reject relevant locations with either a non-empty Windows `drive` or `root`. The same `root` check still needs to be propagated through the remaining independent downstream validator/auditor boundaries before #388 is complete.
 
 Existing absolute-path and `..` escape checks remain in place. Ordinary relative identities such as `model_q4.onnx_data` and `weights/chunk-0001.bin` remain accepted.
 
-Regression coverage lives in `tools/tests/test_capture_source_windows_drive_paths.py` for the stdlib-only capture/provenance/artifact boundaries, `tools/tests/test_verify_multi_segment_onnx_windows_drive_paths.py` for the numerical verifier boundary, and `tools/tests/test_multi_segment_onnx_windows_drive_paths.py` for the split producer boundary. The producer test covers both `C:payload.bin` and `\\payload.bin`; downstream rooted-path coverage will be added as #388 advances.
+Regression coverage lives in `tools/tests/test_capture_source_windows_drive_paths.py` for the stdlib-only capture/provenance/artifact boundaries, `tools/tests/test_verify_multi_segment_onnx_windows_drive_paths.py` for the numerical verifier boundary, and `tools/tests/test_multi_segment_onnx_windows_drive_paths.py` for the split producer boundary. Rooted-path coverage now exists for the producer and artifact-integrity verifier; the remaining downstream rooted-path cases will be added as #388 advances.
 
 This is path-validation hardening only: no artifact budget, split policy, runtime execution policy, source hashing mode, production deployment, credential, external billing, or physical-layout behavior changes.
