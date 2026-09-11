@@ -131,6 +131,7 @@ def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]
             or windows.is_absolute()
             or bool(windows.drive)
             or bool(windows.root)
+            or any(":" in part for part in windows.parts)
             or ".." in posix.parts
             or ".." in windows.parts
         ):
