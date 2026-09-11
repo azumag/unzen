@@ -9,10 +9,11 @@ Operators previously had to remember two independent commands:
 
 This entrypoint intentionally runs both. The source audit already performs its
 own bundle verification, so this command obtains independently measured bundle
-snapshots before, during, and after source verification and refuses to publish a
-combined pass unless their immutable identities agree. This makes an incomplete
-audit harder to perform accidentally and also fails closed if the capture changes
-at any observed point during the complete audit.
+and source snapshots before, during, and after verification and refuses to
+publish a combined pass unless their immutable identities agree. This makes an
+incomplete audit harder to perform accidentally and also fails closed if either
+the capture or its original source artifacts change at any observed point during
+the complete audit.
 
 ONNX Runtime is not loaded by this tool.
 """
@@ -418,6 +419,118 @@ def audit_capture(
         audit_snapshot_path_resolution_mode,
         final_audit_snapshot_path_resolution_mode,
         field="artifact audit path-resolution mode after source audit",
+    )
+
+    postflight_source = source_verifier(capture, full_model)
+    _require_report_contract(
+        postflight_source,
+        field="post-bundle source",
+        expected_kind=SOURCE_REPORT_KIND,
+        expected_schema_version=SOURCE_REPORT_SCHEMA_VERSION,
+    )
+    _require_pass(
+        postflight_source.get("status"),
+        field="post-bundle source verification",
+    )
+
+    postflight_source_capture_status = _capture_status(
+        postflight_source.get("captureStatus"),
+        field="post-bundle source.captureStatus",
+    )
+    postflight_source_graph_bytes = _non_negative_int(
+        postflight_source.get("sourceGraphBytes"),
+        field="post-bundle source.sourceGraphBytes",
+    )
+    postflight_source_external_data = _source_external_data(
+        postflight_source.get("sourceExternalData"),
+        field="post-bundle source.sourceExternalData",
+    )
+    postflight_source_external_data_count = _non_negative_int(
+        postflight_source.get("sourceExternalDataCount"),
+        field="post-bundle source.sourceExternalDataCount",
+    )
+    postflight_source_external_data_bytes = _non_negative_int(
+        postflight_source.get("sourceExternalDataBytes"),
+        field="post-bundle source.sourceExternalDataBytes",
+    )
+    if postflight_source_external_data_count != len(postflight_source_external_data):
+        raise ValueError(
+            "post-bundle source.sourceExternalDataCount must equal the number of "
+            "post-bundle source.sourceExternalData entries: "
+            f"count={postflight_source_external_data_count}, "
+            f"entries={len(postflight_source_external_data)}"
+        )
+    postflight_measured_external_data_bytes = sum(
+        int(item["bytes"]) for item in postflight_source_external_data
+    )
+    if postflight_source_external_data_bytes != postflight_measured_external_data_bytes:
+        raise ValueError(
+            "post-bundle source.sourceExternalDataBytes must equal the sum of "
+            "post-bundle source.sourceExternalData bytes: "
+            f"total={postflight_source_external_data_bytes}, "
+            f"entries={postflight_measured_external_data_bytes}"
+        )
+
+    postflight_source_path_resolution_mode = _path_resolution_mode(
+        postflight_source.get("sourcePathResolutionMode"),
+        field="post-bundle source.sourcePathResolutionMode",
+    )
+    if require_component_anchored_source:
+        _require_strong_path_resolution(
+            postflight_source_path_resolution_mode,
+            field="post-bundle source verification",
+        )
+
+    for key, label in (
+        ("runSummarySha256", "run-summary SHA-256 after bundle postflight"),
+        ("manifestSha256", "manifest SHA-256 after bundle postflight"),
+        ("evidenceSha256", "evidence SHA-256 after bundle postflight"),
+        ("verificationSha256", "verification SHA-256 after bundle postflight"),
+    ):
+        postflight_source_digest = _canonical_sha256(
+            postflight_source.get(key),
+            field=f"post-bundle source.{key}",
+        )
+        _require_equal(snapshot_digests[key], postflight_source_digest, field=label)
+
+    postflight_source_graph = _canonical_sha256(
+        postflight_source.get("sourceGraphSha256"),
+        field="post-bundle source.sourceGraphSha256",
+    )
+    _require_equal(
+        source_graph,
+        postflight_source_graph,
+        field="source graph SHA-256 after bundle postflight",
+    )
+    _require_equal(
+        source_graph_bytes,
+        postflight_source_graph_bytes,
+        field="source graph bytes after bundle postflight",
+    )
+    _require_equal(
+        source_external_data,
+        postflight_source_external_data,
+        field="source external data after bundle postflight",
+    )
+    _require_equal(
+        source_external_data_count,
+        postflight_source_external_data_count,
+        field="source external-data count after bundle postflight",
+    )
+    _require_equal(
+        source_external_data_bytes,
+        postflight_source_external_data_bytes,
+        field="source external-data bytes after bundle postflight",
+    )
+    _require_equal(
+        source_path_resolution_mode,
+        postflight_source_path_resolution_mode,
+        field="source path-resolution mode after bundle postflight",
+    )
+    _require_equal(
+        source_capture_status,
+        postflight_source_capture_status,
+        field="capture status after bundle postflight",
     )
 
     return {
