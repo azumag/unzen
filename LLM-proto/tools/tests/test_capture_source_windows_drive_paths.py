@@ -35,6 +35,15 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 field="source external-data location",
             )
 
+    def test_source_relative_path_rejects_windows_alternate_data_stream_path(self) -> None:
+        for value in ("payload.bin:stream", "weights/payload.bin:stream"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "unsafe"):
+                    source_module._relative_path_text(
+                        value,
+                        field="source external-data location",
+                    )
+
     def test_source_external_entries_reject_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
             source_module._normalized_external_entries(
@@ -48,6 +57,15 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                 [{"location": r"\payload.bin", "bytes": 1, "sha256": DIGEST}],
                 field="split-manifest.sourceModel.externalData",
             )
+
+    def test_source_external_entries_reject_windows_alternate_data_stream_path(self) -> None:
+        for value in ("payload.bin:stream", "weights/payload.bin:stream"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "unsafe"):
+                    source_module._normalized_external_entries(
+                        [{"location": value, "bytes": 1, "sha256": DIGEST}],
+                        field="split-manifest.sourceModel.externalData",
+                    )
 
     def test_complete_audit_rejects_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
