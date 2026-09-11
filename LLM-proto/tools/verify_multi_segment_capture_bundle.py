@@ -40,6 +40,8 @@ EVIDENCE_SCHEMA_VERSION = "1.0.0"
 VERIFICATION_KIND = "unzen-budgeted-multi-segment-same-machine-verification"
 VERIFICATION_SCHEMA_VERSION = "1.1.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -62,6 +64,15 @@ def _non_empty_string(raw: object, *, field: str) -> str:
     return raw
 
 
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
+
+
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
@@ -72,6 +83,7 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
         or bool(windows.drive)
         or bool(windows.root)
         or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
