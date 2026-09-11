@@ -113,6 +113,25 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
                         field="split-manifest.sourceModel.externalData[0].location",
                     )
 
+    def test_source_provenance_rejects_windows_reserved_or_trimmed_component(self) -> None:
+        for value in (
+            "NUL",
+            "nul.bin",
+            "weights/CON",
+            "weights/com1.onnx",
+            "weights/LPT9",
+            "weights/COM¹.log",
+            "weights/lpt².bin",
+            "weights/payload.",
+            "weights/payload ",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "unsafe"):
+                    provenance_module._safe_relative(
+                        value,
+                        field="split-manifest.sourceModel.externalData[0].location",
+                    )
+
     def test_capture_bundle_rejects_drive_relative_windows_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe"):
             bundle_module._safe_relative_path(
