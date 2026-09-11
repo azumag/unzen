@@ -82,6 +82,84 @@ describe('CheckpointStore', () => {
     expect(store.get(reqId2, 0)).toBe(cp2);
   });
 
+  describe('validation', () => {
+    it('rejects empty hidden states before mutating the store', () => {
+      const checkpoint: Checkpoint = {
+        ...makeCheckpoint(reqId, 0),
+        hiddenStates: new Uint8Array(),
+      };
+
+      expect(() => store.save(checkpoint)).toThrow(/non-empty Uint8Array/);
+      expect(store.size).toBe(0);
+    });
+
+    it('rejects non-Uint8Array hidden states before mutating the store', () => {
+      const checkpoint = {
+        ...makeCheckpoint(reqId, 0),
+        hiddenStates: [1, 2, 3],
+      } as unknown as Checkpoint;
+
+      expect(() => store.save(checkpoint)).toThrow(/non-empty Uint8Array/);
+      expect(store.size).toBe(0);
+    });
+
+    it('rejects malformed tensor shape before mutating the store', () => {
+      const base = makeCheckpoint(reqId, 0);
+      const checkpoint: Checkpoint = {
+        ...base,
+        metadata: {
+          ...base.metadata,
+          shape: [1, 0, 4096],
+        },
+      };
+
+      expect(() => store.save(checkpoint)).toThrow(/positive safe integers/);
+      expect(store.size).toBe(0);
+    });
+
+    it('rejects blank dtype before mutating the store', () => {
+      const base = makeCheckpoint(reqId, 0);
+      const checkpoint: Checkpoint = {
+        ...base,
+        metadata: {
+          ...base.metadata,
+          dtype: '   ',
+        },
+      };
+
+      expect(() => store.save(checkpoint)).toThrow(/non-empty string/);
+      expect(store.size).toBe(0);
+    });
+
+    it('rejects invalid sequence length before mutating the store', () => {
+      const base = makeCheckpoint(reqId, 0);
+      const checkpoint: Checkpoint = {
+        ...base,
+        metadata: {
+          ...base.metadata,
+          sequenceLength: Number.NaN,
+        },
+      };
+
+      expect(() => store.save(checkpoint)).toThrow(/sequenceLength/);
+      expect(store.size).toBe(0);
+    });
+
+    it('rejects invalid timestamp before mutating the store', () => {
+      const base = makeCheckpoint(reqId, 0);
+      const checkpoint: Checkpoint = {
+        ...base,
+        metadata: {
+          ...base.metadata,
+          timestamp: -1,
+        },
+      };
+
+      expect(() => store.save(checkpoint)).toThrow(/timestamp/);
+      expect(store.size).toBe(0);
+    });
+  });
+
   describe('latest', () => {
     it('returns the highest completed segment regardless of insertion order', () => {
       const cp3 = makeCheckpoint(reqId, 3);
