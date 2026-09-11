@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 import stat
 import sys
 
@@ -27,6 +28,17 @@ REPORT_SCHEMA_VERSION = "1.1.0"
 DEFAULT_MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 PATH_RESOLUTION_COMPONENT_ANCHORED = "component-anchored-dirfd"
 PATH_RESOLUTION_FINAL_ONLY = "final-component-only"
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+
+
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
 
 
 def _identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -355,6 +367,7 @@ def _safe_path(root: Path, raw: object, *, field: str) -> tuple[str, Path, tuple
         or bool(windows.drive)
         or bool(windows.root)
         or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
