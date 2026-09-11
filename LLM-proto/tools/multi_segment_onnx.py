@@ -204,6 +204,7 @@ def _external_range(initializer: TensorProto) -> tuple[str, int, int]:
         or windows.is_absolute()
         or bool(windows.drive)
         or bool(windows.root)
+        or any(":" in part for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
