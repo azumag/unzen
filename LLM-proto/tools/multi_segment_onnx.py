@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
@@ -35,6 +36,17 @@ class SegmentSpec:
 
 
 SpanCost = Callable[[int, int], int]
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+
+
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
 
 
 class BrowserArtifactBudgetError(RuntimeError):
@@ -205,6 +217,7 @@ def _external_range(initializer: TensorProto) -> tuple[str, int, int]:
         or bool(windows.drive)
         or bool(windows.root)
         or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
