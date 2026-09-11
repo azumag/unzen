@@ -149,6 +149,7 @@ def _safe_relative(raw: object, *, field: str) -> str:
         posix.is_absolute()
         or windows.is_absolute()
         or bool(windows.drive)
+        or bool(windows.root)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
