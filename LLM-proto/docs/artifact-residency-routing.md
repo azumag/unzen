@@ -112,6 +112,11 @@ caller from changing a checkpoint after validation, or from mutating a retrieved
 checkpoint and silently rewriting the durable prototype resume point. TypeScript
 `readonly` annotations alone are not treated as runtime isolation.
 
+Checkpoint storage is partitioned by exact `InferenceRequestId` and then by
+segment index. Request cleanup deletes only that exact request partition; it does
+not use string-prefix matching, so IDs such as `req` and `req:child` remain
+independent even when both are present at the same time.
+
 If a later browser fails, `SpanPipeline` retains the highest validated non-final
 checkpoint, asks `SpanRouter` to cover only the suffix beginning at the next
 segment, and passes that checkpoint to the replacement worker. Completed prefix
@@ -151,6 +156,8 @@ work under #167.
   before it can mutate the resume store.
 - Store-owned checkpoint bytes and metadata must not share mutable references with
   producer inputs or consumer read results.
+- Checkpoint lookup, latest selection and cleanup use exact request identity; one
+  request ID must never delete or retrieve a prefix-related request's checkpoints.
 - A resumed route begins at `checkpoint.segmentIndex + 1` and never includes an
   already completed prefix segment.
 - Browser workers connect only to the Coordinator and allowlisted artifact

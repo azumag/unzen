@@ -265,6 +265,24 @@ describe('CheckpointStore', () => {
       expect(store.get(reqId2, 0)).toBeDefined();
     });
 
+    it('matches request identity exactly instead of deleting prefix-related IDs', () => {
+      const parent = inferenceRequestId('req');
+      const child = inferenceRequestId('req:child');
+      store.save(makeCheckpoint(parent, 0));
+      store.save(makeCheckpoint(parent, 1));
+      store.save(makeCheckpoint(child, 0));
+      store.save(makeCheckpoint(child, 2));
+
+      store.deleteAll(parent);
+
+      expect(store.size).toBe(2);
+      expect(store.get(parent, 0)).toBeUndefined();
+      expect(store.get(parent, 1)).toBeUndefined();
+      expect(store.get(child, 0)).toBeDefined();
+      expect(store.get(child, 2)).toBeDefined();
+      expect(store.latest(child)?.segmentIndex).toBe(2);
+    });
+
     it('should be safe to call on non-existent request', () => {
       store.deleteAll(inferenceRequestId('nonexistent'));
       expect(store.size).toBe(0);
