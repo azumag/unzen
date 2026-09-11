@@ -71,6 +71,7 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
         or windows.is_absolute()
         or bool(windows.drive)
         or bool(windows.root)
+        or any(":" in part for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
