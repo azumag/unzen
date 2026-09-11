@@ -8,11 +8,11 @@ Operators previously had to remember two independent commands:
   full ONNX graph and source external-data files.
 
 This entrypoint intentionally runs both. The source audit already performs its
-own bundle verification, so this command obtains two independently measured
-bundle snapshots and refuses to publish a combined pass unless their immutable
-identities agree. This makes an incomplete audit harder to perform accidentally
-and also fails closed if the capture changes between the first bundle audit and
-the source audit.
+own bundle verification, so this command obtains independently measured bundle
+snapshots before, during, and after source verification and refuses to publish a
+combined pass unless their immutable identities agree. This makes an incomplete
+audit harder to perform accidentally and also fails closed if the capture changes
+at any observed point during the complete audit.
 
 ONNX Runtime is not loaded by this tool.
 """
@@ -318,6 +318,106 @@ def audit_capture(
         capture_status,
         source_capture_status,
         field="capture status",
+    )
+
+    final_bundle = bundle_verifier(capture)
+    _require_report_contract(
+        final_bundle,
+        field="post-source bundle",
+        expected_kind=BUNDLE_REPORT_KIND,
+        expected_schema_version=BUNDLE_REPORT_SCHEMA_VERSION,
+    )
+    _require_pass(
+        final_bundle.get("status"),
+        field="post-source bundle verification",
+    )
+
+    final_capture_status = _capture_status(
+        final_bundle.get("captureStatus"),
+        field="post-source bundle.captureStatus",
+    )
+    final_segment_count = _positive_int(
+        final_bundle.get("segmentCount"),
+        field="post-source bundle.segmentCount",
+    )
+    final_maximum_segment_artifact_bytes = _positive_int(
+        final_bundle.get("maximumSegmentArtifactBytes"),
+        field="post-source bundle.maximumSegmentArtifactBytes",
+    )
+    final_effective_required_max_bytes = _positive_int(
+        final_bundle.get("effectiveRequiredMaxBytes"),
+        field="post-source bundle.effectiveRequiredMaxBytes",
+    )
+
+    if "captureSnapshotPathResolutionMode" not in final_bundle:
+        raise ValueError(
+            "post-source bundle.captureSnapshotPathResolutionMode must be present; "
+            "legacy capture-time mode must be represented explicitly as null"
+        )
+    final_capture_snapshot_path_resolution_mode = _optional_path_resolution_mode(
+        final_bundle.get("captureSnapshotPathResolutionMode"),
+        field="post-source bundle.captureSnapshotPathResolutionMode",
+    )
+    final_audit_snapshot_path_resolution_mode = _path_resolution_mode(
+        final_bundle.get("auditSnapshotPathResolutionMode"),
+        field="post-source bundle.auditSnapshotPathResolutionMode",
+    )
+    if require_component_anchored_artifacts:
+        _require_strong_path_resolution(
+            final_audit_snapshot_path_resolution_mode,
+            field="post-source artifact snapshot verification",
+        )
+
+    for key, label in (
+        ("runSummarySha256", "run-summary SHA-256 after source audit"),
+        ("manifestSha256", "manifest SHA-256 after source audit"),
+        ("evidenceSha256", "evidence SHA-256 after source audit"),
+        ("verificationSha256", "verification SHA-256 after source audit"),
+    ):
+        final_digest = _canonical_sha256(
+            final_bundle.get(key),
+            field=f"post-source bundle.{key}",
+        )
+        _require_equal(snapshot_digests[key], final_digest, field=label)
+
+    final_source_graph = _canonical_sha256(
+        final_bundle.get("sourceGraphSha256"),
+        field="post-source bundle.sourceGraphSha256",
+    )
+    _require_equal(
+        source_graph,
+        final_source_graph,
+        field="source graph SHA-256 after source audit",
+    )
+    _require_equal(
+        capture_status,
+        final_capture_status,
+        field="capture status after source audit",
+    )
+    _require_equal(
+        segment_count,
+        final_segment_count,
+        field="segment count after source audit",
+    )
+    _require_equal(
+        maximum_segment_artifact_bytes,
+        final_maximum_segment_artifact_bytes,
+        field="maximum segment artifact bytes after source audit",
+    )
+    _require_equal(
+        effective_required_max_bytes,
+        final_effective_required_max_bytes,
+        field="effective required max bytes after source audit",
+    )
+    _require_equal(
+        capture_snapshot_path_resolution_mode,
+        final_capture_snapshot_path_resolution_mode,
+        field="capture snapshot path-resolution mode after source audit",
+    )
+    _require_equal(
+        audit_snapshot_path_resolution_mode,
+        final_audit_snapshot_path_resolution_mode,
+        field="artifact audit path-resolution mode after source audit",
     )
 
     return {
