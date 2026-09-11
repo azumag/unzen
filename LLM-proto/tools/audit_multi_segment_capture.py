@@ -129,6 +129,7 @@ def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]
         if (
             posix.is_absolute()
             or windows.is_absolute()
+            or bool(windows.drive)
             or ".." in posix.parts
             or ".." in windows.parts
         ):
