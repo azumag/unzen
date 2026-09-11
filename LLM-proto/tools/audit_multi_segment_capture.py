@@ -49,6 +49,8 @@ PATH_RESOLUTION_MODES = frozenset(
     }
 )
 STRONG_PATH_RESOLUTION_MODE = PATH_RESOLUTION_COMPONENT_ANCHORED
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 
 
 def _require_pass(raw: object, *, field: str) -> None:
@@ -114,6 +116,15 @@ def _capture_status(raw: object, *, field: str) -> str:
     return raw
 
 
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
+
+
 def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]:
     if not isinstance(raw, list):
         raise ValueError(f"{field} must be an array")
@@ -132,6 +143,7 @@ def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]
             or bool(windows.drive)
             or bool(windows.root)
             or any(":" in part for part in windows.parts)
+            or any(_unsafe_windows_component(part) for part in windows.parts)
             or ".." in posix.parts
             or ".." in windows.parts
         ):
