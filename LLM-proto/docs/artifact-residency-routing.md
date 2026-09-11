@@ -97,17 +97,29 @@ checkpoint bound to all of the following:
 - the assigned worker and exact span range;
 - the span's final segment index.
 
-Only a result that passes those checks reaches `CheckpointStore`. If a later
-browser fails, `SpanPipeline` retains the highest validated non-final checkpoint,
-asks `SpanRouter` to cover only the suffix beginning at the next segment, and
-passes that checkpoint to the replacement worker. Completed prefix spans are not
-re-executed. The same path also resumes from a pre-existing durable checkpoint on
-the first attempt.
+Only a result that passes those checks reaches `CheckpointStore`. The store then
+performs a second runtime validation before mutating durable prototype state:
+`hiddenStates` must be a non-empty `Uint8Array`; `metadata.shape` must contain
+positive safe-integer dimensions; `metadata.dtype` must be non-empty; and
+`sequenceLength` / `timestamp` must be non-negative safe integers. A malformed
+payload therefore cannot become a resume point even if it crossed a TypeScript
+or transport boundary with an asserted `Checkpoint` type.
+
+If a later browser fails, `SpanPipeline` retains the highest validated non-final
+checkpoint, asks `SpanRouter` to cover only the suffix beginning at the next
+segment, and passes that checkpoint to the replacement worker. Completed prefix
+spans are not re-executed. The same path also resumes from a pre-existing durable
+checkpoint on the first attempt.
 
 Final spans must produce output and must not produce another checkpoint. This
 prevents a stale or malicious final-boundary checkpoint from skipping the only
 span that can return the inference result. Checkpoints are deleted after final
 success or terminal failure, but not between retry attempts.
+
+The payload validation above is deliberately structural. It does not prove a
+cryptographic checkpoint digest, map `dtype` to an exact tensor byte count, or
+replace real browser/WebGPU relay evidence. Those remain separate work under
+#167.
 
 ## Invariants
 
@@ -128,6 +140,8 @@ success or terminal failure, but not between retry attempts.
 - A logical segment becomes resident only after all of its component locators
   pass the transport allowlist.
 - A durable checkpoint must match the request and exact completed span boundary.
+- A durable checkpoint payload must pass `CheckpointStore` structural validation
+  before it can mutate the resume store.
 - A resumed route begins at `checkpoint.segmentIndex + 1` and never includes an
   already completed prefix segment.
 - Browser workers connect only to the Coordinator and allowlisted artifact
