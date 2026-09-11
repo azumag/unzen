@@ -10,7 +10,9 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import audit_multi_segment_capture as audit_module  # noqa: E402
+import verify_multi_segment_artifact_snapshot as snapshot_module  # noqa: E402
 import verify_multi_segment_artifacts as artifacts_module  # noqa: E402
+import verify_multi_segment_capture_bundle as bundle_module  # noqa: E402
 import verify_multi_segment_capture_source as source_module  # noqa: E402
 import verify_multi_segment_capture_source_provenance as provenance_module  # noqa: E402
 
@@ -45,6 +47,22 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
             provenance_module._safe_relative(
                 "C:payload.bin",
                 field="split-manifest.sourceModel.externalData[0].location",
+            )
+
+    def test_capture_bundle_rejects_drive_relative_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            bundle_module._safe_relative_path(
+                Path.cwd(),
+                "C:payload.bin",
+                field="run-summary.artifacts.manifest",
+            )
+
+    def test_artifact_snapshot_rejects_drive_relative_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            snapshot_module._safe_path(
+                Path.cwd(),
+                "C:payload.bin",
+                field="segments[0].path",
             )
 
     def test_artifact_integrity_rejects_drive_relative_windows_path(self) -> None:
@@ -92,6 +110,22 @@ class CaptureSourceWindowsDrivePathTest(unittest.TestCase):
             ),
             relative,
         )
+        self.assertEqual(
+            bundle_module._safe_relative_path(
+                Path.cwd(),
+                relative,
+                field="run-summary.artifacts.manifest",
+            ),
+            (Path.cwd() / relative).resolve(),
+        )
+        snapshot_name, snapshot_path, snapshot_parts = snapshot_module._safe_path(
+            Path.cwd(),
+            relative,
+            field="segments[0].path",
+        )
+        self.assertEqual(snapshot_name, relative)
+        self.assertEqual(snapshot_path, (Path.cwd().resolve() / relative).absolute())
+        self.assertEqual(snapshot_parts, tuple(Path(relative).parts))
         self.assertEqual(
             artifacts_module._safe_relative_path(
                 Path.cwd(),
