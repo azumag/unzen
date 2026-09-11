@@ -21,6 +21,14 @@ class VerifyMultiSegmentOnnxWindowsDrivePathTest(unittest.TestCase):
                 field="sourceModel.externalData[0].location",
             )
 
+    def test_rejects_rooted_drive_less_windows_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            verifier_module._safe_relative_path(
+                Path.cwd(),
+                r"\payload.bin",
+                field="sourceModel.externalData[0].location",
+            )
+
     def test_ordinary_relative_path_remains_valid(self) -> None:
         relative = "weights/chunk-0001.bin"
         self.assertEqual(
