@@ -39,6 +39,26 @@ class VerifyMultiSegmentOnnxWindowsDrivePathTest(unittest.TestCase):
                         field="sourceModel.externalData[0].location",
                     )
 
+    def test_rejects_windows_reserved_or_trimmed_component(self) -> None:
+        for value in (
+            "NUL",
+            "nul.bin",
+            "weights/CON",
+            "weights/com1.onnx",
+            "weights/LPT9",
+            "weights/COM¹.log",
+            "weights/lpt².bin",
+            "weights/payload.",
+            "weights/payload ",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "unsafe"):
+                    verifier_module._safe_relative_path(
+                        Path.cwd(),
+                        value,
+                        field="sourceModel.externalData[0].location",
+                    )
+
     def test_ordinary_relative_path_remains_valid(self) -> None:
         relative = "weights/chunk-0001.bin"
         self.assertEqual(

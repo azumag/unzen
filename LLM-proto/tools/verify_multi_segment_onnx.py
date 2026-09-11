@@ -20,6 +20,7 @@ import gc
 import hashlib
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 from typing import Sequence
 
 import numpy as np
@@ -40,6 +41,17 @@ from verify_split_onnx import (
 
 MANIFEST_KIND = "unzen-budgeted-multi-segment-onnx"
 ARTIFACT_LAYOUT = "per-segment-external-data"
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+
+
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
 
 
 def _safe_relative_path(
@@ -59,6 +71,7 @@ def _safe_relative_path(
         or bool(windows.drive)
         or bool(windows.root)
         or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
         or ".." in posix.parts
         or ".." in windows.parts
     ):
