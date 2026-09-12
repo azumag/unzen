@@ -189,6 +189,18 @@ describe('importGeneratedOnnxSplitManifest', () => {
       .rejects.toThrow(/contiguous/);
   });
 
+  it.each(['index', 'startLayer', 'endLayer'] as const)(
+    'rejects unsafe integer generated %s before span conversion',
+    async (field) => {
+      const input = generatedManifest();
+      const segments = input.segments as Record<string, unknown>[];
+      segments[1][field] = Number.MAX_SAFE_INTEGER + 1;
+
+      await expect(importGeneratedOnnxSplitManifest(input, options))
+        .rejects.toThrow(new RegExp(`${field}.*safe non-negative integer`));
+    },
+  );
+
   it('rejects a per-segment memory list with the wrong length', async () => {
     await expect(importGeneratedOnnxSplitManifest(
       generatedManifest(),

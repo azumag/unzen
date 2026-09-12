@@ -1,6 +1,8 @@
-# Generated ONNX import path safety
+# Generated ONNX import path and numeric safety
 
-`importGeneratedOnnxSplitManifest()` treats generated graph and external-data paths as untrusted input and validates them before constructing runtime artifact locators.
+`importGeneratedOnnxSplitManifest()` treats generated graph/external-data paths and segment geometry as untrusted input and validates them before constructing runtime artifacts.
+
+## Path identity
 
 Accepted paths must be relative, forward-slash separated artifact identities. Absolute/rooted paths, backslashes, URI/drive separators, control characters, empty components, `.` and `..` are rejected.
 
@@ -8,4 +10,12 @@ The runtime import boundary also mirrors the Windows alias rules used by the Pyt
 
 This keeps artifact identity platform-independent between POSIX producers/verifiers and Windows consumers. Ordinary relative paths such as `graphs/segment0.onnx` and `weights/chunk-0001.bin` remain valid.
 
-This contract is path-identity hardening only. It does not replace content digest verification, browser artifact byte-budget enforcement, or transport/runtime trust checks.
+## Segment geometry numeric domain
+
+Generated `segment.index`, `startLayer`, and `endLayer` values must be non-negative JavaScript safe integers. In particular, values greater than `Number.MAX_SAFE_INTEGER` are rejected before the Python half-open `[startLayer, endLayer)` span is converted into the runtime inclusive `layerStart` / `layerEnd` representation.
+
+`Number.isInteger()` alone is not sufficient for this boundary: JavaScript can represent some integral-looking values above the safe-integer limit while losing adjacent-integer identity. Arithmetic such as `endLayer - 1` or later adjacency checks could therefore collapse distinct layer numbers. The importer fails closed before performing that conversion.
+
+Normal generated layer counts are unaffected by this guard.
+
+These contracts are import-boundary hardening only. They do not replace content digest verification, browser artifact byte-budget enforcement, or transport/runtime trust checks, and they do not constitute real WebGPU or multi-browser execution evidence.
