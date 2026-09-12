@@ -17,9 +17,9 @@ export class CheckpointStore {
   private readonly store = new Map<InferenceRequestId, Map<number, Checkpoint>>();
 
   private static assertValidCheckpoint(checkpoint: Checkpoint): void {
-    if (!Number.isInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
+    if (!Number.isSafeInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
       throw new Error(
-        `checkpoint segmentIndex must be a non-negative integer; ` +
+        `checkpoint segmentIndex must be a non-negative safe integer; ` +
         `found ${checkpoint.segmentIndex}`,
       );
     }
@@ -101,9 +101,9 @@ export class CheckpointStore {
     requestId: InferenceRequestId,
     atOrBeforeSegmentIndex = Number.MAX_SAFE_INTEGER,
   ): Checkpoint | undefined {
-    if (!Number.isInteger(atOrBeforeSegmentIndex)) {
+    if (!Number.isSafeInteger(atOrBeforeSegmentIndex)) {
       throw new Error(
-        `atOrBeforeSegmentIndex must be an integer; found ${atOrBeforeSegmentIndex}`,
+        `atOrBeforeSegmentIndex must be a safe integer; found ${atOrBeforeSegmentIndex}`,
       );
     }
     if (atOrBeforeSegmentIndex < 0) return undefined;

@@ -89,6 +89,13 @@ describe('CheckpointStore', () => {
   });
 
   describe('validation', () => {
+    it('rejects unsafe segment indexes before mutating the store', () => {
+      const checkpoint = makeCheckpoint(reqId, Number.MAX_SAFE_INTEGER + 1);
+
+      expect(() => store.save(checkpoint)).toThrow(/non-negative safe integer/);
+      expect(store.size).toBe(0);
+    });
+
     it('rejects empty hidden states before mutating the store', () => {
       const checkpoint: Checkpoint = {
         ...makeCheckpoint(reqId, 0),
@@ -238,7 +245,14 @@ describe('CheckpointStore', () => {
     });
 
     it('rejects a non-integer upper boundary', () => {
-      expect(() => store.latest(reqId, 1.5)).toThrow(/integer/);
+      expect(() => store.latest(reqId, 1.5)).toThrow(/safe integer/);
+    });
+
+    it('rejects an unsafe-integer upper boundary before scanning checkpoints', () => {
+      store.save(makeCheckpoint(reqId, 2));
+
+      expect(() => store.latest(reqId, Number.MAX_SAFE_INTEGER + 1)).toThrow(/safe integer/);
+      expect(store.latest(reqId, Number.MAX_SAFE_INTEGER)?.segmentIndex).toBe(2);
     });
   });
 
