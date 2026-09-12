@@ -53,6 +53,12 @@ export function capabilityMatchesRequest(
 
 export class BackendRegistry {
   private readonly entries = new Map<string, CapabilityEntry>();
+  /**
+   * Async registration crosses an await boundary while capabilities are read
+   * from the backend. Reserve ids during that window so another register path
+   * cannot pass the duplicate check and silently overwrite the eventual entry.
+   */
+  private readonly pendingBackendIds = new Set<string>();
 
   /** Number of routable entries. */
   get size(): number {
@@ -67,16 +73,21 @@ export class BackendRegistry {
    * cannot mutate routing facts after it has crossed the trust boundary.
    */
   async register(backendId: string, backend: InferenceBackend): Promise<void> {
-    if (this.entries.has(backendId)) {
-      throw new Error(`backend already registered: ${backendId}`);
+    this.assertBackendIdAvailable(backendId);
+    this.pendingBackendIds.add(backendId);
+    try {
+      const capability = await backend.describeCapabilities();
+      assertValidWorkerCapability(capability);
+      const snapshot = snapshotWorkerCapability(capability);
+      this.entries.set(
+        backendId,
+        Object.freeze({ backendId, capability: snapshot, backend }),
+      );
+    } finally {
+      // Failure must not poison this id permanently. Successful registration is
+      // protected by `entries`; failed registration becomes retryable.
+      this.pendingBackendIds.delete(backendId);
     }
-    const capability = await backend.describeCapabilities();
-    assertValidWorkerCapability(capability);
-    const snapshot = snapshotWorkerCapability(capability);
-    this.entries.set(
-      backendId,
-      Object.freeze({ backendId, capability: snapshot, backend }),
-    );
   }
 
   /**
@@ -85,9 +96,7 @@ export class BackendRegistry {
    * but is still driven through the old `SegmentExecutor` path.
    */
   registerCapability(backendId: string, capability: WorkerCapability): void {
-    if (this.entries.has(backendId)) {
-      throw new Error(`backend already registered: ${backendId}`);
-    }
+    this.assertBackendIdAvailable(backendId);
     assertValidWorkerCapability(capability);
     const snapshot = snapshotWorkerCapability(capability);
     this.entries.set(
@@ -135,6 +144,12 @@ export class BackendRegistry {
         .filter((backend): backend is InferenceBackend => backend !== undefined)
         .map((backend) => backend.dispose()),
     );
+  }
+
+  private assertBackendIdAvailable(backendId: string): void {
+    if (this.entries.has(backendId) || this.pendingBackendIds.has(backendId)) {
+      throw new Error(`backend already registered: ${backendId}`);
+    }
   }
 }
 
