@@ -8,6 +8,14 @@ import {
   type CheckpointTransferMeasurementManifest,
 } from '../src/checkpoint-transfer-measurement.js';
 
+function createSerializedFrame(header: unknown, payloadBytes = 0): Uint8Array {
+  const encodedHeader = new TextEncoder().encode(JSON.stringify(header));
+  const serialized = new Uint8Array(4 + encodedHeader.byteLength + payloadBytes);
+  new DataView(serialized.buffer).setUint32(0, encodedHeader.byteLength, true);
+  serialized.set(encodedHeader, 4);
+  return serialized;
+}
+
 describe('checkpoint serialization and transfer measurement gate', () => {
   it('reports payload size, serialization timing, transfer timing, and feasibility comparison', () => {
     const report = measureCheckpointSerializationAndTransfer(createDefaultCheckpointMeasurementManifest());
@@ -100,6 +108,102 @@ describe('checkpoint serialization and transfer measurement gate', () => {
     expect(report.observedTransferMs).toBe(864);
     expect(report.failureReason).toBe(
       'coordinator-observed-transfer-budget-exceeded: 864ms exceeds 750ms',
+    );
+  });
+
+  it('rejects non-finite transfer rates before timing arithmetic', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const manifest: CheckpointTransferMeasurementManifest = {
+      ...base,
+      coordinatorTransferBytesPerSecond: Number.NaN,
+    };
+
+    expect(() => measureCheckpointSerializationAndTransfer(manifest)).toThrow(
+      'coordinatorTransferBytesPerSecond must be a positive finite number',
+    );
+  });
+
+  it('rejects unsafe tensor byte-size multiplication before allocation', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const manifest: CheckpointTransferMeasurementManifest = {
+      ...base,
+      tensor: {
+        ...base.tensor,
+        batchSize: Number.MAX_SAFE_INTEGER,
+      },
+    };
+
+    expect(() => createCheckpointPayload(manifest)).toThrow(
+      'checkpoint tensor element count exceeds Number.MAX_SAFE_INTEGER',
+    );
+  });
+
+  it('rejects unsafe segment indexes before generating payload bytes', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const manifest: CheckpointTransferMeasurementManifest = {
+      ...base,
+      segmentIndex: Number.MAX_SAFE_INTEGER + 1,
+    };
+
+    expect(() => createCheckpointPayload(manifest)).toThrow(
+      'segmentIndex must be a non-negative safe integer',
+    );
+  });
+
+  it('rejects truncated and out-of-bounds serialized checkpoint frames', () => {
+    expect(() => deserializeCheckpointPayload(new Uint8Array(3))).toThrow(
+      'serialized checkpoint must contain a 4-byte header length',
+    );
+
+    const oversizedHeader = new Uint8Array(4);
+    new DataView(oversizedHeader.buffer).setUint32(0, 128, true);
+    expect(() => deserializeCheckpointPayload(oversizedHeader)).toThrow(
+      'serialized checkpoint header length is out of bounds',
+    );
+  });
+
+  it('rejects invalid JSON checkpoint headers', () => {
+    const invalidHeader = new TextEncoder().encode('{not-json');
+    const serialized = new Uint8Array(4 + invalidHeader.byteLength);
+    new DataView(serialized.buffer).setUint32(0, invalidHeader.byteLength, true);
+    serialized.set(invalidHeader, 4);
+
+    expect(() => deserializeCheckpointPayload(serialized)).toThrow(
+      'serialized checkpoint header must be valid JSON',
+    );
+  });
+
+  it('rejects metadata whose sequence length disagrees with tensor shape', () => {
+    const serialized = createSerializedFrame({
+      requestId: 'request-1',
+      segmentIndex: 0,
+      metadata: {
+        shape: [1, 2, 3],
+        dtype: 'float16',
+        sequenceLength: 3,
+        timestamp: 0,
+      },
+    }, 12);
+
+    expect(() => deserializeCheckpointPayload(serialized)).toThrow(
+      'serialized checkpoint metadata.sequenceLength must match metadata.shape[1]',
+    );
+  });
+
+  it('rejects payload bytes that do not match declared tensor shape and dtype', () => {
+    const serialized = createSerializedFrame({
+      requestId: 'request-1',
+      segmentIndex: 0,
+      metadata: {
+        shape: [1, 2, 3],
+        dtype: 'float16',
+        sequenceLength: 2,
+        timestamp: 0,
+      },
+    }, 11);
+
+    expect(() => deserializeCheckpointPayload(serialized)).toThrow(
+      'serialized checkpoint payload length mismatch: expected 12, got 11',
     );
   });
 });
