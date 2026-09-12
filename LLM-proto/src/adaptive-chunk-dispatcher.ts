@@ -168,8 +168,11 @@ export class AdaptiveChunkDispatcher {
     }
     const longLivedWorkerMs = options.longLivedWorkerMs ?? DEFAULT_LONG_LIVED_WORKER_MS;
     assertFiniteNonNegative('longLivedWorkerMs', longLivedWorkerMs);
-    const configuredVramLimitMB = options.configuredVramLimitMB ?? Number.POSITIVE_INFINITY;
+    const configuredVramLimitMB = options.configuredVramLimitMB === undefined
+      ? Number.POSITIVE_INFINITY
+      : options.configuredVramLimitMB;
     if (
+      typeof configuredVramLimitMB !== 'number' ||
       Number.isNaN(configuredVramLimitMB) ||
       configuredVramLimitMB < 0 ||
       configuredVramLimitMB === Number.NEGATIVE_INFINITY
