@@ -43,9 +43,15 @@ These guards keep `NaN`, invalid infinities, zero divisors, negative limits, and
 
 This matters because TypeScript `readonly` annotations do not prevent runtime mutation. Without a defensive snapshot, changing a validated `estimatedVramMB` to `NaN` after construction could make JavaScript fit comparisons fail open, while pushing or removing array entries could change assignment and cache-index ranges without rerunning constructor validation.
 
+## Worker telemetry ownership
+
+Every registration and heartbeat is copied into a dispatcher-owned frozen telemetry snapshot before validation and cache synchronization. The snapshot includes a copied/frozen `cacheHits` array and, when present, copied/frozen `cacheArtifacts` identity objects and array. Validation, residency synchronization, scoring, load gates, and stored worker state therefore all refer to the same accepted snapshot.
+
+Callers may retain and mutate their original telemetry object after `registerWorker()` or `updateHeartbeat()` returns, but those later writes cannot change accepted VRAM, busy ratios, failure rate, throughput, jitter, or cache claims without a new validated heartbeat. This closes the runtime gap between TypeScript `readonly` declarations and JavaScript object mutability, including the legacy index-only cache path.
+
 ## Atomic heartbeat rule
 
-`registerWorker()` validates registration metadata and telemetry before synchronizing cache residency or inserting worker state. `updateHeartbeat()` validates the entire telemetry object before synchronizing cache residency and before replacing the existing telemetry snapshot.
+`registerWorker()` snapshots and validates registration metadata and telemetry before synchronizing cache residency or inserting worker state. `updateHeartbeat()` snapshots and validates the entire telemetry object before synchronizing cache residency and before replacing the existing telemetry snapshot.
 
 Therefore an invalid heartbeat:
 
@@ -57,4 +63,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, valid telemetry boundaries, invalid dispatcher numeric configuration, and post-construction segment mutation isolation. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, and post-acceptance telemetry mutation isolation. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
