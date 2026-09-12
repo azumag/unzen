@@ -216,8 +216,12 @@ export class ArtifactResidencyLedger {
     maximumLength = Number.POSITIVE_INFINITY,
   ): number {
     this.getArtifact(startSegment);
-    if (maximumLength < 0 || Number.isNaN(maximumLength)) {
-      throw new Error('maximumLength must be non-negative');
+    if (
+      typeof maximumLength !== 'number' ||
+      maximumLength < 0 ||
+      Number.isNaN(maximumLength)
+    ) {
+      throw new Error('maximumLength must be a non-negative number');
     }
 
     const limit = Number.isFinite(maximumLength)
