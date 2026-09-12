@@ -63,6 +63,8 @@ export class BackendRegistry {
    * Register a backend implementing the `InferenceBackend` contract. The
    * capability is runtime-validated; an invalid capability rejects the whole
    * registration so the routing table never contains an untrusted entry.
+   * The validated capability is copied and frozen before storage so a backend
+   * cannot mutate routing facts after it has crossed the trust boundary.
    */
   async register(backendId: string, backend: InferenceBackend): Promise<void> {
     if (this.entries.has(backendId)) {
@@ -70,7 +72,11 @@ export class BackendRegistry {
     }
     const capability = await backend.describeCapabilities();
     assertValidWorkerCapability(capability);
-    this.entries.set(backendId, { backendId, capability, backend });
+    const snapshot = snapshotWorkerCapability(capability);
+    this.entries.set(
+      backendId,
+      Object.freeze({ backendId, capability: snapshot, backend }),
+    );
   }
 
   /**
@@ -83,7 +89,11 @@ export class BackendRegistry {
       throw new Error(`backend already registered: ${backendId}`);
     }
     assertValidWorkerCapability(capability);
-    this.entries.set(backendId, { backendId, capability });
+    const snapshot = snapshotWorkerCapability(capability);
+    this.entries.set(
+      backendId,
+      Object.freeze({ backendId, capability: snapshot }),
+    );
   }
 
   /** Remove a backend. Returns true when it existed. */
@@ -126,4 +136,26 @@ export class BackendRegistry {
         .map((backend) => backend.dispose()),
     );
   }
+}
+
+/**
+ * Store routing facts by value rather than retaining worker-owned references.
+ * `readonly` protects TypeScript callers only; messages/deserialized objects
+ * remain mutable at runtime. Every nested mutable routing field therefore gets
+ * its own frozen copy before the capability enters the registry.
+ */
+function snapshotWorkerCapability(capability: WorkerCapability): WorkerCapability {
+  const health = capability.health === undefined
+    ? undefined
+    : Object.freeze({ ...capability.health });
+
+  return Object.freeze({
+    ...capability,
+    inputModalities: Object.freeze([...capability.inputModalities]),
+    outputModalities: Object.freeze([...capability.outputModalities]),
+    supportedLanguages: Object.freeze([...capability.supportedLanguages]),
+    executionSurfaces: Object.freeze([...capability.executionSurfaces]),
+    allowedNetworkDestinations: Object.freeze([...capability.allowedNetworkDestinations]),
+    ...(health === undefined ? {} : { health }),
+  });
 }
