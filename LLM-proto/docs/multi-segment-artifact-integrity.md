@@ -28,6 +28,14 @@ manifest:
   splitPlan.requiredMaxBytes)`);
 - relative artifact paths.
 
+Each graph and external-data file is opened once for measurement. Its byte size
+and SHA-256 are derived from that same descriptor, and descriptor metadata is
+checked again after hashing. A pathname replacement after open therefore cannot
+mix a digest from one filesystem object with a size from another, while an
+in-place mutation that changes the observed descriptor metadata fails closed.
+This pins the integrity report to the file identity that was actually measured;
+it does not lock the pathname against later replacement by another process.
+
 A successful report records the manifest digest, every measured graph and
 external-data size/digest, the measured maximum segment size, and the effective
 required budget. Keep this JSON next to the later correctness and browser
