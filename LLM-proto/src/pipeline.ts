@@ -155,6 +155,34 @@ export class Pipeline {
     segmentIndex: number,
   ): Promise<SegmentResult | null> {
     const segment = this.segments[segmentIndex];
+    // Snapshot and validate the predecessor boundary once. A retry must execute
+    // from the same known-good state even if the shared checkpoint store changes
+    // while another browser attempt is failing.
+    const checkpoint = segmentIndex > 0
+      ? this.checkpointStore.get(request.id, segmentIndex - 1)
+      : undefined;
+    if (segmentIndex > 0 && checkpoint === undefined) {
+      throw new PipelineError(
+        `missing checkpoint before segment ${segmentIndex}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (checkpoint !== undefined && checkpoint.requestId !== request.id) {
+      throw new PipelineError(
+        `checkpoint request ${checkpoint.requestId} does not match ${request.id}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (checkpoint !== undefined && checkpoint.segmentIndex !== segmentIndex - 1) {
+      throw new PipelineError(
+        `checkpoint segment ${checkpoint.segmentIndex} does not precede segment ${segmentIndex}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+
     let lastContractError: PipelineError | undefined;
 
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
@@ -170,11 +198,6 @@ export class Pipeline {
       }
 
       this.workerPool.markBusy(worker.id, segmentIndex);
-
-      // Retrieve checkpoint from previous segment (undefined for segment 0)
-      const checkpoint = segmentIndex > 0
-        ? this.checkpointStore.get(request.id, segmentIndex - 1)
-        : undefined;
 
       const assignment: SegmentAssignment = {
         requestId: request.id,

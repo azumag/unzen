@@ -1,8 +1,18 @@
-# Legacy Pipeline SegmentResult contract
+# Legacy Pipeline checkpoint and SegmentResult contract
 
-The legacy `Pipeline` remains a contract-tested prototype for segmented inference. It is not production deployment or real WebGPU evidence, but worker results still cross a trust boundary and must fail closed before checkpoint state or final output is accepted.
+The legacy `Pipeline` remains a contract-tested prototype for segmented inference. It is not production deployment or real WebGPU evidence, but checkpoint inputs and worker results cross trust/state boundaries and must fail closed before execution state or final output is accepted.
 
-For every resolved `SegmentExecutor.execute()` result, `Pipeline` now validates the echoed execution identity before marking the worker idle:
+## Input checkpoint boundary
+
+Before assigning any non-zero segment, `Pipeline` requires the exact predecessor checkpoint (`segmentIndex - 1`) for the active request. A missing predecessor fails before any worker is marked busy or executor dispatch occurs. The checkpoint identity and boundary index are checked defensively even though `CheckpointStore` is keyed by those values.
+
+The validated predecessor checkpoint is snapshotted once per segment and reused across bounded worker retries. A concurrent/shared-store mutation after the first dispatch therefore cannot silently turn a retry into a non-zero segment execution without its resume boundary.
+
+Segment 0 continues to start without an input checkpoint.
+
+## Worker result boundary
+
+For every resolved `SegmentExecutor.execute()` result, `Pipeline` validates the echoed execution identity before marking the worker idle:
 
 - `requestId` must exactly match the active inference request.
 - `segmentIndex` must exactly match the assigned segment.
@@ -16,6 +26,6 @@ Boundary shape is also enforced:
 
 A worker that resolves with a contract-violating result is treated like a failed execution attempt: it is marked disconnected and the normal bounded retry path may choose another worker. No malformed checkpoint is committed and no mismatched output completes the request.
 
-This mirrors the fail-closed result checks already present in `SpanPipeline`. It strengthens the prototype checkpoint/relay contract for #167 but does **not** demonstrate a prepared 1B model, browser WebGPU execution, multi-browser relay, GPU working-set telemetry, or worker-loss resume on real infrastructure.
+This mirrors the fail-closed checkpoint/result checks already present in `SpanPipeline`. It strengthens the prototype checkpoint/relay contract for #167 but does **not** demonstrate a prepared 1B model, browser WebGPU execution, multi-browser relay, GPU working-set telemetry, or worker-loss resume on real infrastructure.
 
-Regression coverage lives in `tests/pipeline-result-contract.test.ts`.
+Regression coverage lives in `tests/pipeline-result-contract.test.ts` and `tests/pipeline-input-checkpoint-contract.test.ts`.
