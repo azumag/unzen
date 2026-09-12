@@ -337,12 +337,12 @@ function cloneAndValidateComponents(
   let graphLocator: string | undefined;
   const componentPaths = new Set<string>();
   const copied = artifact.components.map((component, componentIndex) => {
-    if (!COMPONENT_ROLES.has(component.role)) {
+    if (typeof component.role !== 'string' || !COMPONENT_ROLES.has(component.role)) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} role must be graph or external-data`,
       );
     }
-    if (component.path.trim().length === 0) {
+    if (typeof component.path !== 'string' || component.path.trim().length === 0) {
       throw new Error(`segment ${artifact.index} component ${componentIndex} path must be non-empty`);
     }
     if (componentPaths.has(component.path)) {
@@ -354,17 +354,20 @@ function cloneAndValidateComponents(
         `segment ${artifact.index} component ${componentIndex} byteSize must be a safe positive integer`,
       );
     }
-    if (!SHA256_HEX_PATTERN.test(component.sha256)) {
+    if (typeof component.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(component.sha256)) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} sha256 must be exactly 64 lowercase hexadecimal characters`,
       );
     }
-    if (component.contentType.trim().length === 0) {
+    if (typeof component.contentType !== 'string' || component.contentType.trim().length === 0) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} contentType must be non-empty`,
       );
     }
-    if (component.artifactLocator.trim().length === 0) {
+    if (
+      typeof component.artifactLocator !== 'string' ||
+      component.artifactLocator.trim().length === 0
+    ) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} artifactLocator must be non-empty`,
       );
