@@ -23,6 +23,12 @@ Valid registration semantics are unchanged:
 
 `WorkerRegistry` therefore snapshots a worker record when it is revoked. A revoked-generation lookup also returns a fresh detached copy. This guarantees that mutating data obtained from `getByGeneration(oldGeneration)` cannot write through to the replacement generation or modify the registry's archived revoked snapshot.
 
-This isolation is deliberately narrower than a claim that every previously returned active worker reference is a durable historical handle. Callers should treat active records as current-state views and generation identity as the authority across reconnects.
+## Active worker proxy generation fence
+
+Active records returned by `DurableObjectRepository.getWorker()` and `listWorkers()` remain write-through current-state views for compatibility with the coordinator contract. Each proxy captures the worker generation that existed when the record was read. Before persisting a later property mutation, the repository re-reads the durable key and requires that the stored generation still matches that captured generation.
+
+If the worker was deleted or a reconnect replaced it with a new generation, mutation of the stale proxy is local-only: it cannot recreate the deleted key and cannot alter the replacement generation. Current-generation proxy mutations continue to persist normally.
+
+Callers should still treat generation identity as the authority across reconnects rather than retaining worker objects as durable historical handles.
 
 This contract protects coordinator-side durable routing state only. Passing these checks is not evidence that reported VRAM is physically accurate, that a real WebGPU device can execute the assigned segment, or that the 1B multi-browser relay/resume path has been demonstrated.

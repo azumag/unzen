@@ -93,28 +93,54 @@ export class DurableObjectRepository implements DurableRepository {
    * mutation on the stale object could overwrite the new stage. Therefore each
    * property write re-reads the latest stored value and merges only that
    * property before persisting it.
+   *
+   * `canPersist` adds an identity fence for keyspaces whose durable key may be
+   * reused by a different logical record. Worker keys are reused across
+   * generations, so stale worker proxies must never update or resurrect a
+   * replacement generation.
    */
-  private mutableRecord<T extends object>(key: string, value: T | undefined): T | undefined {
+  private mutableRecord<T extends object>(
+    key: string,
+    value: T | undefined,
+    canPersist?: (latest: T | undefined) => boolean,
+  ): T | undefined {
     if (value === undefined) return undefined;
     const storage = this.storage;
     return new Proxy(value, {
       set(target, property, next): boolean {
         const ok = Reflect.set(target, property, next);
         if (!ok) return false;
-        const latest = storage.get<T>(key) ?? target;
-        Reflect.set(latest, property, next);
-        storage.put(key, latest);
+        const latest = storage.get<T>(key);
+        if (canPersist !== undefined && !canPersist(latest)) return true;
+        const persisted = latest ?? target;
+        Reflect.set(persisted, property, next);
+        storage.put(key, persisted);
         return true;
       },
       deleteProperty(target, property): boolean {
         const ok = Reflect.deleteProperty(target, property);
         if (!ok) return false;
-        const latest = storage.get<T>(key) ?? target;
-        Reflect.deleteProperty(latest, property);
-        storage.put(key, latest);
+        const latest = storage.get<T>(key);
+        if (canPersist !== undefined && !canPersist(latest)) return true;
+        const persisted = latest ?? target;
+        Reflect.deleteProperty(persisted, property);
+        storage.put(key, persisted);
         return true;
       },
     });
+  }
+
+  private mutableWorkerRecord(
+    key: string,
+    value: WorkerRecord | undefined,
+  ): WorkerRecord | undefined {
+    if (value === undefined) return undefined;
+    const expectedGeneration = value.generation;
+    return this.mutableRecord(
+      key,
+      value,
+      (latest) => latest !== undefined && latest.generation === expectedGeneration,
+    );
   }
 
   private listValues<T>(prefix: string): T[] {
@@ -340,7 +366,7 @@ export class DurableObjectRepository implements DurableRepository {
 
   getWorker(workerId: WorkerId): WorkerRecord | undefined {
     const key = workerKey(workerId);
-    return this.mutableRecord(key, this.storage.get<WorkerRecord>(key));
+    return this.mutableWorkerRecord(key, this.storage.get<WorkerRecord>(key));
   }
 
   deleteWorker(workerId: WorkerId): void {
@@ -348,6 +374,8 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   listWorkers(): readonly WorkerRecord[] {
-    return this.listMutable<WorkerRecord>(P.worker);
+    return [...this.storage.list<WorkerRecord>({ prefix: P.worker })].map(([key, value]) =>
+      this.mutableWorkerRecord(key, value)!,
+    );
   }
 }
