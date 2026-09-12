@@ -206,4 +206,42 @@ describe('checkpoint serialization and transfer measurement gate', () => {
       'serialized checkpoint payload length mismatch: expected 12, got 11',
     );
   });
+
+  it('rejects derived transfer durations that exceed safe integer precision', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const manifest: CheckpointTransferMeasurementManifest = {
+      ...base,
+      tensor: {
+        batchSize: 1,
+        sequenceLength: 1,
+        hiddenSize: 1,
+        dtype: 'int8',
+      },
+      coordinatorTransferBytesPerSecond: Number.MIN_VALUE,
+    };
+
+    expect(() => measureCheckpointSerializationAndTransfer(manifest)).toThrow(
+      'checkpoint duration exceeds Number.MAX_SAFE_INTEGER',
+    );
+  });
+
+  it('rejects retry attempt counts that overflow safe integer precision', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const manifest: CheckpointTransferMeasurementManifest = {
+      ...base,
+      tensor: {
+        batchSize: 1,
+        sequenceLength: 1,
+        hiddenSize: 1,
+        dtype: 'int8',
+      },
+      maxRetries: Number.MAX_SAFE_INTEGER,
+      retryBackoffMs: 0,
+      simulatedFailuresBeforeSuccess: Number.MAX_SAFE_INTEGER,
+    };
+
+    expect(() => measureCheckpointSerializationAndTransfer(manifest)).toThrow(
+      'coordinator transfer attempt count exceeds Number.MAX_SAFE_INTEGER',
+    );
+  });
 });

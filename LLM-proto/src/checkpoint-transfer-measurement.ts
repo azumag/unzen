@@ -397,8 +397,15 @@ function assertNonNegativeFiniteNumber(value: unknown, fieldName: string): asser
   }
 }
 
+function checkedAddSafeInteger(left: number, right: number, fieldName: string): number {
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new Error(`${fieldName} exceeds Number.MAX_SAFE_INTEGER`);
+  }
+  return left + right;
+}
+
 function checkedMultiplySafeInteger(left: number, right: number, fieldName: string): number {
-  if (left > Math.floor(Number.MAX_SAFE_INTEGER / right)) {
+  if (left !== 0 && right > Math.floor(Number.MAX_SAFE_INTEGER / left)) {
     throw new Error(`${fieldName} exceeds Number.MAX_SAFE_INTEGER`);
   }
   return left * right;
@@ -410,9 +417,30 @@ function measureCoordinatorTransfer(
 ) {
   const failuresBeforeSuccess = manifest.simulatedFailuresBeforeSuccess ?? 0;
   const retryCount = Math.min(failuresBeforeSuccess, manifest.maxRetries);
-  const attempts = retryCount + 1;
-  const transferMsPerAttempt = ceilDurationMs(serializedBytes, manifest.coordinatorTransferBytesPerSecond);
-  const observedTransferMs = attempts * transferMsPerAttempt + retryCount * manifest.retryBackoffMs;
+  const attempts = checkedAddSafeInteger(
+    retryCount,
+    1,
+    'coordinator transfer attempt count',
+  );
+  const transferMsPerAttempt = ceilDurationMs(
+    serializedBytes,
+    manifest.coordinatorTransferBytesPerSecond,
+  );
+  const attemptTransferMs = checkedMultiplySafeInteger(
+    attempts,
+    transferMsPerAttempt,
+    'coordinator transfer attempts duration',
+  );
+  const retryBackoffTotalMs = checkedMultiplySafeInteger(
+    retryCount,
+    manifest.retryBackoffMs,
+    'coordinator retry backoff duration',
+  );
+  const observedTransferMs = checkedAddSafeInteger(
+    attemptTransferMs,
+    retryBackoffTotalMs,
+    'coordinator observed transfer duration',
+  );
 
   if (failuresBeforeSuccess > manifest.maxRetries) {
     return {
@@ -474,5 +502,9 @@ function ceilDurationMs(bytes: number, bytesPerSecond: number): number {
     throw new Error('bytesPerSecond must be a positive finite number');
   }
 
-  return Math.ceil((bytes / bytesPerSecond) * 1000);
+  const durationMs = Math.ceil((bytes / bytesPerSecond) * 1000);
+  if (!Number.isSafeInteger(durationMs) || durationMs < 0) {
+    throw new Error('checkpoint duration exceeds Number.MAX_SAFE_INTEGER');
+  }
+  return durationMs;
 }
