@@ -61,6 +61,58 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
     })).not.toThrow();
   });
 
+  it.each([0, 4, 99, 'tier-1'])(
+    'rejects invalid worker tier %s before registration',
+    (tier) => {
+      const dispatcher = new AdaptiveChunkDispatcher({
+        segments: makeSegments(1),
+      });
+
+      expect(() => dispatcher.registerWorker({
+        id: 'invalid-tier-worker',
+        tier: tier as WorkerTier,
+        telemetry: baseTelemetry,
+      })).toThrow(/worker tier/);
+
+      expect(() => dispatcher.run('after-invalid-tier')).toThrow(
+        /No eligible adaptive worker/,
+      );
+    },
+  );
+
+  it('keeps the previous worker state when an invalid tier re-registration is rejected', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: makeSegments(1),
+    });
+    dispatcher.registerWorker({
+      id: 'stable-tier-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: baseTelemetry,
+    });
+
+    expect(() => dispatcher.registerWorker({
+      id: 'stable-tier-worker',
+      tier: 99 as WorkerTier,
+      telemetry: {
+        ...baseTelemetry,
+        gpuBusyRatio: 0.99,
+        cacheHits: [],
+      },
+    })).toThrow(/worker tier/);
+
+    const report = dispatcher.run('after-invalid-tier-reregistration');
+    expect(report.assignments).toHaveLength(1);
+    expect(report.assignments[0]).toMatchObject({
+      workerId: 'stable-tier-worker',
+      tier: WorkerTier.TIER_2,
+      cacheHit: true,
+      loadReadings: {
+        gpuBusyRatio: 0.01,
+        cpuBusyRatio: 0.01,
+      },
+    });
+  });
+
   it.each([
     ['uptimeMs', Number.NaN],
     ['uptimeMs', Number.POSITIVE_INFINITY],

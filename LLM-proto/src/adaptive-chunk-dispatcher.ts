@@ -197,6 +197,7 @@ export class AdaptiveChunkDispatcher {
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     const id = workerId(registration.id);
+    assertWorkerTier(registration.tier);
     this.validateTelemetry(registration.telemetry);
     const cacheHits = this.validateAndSynchronizeCacheResidency(id, registration.telemetry);
     this.workers.set(id, {
@@ -713,6 +714,16 @@ export class AdaptiveChunkDispatcher {
     }
 
     return Math.round((this.checkpointBytes / telemetry.checkpointBytesPerSecond) * 1000);
+  }
+}
+
+function assertWorkerTier(tier: WorkerTier): void {
+  if (
+    tier !== WorkerTier.TIER_1 &&
+    tier !== WorkerTier.TIER_2 &&
+    tier !== WorkerTier.TIER_3
+  ) {
+    throw new Error(`worker tier must be one of 1, 2, or 3; received ${String(tier)}`);
   }
 }
 
