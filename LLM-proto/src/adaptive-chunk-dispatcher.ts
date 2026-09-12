@@ -212,12 +212,13 @@ export class AdaptiveChunkDispatcher {
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     const id = workerId(registration.id);
     assertWorkerTier(registration.tier);
-    this.validateTelemetry(registration.telemetry);
-    const cacheHits = this.validateAndSynchronizeCacheResidency(id, registration.telemetry);
+    const telemetry = snapshotWorkerTelemetry(registration.telemetry);
+    this.validateTelemetry(telemetry);
+    const cacheHits = this.validateAndSynchronizeCacheResidency(id, telemetry);
     this.workers.set(id, {
       id,
       tier: registration.tier,
-      telemetry: registration.telemetry,
+      telemetry,
       lastAssignmentOrder: 0,
       residentSegments: new Set(cacheHits),
     });
@@ -229,11 +230,14 @@ export class AdaptiveChunkDispatcher {
       throw new Error(`Unknown adaptive worker: ${worker}`);
     }
 
+    // Snapshot before validation so validation, cache synchronization, and the
+    // stored worker state all refer to one dispatcher-owned telemetry value.
+    const telemetrySnapshot = snapshotWorkerTelemetry(telemetry);
     // Validate telemetry before touching either cache-residency view. Invalid
     // heartbeats must preserve the last known-good telemetry and cache state.
-    this.validateTelemetry(telemetry);
-    const cacheHits = this.validateAndSynchronizeCacheResidency(worker, telemetry);
-    state.telemetry = telemetry;
+    this.validateTelemetry(telemetrySnapshot);
+    const cacheHits = this.validateAndSynchronizeCacheResidency(worker, telemetrySnapshot);
+    state.telemetry = telemetrySnapshot;
     state.residentSegments.clear();
     for (const segment of cacheHits) {
       state.residentSegments.add(segment);
@@ -729,6 +733,28 @@ export class AdaptiveChunkDispatcher {
 
     return Math.round((this.checkpointBytes / telemetry.checkpointBytesPerSecond) * 1000);
   }
+}
+
+function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
+  const cacheArtifacts = telemetry.cacheArtifacts;
+  return Object.freeze({
+    uptimeMs: telemetry.uptimeMs,
+    vramFreeMB: telemetry.vramFreeMB,
+    gpuBusyRatio: telemetry.gpuBusyRatio,
+    cpuBusyRatio: telemetry.cpuBusyRatio,
+    cacheHits: Object.freeze([...telemetry.cacheHits]),
+    ...(cacheArtifacts === undefined
+      ? {}
+      : {
+        cacheArtifacts: Object.freeze(
+          cacheArtifacts.map((identity) => Object.freeze({ ...identity })),
+        ),
+      }),
+    tokensPerSecond: telemetry.tokensPerSecond,
+    checkpointBytesPerSecond: telemetry.checkpointBytesPerSecond,
+    failureRate: telemetry.failureRate,
+    heartbeatJitterMs: telemetry.heartbeatJitterMs,
+  });
 }
 
 function assertWorkerTier(tier: WorkerTier): void {
