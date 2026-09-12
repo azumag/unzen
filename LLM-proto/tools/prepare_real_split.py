@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import stat
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import BinaryIO
 
@@ -111,6 +112,51 @@ def _paths_alias(left: Path, right: Path) -> bool:
     return False
 
 
+def _validate_output_destination(output_path: Path, output_root: Path) -> None:
+    """Reject stable destination aliases that could redirect or multiply writes."""
+
+    root = output_root.resolve()
+    parent = output_path.parent.resolve()
+    try:
+        parent.relative_to(root)
+    except ValueError as error:
+        raise ValueError(
+            "output external-data parent escapes model directory: "
+            f"output={output_path}, root={root}"
+        ) from error
+    if output_path.is_symlink():
+        raise ValueError(f"output external-data path must not be a symlink: {output_path}")
+
+
+def _open_repack_destination(output_path: Path) -> BinaryIO:
+    """Open without truncation, validate the inode, then truncate through the fd."""
+
+    flags = os.O_WRONLY | os.O_CREAT
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(output_path, flags, 0o666)
+    try:
+        snapshot = os.fstat(descriptor)
+        if not stat.S_ISREG(snapshot.st_mode):
+            raise ValueError(
+                f"output external-data destination must be a regular file: {output_path}"
+            )
+        if snapshot.st_nlink != 1:
+            raise ValueError(
+                "output external-data destination has multiple hard links: "
+                f"{output_path} (nlink={snapshot.st_nlink})"
+            )
+        os.ftruncate(descriptor, 0)
+        destination = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        return destination
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def repack_segment_external_data(
     model_path: Path,
     source_model_dir: Path,
@@ -175,6 +221,8 @@ def repack_segment_external_data(
             (initializer, location, source_path, source_offset, length)
         )
 
+    _validate_output_destination(output_data_path, model_path.parent)
+
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
     try:
@@ -195,7 +243,7 @@ def repack_segment_external_data(
                     f"length={length}, fileBytes={file_size}"
                 )
 
-        with output_data_path.open("wb") as destination:
+        with _open_repack_destination(output_data_path) as destination:
             for initializer, location, source_path, source_offset, length in prepared:
                 key = (location, source_offset, length)
                 destination_offset = range_offsets.get(key)
