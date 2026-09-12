@@ -86,6 +86,7 @@ export class WorkerPool {
 
   /** Mark a worker as busy processing a specific segment. */
   markBusy(id: WorkerId, segmentIndex: number): void {
+    this.assertValidSegmentIndex(segmentIndex);
     const worker = this.workers.get(id);
     if (!worker) return;
     worker.status = WorkerStatus.BUSY;
@@ -191,6 +192,15 @@ export class WorkerPool {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new Error(
         `timeoutMs must be a positive finite number; found ${String(timeoutMs)}`,
+      );
+    }
+  }
+
+  /** Keep the busy-state routing cursor within the model's non-negative segment domain. */
+  private assertValidSegmentIndex(segmentIndex: number): void {
+    if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) {
+      throw new Error(
+        `segmentIndex must be a non-negative safe integer; found ${String(segmentIndex)}`,
       );
     }
   }
