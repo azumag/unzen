@@ -166,6 +166,20 @@ export class AdaptiveChunkDispatcher {
     if (!Number.isFinite(loadBudgetRatio) || loadBudgetRatio <= 0 || loadBudgetRatio > 1) {
       throw new Error('loadBudgetRatio must be a finite number in (0, 1]');
     }
+    const longLivedWorkerMs = options.longLivedWorkerMs ?? DEFAULT_LONG_LIVED_WORKER_MS;
+    assertFiniteNonNegative('longLivedWorkerMs', longLivedWorkerMs);
+    const configuredVramLimitMB = options.configuredVramLimitMB ?? Number.POSITIVE_INFINITY;
+    if (
+      Number.isNaN(configuredVramLimitMB) ||
+      configuredVramLimitMB < 0 ||
+      configuredVramLimitMB === Number.NEGATIVE_INFINITY
+    ) {
+      throw new Error('configuredVramLimitMB must be non-negative or positive infinity');
+    }
+    const checkpointBytes = options.checkpointBytes ?? DEFAULT_CHECKPOINT_BYTES;
+    if (!Number.isFinite(checkpointBytes) || checkpointBytes <= 0) {
+      throw new Error('checkpointBytes must be a positive finite number');
+    }
 
     this.coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
     this.cdnUrl = options.cdnUrl ?? DEFAULT_CDN_URL;
@@ -174,9 +188,9 @@ export class AdaptiveChunkDispatcher {
       this.cdnUrl,
     ]);
     this.loadBudgetRatio = loadBudgetRatio;
-    this.longLivedWorkerMs = options.longLivedWorkerMs ?? DEFAULT_LONG_LIVED_WORKER_MS;
-    this.configuredVramLimitMB = options.configuredVramLimitMB ?? Number.POSITIVE_INFINITY;
-    this.checkpointBytes = options.checkpointBytes ?? DEFAULT_CHECKPOINT_BYTES;
+    this.longLivedWorkerMs = longLivedWorkerMs;
+    this.configuredVramLimitMB = configuredVramLimitMB;
+    this.checkpointBytes = checkpointBytes;
     this.artifactResidencyLedger = options.artifactResidencyLedger;
     this.artifactResidencyLedger?.assertCompatibleSegments(options.segments);
   }
