@@ -121,6 +121,12 @@ describe('SmolLM2 P0 manifest provenance contract', () => {
     expect(() => validateSmolLm2P0Manifest(wrongGeometry)).toThrow(/runtimeHints\.kvHeads mismatch/);
   });
 
+  it('rejects duplicate boundary tensor names before execution', () => {
+    const manifest = validManifest();
+    manifest.boundary.tensors[1].name = manifest.boundary.tensors[0].name;
+    expect(() => validateSmolLm2P0Manifest(manifest)).toThrow(/duplicate tensor name/);
+  });
+
   it('rejects policy relaxation and budget-report drift', () => {
     const relaxed = validManifest();
     relaxed.browserArtifactBudget.requiredTier = 'absolute';
