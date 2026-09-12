@@ -451,8 +451,8 @@ function requireSha256(value: unknown, path: string): string {
 }
 
 function requireNonNegativeInteger(value: unknown, path: string): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-    throw new Error(`${path} must be a non-negative integer`);
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${path} must be a safe non-negative integer`);
   }
   return value;
 }
