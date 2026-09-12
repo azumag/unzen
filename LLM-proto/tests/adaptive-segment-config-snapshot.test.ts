@@ -26,7 +26,7 @@ describe('AdaptiveChunkDispatcher segment configuration ownership', () => {
       configuredVramLimitMB: 4200,
     });
 
-    segments[0].estimatedVramMB = Number.NaN;
+    (segments[0] as { estimatedVramMB: number }).estimatedVramMB = Number.NaN;
     segments.push({
       index: 2,
       layerStart: 16,
