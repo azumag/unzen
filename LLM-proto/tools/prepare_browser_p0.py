@@ -86,10 +86,49 @@ def verify_pinned_source_external_data(manifest: dict[str, object]) -> None:
 
 
 def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
-    graph_path = output_dir / str(segment["path"])
+    graph_name = segment.get("path")
+    if not isinstance(graph_name, str) or not graph_name:
+        raise RuntimeError("generated P0 segment path must be a non-empty string")
+    graph_path = output_dir / graph_name
+    if not graph_path.is_file():
+        raise RuntimeError(f"generated P0 segment graph is missing: {graph_path}")
+
     total = graph_path.stat().st_size
-    for entry in segment.get("externalData", []):
-        total += int(entry["bytes"])
+    external_entries = segment.get("externalData", [])
+    if not isinstance(external_entries, list):
+        raise RuntimeError("generated P0 segment externalData must be a list")
+
+    for index, raw_entry in enumerate(external_entries):
+        if not isinstance(raw_entry, dict):
+            raise RuntimeError(f"generated P0 externalData[{index}] must be an object")
+        location = raw_entry.get("location")
+        if not isinstance(location, str) or not location:
+            raise RuntimeError(
+                f"generated P0 externalData[{index}].location must be a non-empty string"
+            )
+        declared_bytes = raw_entry.get("bytes")
+        if (
+            isinstance(declared_bytes, bool)
+            or not isinstance(declared_bytes, int)
+            or declared_bytes < 0
+        ):
+            raise RuntimeError(
+                f"generated P0 externalData[{index}].bytes must be a non-negative integer"
+            )
+
+        external_path = output_dir / location
+        if not external_path.is_file():
+            raise RuntimeError(f"generated P0 external-data file is missing: {external_path}")
+        observed_bytes = external_path.stat().st_size
+        if observed_bytes != declared_bytes:
+            raise RuntimeError(
+                "generated P0 external-data byte size drifted from manifest: "
+                f"location={location}, declared={declared_bytes}, observed={observed_bytes}"
+            )
+        total += observed_bytes
+
+    if total <= 0:
+        raise RuntimeError("generated P0 segment artifact must contain at least one byte")
     return total
 
 
