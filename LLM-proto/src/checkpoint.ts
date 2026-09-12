@@ -16,7 +16,15 @@ export class CheckpointStore {
   /** Exact request identity -> segment index -> checkpoint. */
   private readonly store = new Map<InferenceRequestId, Map<number, Checkpoint>>();
 
+  private static assertValidRequestId(requestId: unknown): asserts requestId is InferenceRequestId {
+    if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+      throw new Error('checkpoint requestId must be a non-empty string');
+    }
+  }
+
   private static assertValidCheckpoint(checkpoint: Checkpoint): void {
+    CheckpointStore.assertValidRequestId(checkpoint.requestId);
+
     if (!Number.isSafeInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
       throw new Error(
         `checkpoint segmentIndex must be a non-negative safe integer; ` +
@@ -86,6 +94,7 @@ export class CheckpointStore {
 
   /** Retrieve a specific checkpoint by request and segment index. */
   get(requestId: InferenceRequestId, segmentIndex: number): Checkpoint | undefined {
+    CheckpointStore.assertValidRequestId(requestId);
     const checkpoint = this.store.get(requestId)?.get(segmentIndex);
     return checkpoint ? CheckpointStore.snapshot(checkpoint) : undefined;
   }
@@ -101,6 +110,7 @@ export class CheckpointStore {
     requestId: InferenceRequestId,
     atOrBeforeSegmentIndex = Number.MAX_SAFE_INTEGER,
   ): Checkpoint | undefined {
+    CheckpointStore.assertValidRequestId(requestId);
     if (!Number.isSafeInteger(atOrBeforeSegmentIndex)) {
       throw new Error(
         `atOrBeforeSegmentIndex must be a safe integer; found ${atOrBeforeSegmentIndex}`,
@@ -123,6 +133,7 @@ export class CheckpointStore {
 
   /** Delete all checkpoints for exactly one completed or failed request. */
   deleteAll(requestId: InferenceRequestId): void {
+    CheckpointStore.assertValidRequestId(requestId);
     this.store.delete(requestId);
   }
 
