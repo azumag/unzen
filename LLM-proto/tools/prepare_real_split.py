@@ -225,15 +225,27 @@ def repack_segment_external_data(
 
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
+    source_keys: dict[Path, str] = {}
     try:
         # Open and size-check every source before the destination exists or is
         # truncated. Missing/unreadable/truncated inputs therefore fail without
-        # leaving a misleading partial repack artifact behind.
+        # leaving a misleading partial repack artifact behind. Resolve each
+        # lexical source path once and pin later copies to the descriptor opened
+        # for that identity instead of re-following a mutable symlink path.
         for _, _, source_path, source_offset, length in prepared:
-            source_key = str(source_path.resolve())
+            source_key = source_keys.get(source_path)
+            if source_key is None:
+                resolved_source = source_path.resolve()
+                if _paths_alias(output_data_path, resolved_source):
+                    raise ValueError(
+                        "output external-data path aliases source external-data: "
+                        f"output={output_data_path}, source={resolved_source}"
+                    )
+                source_key = str(resolved_source)
+                source_keys[source_path] = source_key
             source = open_sources.get(source_key)
             if source is None:
-                source = source_path.open("rb")
+                source = Path(source_key).open("rb")
                 open_sources[source_key] = source
             file_size = os.fstat(source.fileno()).st_size
             if source_offset + length > file_size:
@@ -249,7 +261,7 @@ def repack_segment_external_data(
                 destination_offset = range_offsets.get(key)
                 if destination_offset is None:
                     destination_offset = destination.tell()
-                    source_key = str(source_path.resolve())
+                    source_key = source_keys[source_path]
                     source = open_sources[source_key]
                     _copy_range(source, destination, source_offset, length)
                     range_offsets[key] = destination_offset
