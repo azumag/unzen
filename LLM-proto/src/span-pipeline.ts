@@ -31,15 +31,24 @@ import type { SpanAssignment, SpanResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
 import { SpanRouter, type Route, type Span } from './span-router.js';
-import { withTimeout, delay } from './pipeline-utils.js';
+import { withAbortableTimeout, delay } from './pipeline-utils.js';
+import { SegmentTimeoutError } from './errors.js';
 
 /**
  * Executes a span of contiguous segments on a single browser worker.
  * The worker keeps hidden states in GPU memory between segments within the span,
  * only producing a checkpoint after the last segment.
+ *
+ * `signal` is aborted when the span timeout elapses. Implementations should stop
+ * transport/GPU work cooperatively so a disconnected worker does not keep an
+ * orphaned span running after the coordinator has moved on.
  */
 export interface SpanExecutor {
-  execute(workerId: WorkerId, assignment: SpanAssignment): Promise<SpanResult>;
+  execute(
+    workerId: WorkerId,
+    assignment: SpanAssignment,
+    signal?: AbortSignal,
+  ): Promise<SpanResult>;
 }
 
 export interface SpanPipelineOptions {
@@ -363,7 +372,16 @@ export class SpanPipeline {
     timeoutMs: number,
   ): Promise<SpanResult> {
     const label = `Span [${assignment.segments[0].index}-${assignment.segments[assignment.segments.length - 1].index}]`;
-    return withTimeout(this.executor.execute(workerId, assignment), timeoutMs, label);
+    return withAbortableTimeout(
+      (signal) => this.executor.execute(workerId, assignment, signal),
+      timeoutMs,
+      label,
+    ).catch((error: unknown) => {
+      if (error instanceof SegmentTimeoutError) {
+        throw new SegmentTimeoutError(`${label} timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    });
   }
 }
 
