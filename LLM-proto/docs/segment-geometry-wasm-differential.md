@@ -27,15 +27,25 @@ Binary identity:
 
 ## Responsibility boundary
 
-JavaScript remains responsible for JSON/object parsing and numeric-domain preflight. Before calling Wasm, all geometry integers must satisfy:
+The production JavaScript validator admits topology values only when integer identity is exact in JavaScript:
 
 ```text
 Number.isSafeInteger(value)
+0 <= segment.index
+0 <= layerStart <= layerEnd
+1 <= totalLayers
+```
+
+Contiguity (`previous.layerEnd + 1`) and completeness (`totalLayers - 1`) arithmetic runs only after every topology value has passed that safe-integer gate. This avoids precision-collapse cases above `Number.MAX_SAFE_INTEGER`, where distinct mathematical layer numbers can become the same JavaScript `number` (for example, an unsafe `x` can satisfy `x + 1 === x`). Such inputs fail closed before topology arithmetic.
+
+The Wasm differential worker deliberately uses a narrower execution domain. Before calling Wasm, all geometry integers must additionally satisfy:
+
+```text
 0 <= value <= 2_147_483_647
 1 <= totalLayers <= 2_147_483_647
 ```
 
-Values outside that domain fail closed **before** the Wasm function runs. This avoids silently applying WebAssembly i32 wraparound to JavaScript numbers. `NaN`, `Infinity`, strings, missing fields, artifact metadata, locators, digests, signatures, and other structural validation remain entirely in the existing JavaScript validator.
+Values outside that Wasm-specific domain fail closed **before** the Wasm function runs. This avoids silently applying WebAssembly i32 wraparound to JavaScript numbers. `NaN`, `Infinity`, strings, missing fields, artifact metadata, locators, digests, signatures, and other structural validation remain entirely in the existing JavaScript validator.
 
 Within the admitted numeric domain, the Wasm function returns compact deterministic reason codes:
 
@@ -67,6 +77,8 @@ Input segment order is not semantically meaningful: JavaScript sorts by `index` 
 - explicit pre-Wasm rejection outside the chosen numeric domain
 - structural malformed values retained on the JavaScript side
 - deterministic seeded integer vectors to detect JS/Wasm drift
+
+`tests/model-manifest-validator.test.ts` separately pins the production JavaScript numeric trust boundary, including unsafe `totalLayers`, segment indexes, range endpoints, and the precision-collapse adjacency case where `x + 1 === x`.
 
 The test also pins every Wasm reason branch and the binary SHA-256. Any parity mismatch fails CI.
 

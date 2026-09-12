@@ -98,6 +98,96 @@ describe('validateModelManifestShape (sync fail-fast structural checks)', () => 
     expect(codes(result)).toContain('missing-segment-index');
   });
 
+  it('rejects unsafe-integer totalLayers before completeness arithmetic', () => {
+    const result = validateModelManifestShape({
+      ...createFixtureModelManifest(),
+      totalLayers: Number.MAX_SAFE_INTEGER + 1,
+    });
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-model-metadata',
+          path: '$.totalLayers',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects unsafe-integer segment indexes', () => {
+    const manifest = createFixtureModelManifest();
+    const result = validateModelManifestShape({
+      ...manifest,
+      segments: manifest.segments.map((segment, index) =>
+        index === 2 ? { ...segment, index: Number.MAX_SAFE_INTEGER + 1 } : segment,
+      ),
+    });
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-manifest',
+          path: '$.segments[2].index',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects unsafe-integer layer range endpoints', () => {
+    const manifest = createFixtureModelManifest();
+    const unsafeInteger = Number.MAX_SAFE_INTEGER + 1;
+    const result = validateModelManifestShape({
+      ...manifest,
+      segments: manifest.segments.map((segment, index) => {
+        if (index === 2) return { ...segment, layerStart: unsafeInteger };
+        if (index === 3) return { ...segment, layerEnd: unsafeInteger };
+        return segment;
+      }),
+    });
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-layer-range',
+          path: '$.segments[2].layerStart',
+        }),
+        expect.objectContaining({
+          code: 'invalid-layer-range',
+          path: '$.segments[3].layerEnd',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects the unsafe adjacency case where x + 1 collapses to x', () => {
+    const manifest = createFixtureModelManifest();
+    const unsafeBoundary = Number.MAX_SAFE_INTEGER + 1;
+    expect(unsafeBoundary + 1).toBe(unsafeBoundary);
+
+    const result = validateModelManifestShape({
+      ...manifest,
+      segments: manifest.segments.map((segment, index) => {
+        if (index === 0) return { ...segment, layerEnd: unsafeBoundary };
+        if (index === 1) return { ...segment, layerStart: unsafeBoundary };
+        return segment;
+      }),
+    });
+
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-layer-range',
+          path: '$.segments[0].layerEnd',
+        }),
+        expect.objectContaining({
+          code: 'invalid-layer-range',
+          path: '$.segments[1].layerStart',
+        }),
+      ]),
+    );
+  });
+
   it('rejects placeholder artifact hashes such as sha256:segment-0', () => {
     const manifest = createFixtureModelManifest();
     const result = validateModelManifestShape({
