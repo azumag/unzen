@@ -147,6 +147,17 @@ describe('WorkerPool', () => {
       expect(worker?.id).toBe(workerId('w1'));
     });
 
+    it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'should reject invalid required VRAM %s instead of selecting a worker',
+      (requiredVramMB) => {
+        pool.register(makeRegistration('w1', WorkerTier.TIER_1, 8192));
+        expect(() => pool.getAvailableWorker(requiredVramMB)).toThrow(
+          /requiredVramMB must be a positive finite number/,
+        );
+        expect(pool.get(workerId('w1'))?.status).toBe(WorkerStatus.IDLE);
+      },
+    );
+
     it('should prefer Tier 1 over Tier 2 over Tier 3', () => {
       pool.register(makeRegistration('w3', WorkerTier.TIER_3, 4096));
       pool.register(makeRegistration('w1', WorkerTier.TIER_1, 4096));

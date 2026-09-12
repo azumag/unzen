@@ -192,6 +192,17 @@ describe('WorkerRegistry', () => {
     expect(next?.workerId).toBe(workerId('t2'));
   });
 
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects invalid required VRAM %s before durable worker selection',
+    (requiredVramMB) => {
+      registry.register(registration('big', WorkerTier.TIER_1, 8192), 'c1');
+      expect(() => registry.getAvailableWorker(requiredVramMB)).toThrow(
+        /requiredVramMB must be a positive finite number/,
+      );
+      expect(registry.get(workerId('big'))?.stage).toBe(WorkerStage.Idle);
+    },
+  );
+
   it('returns undefined when no worker has enough VRAM or all are busy', () => {
     registry.register(registration('low', WorkerTier.TIER_3, 1024), 'c1');
     expect(registry.getAvailableWorker(2100)).toBeUndefined();

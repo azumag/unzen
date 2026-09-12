@@ -59,6 +59,8 @@ export class WorkerPool {
    * Returns null if no suitable worker is available.
    */
   getAvailableWorker(requiredVramMB: number): WorkerInfo | null {
+    this.assertValidVramRequirement(requiredVramMB);
+
     let best: WorkerInfo | null = null;
 
     for (const worker of this.workers.values()) {
@@ -169,6 +171,15 @@ export class WorkerPool {
     if (!Number.isFinite(registration.vramMB) || registration.vramMB <= 0) {
       throw new Error(
         `worker vramMB must be a positive finite number; found ${String(registration.vramMB)}`,
+      );
+    }
+  }
+
+  /** Fail closed before JavaScript comparison semantics can turn NaN into a routing match. */
+  private assertValidVramRequirement(requiredVramMB: number): void {
+    if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
+      throw new Error(
+        `requiredVramMB must be a positive finite number; found ${String(requiredVramMB)}`,
       );
     }
   }

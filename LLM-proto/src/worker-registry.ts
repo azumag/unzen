@@ -151,6 +151,8 @@ export class WorkerRegistry {
    * legacy WorkerPool selection so behavior stays consistent.
    */
   getAvailableWorker(requiredVramMB: number): WorkerRecord | undefined {
+    this.assertValidVramRequirement(requiredVramMB);
+
     let best: WorkerRecord | undefined;
     for (const worker of this.store.listWorkers()) {
       if (worker.stage !== WorkerStageValue.Idle) continue;
@@ -253,6 +255,15 @@ export class WorkerRegistry {
 
     if (typeof connectionId !== 'string' || connectionId.trim().length === 0) {
       throw new Error('connectionId must be a non-empty string');
+    }
+  }
+
+  /** Fail closed before JavaScript comparison semantics can turn NaN into a routing match. */
+  private assertValidVramRequirement(requiredVramMB: number): void {
+    if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
+      throw new Error(
+        `requiredVramMB must be a positive finite number; found ${String(requiredVramMB)}`,
+      );
     }
   }
 
