@@ -7,6 +7,7 @@ import {
   serializeCheckpointPayload,
   type CheckpointTransferMeasurementManifest,
 } from '../src/checkpoint-transfer-measurement.js';
+import type { Checkpoint } from '../src/types.js';
 
 function createSerializedFrame(header: unknown, payloadBytes = 0): Uint8Array {
   const encodedHeader = new TextEncoder().encode(JSON.stringify(header));
@@ -53,6 +54,63 @@ describe('checkpoint serialization and transfer measurement gate', () => {
     expect(restored.metadata).toEqual(checkpoint.metadata);
     expect(restored.hiddenStates.byteLength).toBe(checkpoint.hiddenStates.byteLength);
     expect([...restored.hiddenStates.slice(0, 8)]).toEqual([...checkpoint.hiddenStates.slice(0, 8)]);
+  });
+
+  it('rejects malformed outbound checkpoint indexes before header encoding', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const checkpoint = createCheckpointPayload({
+      ...base,
+      tensor: {
+        batchSize: 1,
+        sequenceLength: 2,
+        hiddenSize: 3,
+        dtype: 'int8',
+      },
+    });
+
+    expect(() => serializeCheckpointPayload({
+      ...checkpoint,
+      segmentIndex: Number.MAX_SAFE_INTEGER + 1,
+    })).toThrow('serialized checkpoint segmentIndex must be a non-negative safe integer');
+  });
+
+  it('rejects outbound hidden states that are not Uint8Array', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const checkpoint = createCheckpointPayload({
+      ...base,
+      tensor: {
+        batchSize: 1,
+        sequenceLength: 2,
+        hiddenSize: 3,
+        dtype: 'int8',
+      },
+    });
+    const malformed = {
+      ...checkpoint,
+      hiddenStates: [1, 2, 3, 4, 5, 6],
+    } as unknown as Checkpoint;
+
+    expect(() => serializeCheckpointPayload(malformed)).toThrow(
+      'checkpoint hiddenStates must be a Uint8Array',
+    );
+  });
+
+  it('rejects outbound payload bytes that disagree with metadata shape and dtype', () => {
+    const base = createDefaultCheckpointMeasurementManifest();
+    const checkpoint = createCheckpointPayload({
+      ...base,
+      tensor: {
+        batchSize: 1,
+        sequenceLength: 2,
+        hiddenSize: 3,
+        dtype: 'int8',
+      },
+    });
+
+    expect(() => serializeCheckpointPayload({
+      ...checkpoint,
+      hiddenStates: new Uint8Array(5),
+    })).toThrow('checkpoint payload length mismatch: expected 6, got 5');
   });
 
   it('returns a failure reason when coordinator transfer is over the scale-up budget', () => {
