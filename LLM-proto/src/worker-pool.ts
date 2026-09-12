@@ -13,9 +13,8 @@
 import {
   type WorkerId,
   type WorkerInfo,
-  type WorkerTier,
   WorkerStatus,
-  WorkerTier as WorkerTierValue,
+  WorkerTier,
 } from './types.js';
 import type { WorkerRegistration } from './protocol.js';
 
@@ -160,9 +159,9 @@ export class WorkerPool {
     }
 
     if (
-      registration.tier !== WorkerTierValue.TIER_1 &&
-      registration.tier !== WorkerTierValue.TIER_2 &&
-      registration.tier !== WorkerTierValue.TIER_3
+      registration.tier !== WorkerTier.TIER_1 &&
+      registration.tier !== WorkerTier.TIER_2 &&
+      registration.tier !== WorkerTier.TIER_3
     ) {
       throw new Error(`worker tier must be 1, 2, or 3; found ${String(registration.tier)}`);
     }
