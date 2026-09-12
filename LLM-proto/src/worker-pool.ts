@@ -15,6 +15,7 @@ import {
   type WorkerInfo,
   type WorkerTier,
   WorkerStatus,
+  WorkerTier as WorkerTierValue,
 } from './types.js';
 import type { WorkerRegistration } from './protocol.js';
 
@@ -23,6 +24,8 @@ export class WorkerPool {
 
   /** Register a new worker. Returns the created WorkerInfo. */
   register(registration: WorkerRegistration): WorkerInfo {
+    this.assertValidRegistration(registration);
+
     const info: WorkerInfo = {
       id: registration.workerId,
       tier: registration.tier,
@@ -142,5 +145,32 @@ export class WorkerPool {
   /** Iterate over all registered workers. Used by SpanRouter for routing decisions. */
   allWorkers(): IterableIterator<WorkerInfo> {
     return this.workers.values();
+  }
+
+  /**
+   * Fail closed at the legacy wire-protocol boundary before a worker can affect
+   * routing state. TypeScript types do not protect runtime WebSocket payloads.
+   */
+  private assertValidRegistration(registration: WorkerRegistration): void {
+    if (
+      typeof registration.workerId !== 'string' ||
+      registration.workerId.trim().length === 0
+    ) {
+      throw new Error('workerId must be a non-empty string');
+    }
+
+    if (
+      registration.tier !== WorkerTierValue.TIER_1 &&
+      registration.tier !== WorkerTierValue.TIER_2 &&
+      registration.tier !== WorkerTierValue.TIER_3
+    ) {
+      throw new Error(`worker tier must be 1, 2, or 3; found ${String(registration.tier)}`);
+    }
+
+    if (!Number.isFinite(registration.vramMB) || registration.vramMB <= 0) {
+      throw new Error(
+        `worker vramMB must be a positive finite number; found ${String(registration.vramMB)}`,
+      );
+    }
   }
 }
