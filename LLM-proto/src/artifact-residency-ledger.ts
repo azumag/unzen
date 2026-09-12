@@ -338,11 +338,8 @@ function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentAr
   if (typeof artifact.contentType !== 'string' || artifact.contentType.trim().length === 0) {
     throw new Error(`segment ${artifact.index} contentType must be non-empty`);
   }
-  if (
-    artifact.encoding !== undefined &&
-    (typeof artifact.encoding !== 'string' || artifact.encoding.trim().length === 0)
-  ) {
-    throw new Error(`segment ${artifact.index} encoding must be a non-empty string when present`);
+  if (artifact.encoding !== undefined && typeof artifact.encoding !== 'string') {
+    throw new Error(`segment ${artifact.index} encoding must be a string when present`);
   }
   if (
     typeof artifact.artifactLocator !== 'string' ||
@@ -367,12 +364,9 @@ function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentAr
   }
   if (
     artifact.measurementConditions !== undefined &&
-    (typeof artifact.measurementConditions !== 'string' ||
-      artifact.measurementConditions.trim().length === 0)
+    typeof artifact.measurementConditions !== 'string'
   ) {
-    throw new Error(
-      `segment ${artifact.index} measurementConditions must be a non-empty string when present`,
-    );
+    throw new Error(`segment ${artifact.index} measurementConditions must be a string when present`);
   }
   if (
     !Array.isArray(artifact.compatibleRuntimes) ||
