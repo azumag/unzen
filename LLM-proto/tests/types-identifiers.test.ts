@@ -18,4 +18,40 @@ describe('branded identifier constructors', () => {
       /inferenceRequestId must be a non-empty string/,
     );
   });
+
+  it('rejects non-string runtime worker identifiers before branding', () => {
+    const malformedValues: readonly unknown[] = [
+      null,
+      undefined,
+      123,
+      true,
+      [],
+      {},
+      Symbol('worker'),
+      { trim: () => 'spoofed-worker' },
+    ];
+
+    for (const value of malformedValues) {
+      expect(() => workerId(value as string)).toThrow(/workerId must be a non-empty string/);
+    }
+  });
+
+  it('rejects non-string runtime request identifiers before branding', () => {
+    const malformedValues: readonly unknown[] = [
+      null,
+      undefined,
+      123,
+      false,
+      [],
+      {},
+      Symbol('request'),
+      { trim: () => 'spoofed-request' },
+    ];
+
+    for (const value of malformedValues) {
+      expect(() => inferenceRequestId(value as string)).toThrow(
+        /inferenceRequestId must be a non-empty string/,
+      );
+    }
+  });
 });
