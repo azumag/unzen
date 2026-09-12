@@ -108,6 +108,21 @@ describe('WorkerCapability runtime validation', () => {
     expect(result.issues.map((issue) => issue.code)).toContain('invalid-context-window');
   });
 
+  it('rejects an unsafe-integer context window', () => {
+    const result = validateWorkerCapability(
+      createFullModelCapability({ contextWindowTokens: Number.MAX_SAFE_INTEGER + 1 }),
+    );
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-context-window',
+          path: '$.contextWindowTokens',
+        }),
+      ]),
+    );
+  });
+
   it('rejects context usage above the context window', () => {
     const result = validateWorkerCapability(
       createFullModelCapability({ currentContextUsageTokens: 5000 }),
@@ -120,6 +135,36 @@ describe('WorkerCapability runtime validation', () => {
       createFullModelCapability({ currentContextUsageTokens: 128 }),
     );
     expect(result.status).toBe('valid');
+  });
+
+  it('rejects unsafe-integer current context usage', () => {
+    const result = validateWorkerCapability(
+      createFullModelCapability({ currentContextUsageTokens: Number.MAX_SAFE_INTEGER + 1 }),
+    );
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-context-window',
+          path: '$.currentContextUsageTokens',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects unsafe-integer max concurrency', () => {
+    const result = validateWorkerCapability(
+      createFullModelCapability({ maxConcurrency: Number.MAX_SAFE_INTEGER + 1 }),
+    );
+    expect(result.status).toBe('invalid');
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-max-concurrency',
+          path: '$.maxConcurrency',
+        }),
+      ]),
+    );
   });
 
   it('rejects an invalid browser-managed model download state', () => {
