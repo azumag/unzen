@@ -187,8 +187,18 @@ describe('ArtifactResidencyLedger', () => {
         pattern: /role must be graph or external-data/,
       },
       {
+        name: 'non-string role',
+        components: [{ ...base[0], role: 7 as unknown as SegmentArtifactComponent['role'] }, base[1]],
+        pattern: /role must be graph or external-data/,
+      },
+      {
         name: 'empty path',
         components: [{ ...base[0], path: '   ' }, base[1]],
+        pattern: /path must be non-empty/,
+      },
+      {
+        name: 'non-string path',
+        components: [{ ...base[0], path: 7 as unknown as string }, base[1]],
         pattern: /path must be non-empty/,
       },
       {
@@ -197,13 +207,28 @@ describe('ArtifactResidencyLedger', () => {
         pattern: /sha256 must be exactly 64 lowercase hexadecimal/,
       },
       {
+        name: 'non-string digest',
+        components: [{ ...base[0], sha256: 7 as unknown as string }, base[1]],
+        pattern: /sha256 must be exactly 64 lowercase hexadecimal/,
+      },
+      {
         name: 'empty content type',
         components: [{ ...base[0], contentType: '   ' }, base[1]],
         pattern: /contentType must be non-empty/,
       },
       {
+        name: 'non-string content type',
+        components: [{ ...base[0], contentType: 7 as unknown as string }, base[1]],
+        pattern: /contentType must be non-empty/,
+      },
+      {
         name: 'empty locator',
         components: [{ ...base[0], artifactLocator: '   ' }, base[1]],
+        pattern: /artifactLocator must be non-empty/,
+      },
+      {
+        name: 'non-string locator',
+        components: [{ ...base[0], artifactLocator: 7 as unknown as string }, base[1]],
         pattern: /artifactLocator must be non-empty/,
       },
     ];
