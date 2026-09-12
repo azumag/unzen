@@ -46,6 +46,13 @@ Manifest requirements:
 - optional expected byte counts are positive safe integers; optional expected
   transfer time is finite and non-negative.
 
+Derived timing arithmetic is also bounded. Duration estimates must resolve to
+non-negative JavaScript safe integers, and Coordinator attempt counts, repeated
+transfer durations, retry-backoff totals, and their final sum use checked
+addition/multiplication. A syntactically valid manifest therefore cannot produce
+an `Infinity` or precision-lost timing report merely through extreme but valid
+numeric inputs.
+
 Serialized checkpoint requirements:
 
 - the frame contains the four-byte little-endian header-length prefix;
