@@ -118,9 +118,12 @@ describe('WorkerRegistry', () => {
     expect(second.kind).toBe('reconnected');
     expect(second.previousGeneration).toBe(first.generation);
     expect(second.generation).not.toBe(first.generation);
+    // Old generation is explicitly revoked, not silently overwritten.
     const record = registry.get(workerId('w1'));
     expect(record?.generation).toBe(second.generation);
     expect(record?.revokedAt).toBeUndefined();
+    // The previous generation's record is retained but marked revoked so its
+    // leases can be reclaimed and late results traced to it.
     const revoked = registry.getByGeneration(first.generation);
     expect(revoked?.stage).toBe(WorkerStage.Revoked);
     expect(revoked?.revokedAt).toBeDefined();
@@ -150,6 +153,7 @@ describe('WorkerRegistry', () => {
     registry.markDisconnected(workerId('w1'), first.generation);
     expect(registry.get(workerId('w1'))?.stage).toBe(WorkerStage.Disconnected);
 
+    // A heartbeat carrying a stale generation must not revive the worker.
     expect(() => registry.heartbeat(workerId('w1'), generateWorkerGeneration()))
       .toThrow(StaleGenerationError);
     expect(registry.get(workerId('w1'))?.stage).toBe(WorkerStage.Disconnected);
@@ -157,7 +161,10 @@ describe('WorkerRegistry', () => {
 
   it('heartbeat against a revoked generation throws and never revives', () => {
     const first = registry.register(registration('w1'), 'conn-1');
-    registry.register(registration('w1'), 'conn-2');
+    registry.register(registration('w1'), 'conn-2'); // revokes generation 1
+    // Find the revoked generation record state: register overwrote the map.
+    // Re-registering on conn-2 replaced conn-1's generation entirely, so a
+    // heartbeat for the old generation is now stale.
     expect(() => registry.heartbeat(workerId('w1'), first.generation))
       .toThrow(StaleGenerationError);
   });
@@ -243,6 +250,7 @@ describe('WorkerRegistry', () => {
   });
 
   it('WorkerStage values cover the storage enum', () => {
+    // Guards against a staging typo silently changing registry semantics.
     expect(WorkerStage.Idle).toBe('idle');
     expect(WorkerStage.Busy).toBe('busy');
     expect(WorkerStage.Disconnected).toBe('disconnected');
