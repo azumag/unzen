@@ -205,7 +205,8 @@ export class WorkerRegistry {
     for (const worker of this.store.listWorkers()) {
       if (worker.generation === generation) return worker;
     }
-    return this.revokedGenerations.get(generation);
+    const revoked = this.revokedGenerations.get(generation);
+    return revoked === undefined ? undefined : { ...revoked };
   }
 
   get(workerId: WorkerId): WorkerRecord | undefined {
@@ -275,7 +276,11 @@ export class WorkerRegistry {
   private revoke(record: WorkerRecord, now: number): void {
     record.stage = WorkerStageValue.Revoked;
     record.revokedAt = now;
-    this.revokedGenerations.set(record.generation, record);
+    // DurableObjectRepository returns write-through proxies for active worker
+    // records. Never retain that proxy after the active key is deleted/reused
+    // by a replacement generation: an archived mutation could otherwise write
+    // through to the new generation at the same worker key.
+    this.revokedGenerations.set(record.generation, { ...record });
     this.store.deleteWorker(record.workerId);
   }
 }
