@@ -12,7 +12,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import BinaryIO
 
 import onnx
@@ -22,6 +23,8 @@ from split_llama_1b_onnx import check_model_for_runtime, sha256_file, split_mode
 
 
 COPY_CHUNK_BYTES = 8 * 1024 * 1024
+WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
+WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 
 
 def _external_metadata(initializer: TensorProto) -> dict[str, str]:
@@ -58,6 +61,37 @@ def _copy_range(source: BinaryIO, destination: BinaryIO, offset: int, length: in
         remaining -= len(chunk)
 
 
+def _unsafe_windows_component(part: str) -> bool:
+    if part.endswith((".", " ")):
+        return True
+    stem = part.split(".", 1)[0].upper()
+    return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
+        WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
+    )
+
+
+def _relative_artifact_path(raw: str, *, field: str) -> Path:
+    """Validate one artifact locator consistently across POSIX and Windows."""
+
+    posix = PurePosixPath(raw)
+    windows = PureWindowsPath(raw)
+    if (
+        not raw
+        or not posix.parts
+        or not windows.parts
+        or posix.is_absolute()
+        or windows.is_absolute()
+        or bool(windows.drive)
+        or bool(windows.root)
+        or ".." in posix.parts
+        or ".." in windows.parts
+        or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
+    ):
+        raise ValueError(f"unsafe {field}: {raw}")
+    return Path(raw)
+
+
 def _paths_alias(left: Path, right: Path) -> bool:
     """Return whether two paths identify the same file without requiring existence.
 
@@ -91,7 +125,17 @@ def repack_segment_external_data(
     if not external:
         return None
 
-    output_data_path = model_path.parent / output_data_name
+    output_location = _relative_artifact_path(
+        output_data_name,
+        field="output external-data location",
+    )
+    output_data_path = model_path.parent / output_location
+    if _paths_alias(output_data_path, model_path):
+        raise ValueError(
+            "output external-data path aliases model graph: "
+            f"output={output_data_path}, model={model_path}"
+        )
+
     prepared: list[tuple[TensorProto, str, Path, int, int]] = []
 
     # Preflight every source range and path identity before opening the
@@ -102,9 +146,10 @@ def repack_segment_external_data(
         location = metadata.get("location")
         if not location:
             raise ValueError(f"external initializer {initializer.name!r} has no location")
-        source_location = Path(location)
-        if source_location.is_absolute() or ".." in source_location.parts:
-            raise ValueError(f"unsafe source external-data location: {location}")
+        source_location = _relative_artifact_path(
+            location,
+            field="source external-data location",
+        )
         if "length" not in metadata:
             raise ValueError(
                 f"external initializer {initializer.name!r} has no length; "
