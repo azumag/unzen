@@ -153,6 +153,114 @@ class RepackSourceAliasSafetyTest(unittest.TestCase):
 
             self.assertEqual(destination.read_bytes(), existing)
 
+    def test_rejects_cross_platform_unsafe_source_locations(self) -> None:
+        unsafe = (
+            "/abs/weights.bin",
+            "../weights.bin",
+            r"C:\weights.bin",
+            r"\\server\share\weights.bin",
+            "CON.bin",
+            "LPT².dat",
+            "weights.",
+            "weights:stream.bin",
+        )
+        for location in unsafe:
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source_dir = root / "source"
+                output_dir = root / "output"
+                source_dir.mkdir()
+                output_dir.mkdir()
+                model_path = output_dir / "segment0.onnx"
+                self._write_external_model(model_path, location)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "unsafe source external-data location",
+                ):
+                    repack_segment_external_data(
+                        model_path,
+                        source_dir,
+                        "segment0.onnx_data",
+                    )
+
+    def test_rejects_cross_platform_unsafe_output_locations(self) -> None:
+        unsafe = (
+            "",
+            "/abs/segment0.onnx_data",
+            "../segment0.onnx_data",
+            r"C:\segment0.onnx_data",
+            r"\\server\share\segment0.onnx_data",
+            "CON.bin",
+            "LPT².dat",
+            "segment0.",
+            "segment0:stream.bin",
+        )
+        for location in unsafe:
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source_dir = root / "source"
+                output_dir = root / "output"
+                source_dir.mkdir()
+                output_dir.mkdir()
+                (source_dir / "weights.bin").write_bytes(struct.pack("<f", 1.0))
+                model_path = output_dir / "segment0.onnx"
+                self._write_external_model(model_path)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "unsafe output external-data location",
+                ):
+                    repack_segment_external_data(model_path, source_dir, location)
+
+    def test_rejects_output_that_aliases_model_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+            (source_dir / "weights.bin").write_bytes(struct.pack("<f", 1.0))
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path)
+            original_model = model_path.read_bytes()
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "output external-data path aliases model graph",
+            ):
+                repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    model_path.name,
+                )
+
+            self.assertEqual(model_path.read_bytes(), original_model)
+
+    def test_allows_nested_relative_source_and_output_locations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            (source_dir / "nested").mkdir(parents=True)
+            (output_dir / "nested").mkdir(parents=True)
+            original = struct.pack("<f", 6.25)
+            (source_dir / "nested" / "weights.bin").write_bytes(original)
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path, "nested/weights.bin")
+
+            result = repack_segment_external_data(
+                model_path,
+                source_dir,
+                "nested/segment0.onnx_data",
+            )
+
+            self.assertIsNotNone(result)
+            self.assertEqual(
+                (output_dir / "nested" / "segment0.onnx_data").read_bytes(),
+                original,
+            )
+
     def test_repacks_to_distinct_destination_without_mutating_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
