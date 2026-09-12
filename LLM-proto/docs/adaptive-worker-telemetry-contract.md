@@ -28,7 +28,7 @@ Tier validation happens before telemetry validation, cache-residency synchroniza
 
 ## Dispatcher numeric configuration
 
-Dispatcher configuration is validated at construction before any worker or routing state exists:
+Dispatcher configuration is validated at construction before any worker or routing state exists. Optional numeric defaults are applied only when the field is omitted or explicitly `undefined`; an explicit `null` is treated as malformed runtime input and reaches the field-specific numeric validator instead of silently selecting a default.
 
 - `loadBudgetRatio` must be finite and inside `(0, 1]`.
 - `longLivedWorkerMs` must be finite and non-negative. Zero is valid and makes every otherwise-eligible worker immediately satisfy the age threshold.
