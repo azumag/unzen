@@ -24,6 +24,42 @@ The default manifest matches the WebGPU 30B gate's `[1, 512, 6656]` float16
 checkpoint tensor. That produces a `6,815,744` byte hidden-state payload and a
 `407ms` transfer estimate at `16 MiB/s`.
 
+## Runtime Input Contract
+
+The measurement harness treats its manifest and serialized checkpoint frame as
+runtime trust boundaries. Invalid values are rejected before allocation or
+timing arithmetic rather than being allowed to become `NaN`, `Infinity`, a
+wrapped precision value, or a misleading measurement.
+
+Manifest requirements:
+
+- `requestId` is a non-empty string.
+- `segmentIndex` is a non-negative JavaScript safe integer.
+- tensor dimensions are positive JavaScript safe integers and `dtype` is one of
+  `float16`, `float32`, or `int8`.
+- tensor element/byte multiplication must remain within
+  `Number.MAX_SAFE_INTEGER` before `Uint8Array` allocation is attempted.
+- serialization/deserialization/Coordinator throughput and `maxTransferMs` are
+  positive finite numbers.
+- retry counts/backoff and simulated failure counts are non-negative JavaScript
+  safe integers.
+- optional expected byte counts are positive safe integers; optional expected
+  transfer time is finite and non-negative.
+
+Serialized checkpoint requirements:
+
+- the frame contains the four-byte little-endian header-length prefix;
+- the declared header length is non-zero and contained by the frame;
+- the header is valid JSON with a non-empty request ID, non-negative safe
+  segment index, and checkpoint metadata object;
+- metadata has exactly three positive safe tensor dimensions, a supported
+  dtype, a `sequenceLength` equal to `shape[1]`, and a non-negative safe integer
+  timestamp;
+- actual payload bytes exactly match the byte count implied by shape and dtype.
+
+These checks are measurement-contract hardening only. They do not authenticate
+the evidence producer or prove a real browser/WebGPU/Coordinator transport.
+
 ## Report Fields
 
 `measureCheckpointSerializationAndTransfer()` returns:
