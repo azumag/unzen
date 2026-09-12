@@ -3,7 +3,7 @@ import {
   AdaptiveChunkDispatcher,
   type WorkerTelemetry,
 } from '../src/adaptive-chunk-dispatcher.js';
-import { WorkerTier } from '../src/types.js';
+import { workerId, WorkerTier } from '../src/types.js';
 import { makeSegments } from './test-helpers.js';
 
 function mutableTelemetry(): WorkerTelemetry & { cacheHits: number[] } {
@@ -31,7 +31,7 @@ describe('AdaptiveChunkDispatcher worker telemetry ownership', () => {
       telemetry,
     });
 
-    const mutable = telemetry as WorkerTelemetry & {
+    const mutable = telemetry as unknown as {
       vramFreeMB: number;
       gpuBusyRatio: number;
       failureRate: number;
@@ -57,9 +57,9 @@ describe('AdaptiveChunkDispatcher worker telemetry ownership', () => {
     });
 
     const heartbeat = mutableTelemetry();
-    dispatcher.updateHeartbeat('heartbeat-snapshot-worker' as never, heartbeat);
+    dispatcher.updateHeartbeat(workerId('heartbeat-snapshot-worker'), heartbeat);
 
-    const mutable = heartbeat as WorkerTelemetry & {
+    const mutable = heartbeat as unknown as {
       vramFreeMB: number;
       cpuBusyRatio: number;
       failureRate: number;
