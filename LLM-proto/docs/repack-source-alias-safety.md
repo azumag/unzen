@@ -8,7 +8,9 @@ Source locations and the requested output location must be cross-platform-safe r
 
 The destination is also compared with the model graph itself. A caller therefore cannot turn the external-data write into an overwrite of the `.onnx` graph.
 
-The source/destination comparison covers normal resolved-path aliases and, when both entries already exist, filesystem identity via `samefile()`. This means a direct same-path destination, a symlink to the source, or an existing hard-link alias is rejected before `wb` can truncate the source blob.
+The source/destination comparison covers normal resolved-path aliases and, when both entries already exist, filesystem identity via `samefile()`. This means a direct same-path destination, a symlink to the source, or an existing hard-link alias is rejected before source bytes are copied.
+
+Destination identity has a separate write-boundary guard. Its resolved parent must remain inside the model directory, an existing destination must not be a symlink, and the final file descriptor must identify a regular file with exactly one hard link. The descriptor is opened without truncation, validated with `fstat()`, and only then truncated through that descriptor. On platforms that expose `O_NOFOLLOW`, the final open also refuses a symlink introduced after the stable-path preflight. Existing ordinary single-link files can still be replaced by a new repack.
 
 The same preflight parses all external-data ranges, opens every unique source file for reading, and validates each declared `offset + length` against the opened file size before any destination write. Missing, unreadable, malformed, or truncated source inputs therefore fail without creating a new destination payload or truncating an existing one. Source descriptors are kept open for the copy and closed on both success and failure.
 
