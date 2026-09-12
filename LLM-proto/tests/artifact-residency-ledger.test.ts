@@ -150,6 +150,22 @@ describe('ArtifactResidencyLedger', () => {
     expect(ledger.totalArtifactBytes).toBe(300);
   });
 
+  it('copies and freezes top-level runtime arrays so caller mutation cannot rewrite inventory', () => {
+    const compatibleRuntimes = ['onnxruntime-web'];
+    const artifact: SegmentArtifact = {
+      ...makeArtifacts([100])[0],
+      compatibleRuntimes,
+    };
+    const ledger = new ArtifactResidencyLedger([artifact]);
+
+    compatibleRuntimes.push('late-runtime');
+
+    const stored = ledger.getArtifact(0);
+    expect(stored.compatibleRuntimes).toEqual(['onnxruntime-web']);
+    expect(Object.isFrozen(stored.compatibleRuntimes)).toBe(true);
+    expect(Object.isFrozen(stored)).toBe(true);
+  });
+
   it('copies and freezes component bundles so caller mutation cannot rewrite inventory', () => {
     const components = makeBundleComponents();
     const ledger = new ArtifactResidencyLedger([makeBundleArtifact(components)]);
@@ -241,6 +257,13 @@ describe('ArtifactResidencyLedger', () => {
     }
   });
 
+  it('rejects non-object bundle components explicitly', () => {
+    expect(() => new ArtifactResidencyLedger([makeBundleArtifact([
+      null as unknown as SegmentArtifactComponent,
+      makeBundleComponents()[1],
+    ])])).toThrow(/component 0 must be an object/);
+  });
+
   it('requires unique component paths and exactly one graph bound to the primary locator', () => {
     const base = makeBundleComponents();
 
@@ -263,6 +286,98 @@ describe('ArtifactResidencyLedger', () => {
       ...makeBundleArtifact(base),
       artifactLocator: 'https://cdn.unzen.local/models/test/not-the-graph.onnx',
     }])).toThrow(/primary artifactLocator must match the graph component locator/);
+  });
+
+  it('rejects malformed container and non-object artifact input before field operations', () => {
+    expect(() => new ArtifactResidencyLedger(
+      {} as unknown as readonly SegmentArtifact[],
+    )).toThrow(/artifacts must be an array/);
+    expect(() => new ArtifactResidencyLedger([
+      null as unknown as SegmentArtifact,
+    ])).toThrow(/segment artifact 0 must be an object/);
+  });
+
+  it('fails closed on malformed top-level artifact fields before sorting or coercion', () => {
+    const base = makeArtifacts([100])[0];
+    const cases: Array<{ name: string; artifact: SegmentArtifact; pattern: RegExp }> = [
+      {
+        name: 'unsafe index',
+        artifact: { ...base, index: Number.MAX_SAFE_INTEGER + 1 },
+        pattern: /index must be a non-negative safe integer/,
+      },
+      {
+        name: 'invalid layer start',
+        artifact: { ...base, layerStart: -1 },
+        pattern: /layerStart must be a non-negative safe integer/,
+      },
+      {
+        name: 'reversed layer range',
+        artifact: { ...base, layerEnd: -1 },
+        pattern: /layerEnd must be a safe integer greater than or equal to layerStart/,
+      },
+      {
+        name: 'non-string digest',
+        artifact: { ...base, sha256: 7 as unknown as string },
+        pattern: /sha256 must be exactly 64 lowercase hexadecimal/,
+      },
+      {
+        name: 'non-string content type',
+        artifact: { ...base, contentType: 7 as unknown as string },
+        pattern: /contentType must be non-empty/,
+      },
+      {
+        name: 'empty encoding',
+        artifact: { ...base, encoding: '   ' },
+        pattern: /encoding must be a non-empty string when present/,
+      },
+      {
+        name: 'non-string locator',
+        artifact: { ...base, artifactLocator: 7 as unknown as string },
+        pattern: /artifactLocator must be non-empty/,
+      },
+      {
+        name: 'non-array components',
+        artifact: { ...base, components: {} as unknown as SegmentArtifactComponent[] },
+        pattern: /components must be an array when present/,
+      },
+      {
+        name: 'non-finite memory',
+        artifact: { ...base, estimatedMemoryMB: Number.NaN },
+        pattern: /estimatedMemoryMB must be a positive finite number/,
+      },
+      {
+        name: 'invalid memory basis',
+        artifact: { ...base, memoryBasis: 'unknown' as SegmentArtifact['memoryBasis'] },
+        pattern: /memoryBasis must be measured, budgeted, or estimated/,
+      },
+      {
+        name: 'invalid measurement conditions',
+        artifact: { ...base, measurementConditions: 7 as unknown as string },
+        pattern: /measurementConditions must be a non-empty string when present/,
+      },
+      {
+        name: 'non-array runtimes',
+        artifact: { ...base, compatibleRuntimes: 'onnxruntime-web' as unknown as string[] },
+        pattern: /compatibleRuntimes must be a non-empty string array/,
+      },
+      {
+        name: 'runtime with non-string element',
+        artifact: { ...base, compatibleRuntimes: [7 as unknown as string] },
+        pattern: /compatibleRuntimes must be a non-empty string array/,
+      },
+      {
+        name: 'non-string runtime version',
+        artifact: { ...base, minimumRuntimeVersion: 7 as unknown as string },
+        pattern: /minimumRuntimeVersion must be non-empty/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(
+        () => new ArtifactResidencyLedger([testCase.artifact]),
+        testCase.name,
+      ).toThrow(testCase.pattern);
+    }
   });
 
   it('fails closed on duplicate indexes and unsafe byte sizes', () => {
