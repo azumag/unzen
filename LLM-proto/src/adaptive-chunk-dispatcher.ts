@@ -1,5 +1,11 @@
 import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
-import { workerId, WorkerTier, type SegmentConfig, type WorkerId } from './types.js';
+import {
+  inferenceRequestId,
+  workerId,
+  WorkerTier,
+  type SegmentConfig,
+  type WorkerId,
+} from './types.js';
 import { AllowlistedPrototypeTransport } from './two-worker-prototype.js';
 
 export interface CachedArtifactIdentity {
@@ -245,6 +251,7 @@ export class AdaptiveChunkDispatcher {
   }
 
   run(requestId = `adaptive-${++this.requestCounter}`): AdaptiveDispatcherRunReport {
+    const validatedRequestId = inferenceRequestId(requestId);
     const transportStartIndex = this.transport.connectionCount;
     const assignments: AdaptiveChunkAssignmentReport[] = [];
     const skippedWorkers: {
@@ -303,7 +310,9 @@ export class AdaptiveChunkDispatcher {
       const coldLoad = !cacheHit && !selected.rollingConsecutive;
       const checkpointTransferMs = this.estimateCheckpointTransferMs(selected.worker.telemetry);
 
-      this.transport.connect(`${this.coordinatorUrl}/adaptive/${requestId}/chunk/${nextSegment}`);
+      this.transport.connect(
+        `${this.coordinatorUrl}/adaptive/${validatedRequestId}/chunk/${nextSegment}`,
+      );
       if (missingArtifacts !== undefined) {
         // Validate every file locator for every logical bundle before committing
         // any cache state. If a later component is rejected, the worker must not
@@ -363,7 +372,7 @@ export class AdaptiveChunkDispatcher {
     }
 
     return {
-      requestId,
+      requestId: validatedRequestId,
       assignments,
       skippedWorkers,
       transport: {

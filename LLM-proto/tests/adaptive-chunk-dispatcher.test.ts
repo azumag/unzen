@@ -231,4 +231,58 @@ describe('AdaptiveChunkDispatcher', () => {
       'https://custom-cdn.unzen.local',
     ]));
   });
+
+  it('rejects malformed request IDs before transport or assignment state changes', () => {
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: makeSegments(1),
+      transport,
+    });
+    dispatcher.registerWorker({
+      id: 'request-boundary-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: baseTelemetry,
+    });
+
+    for (const malformed of ['', '   ', 42, null, {}, Symbol('bad-request')]) {
+      expect(() => dispatcher.run(malformed as unknown as string)).toThrow(
+        /inferenceRequestId must be a non-empty string/,
+      );
+      expect(transport.connectionCount).toBe(0);
+    }
+
+    const report = dispatcher.run('valid-after-rejection');
+    expect(report.requestId).toBe('valid-after-rejection');
+    expect(report.assignments).toHaveLength(1);
+  });
+
+  it('preserves exact non-empty request identity in the run report', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: makeSegments(1),
+    });
+    dispatcher.registerWorker({
+      id: 'padded-request-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: baseTelemetry,
+    });
+
+    const requestId = ' request-with-padding ';
+    expect(dispatcher.run(requestId).requestId).toBe(requestId);
+  });
+
+  it('keeps the generated default request ID contract', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: makeSegments(1),
+    });
+    dispatcher.registerWorker({
+      id: 'generated-request-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: baseTelemetry,
+    });
+
+    expect(dispatcher.run().requestId).toBe('adaptive-1');
+  });
 });
