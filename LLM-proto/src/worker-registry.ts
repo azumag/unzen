@@ -72,6 +72,8 @@ export class WorkerRegistry {
     connectionId: string,
     now = Date.now(),
   ): RegisterWorkerOutcome {
+    this.assertValidRegistration(registration, connectionId);
+
     const existing = this.store.getWorker(registration.workerId);
 
     // Same connection re-registers (e.g. capability refresh): keep the
@@ -216,6 +218,41 @@ export class WorkerRegistry {
 
   get idleCount(): number {
     return this.store.listWorkers().filter((w) => w.stage === WorkerStageValue.Idle).length;
+  }
+
+  /**
+   * Validate the runtime registration envelope before any durable state or
+   * generation ownership can change. TypeScript types do not protect decoded
+   * WebSocket / JSON payloads.
+   */
+  private assertValidRegistration(
+    registration: { readonly workerId: WorkerId; readonly tier: WorkerTier; readonly vramMB: number },
+    connectionId: string,
+  ): void {
+    if (
+      typeof registration.workerId !== 'string' ||
+      registration.workerId.trim().length === 0
+    ) {
+      throw new Error('workerId must be a non-empty string');
+    }
+
+    if (
+      registration.tier !== WorkerTier.TIER_1 &&
+      registration.tier !== WorkerTier.TIER_2 &&
+      registration.tier !== WorkerTier.TIER_3
+    ) {
+      throw new Error(`worker tier must be 1, 2, or 3; found ${String(registration.tier)}`);
+    }
+
+    if (!Number.isFinite(registration.vramMB) || registration.vramMB <= 0) {
+      throw new Error(
+        `worker vramMB must be a positive finite number; found ${String(registration.vramMB)}`,
+      );
+    }
+
+    if (typeof connectionId !== 'string' || connectionId.trim().length === 0) {
+      throw new Error('connectionId must be a non-empty string');
+    }
   }
 
   private buildRecord(
