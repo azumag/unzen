@@ -50,6 +50,71 @@ class BrowserP0BudgetTest(unittest.TestCase):
             self.assertEqual(budget["absoluteMaxBytes"], ABSOLUTE_MAX_BYTES)
             self.assertEqual([item["tier"] for item in budget["segments"]], ["preferred", "preferred"])
 
+    def test_budget_uses_observed_external_data_file_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "segment0.onnx").write_bytes(b"g" * 1024)
+            (root / "segment0.onnx_data").write_bytes(b"w" * 4096)
+            (root / "segment1.onnx").write_bytes(b"g" * 2048)
+            manifest = {
+                "segments": [
+                    {
+                        "index": 0,
+                        "path": "segment0.onnx",
+                        "externalData": [{
+                            "location": "segment0.onnx_data",
+                            "bytes": 4096,
+                        }],
+                    },
+                    {"index": 1, "path": "segment1.onnx", "externalData": []},
+                ]
+            }
+
+            apply_browser_budget(manifest, root)
+
+            self.assertEqual(manifest["segments"][0]["browserArtifactBytes"], 5120)
+            self.assertEqual(
+                manifest["browserArtifactBudget"]["segments"][0]["artifactBytes"],
+                5120,
+            )
+
+    def test_budget_rejects_external_data_size_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "segment0.onnx").write_bytes(b"g" * 1024)
+            (root / "segment0.onnx_data").write_bytes(b"w" * 4096)
+            manifest = {
+                "segments": [{
+                    "index": 0,
+                    "path": "segment0.onnx",
+                    "externalData": [{
+                        "location": "segment0.onnx_data",
+                        "bytes": 2048,
+                    }],
+                }]
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "byte size drifted from manifest"):
+                apply_browser_budget(manifest, root)
+
+    def test_budget_rejects_missing_external_data_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "segment0.onnx").write_bytes(b"g" * 1024)
+            manifest = {
+                "segments": [{
+                    "index": 0,
+                    "path": "segment0.onnx",
+                    "externalData": [{
+                        "location": "segment0.onnx_data",
+                        "bytes": 4096,
+                    }],
+                }]
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "external-data file is missing"):
+                apply_browser_budget(manifest, root)
+
     def test_p0_fails_instead_of_silently_accepting_an_oversized_shard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -74,7 +139,6 @@ class BrowserP0BudgetTest(unittest.TestCase):
             source.write_bytes(b"not-the-pinned-smollm2-graph")
             with self.assertRaisesRegex(RuntimeError, "does not match the pinned artifact"):
                 p0_module.verify_pinned_source_graph(source)
-
 
     def test_p0_external_data_must_match_pinned_digest(self) -> None:
         manifest = {
