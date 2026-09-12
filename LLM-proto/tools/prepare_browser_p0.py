@@ -176,6 +176,7 @@ def apply_browser_budget(
     if require_tier not in TIER_LIMITS:
         raise ValueError(f"unsupported required tier: {require_tier}")
 
+    evaluated_segments: list[tuple[dict[str, object], dict[str, object]]] = []
     segment_reports: list[dict[str, object]] = []
     maximum = 0
     for segment in manifest["segments"]:
@@ -187,8 +188,7 @@ def apply_browser_budget(
             "tier": _tier(byte_size),
             "targetDeltaBytes": byte_size - TARGET_BYTES,
         }
-        segment["browserArtifactBytes"] = byte_size
-        segment["browserArtifactTier"] = report["tier"]
+        evaluated_segments.append((segment, report))
         segment_reports.append(report)
 
     policy = {
@@ -201,7 +201,6 @@ def apply_browser_budget(
         "maximumSegmentArtifactBytes": maximum,
         "segments": segment_reports,
     }
-    manifest["browserArtifactBudget"] = policy
 
     oversized = [
         report
@@ -217,6 +216,13 @@ def apply_browser_budget(
             f"browser artifact budget exceeded for required tier {require_tier}: {detail}; "
             "increase segment count instead of accepting a larger browser shard"
         )
+
+    # Budget annotations are a commit step: callers must never observe a
+    # partially annotated manifest when any segment or policy check fails.
+    for segment, report in evaluated_segments:
+        segment["browserArtifactBytes"] = report["artifactBytes"]
+        segment["browserArtifactTier"] = report["tier"]
+    manifest["browserArtifactBudget"] = policy
     return manifest
 
 
