@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import struct
 import sys
 import tempfile
@@ -237,6 +238,93 @@ class RepackSourceAliasSafetyTest(unittest.TestCase):
 
             self.assertEqual(model_path.read_bytes(), original_model)
 
+    def test_rejects_foreign_destination_symlink_without_mutating_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+            (source_dir / "weights.bin").write_bytes(struct.pack("<f", 1.0))
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path)
+
+            foreign = root / "foreign.bin"
+            original = b"foreign-must-survive"
+            foreign.write_bytes(original)
+            destination = output_dir / "segment0.onnx_data"
+            try:
+                destination.symlink_to(foreign)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation is unavailable on this platform")
+
+            with self.assertRaisesRegex(ValueError, "must not be a symlink"):
+                repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    destination.name,
+                )
+
+            self.assertEqual(foreign.read_bytes(), original)
+
+    def test_rejects_foreign_hard_link_without_mutating_peer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+            (source_dir / "weights.bin").write_bytes(struct.pack("<f", 1.0))
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path)
+
+            foreign = root / "foreign.bin"
+            original = b"linked-peer-must-survive"
+            foreign.write_bytes(original)
+            destination = output_dir / "segment0.onnx_data"
+            try:
+                os.link(foreign, destination)
+            except (OSError, NotImplementedError):
+                self.skipTest("hard-link creation is unavailable on this platform")
+
+            with self.assertRaisesRegex(ValueError, "multiple hard links"):
+                repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    destination.name,
+                )
+
+            self.assertEqual(foreign.read_bytes(), original)
+            self.assertEqual(destination.read_bytes(), original)
+
+    def test_rejects_output_parent_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            foreign_dir = root / "foreign"
+            source_dir.mkdir()
+            output_dir.mkdir()
+            foreign_dir.mkdir()
+            (source_dir / "weights.bin").write_bytes(struct.pack("<f", 1.0))
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path)
+
+            escape = output_dir / "escape"
+            try:
+                escape.symlink_to(foreign_dir, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlink creation is unavailable on this platform")
+
+            with self.assertRaisesRegex(ValueError, "parent escapes model directory"):
+                repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    "escape/segment0.onnx_data",
+                )
+
+            self.assertFalse((foreign_dir / "segment0.onnx_data").exists())
+
     def test_allows_nested_relative_source_and_output_locations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -260,6 +348,28 @@ class RepackSourceAliasSafetyTest(unittest.TestCase):
                 (output_dir / "nested" / "segment0.onnx_data").read_bytes(),
                 original,
             )
+
+    def test_replaces_existing_regular_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+            original = struct.pack("<f", 7.5)
+            (source_dir / "weights.bin").write_bytes(original)
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path)
+            destination = output_dir / "segment0.onnx_data"
+            destination.write_bytes(b"old-destination")
+
+            repack_segment_external_data(
+                model_path,
+                source_dir,
+                destination.name,
+            )
+
+            self.assertEqual(destination.read_bytes(), original)
 
     def test_repacks_to_distinct_destination_without_mutating_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
