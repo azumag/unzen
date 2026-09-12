@@ -231,6 +231,18 @@ describe('WorkerRegistry', () => {
     expect(timedOut.map((w) => w.workerId)).toEqual([workerId('w2')]);
   });
 
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'listTimedOut rejects invalid timeout %s before evaluating durable worker liveness',
+    (timeoutMs) => {
+      registry.register(registration('w1'), 'conn-1');
+      const before = { ...registry.get(workerId('w1'))! };
+      expect(() => registry.listTimedOut(timeoutMs, Date.now() + 20_000)).toThrow(
+        /timeoutMs must be a positive finite number/,
+      );
+      expect(registry.get(workerId('w1'))).toEqual(before);
+    },
+  );
+
   it('persists through the repository (restart survival)', () => {
     registry.register(registration('w1'), 'conn-1');
     const fresh = new WorkerRegistry(repo);

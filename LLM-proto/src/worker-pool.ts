@@ -105,6 +105,8 @@ export class WorkerPool {
    * These should be marked disconnected and their segments reassigned.
    */
   getTimedOutWorkers(timeoutMs: number): WorkerInfo[] {
+    this.assertValidHeartbeatTimeout(timeoutMs);
+
     const now = Date.now();
     const timedOut: WorkerInfo[] = [];
     for (const worker of this.workers.values()) {
@@ -180,6 +182,15 @@ export class WorkerPool {
     if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
       throw new Error(
         `requiredVramMB must be a positive finite number; found ${String(requiredVramMB)}`,
+      );
+    }
+  }
+
+  /** Fail closed before malformed timeout arithmetic can corrupt liveness decisions. */
+  private assertValidHeartbeatTimeout(timeoutMs: number): void {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(
+        `timeoutMs must be a positive finite number; found ${String(timeoutMs)}`,
       );
     }
   }

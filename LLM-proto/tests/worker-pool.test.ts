@@ -215,6 +215,18 @@ describe('WorkerPool', () => {
       expect(timedOut[0].id).toBe(workerId('w1'));
     });
 
+    it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'should reject invalid timeout %s before evaluating worker liveness',
+      (timeoutMs) => {
+        pool.register(makeRegistration('w1'));
+        vi.advanceTimersByTime(20_000);
+        expect(() => pool.getTimedOutWorkers(timeoutMs)).toThrow(
+          /timeoutMs must be a positive finite number/,
+        );
+        expect(pool.get(workerId('w1'))?.status).toBe(WorkerStatus.IDLE);
+      },
+    );
+
     it('should not include already-disconnected workers', () => {
       pool.register(makeRegistration('w1'));
       pool.markDisconnected(workerId('w1'));
