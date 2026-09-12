@@ -57,6 +57,25 @@ def _copy_range(source: BinaryIO, destination: BinaryIO, offset: int, length: in
         remaining -= len(chunk)
 
 
+def _paths_alias(left: Path, right: Path) -> bool:
+    """Return whether two paths identify the same file without requiring existence.
+
+    ``resolve()`` catches lexical and symlink aliases. ``samefile()`` additionally
+    catches hard links when both entries already exist. Errors from the latter are
+    intentionally ignored because the resolved-path comparison remains valid for
+    destinations that have not been created yet.
+    """
+
+    if left.resolve() == right.resolve():
+        return True
+    if left.exists() and right.exists():
+        try:
+            return left.samefile(right)
+        except OSError:
+            pass
+    return False
+
+
 def repack_segment_external_data(
     model_path: Path,
     source_model_dir: Path,
@@ -72,33 +91,53 @@ def repack_segment_external_data(
         return None
 
     output_data_path = model_path.parent / output_data_name
+    prepared: list[tuple[TensorProto, str, Path, int, int]] = []
+
+    # Preflight every source range and path identity before opening the
+    # destination. Opening an aliased destination with ``wb`` would truncate the
+    # source weight blob before the first read, making recovery impossible.
+    for initializer in external:
+        metadata = _external_metadata(initializer)
+        location = metadata.get("location")
+        if not location:
+            raise ValueError(f"external initializer {initializer.name!r} has no location")
+        source_location = Path(location)
+        if source_location.is_absolute() or ".." in source_location.parts:
+            raise ValueError(f"unsafe source external-data location: {location}")
+        if "length" not in metadata:
+            raise ValueError(
+                f"external initializer {initializer.name!r} has no length; "
+                "streaming repack requires explicit ONNX external-data length"
+            )
+        try:
+            source_offset = int(metadata.get("offset", "0"))
+            length = int(metadata["length"])
+        except ValueError as error:
+            raise ValueError(
+                f"external initializer {initializer.name!r} has a non-integer range"
+            ) from error
+        if source_offset < 0 or length < 0:
+            raise ValueError(f"invalid external-data range for {initializer.name!r}")
+
+        source_path = source_model_dir / source_location
+        if _paths_alias(output_data_path, source_path):
+            raise ValueError(
+                "output external-data path aliases source external-data: "
+                f"output={output_data_path}, source={source_path}"
+            )
+        prepared.append(
+            (initializer, location, source_path, source_offset, length)
+        )
+
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
     try:
         with output_data_path.open("wb") as destination:
-            for initializer in external:
-                metadata = _external_metadata(initializer)
-                location = metadata.get("location")
-                if not location:
-                    raise ValueError(f"external initializer {initializer.name!r} has no location")
-                source_location = Path(location)
-                if source_location.is_absolute() or ".." in source_location.parts:
-                    raise ValueError(f"unsafe source external-data location: {location}")
-                if "length" not in metadata:
-                    raise ValueError(
-                        f"external initializer {initializer.name!r} has no length; "
-                        "streaming repack requires explicit ONNX external-data length"
-                    )
-                source_offset = int(metadata.get("offset", "0"))
-                length = int(metadata["length"])
-                if source_offset < 0 or length < 0:
-                    raise ValueError(f"invalid external-data range for {initializer.name!r}")
-
+            for initializer, location, source_path, source_offset, length in prepared:
                 key = (location, source_offset, length)
                 destination_offset = range_offsets.get(key)
                 if destination_offset is None:
                     destination_offset = destination.tell()
-                    source_path = source_model_dir / source_location
                     source_key = str(source_path.resolve())
                     source = open_sources.get(source_key)
                     if source is None:
