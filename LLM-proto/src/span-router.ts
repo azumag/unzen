@@ -43,12 +43,20 @@ interface RankedWorker {
 }
 
 export class SpanRouter {
+  private readonly segments: readonly SegmentConfig[];
+
   constructor(
-    private readonly segments: readonly SegmentConfig[],
+    segments: readonly SegmentConfig[],
     private readonly workerPool: WorkerPool,
     private readonly artifactResidencyLedger?: ArtifactResidencyLedger,
   ) {
-    for (const [arrayIndex, segment] of segments.entries()) {
+    if (!Array.isArray(segments)) {
+      throw new Error('SpanRouter segments must be an array');
+    }
+    const segmentSnapshot = Object.freeze(
+      segments.map((segment) => Object.freeze({ ...segment })),
+    );
+    for (const [arrayIndex, segment] of segmentSnapshot.entries()) {
       if (segment.index !== arrayIndex) {
         throw new Error(
           `SpanRouter requires segment indexes 0..n-1; ` +
@@ -61,7 +69,8 @@ export class SpanRouter {
         );
       }
     }
-    this.artifactResidencyLedger?.assertCompatibleSegments(segments);
+    this.segments = segmentSnapshot;
+    this.artifactResidencyLedger?.assertCompatibleSegments(segmentSnapshot);
   }
 
   /**
