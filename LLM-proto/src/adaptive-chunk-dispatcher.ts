@@ -745,6 +745,7 @@ export class AdaptiveChunkDispatcher {
 }
 
 function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
+  assertWorkerTelemetrySnapshotShape(telemetry);
   const cacheArtifacts = telemetry.cacheArtifacts;
   return Object.freeze({
     uptimeMs: telemetry.uptimeMs,
@@ -764,6 +765,40 @@ function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
     failureRate: telemetry.failureRate,
     heartbeatJitterMs: telemetry.heartbeatJitterMs,
   });
+}
+
+function assertWorkerTelemetrySnapshotShape(
+  telemetry: unknown,
+): asserts telemetry is WorkerTelemetry {
+  if (typeof telemetry !== 'object' || telemetry === null || Array.isArray(telemetry)) {
+    throw new Error('worker telemetry must be a non-null object');
+  }
+
+  const runtimeTelemetry = telemetry as Record<string, unknown>;
+  if (!Array.isArray(runtimeTelemetry.cacheHits)) {
+    throw new Error('worker telemetry cacheHits must be an array');
+  }
+
+  const cacheArtifacts = runtimeTelemetry.cacheArtifacts;
+  if (cacheArtifacts === undefined) {
+    return;
+  }
+  if (!Array.isArray(cacheArtifacts)) {
+    throw new Error('worker telemetry cacheArtifacts must be an array when present');
+  }
+
+  for (const [index, identity] of cacheArtifacts.entries()) {
+    if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
+      throw new Error(`worker telemetry cacheArtifacts[${index}] must be a non-null object`);
+    }
+    const runtimeIdentity = identity as Record<string, unknown>;
+    if (typeof runtimeIdentity.segmentIndex !== 'number') {
+      throw new Error(`worker telemetry cacheArtifacts[${index}].segmentIndex must be a number`);
+    }
+    if (typeof runtimeIdentity.sha256 !== 'string') {
+      throw new Error(`worker telemetry cacheArtifacts[${index}].sha256 must be a string`);
+    }
+  }
 }
 
 function assertWorkerTier(tier: WorkerTier): void {

@@ -49,6 +49,19 @@ Every registration and heartbeat is copied into a dispatcher-owned frozen teleme
 
 Callers may retain and mutate their original telemetry object after `registerWorker()` or `updateHeartbeat()` returns, but those later writes cannot change accepted VRAM, busy ratios, failure rate, throughput, jitter, or cache claims without a new validated heartbeat. This closes the runtime gap between TypeScript `readonly` declarations and JavaScript object mutability, including the legacy index-only cache path.
 
+## Runtime container shape
+
+Snapshotting itself is also a runtime trust boundary. Before the dispatcher spreads or maps any telemetry-owned collection, it requires:
+
+- the telemetry value to be a non-null, non-array object;
+- `cacheHits` to be an actual JavaScript array;
+- optional `cacheArtifacts` to be an actual JavaScript array when present;
+- every `cacheArtifacts` entry to be a non-null, non-array object;
+- every cache-artifact `segmentIndex` to be a runtime `number` before normal range validation;
+- every cache-artifact `sha256` to be a runtime `string` before canonical digest validation.
+
+These checks intentionally happen before defensive copying. As a result, asserted or decoded values such as `null`, primitive telemetry, iterable strings in `cacheHits`, object-shaped substitutes for arrays, malformed cache-artifact entries, and non-string digest values are rejected by explicit validation rather than incidental spread/map/property coercion failures. Numeric cache-index range checks, canonical SHA-256 checks, manifest identity checks, and duplicate detection still run afterward against the dispatcher-owned snapshot.
+
 ## Atomic heartbeat rule
 
 `registerWorker()` snapshots and validates registration metadata and telemetry before synchronizing cache residency or inserting worker state. `updateHeartbeat()` snapshots and validates the entire telemetry object before synchronizing cache residency and before replacing the existing telemetry snapshot.
@@ -63,4 +76,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, and post-acceptance telemetry mutation isolation. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, and post-acceptance telemetry mutation isolation. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
