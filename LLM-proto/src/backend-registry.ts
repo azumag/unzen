@@ -146,7 +146,10 @@ export class BackendRegistry {
     );
   }
 
-  private assertBackendIdAvailable(backendId: string): void {
+  private assertBackendIdAvailable(backendId: unknown): asserts backendId is string {
+    if (typeof backendId !== 'string' || backendId.trim().length === 0) {
+      throw new Error('backendId must be a non-empty string');
+    }
     if (this.entries.has(backendId) || this.pendingBackendIds.has(backendId)) {
       throw new Error(`backend already registered: ${backendId}`);
     }
