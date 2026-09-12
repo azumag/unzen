@@ -12,7 +12,7 @@ For every top-level segment artifact the direct-constructor boundary requires:
 - a positive safe-integer byte size;
 - a canonical lowercase 64-character hexadecimal SHA-256;
 - non-empty content type, primary artifact locator, and minimum runtime version;
-- optional encoding and measurement conditions to be non-empty strings when present;
+- optional encoding and measurement conditions to be strings when present, without adding a new non-empty policy beyond the shared manifest contract;
 - a finite positive memory estimate and a known `measured`, `budgeted`, or `estimated` basis;
 - a non-empty array of non-empty runtime strings.
 
