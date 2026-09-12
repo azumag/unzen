@@ -22,15 +22,20 @@ export class CheckpointStore {
     }
   }
 
+  private static assertValidSegmentIndex(segmentIndex: unknown): asserts segmentIndex is number {
+    if (
+      typeof segmentIndex !== 'number' ||
+      !Number.isSafeInteger(segmentIndex) ||
+      segmentIndex < 0
+    ) {
+      throw new Error('checkpoint segmentIndex must be a non-negative safe integer');
+    }
+  }
+
   private static assertValidCheckpoint(checkpoint: Checkpoint): void {
     CheckpointStore.assertValidRequestId(checkpoint.requestId);
+    CheckpointStore.assertValidSegmentIndex(checkpoint.segmentIndex);
 
-    if (!Number.isSafeInteger(checkpoint.segmentIndex) || checkpoint.segmentIndex < 0) {
-      throw new Error(
-        `checkpoint segmentIndex must be a non-negative safe integer; ` +
-        `found ${checkpoint.segmentIndex}`,
-      );
-    }
     if (!(checkpoint.hiddenStates instanceof Uint8Array) || checkpoint.hiddenStates.byteLength === 0) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
@@ -95,6 +100,7 @@ export class CheckpointStore {
   /** Retrieve a specific checkpoint by request and segment index. */
   get(requestId: InferenceRequestId, segmentIndex: number): Checkpoint | undefined {
     CheckpointStore.assertValidRequestId(requestId);
+    CheckpointStore.assertValidSegmentIndex(segmentIndex);
     const checkpoint = this.store.get(requestId)?.get(segmentIndex);
     return checkpoint ? CheckpointStore.snapshot(checkpoint) : undefined;
   }
