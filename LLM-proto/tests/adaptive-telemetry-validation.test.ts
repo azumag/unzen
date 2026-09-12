@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AdaptiveChunkDispatcher,
+  type AdaptiveChunkDispatcherOptions,
   type WorkerTelemetry,
 } from '../src/adaptive-chunk-dispatcher.js';
 import { workerId, WorkerTier } from '../src/types.js';
@@ -28,6 +29,37 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
       })).toThrow(/loadBudgetRatio/);
     },
   );
+
+  it.each([
+    ['longLivedWorkerMs', Number.NaN],
+    ['longLivedWorkerMs', Number.POSITIVE_INFINITY],
+    ['longLivedWorkerMs', -1],
+    ['configuredVramLimitMB', Number.NaN],
+    ['configuredVramLimitMB', Number.NEGATIVE_INFINITY],
+    ['configuredVramLimitMB', -1],
+    ['checkpointBytes', 0],
+    ['checkpointBytes', -1],
+    ['checkpointBytes', Number.NaN],
+    ['checkpointBytes', Number.POSITIVE_INFINITY],
+  ] as const)(
+    'rejects invalid dispatcher option %s=%s',
+    (field, value) => {
+      const options: AdaptiveChunkDispatcherOptions = {
+        segments: makeSegments(1),
+        [field]: value,
+      };
+      expect(() => new AdaptiveChunkDispatcher(options)).toThrow(new RegExp(field));
+    },
+  );
+
+  it('accepts the documented dispatcher configuration boundaries', () => {
+    expect(() => new AdaptiveChunkDispatcher({
+      segments: makeSegments(1),
+      longLivedWorkerMs: 0,
+      configuredVramLimitMB: Number.POSITIVE_INFINITY,
+      checkpointBytes: 1,
+    })).not.toThrow();
+  });
 
   it.each([
     ['uptimeMs', Number.NaN],
