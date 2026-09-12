@@ -18,6 +18,7 @@ import type { SegmentConfig, WorkerId } from './types.js';
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const COMPONENT_ROLES = new Set(['graph', 'external-data']);
+const MEMORY_BASIS_VALUES = new Set(['measured', 'budgeted', 'estimated']);
 
 export interface WorkerArtifactResidencySnapshot {
   readonly workerId: WorkerId;
@@ -39,11 +40,20 @@ export class ArtifactResidencyLedger {
   private readonly measuredTotalArtifactBytes: number;
 
   constructor(artifacts: readonly SegmentArtifact[]) {
+    if (!Array.isArray(artifacts)) {
+      throw new Error('ArtifactResidencyLedger artifacts must be an array');
+    }
     if (artifacts.length === 0) {
       throw new Error('ArtifactResidencyLedger requires at least one segment artifact');
     }
 
-    const sorted = [...artifacts].sort((left, right) => left.index - right.index);
+    // Validate before sorting. Runtime callers can cross the TypeScript boundary
+    // with asserted or deserialized data; a malformed index must never reach a
+    // numeric comparator (or any trim/spread operation) before it is checked.
+    const validated = (artifacts as readonly unknown[]).map((artifact, arrayIndex) =>
+      cloneAndValidateArtifact(artifact, arrayIndex),
+    );
+    const sorted = [...validated].sort((left, right) => left.index - right.index);
     for (let expectedIndex = 0; expectedIndex < sorted.length; expectedIndex++) {
       const artifact = sorted[expectedIndex];
       if (artifact.index !== expectedIndex) {
@@ -52,31 +62,7 @@ export class ArtifactResidencyLedger {
           `expected ${expectedIndex}, found ${artifact.index}`,
         );
       }
-      if (!Number.isSafeInteger(artifact.byteSize) || artifact.byteSize <= 0) {
-        throw new Error(
-          `segment ${artifact.index} byteSize must be a safe positive integer; ` +
-          `found ${artifact.byteSize}`,
-        );
-      }
-      if (!SHA256_HEX_PATTERN.test(artifact.sha256)) {
-        throw new Error(
-          `segment ${artifact.index} sha256 must be exactly 64 lowercase hexadecimal characters`,
-        );
-      }
-      if (artifact.artifactLocator.trim().length === 0) {
-        throw new Error(`segment ${artifact.index} artifactLocator must be non-empty`);
-      }
-
-      const components = cloneAndValidateComponents(artifact);
-      // Copy and freeze every array/object that is reachable through the
-      // inventory. A caller may have built a plain mutable object even though
-      // the public TypeScript interface is readonly; telemetry and routing must
-      // never observe those later mutations.
-      this.artifactsByIndex.set(artifact.index, Object.freeze({
-        ...artifact,
-        compatibleRuntimes: Object.freeze([...artifact.compatibleRuntimes]),
-        ...(components === undefined ? {} : { components }),
-      }));
+      this.artifactsByIndex.set(artifact.index, artifact);
     }
 
     this.measuredTotalArtifactBytes = sorted.reduce(
@@ -322,6 +308,97 @@ export class ArtifactResidencyLedger {
   }
 }
 
+function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentArtifact {
+  if (!isRecord(input)) {
+    throw new Error(`segment artifact ${arrayIndex} must be an object`);
+  }
+  const artifact = input;
+
+  if (!Number.isSafeInteger(artifact.index) || Number(artifact.index) < 0) {
+    throw new Error(`segment artifact ${arrayIndex} index must be a non-negative safe integer`);
+  }
+  if (!Number.isSafeInteger(artifact.layerStart) || Number(artifact.layerStart) < 0) {
+    throw new Error(`segment ${artifact.index} layerStart must be a non-negative safe integer`);
+  }
+  if (!Number.isSafeInteger(artifact.layerEnd) || Number(artifact.layerEnd) < Number(artifact.layerStart)) {
+    throw new Error(
+      `segment ${artifact.index} layerEnd must be a safe integer greater than or equal to layerStart`,
+    );
+  }
+  if (!Number.isSafeInteger(artifact.byteSize) || Number(artifact.byteSize) <= 0) {
+    throw new Error(
+      `segment ${artifact.index} byteSize must be a safe positive integer; found ${String(artifact.byteSize)}`,
+    );
+  }
+  if (typeof artifact.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(artifact.sha256)) {
+    throw new Error(
+      `segment ${artifact.index} sha256 must be exactly 64 lowercase hexadecimal characters`,
+    );
+  }
+  if (typeof artifact.contentType !== 'string' || artifact.contentType.trim().length === 0) {
+    throw new Error(`segment ${artifact.index} contentType must be non-empty`);
+  }
+  if (
+    artifact.encoding !== undefined &&
+    (typeof artifact.encoding !== 'string' || artifact.encoding.trim().length === 0)
+  ) {
+    throw new Error(`segment ${artifact.index} encoding must be a non-empty string when present`);
+  }
+  if (
+    typeof artifact.artifactLocator !== 'string' ||
+    artifact.artifactLocator.trim().length === 0
+  ) {
+    throw new Error(`segment ${artifact.index} artifactLocator must be non-empty`);
+  }
+  if (artifact.components !== undefined && !Array.isArray(artifact.components)) {
+    throw new Error(`segment ${artifact.index} components must be an array when present`);
+  }
+  if (
+    typeof artifact.estimatedMemoryMB !== 'number' ||
+    !Number.isFinite(artifact.estimatedMemoryMB) ||
+    artifact.estimatedMemoryMB <= 0
+  ) {
+    throw new Error(`segment ${artifact.index} estimatedMemoryMB must be a positive finite number`);
+  }
+  if (typeof artifact.memoryBasis !== 'string' || !MEMORY_BASIS_VALUES.has(artifact.memoryBasis)) {
+    throw new Error(
+      `segment ${artifact.index} memoryBasis must be measured, budgeted, or estimated`,
+    );
+  }
+  if (
+    artifact.measurementConditions !== undefined &&
+    (typeof artifact.measurementConditions !== 'string' ||
+      artifact.measurementConditions.trim().length === 0)
+  ) {
+    throw new Error(
+      `segment ${artifact.index} measurementConditions must be a non-empty string when present`,
+    );
+  }
+  if (
+    !Array.isArray(artifact.compatibleRuntimes) ||
+    artifact.compatibleRuntimes.length === 0 ||
+    !artifact.compatibleRuntimes.every(
+      (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
+    )
+  ) {
+    throw new Error(`segment ${artifact.index} compatibleRuntimes must be a non-empty string array`);
+  }
+  if (
+    typeof artifact.minimumRuntimeVersion !== 'string' ||
+    artifact.minimumRuntimeVersion.trim().length === 0
+  ) {
+    throw new Error(`segment ${artifact.index} minimumRuntimeVersion must be non-empty`);
+  }
+
+  const typed = artifact as unknown as SegmentArtifact;
+  const components = cloneAndValidateComponents(typed);
+  return Object.freeze({
+    ...typed,
+    compatibleRuntimes: Object.freeze([...typed.compatibleRuntimes]),
+    ...(components === undefined ? {} : { components }),
+  });
+}
+
 function cloneAndValidateComponents(
   artifact: SegmentArtifact,
 ): readonly SegmentArtifactComponent[] | undefined {
@@ -337,6 +414,9 @@ function cloneAndValidateComponents(
   let graphLocator: string | undefined;
   const componentPaths = new Set<string>();
   const copied = artifact.components.map((component, componentIndex) => {
+    if (!isRecord(component)) {
+      throw new Error(`segment ${artifact.index} component ${componentIndex} must be an object`);
+    }
     if (typeof component.role !== 'string' || !COMPONENT_ROLES.has(component.role)) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} role must be graph or external-data`,
@@ -349,7 +429,7 @@ function cloneAndValidateComponents(
       throw new Error(`segment ${artifact.index} component path ${component.path} must be unique`);
     }
     componentPaths.add(component.path);
-    if (!Number.isSafeInteger(component.byteSize) || component.byteSize <= 0) {
+    if (!Number.isSafeInteger(component.byteSize) || Number(component.byteSize) <= 0) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} byteSize must be a safe positive integer`,
       );
@@ -376,11 +456,11 @@ function cloneAndValidateComponents(
       graphCount++;
       graphLocator = component.artifactLocator;
     }
-    componentBytes += component.byteSize;
+    componentBytes += Number(component.byteSize);
     if (!Number.isSafeInteger(componentBytes)) {
       throw new Error(`segment ${artifact.index} component bytes exceed JavaScript safe integer range`);
     }
-    return Object.freeze({ ...component });
+    return Object.freeze({ ...component }) as unknown as SegmentArtifactComponent;
   });
 
   if (graphCount !== 1) {
@@ -400,4 +480,8 @@ function cloneAndValidateComponents(
     );
   }
   return Object.freeze(copied);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
