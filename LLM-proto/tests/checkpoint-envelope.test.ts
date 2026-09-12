@@ -61,6 +61,12 @@ describe('checkpoint-envelope', () => {
     expect(await verifyCheckpointDigest({ ...envelope, payloadLength: 5 })).toBe(false);
   });
 
+  it('digest verification fails closed on a non-byte runtime payload', async () => {
+    const envelope = await buildEnvelope();
+    const malformed = { ...envelope, payload: { byteLength: envelope.payloadLength } } as unknown as typeof envelope;
+    await expect(verifyCheckpointDigest(malformed)).resolves.toBe(false);
+  });
+
   it('expires after TTL', async () => {
     const envelope = await buildEnvelope({ createdAt: 1_000, ttlMs: 5_000 });
     expect(isCheckpointExpired(envelope, 5_999)).toBe(false);
@@ -146,6 +152,72 @@ describe('checkpoint-envelope', () => {
         expect(digest).not.toHaveBeenCalled();
       } finally { digest.mockRestore(); }
     });
+
+    it('rejects malformed runtime payload objects before hashing', async () => {
+      const { envelope, expected: exp } = await expected();
+      const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+      try {
+        const malformed = {
+          ...envelope,
+          payload: { byteLength: envelope.payloadLength },
+        } as unknown as typeof envelope;
+        const result = await validateCheckpointEnvelope(malformed, exp);
+        expect(result.ok).toBe(false);
+        expect(digest).not.toHaveBeenCalled();
+      } finally { digest.mockRestore(); }
+    });
+
+    it.each([NaN, Infinity, -1, Number.MAX_SAFE_INTEGER + 1, '0'])(
+      'rejects malformed segment indexes %s before hashing', async (value) => {
+        const { envelope, expected: exp } = await expected();
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        try {
+          const malformed = { ...envelope, segmentIndex: value } as unknown as typeof envelope;
+          expect((await validateCheckpointEnvelope(malformed, exp)).ok).toBe(false);
+          expect(digest).not.toHaveBeenCalled();
+        } finally { digest.mockRestore(); }
+      },
+    );
+
+    it.each([NaN, Infinity, -1, Number.MAX_SAFE_INTEGER + 1, '4'])(
+      'rejects malformed payload lengths %s before hashing', async (value) => {
+        const { envelope, expected: exp } = await expected();
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        try {
+          const malformed = { ...envelope, payloadLength: value } as unknown as typeof envelope;
+          expect((await validateCheckpointEnvelope(malformed, exp)).ok).toBe(false);
+          expect(digest).not.toHaveBeenCalled();
+        } finally { digest.mockRestore(); }
+      },
+    );
+
+    it.each([
+      ['modelManifestDigest', 'D'.repeat(64)],
+      ['payloadDigest', 'not-a-digest'],
+      ['previousCheckpointDigest', 'f'.repeat(63)],
+    ] as const)(
+      'rejects malformed %s before hashing', async (field, value) => {
+        const { envelope, expected: exp } = await expected();
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        try {
+          const malformed = { ...envelope, [field]: value } as unknown as typeof envelope;
+          expect((await validateCheckpointEnvelope(malformed, exp)).ok).toBe(false);
+          expect(digest).not.toHaveBeenCalled();
+        } finally { digest.mockRestore(); }
+      },
+    );
+
+    it.each(['requestId', 'attemptId', 'workerId', 'workerGeneration', 'formatVersion'] as const)(
+      'rejects an empty runtime %s before hashing', async (field) => {
+        const { envelope, expected: exp } = await expected();
+        const digest = vi.spyOn(globalThis.crypto.subtle, 'digest');
+        try {
+          const malformed = { ...envelope, [field]: '   ' } as unknown as typeof envelope;
+          expect((await validateCheckpointEnvelope(malformed, exp)).ok).toBe(false);
+          expect(digest).not.toHaveBeenCalled();
+        } finally { digest.mockRestore(); }
+      },
+    );
 
     it('accepts a valid, in-TTL envelope', async () => {
       const { envelope, expected: exp } = await expected();
