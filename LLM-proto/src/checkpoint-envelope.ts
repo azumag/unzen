@@ -176,13 +176,21 @@ function checkpointEnvelopeStructureError(input: unknown): string | undefined {
     }
   }
 
-  if (!Number.isSafeInteger(envelope.segmentIndex) || (envelope.segmentIndex as number) < 0) {
+  if (
+    typeof envelope.segmentIndex !== 'number' ||
+    !Number.isSafeInteger(envelope.segmentIndex) ||
+    envelope.segmentIndex < 0
+  ) {
     return 'checkpoint segmentIndex must be a non-negative safe integer';
   }
   if (!(envelope.payload instanceof Uint8Array)) {
     return 'checkpoint payload must be a Uint8Array';
   }
-  if (!Number.isSafeInteger(envelope.payloadLength) || (envelope.payloadLength as number) < 0) {
+  if (
+    typeof envelope.payloadLength !== 'number' ||
+    !Number.isSafeInteger(envelope.payloadLength) ||
+    envelope.payloadLength < 0
+  ) {
     return 'checkpoint payloadLength must be a non-negative safe integer';
   }
   if (envelope.payloadLength !== envelope.payload.byteLength) {
