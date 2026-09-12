@@ -24,6 +24,8 @@ import type { WorkerId, InferenceRequestId } from './types.js';
 /** Default checkpoint format version = the model manifest checkpoint format. */
 export const CHECKPOINT_FORMAT_VERSION = '1.0.0';
 
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+
 export interface CheckpointEnvelope {
   readonly requestId: InferenceRequestId;
   /** The attempt that produced this checkpoint. */
@@ -100,11 +102,16 @@ export async function createCheckpointEnvelope(
 
 /**
  * Recompute and compare the payload digest. `payloadLength` must equal the
- * actual byte length, so a lying length field is also caught.
+ * actual byte length, so a lying length field is also caught. This helper is a
+ * runtime boundary too: malformed objects return false instead of throwing or
+ * allocating/hash-processing attacker-controlled non-byte payloads.
  */
 export async function verifyCheckpointDigest(
   envelope: CheckpointEnvelope,
 ): Promise<boolean> {
+  if (!(envelope?.payload instanceof Uint8Array)) return false;
+  if (!Number.isSafeInteger(envelope.payloadLength) || envelope.payloadLength < 0) return false;
+  if (!SHA256_HEX_PATTERN.test(envelope.payloadDigest)) return false;
   if (envelope.payload.byteLength !== envelope.payloadLength) return false;
   return (await sha256Hex(envelope.payload)) === envelope.payloadDigest;
 }
@@ -147,6 +154,57 @@ export class CheckpointIntegrityError extends UnzenError {
   }
 }
 
+function isNonEmptyRuntimeString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * Validate the envelope's own runtime structure before comparing it with
+ * trusted coordinator state or hashing any payload bytes. TypeScript types do
+ * not exist at the network/storage boundary, so every identity and byte/digest
+ * field used below must prove its runtime shape first.
+ */
+function checkpointEnvelopeStructureError(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null) {
+    return 'checkpoint envelope must be an object';
+  }
+
+  const envelope = input as Record<string, unknown>;
+  for (const field of ['requestId', 'attemptId', 'workerId', 'workerGeneration', 'formatVersion'] as const) {
+    if (!isNonEmptyRuntimeString(envelope[field])) {
+      return `checkpoint ${field} must be a non-empty string`;
+    }
+  }
+
+  if (!Number.isSafeInteger(envelope.segmentIndex) || (envelope.segmentIndex as number) < 0) {
+    return 'checkpoint segmentIndex must be a non-negative safe integer';
+  }
+  if (!(envelope.payload instanceof Uint8Array)) {
+    return 'checkpoint payload must be a Uint8Array';
+  }
+  if (!Number.isSafeInteger(envelope.payloadLength) || (envelope.payloadLength as number) < 0) {
+    return 'checkpoint payloadLength must be a non-negative safe integer';
+  }
+  if (envelope.payloadLength !== envelope.payload.byteLength) {
+    return 'checkpoint payloadLength does not match payload byte length';
+  }
+  if (!isNonEmptyRuntimeString(envelope.modelManifestDigest) ||
+      !SHA256_HEX_PATTERN.test(envelope.modelManifestDigest)) {
+    return 'checkpoint modelManifestDigest must be canonical lowercase SHA-256';
+  }
+  if (!isNonEmptyRuntimeString(envelope.payloadDigest) ||
+      !SHA256_HEX_PATTERN.test(envelope.payloadDigest)) {
+    return 'checkpoint payloadDigest must be canonical lowercase SHA-256';
+  }
+  if (envelope.previousCheckpointDigest !== undefined &&
+      (!isNonEmptyRuntimeString(envelope.previousCheckpointDigest) ||
+       !SHA256_HEX_PATTERN.test(envelope.previousCheckpointDigest))) {
+    return 'checkpoint previousCheckpointDigest must be canonical lowercase SHA-256 when present';
+  }
+
+  return undefined;
+}
+
 /**
  * Validate an envelope against the run context at the Coordinator boundary.
  * Catches cross-request/cross-revision reuse, stale generations, tampered
@@ -161,6 +219,11 @@ export async function validateCheckpointEnvelope(
     code: ErrorCode.CheckpointIntegrityMismatch,
     message,
   });
+
+  const structureError = checkpointEnvelopeStructureError(envelope);
+  if (structureError !== undefined) {
+    return mismatch(structureError);
+  }
 
   if (envelope.requestId !== expected.requestId) {
     return mismatch(
