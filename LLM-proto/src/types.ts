@@ -13,11 +13,19 @@
 export type WorkerId = string & { readonly __brand: 'WorkerId' };
 export type InferenceRequestId = string & { readonly __brand: 'InferenceRequestId' };
 
+function assertNonEmptyIdentifier(value: string, kind: string): void {
+  if (value.trim().length === 0) {
+    throw new Error(`${kind} must be a non-empty string`);
+  }
+}
+
 export function workerId(id: string): WorkerId {
+  assertNonEmptyIdentifier(id, 'workerId');
   return id as WorkerId;
 }
 
 export function inferenceRequestId(id: string): InferenceRequestId {
+  assertNonEmptyIdentifier(id, 'inferenceRequestId');
   return id as InferenceRequestId;
 }
 
