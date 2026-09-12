@@ -245,11 +245,7 @@ def validate_multi_segment_manifest(
                 f"segments must be contiguous non-empty layer spans; "
                 f"segment {index} is [{start}, {end}), expected start {expected_start}"
             )
-        path = _safe_relative_path(
-            manifest_dir,
-            raw_segment.get("path"),
-            field=f"segments[{index}].path",
-        )
+        path = _safe_relative_path(manifest_dir, raw_segment.get("path"))
         if not path.is_file():
             raise FileNotFoundError(f"segment artifact not found: {path}")
         inputs = _string_names(raw_segment.get("inputs", []), field=f"segments[{index}].inputs")
