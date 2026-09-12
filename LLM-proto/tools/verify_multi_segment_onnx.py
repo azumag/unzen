@@ -28,7 +28,7 @@ import onnxruntime as ort
 
 from verify_multi_segment_artifacts import (
     SHA256_RE,
-    sha256_file,
+    _measure_file,
     verify_artifact_integrity,
 )
 from verify_split_onnx import (
@@ -54,15 +54,26 @@ def _unsafe_windows_component(part: str) -> bool:
     )
 
 
+def _non_empty_string(raw: object, *, field: str) -> str:
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{field} must be a non-empty string")
+    return raw
+
+
+def _canonical_sha256(raw: object, *, field: str) -> str:
+    value = _non_empty_string(raw, field=field)
+    if not SHA256_RE.fullmatch(value):
+        raise ValueError(f"{field} must be a canonical lowercase SHA-256 digest")
+    return value
+
+
 def _safe_relative_path(
     root: Path,
     raw: object,
     *,
     field: str = "segment path",
 ) -> Path:
-    value = str(raw or "")
-    if not value:
-        raise ValueError(f"{field} must be a non-empty relative path")
+    value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
@@ -86,24 +97,20 @@ def _safe_relative_path(
 def _string_names(raw: object, *, field: str) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise ValueError(f"{field} must be an array")
-    values = tuple(str(value) for value in raw)
-    if any(not value for value in values):
-        raise ValueError(f"{field} contains an empty tensor name")
+    values: list[str] = []
+    for index, value in enumerate(raw):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{field}[{index}] must be a non-empty string")
+        values.append(value)
     if len(set(values)) != len(values):
         raise ValueError(f"{field} contains duplicate tensor names")
-    return values
+    return tuple(values)
 
 
 def _non_negative_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool):
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
         raise ValueError(f"{field} must be a non-negative integer")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{field} must be a non-negative integer") from error
-    if value < 0:
-        raise ValueError(f"{field} must be a non-negative integer")
-    return value
+    return raw
 
 
 def verify_source_model_identity(
@@ -118,10 +125,11 @@ def verify_source_model_identity(
     if not isinstance(raw_source, dict):
         raise ValueError("split manifest sourceModel must be an object")
 
-    expected_graph_sha = str(raw_source.get("sha256") or "")
-    if not SHA256_RE.fullmatch(expected_graph_sha):
-        raise ValueError("sourceModel.sha256 must be a canonical lowercase SHA-256 digest")
-    observed_graph_sha = sha256_file(full_model_path)
+    expected_graph_sha = _canonical_sha256(
+        raw_source.get("sha256"),
+        field="sourceModel.sha256",
+    )
+    graph_bytes, observed_graph_sha = _measure_file(full_model_path)
     if observed_graph_sha != expected_graph_sha:
         raise ValueError(
             "full-model graph SHA-256 mismatch: "
@@ -138,7 +146,10 @@ def verify_source_model_identity(
         if not isinstance(raw_entry, dict):
             raise ValueError(f"sourceModel.externalData[{index}] must be an object")
         field_prefix = f"sourceModel.externalData[{index}]"
-        location = str(raw_entry.get("location") or "")
+        location = _non_empty_string(
+            raw_entry.get("location"),
+            field=f"{field_prefix}.location",
+        )
         if location in seen_locations:
             raise ValueError(f"duplicate source external-data location: {location}")
         seen_locations.add(location)
@@ -154,24 +165,19 @@ def verify_source_model_identity(
             raw_entry.get("bytes"),
             field=f"{field_prefix}.bytes",
         )
-        observed_bytes = external_path.stat().st_size
-        if observed_bytes != expected_bytes:
-            raise ValueError(
-                f"source external-data size mismatch for {location}: "
-                f"expected={expected_bytes}, observed={observed_bytes}"
-            )
-
         raw_sha = raw_entry.get("sha256")
         if raw_sha is None:
             raise ValueError(
                 f"{field_prefix}.sha256 is required for numerical evidence binding"
             )
-        expected_sha = str(raw_sha)
-        if not SHA256_RE.fullmatch(expected_sha):
+        expected_sha = _canonical_sha256(raw_sha, field=f"{field_prefix}.sha256")
+
+        observed_bytes, observed_sha = _measure_file(external_path)
+        if observed_bytes != expected_bytes:
             raise ValueError(
-                f"{field_prefix}.sha256 must be a canonical lowercase SHA-256 digest"
+                f"source external-data size mismatch for {location}: "
+                f"expected={expected_bytes}, observed={observed_bytes}"
             )
-        observed_sha = sha256_file(external_path)
         if observed_sha != expected_sha:
             raise ValueError(
                 f"source external-data SHA-256 mismatch for {location}: "
@@ -188,7 +194,7 @@ def verify_source_model_identity(
 
     return {
         "path": str(full_model_path),
-        "graphBytes": full_model_path.stat().st_size,
+        "graphBytes": graph_bytes,
         "graphSha256": observed_graph_sha,
         "externalData": external_reports,
         "allExternalDataHashed": True,
@@ -218,9 +224,18 @@ def validate_multi_segment_manifest(
     for expected_index, raw_segment in enumerate(raw_segments):
         if not isinstance(raw_segment, dict):
             raise ValueError(f"segment {expected_index} must be an object")
-        index = int(raw_segment.get("index", -1))
-        start = int(raw_segment.get("startLayer", -1))
-        end = int(raw_segment.get("endLayer", -1))
+        index = _non_negative_int(
+            raw_segment.get("index"),
+            field=f"segments[{expected_index}].index",
+        )
+        start = _non_negative_int(
+            raw_segment.get("startLayer"),
+            field=f"segments[{expected_index}].startLayer",
+        )
+        end = _non_negative_int(
+            raw_segment.get("endLayer"),
+            field=f"segments[{expected_index}].endLayer",
+        )
         if index != expected_index:
             raise ValueError(
                 f"segment indices must cover 0..n-1; expected {expected_index}, got {index}"
@@ -262,9 +277,15 @@ def validate_multi_segment_manifest(
             raise ValueError(f"boundary {index} must be an object")
         left = segments[index]
         right = segments[index + 1]
-        after = int(raw_boundary.get("afterLayer", -1))
-        before = int(raw_boundary.get("beforeLayer", -1))
-        if after != int(left["endLayer"]) - 1 or before != int(right["startLayer"]):
+        after = _non_negative_int(
+            raw_boundary.get("afterLayer"),
+            field=f"boundaries[{index}].afterLayer",
+        )
+        before = _non_negative_int(
+            raw_boundary.get("beforeLayer"),
+            field=f"boundaries[{index}].beforeLayer",
+        )
+        if after != left["endLayer"] - 1 or before != right["startLayer"]:
             raise ValueError(
                 f"boundary {index} does not match adjacent segment spans: "
                 f"after={after}, before={before}"
@@ -272,26 +293,40 @@ def validate_multi_segment_manifest(
         raw_tensors = raw_boundary.get("tensors")
         if not isinstance(raw_tensors, list) or not raw_tensors:
             raise ValueError(f"boundary {index} must contain at least one tensor")
-        names = tuple(str(item.get("name", "")) for item in raw_tensors if isinstance(item, dict))
-        if len(names) != len(raw_tensors) or any(not name for name in names):
-            raise ValueError(f"boundary {index} contains an invalid tensor entry")
+        names: list[str] = []
+        for tensor_index, item in enumerate(raw_tensors):
+            if not isinstance(item, dict):
+                raise ValueError(f"boundary {index} contains an invalid tensor entry")
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    f"boundaries[{index}].tensors[{tensor_index}].name must be a non-empty string"
+                )
+            names.append(name)
         if len(set(names)) != len(names):
             raise ValueError(f"boundary {index} contains duplicate tensor names")
-        missing_left = sorted(set(names) - set(left["outputs"]))
-        missing_right = sorted(set(names) - set(right["inputs"]))
+        names_tuple = tuple(names)
+        missing_left = sorted(set(names_tuple) - set(left["outputs"]))
+        missing_right = sorted(set(names_tuple) - set(right["inputs"]))
         if missing_left or missing_right:
             raise ValueError(
                 f"boundary {index} tensor contract mismatch: "
                 f"missingFromProducer={missing_left}, missingFromConsumer={missing_right}"
             )
-        boundaries.append({"names": names, "afterLayer": after, "beforeLayer": before})
+        boundaries.append({"names": names_tuple, "afterLayer": after, "beforeLayer": before})
 
     raw_plan = manifest.get("splitPlan")
     if not isinstance(raw_plan, dict):
         raise ValueError("split manifest splitPlan must be an object")
-    expected_cuts = [int(segment["endLayer"]) for segment in segments[:-1]]
+    expected_cuts = [segment["endLayer"] for segment in segments[:-1]]
     raw_cuts = raw_plan.get("cutLayers")
-    if not isinstance(raw_cuts, list) or [int(value) for value in raw_cuts] != expected_cuts:
+    if not isinstance(raw_cuts, list):
+        raise ValueError("splitPlan.cutLayers must be an array")
+    cuts = [
+        _non_negative_int(value, field=f"splitPlan.cutLayers[{index}]")
+        for index, value in enumerate(raw_cuts)
+    ]
+    if cuts != expected_cuts:
         raise ValueError(
             f"splitPlan.cutLayers must match segment boundaries: expected {expected_cuts}, got {raw_cuts}"
         )
