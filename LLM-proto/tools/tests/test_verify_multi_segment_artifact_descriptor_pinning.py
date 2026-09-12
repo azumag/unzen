@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import tempfile
@@ -16,13 +17,14 @@ from verify_multi_segment_artifacts import _measure_file  # noqa: E402
 
 
 class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
-    def test_path_replacement_after_open_fails_closed_without_following_replacement(self) -> None:
+    def test_path_replacement_after_open_keeps_original_descriptor_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "segment.onnx"
             replacement = root / "replacement.onnx"
-            target.write_bytes(b"original-artifact")
+            original_payload = b"original-artifact"
             replacement_payload = b"replacement-artifact-is-longer"
+            target.write_bytes(original_payload)
             replacement.write_bytes(replacement_payload)
 
             original_open = Path.open
@@ -37,11 +39,12 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
                 return handle
 
             with patch.object(Path, "open", replace_after_open):
-                with self.assertRaisesRegex(RuntimeError, "changed while being measured"):
-                    _measure_file(target, chunk_size=4)
+                measured_bytes, measured_sha = _measure_file(target, chunk_size=4)
 
             self.assertTrue(replaced)
             self.assertEqual(target.read_bytes(), replacement_payload)
+            self.assertEqual(measured_bytes, len(original_payload))
+            self.assertEqual(measured_sha, hashlib.sha256(original_payload).hexdigest())
 
     def test_in_place_mutation_while_hashing_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
