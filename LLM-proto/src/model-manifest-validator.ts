@@ -287,14 +287,14 @@ function validateModelMetadata(
   }
   if (
     typeof manifest.totalLayers !== 'number' ||
-    !Number.isInteger(manifest.totalLayers) ||
+    !Number.isSafeInteger(manifest.totalLayers) ||
     manifest.totalLayers < 1
   ) {
     issue(
       issues,
       'invalid-model-metadata',
       '$.totalLayers',
-      'totalLayers must be a positive integer',
+      'totalLayers must be a safe positive integer',
     );
   }
 }
@@ -402,7 +402,6 @@ function validateSegments(
   }
 
   const indexes = new Set<number>();
-  let layerNumbersValid = true;
   for (const [arrayIndex, artifact] of segments.entries()) {
     const path = `$.segments[${arrayIndex}]`;
     if (!isRecord(artifact)) {
@@ -414,6 +413,26 @@ function validateSegments(
 
   const artifacts = segments as Record<string, unknown>[];
   if (!artifacts.every((artifact) => isRecord(artifact))) {
+    return;
+  }
+
+  const topologyValuesValid =
+    typeof totalLayers === 'number' &&
+    Number.isSafeInteger(totalLayers) &&
+    totalLayers >= 1 &&
+    artifacts.every(
+      (artifact) =>
+        typeof artifact.index === 'number' &&
+        Number.isSafeInteger(artifact.index) &&
+        artifact.index >= 0 &&
+        typeof artifact.layerStart === 'number' &&
+        Number.isSafeInteger(artifact.layerStart) &&
+        artifact.layerStart >= 0 &&
+        typeof artifact.layerEnd === 'number' &&
+        Number.isSafeInteger(artifact.layerEnd) &&
+        artifact.layerEnd >= 0,
+    );
+  if (!topologyValuesValid) {
     return;
   }
 
@@ -434,34 +453,25 @@ function validateSegments(
   for (let index = 1; index < sorted.length; index++) {
     const previous = sorted[index - 1];
     const current = sorted[index];
-    if (
-      typeof previous.layerEnd !== 'number' ||
-      typeof current.layerStart !== 'number' ||
-      current.layerStart !== previous.layerEnd + 1
-    ) {
+    if (Number(current.layerStart) !== Number(previous.layerEnd) + 1) {
       issue(
         issues,
         'non-contiguous-layer-ranges',
         '$.segments',
         `segment ${current.index} starts at layer ${String(current.layerStart)} but the previous segment ends at layer ${String(previous.layerEnd)}`,
       );
-      layerNumbersValid = false;
       break;
     }
   }
 
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
-  if (
-    Number.isInteger(totalLayers) &&
-    layerNumbersValid &&
-    (Number(first.layerStart) !== 0 || Number(last.layerEnd) !== Number(totalLayers) - 1)
-  ) {
+  if (Number(first.layerStart) !== 0 || Number(last.layerEnd) !== totalLayers - 1) {
     issue(
       issues,
       'segments-incomplete',
       '$.segments',
-      `segments must cover layers 0..${Number(totalLayers) - 1}; got ${String(first.layerStart)}..${String(last.layerEnd)}`,
+      `segments must cover layers 0..${totalLayers - 1}; got ${String(first.layerStart)}..${String(last.layerEnd)}`,
     );
   }
 }
@@ -473,31 +483,51 @@ function validateSegmentArtifact(
   indexes: Set<number>,
   issues: ModelManifestValidationIssue[],
 ): void {
-  if (
-    typeof artifact.index !== 'number' ||
-    !Number.isInteger(artifact.index) ||
-    artifact.index < 0
-  ) {
-    issue(issues, 'invalid-manifest', `${path}.index`, 'index must be a non-negative integer');
-  } else if (indexes.has(artifact.index)) {
-    issue(issues, 'duplicate-segment-index', `${path}.index`, `duplicate segment index ${artifact.index}`);
+  const indexValid =
+    typeof artifact.index === 'number' &&
+    Number.isSafeInteger(artifact.index) &&
+    artifact.index >= 0;
+  if (!indexValid) {
+    issue(
+      issues,
+      'invalid-manifest',
+      `${path}.index`,
+      'index must be a safe non-negative integer',
+    );
+  } else if (indexes.has(artifact.index as number)) {
+    issue(
+      issues,
+      'duplicate-segment-index',
+      `${path}.index`,
+      `duplicate segment index ${artifact.index}`,
+    );
   } else {
-    indexes.add(artifact.index);
+    indexes.add(artifact.index as number);
   }
 
   const layerStart = artifact.layerStart;
   const layerEnd = artifact.layerEnd;
-  if (typeof layerStart !== 'number' || !Number.isInteger(layerStart) || layerStart < 0) {
-    issue(issues, 'invalid-layer-range', `${path}.layerStart`, 'layerStart must be a non-negative integer');
+  const layerStartValid =
+    typeof layerStart === 'number' && Number.isSafeInteger(layerStart) && layerStart >= 0;
+  const layerEndValid =
+    typeof layerEnd === 'number' && Number.isSafeInteger(layerEnd) && layerEnd >= 0;
+  if (!layerStartValid) {
+    issue(
+      issues,
+      'invalid-layer-range',
+      `${path}.layerStart`,
+      'layerStart must be a safe non-negative integer',
+    );
   }
-  if (typeof layerEnd !== 'number' || !Number.isInteger(layerEnd) || layerEnd < 0) {
-    issue(issues, 'invalid-layer-range', `${path}.layerEnd`, 'layerEnd must be a non-negative integer');
+  if (!layerEndValid) {
+    issue(
+      issues,
+      'invalid-layer-range',
+      `${path}.layerEnd`,
+      'layerEnd must be a safe non-negative integer',
+    );
   }
-  if (
-    typeof layerStart === 'number' &&
-    typeof layerEnd === 'number' &&
-    layerEnd < layerStart
-  ) {
+  if (layerStartValid && layerEndValid && layerEnd < layerStart) {
     issue(
       issues,
       'invalid-layer-range',
@@ -506,9 +536,11 @@ function validateSegmentArtifact(
     );
   }
   if (
-    Number.isInteger(totalLayers) &&
-    typeof layerEnd === 'number' &&
-    layerEnd >= Number(totalLayers)
+    typeof totalLayers === 'number' &&
+    Number.isSafeInteger(totalLayers) &&
+    totalLayers >= 1 &&
+    layerEndValid &&
+    layerEnd >= totalLayers
   ) {
     issue(
       issues,
