@@ -104,6 +104,14 @@ routable without changing the existing segmented route behavior (deliverable
 estimates; the legacy protocol does not report them. Once every segmented
 worker speaks `InferenceBackend`, this module should be deleted.
 
+The still-active legacy `WorkerPool` is also a runtime trust boundary for this
+wire format. `WorkerPool.register()` rejects blank worker IDs, enum values
+outside Tier 1–3, and non-positive/non-finite VRAM before mutating routing
+state. This validation is intentionally coordinator-side: compile-time
+`WorkerRegistration` types do not validate WebSocket payloads received from a
+browser. Capability validation in the new backend path remains a separate,
+stronger contract.
+
 ## Per-backend responsibility boundary
 
 ```
@@ -162,4 +170,5 @@ cd LLM-proto
 npx vitest run tests/inference-backend.test.ts
 npx vitest run tests/backend-registry.test.ts
 npx vitest run tests/legacy-worker-adapter.test.ts
+npx vitest run tests/worker-pool.test.ts
 ```

@@ -48,6 +48,44 @@ describe('WorkerPool', () => {
       expect(pool.size).toBe(3);
       expect(pool.idleCount).toBe(3);
     });
+
+    it('should reject an empty worker id before mutating the pool', () => {
+      expect(() => pool.register(makeRegistration('   '))).toThrow(/workerId must be a non-empty string/);
+      expect(pool.size).toBe(0);
+      expect(pool.idleCount).toBe(0);
+    });
+
+    it('should reject a tier outside the supported legacy enum', () => {
+      expect(() => pool.register(makeRegistration('w1', 99 as WorkerTier))).toThrow(
+        /worker tier must be 1, 2, or 3/,
+      );
+      expect(pool.size).toBe(0);
+    });
+
+    it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'should reject invalid VRAM %s before mutating the pool',
+      (vramMB) => {
+        expect(() => pool.register(makeRegistration('w1', WorkerTier.TIER_3, vramMB))).toThrow(
+          /worker vramMB must be a positive finite number/,
+        );
+        expect(pool.size).toBe(0);
+        expect(pool.idleCount).toBe(0);
+      },
+    );
+
+    it('should preserve an existing worker when an invalid replacement is rejected', () => {
+      const original = pool.register(makeRegistration('w1', WorkerTier.TIER_2, 4096));
+
+      expect(() => pool.register(makeRegistration('w1', WorkerTier.TIER_1, Number.NaN))).toThrow(
+        /worker vramMB must be a positive finite number/,
+      );
+
+      expect(pool.get(workerId('w1'))).toBe(original);
+      expect(pool.get(workerId('w1'))?.tier).toBe(WorkerTier.TIER_2);
+      expect(pool.get(workerId('w1'))?.vramMB).toBe(4096);
+      expect(pool.size).toBe(1);
+      expect(pool.idleCount).toBe(1);
+    });
   });
 
   describe('unregister', () => {
