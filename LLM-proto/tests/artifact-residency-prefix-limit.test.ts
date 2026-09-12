@@ -31,6 +31,9 @@ describe('ArtifactResidencyLedger residentPrefixLength runtime limit', () => {
   });
 
   it.each([
+    ['negative', -1],
+    ['negative infinity', Number.NEGATIVE_INFINITY],
+    ['NaN', Number.NaN],
     ['numeric string', '1'],
     ['arbitrary string', 'unbounded'],
     ['boolean', true],
