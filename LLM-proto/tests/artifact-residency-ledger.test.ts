@@ -37,6 +37,36 @@ function makeSegmentConfigs(artifacts: readonly SegmentArtifact[]): SegmentConfi
   }));
 }
 
+function makeBundleComponents(): SegmentArtifactComponent[] {
+  return [
+    {
+      role: 'graph',
+      path: 'segment0.onnx',
+      byteSize: 100,
+      sha256: '1'.repeat(64),
+      contentType: 'application/onnx',
+      artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx',
+    },
+    {
+      role: 'external-data',
+      path: 'segment0.onnx_data',
+      byteSize: 200,
+      sha256: '2'.repeat(64),
+      contentType: 'application/octet-stream',
+      artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx_data',
+    },
+  ];
+}
+
+function makeBundleArtifact(components = makeBundleComponents()): SegmentArtifact {
+  return {
+    ...makeArtifacts([300])[0],
+    contentType: 'application/vnd.unzen.onnx-segment-bundle',
+    artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx',
+    components,
+  };
+}
+
 function expectSnapshot(
   snapshot: WorkerArtifactResidencySnapshot,
   indexes: readonly number[],
@@ -121,31 +151,8 @@ describe('ArtifactResidencyLedger', () => {
   });
 
   it('copies and freezes component bundles so caller mutation cannot rewrite inventory', () => {
-    const components: SegmentArtifactComponent[] = [
-      {
-        role: 'graph',
-        path: 'segment0.onnx',
-        byteSize: 100,
-        sha256: '1'.repeat(64),
-        contentType: 'application/onnx',
-        artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx',
-      },
-      {
-        role: 'external-data',
-        path: 'segment0.onnx_data',
-        byteSize: 200,
-        sha256: '2'.repeat(64),
-        contentType: 'application/octet-stream',
-        artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx_data',
-      },
-    ];
-    const artifact: SegmentArtifact = {
-      ...makeArtifacts([300])[0],
-      contentType: 'application/vnd.unzen.onnx-segment-bundle',
-      artifactLocator: components[0].artifactLocator,
-      components,
-    };
-    const ledger = new ArtifactResidencyLedger([artifact]);
+    const components = makeBundleComponents();
+    const ledger = new ArtifactResidencyLedger([makeBundleArtifact(components)]);
 
     components[0].byteSize = 999;
     components.push({
@@ -161,22 +168,76 @@ describe('ArtifactResidencyLedger', () => {
   });
 
   it('rejects a directly constructed bundle whose component bytes are inconsistent', () => {
-    const artifact: SegmentArtifact = {
-      ...makeArtifacts([300])[0],
-      contentType: 'application/vnd.unzen.onnx-segment-bundle',
-      components: [
-        {
-          role: 'graph',
-          path: 'segment0.onnx',
-          byteSize: 100,
-          sha256: '1'.repeat(64),
-          contentType: 'application/onnx',
-          artifactLocator: 'https://cdn.unzen.local/models/test/segment0.onnx',
-        },
-      ],
-    };
+    const artifact = makeBundleArtifact([
+      {
+        ...makeBundleComponents()[0],
+        byteSize: 100,
+      },
+    ]);
 
     expect(() => new ArtifactResidencyLedger([artifact])).toThrow(/component bytes/);
+  });
+
+  it('fails closed on malformed direct-constructor component identity metadata', () => {
+    const base = makeBundleComponents();
+    const cases: Array<{ name: string; components: SegmentArtifactComponent[]; pattern: RegExp }> = [
+      {
+        name: 'unknown role',
+        components: [{ ...base[0], role: 'weights' as SegmentArtifactComponent['role'] }, base[1]],
+        pattern: /role must be graph or external-data/,
+      },
+      {
+        name: 'empty path',
+        components: [{ ...base[0], path: '   ' }, base[1]],
+        pattern: /path must be non-empty/,
+      },
+      {
+        name: 'invalid digest',
+        components: [{ ...base[0], sha256: 'ABC' }, base[1]],
+        pattern: /sha256 must be exactly 64 lowercase hexadecimal/,
+      },
+      {
+        name: 'empty content type',
+        components: [{ ...base[0], contentType: '   ' }, base[1]],
+        pattern: /contentType must be non-empty/,
+      },
+      {
+        name: 'empty locator',
+        components: [{ ...base[0], artifactLocator: '   ' }, base[1]],
+        pattern: /artifactLocator must be non-empty/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(
+        () => new ArtifactResidencyLedger([makeBundleArtifact(testCase.components)]),
+        testCase.name,
+      ).toThrow(testCase.pattern);
+    }
+  });
+
+  it('requires unique component paths and exactly one graph bound to the primary locator', () => {
+    const base = makeBundleComponents();
+
+    expect(() => new ArtifactResidencyLedger([makeBundleArtifact([
+      base[0],
+      { ...base[1], path: base[0].path },
+    ])])).toThrow(/component path .* must be unique/);
+
+    expect(() => new ArtifactResidencyLedger([makeBundleArtifact([
+      { ...base[0], role: 'external-data' },
+      base[1],
+    ])])).toThrow(/exactly one graph component; found 0/);
+
+    expect(() => new ArtifactResidencyLedger([makeBundleArtifact([
+      base[0],
+      { ...base[1], role: 'graph' },
+    ])])).toThrow(/exactly one graph component; found 2/);
+
+    expect(() => new ArtifactResidencyLedger([{
+      ...makeBundleArtifact(base),
+      artifactLocator: 'https://cdn.unzen.local/models/test/not-the-graph.onnx',
+    }])).toThrow(/primary artifactLocator must match the graph component locator/);
   });
 
   it('fails closed on duplicate indexes and unsafe byte sizes', () => {
