@@ -162,11 +162,15 @@ export class AdaptiveChunkDispatcher {
       }
     }
 
-    const loadBudgetRatio = options.loadBudgetRatio ?? DEFAULT_LOAD_BUDGET_RATIO;
+    const loadBudgetRatio = options.loadBudgetRatio === undefined
+      ? DEFAULT_LOAD_BUDGET_RATIO
+      : options.loadBudgetRatio;
     if (!Number.isFinite(loadBudgetRatio) || loadBudgetRatio <= 0 || loadBudgetRatio > 1) {
       throw new Error('loadBudgetRatio must be a finite number in (0, 1]');
     }
-    const longLivedWorkerMs = options.longLivedWorkerMs ?? DEFAULT_LONG_LIVED_WORKER_MS;
+    const longLivedWorkerMs = options.longLivedWorkerMs === undefined
+      ? DEFAULT_LONG_LIVED_WORKER_MS
+      : options.longLivedWorkerMs;
     assertFiniteNonNegative('longLivedWorkerMs', longLivedWorkerMs);
     const configuredVramLimitMB = options.configuredVramLimitMB === undefined
       ? Number.POSITIVE_INFINITY
@@ -179,7 +183,9 @@ export class AdaptiveChunkDispatcher {
     ) {
       throw new Error('configuredVramLimitMB must be non-negative or positive infinity');
     }
-    const checkpointBytes = options.checkpointBytes ?? DEFAULT_CHECKPOINT_BYTES;
+    const checkpointBytes = options.checkpointBytes === undefined
+      ? DEFAULT_CHECKPOINT_BYTES
+      : options.checkpointBytes;
     if (!Number.isFinite(checkpointBytes) || checkpointBytes <= 0) {
       throw new Error('checkpointBytes must be a positive finite number');
     }
