@@ -40,7 +40,9 @@ describe('WorkerRegistry', () => {
     const cases = [
       {
         name: 'blank workerId',
-        value: registration('   '),
+        // Bypass the branded constructor deliberately: this test verifies that
+        // WorkerRegistry remains a runtime trust boundary for untrusted data.
+        value: { workerId: '   ' as ReturnType<typeof workerId>, tier: WorkerTier.TIER_3, vramMB: 4096 },
         connectionId: 'conn-1',
         message: /workerId must be a non-empty string/,
       },
