@@ -36,12 +36,80 @@ describe('WorkerRegistry', () => {
     expect(record?.connectionId).toBe('conn-1');
   });
 
+  it('rejects malformed registrations before durable routing state changes', () => {
+    const cases = [
+      {
+        name: 'blank workerId',
+        value: registration('   '),
+        connectionId: 'conn-1',
+        message: /workerId must be a non-empty string/,
+      },
+      {
+        name: 'invalid tier',
+        value: registration('w1', 99 as WorkerTier),
+        connectionId: 'conn-1',
+        message: /worker tier must be 1, 2, or 3/,
+      },
+      {
+        name: 'zero VRAM',
+        value: registration('w1', WorkerTier.TIER_3, 0),
+        connectionId: 'conn-1',
+        message: /vramMB must be a positive finite number/,
+      },
+      {
+        name: 'negative VRAM',
+        value: registration('w1', WorkerTier.TIER_3, -1),
+        connectionId: 'conn-1',
+        message: /vramMB must be a positive finite number/,
+      },
+      {
+        name: 'NaN VRAM',
+        value: registration('w1', WorkerTier.TIER_3, Number.NaN),
+        connectionId: 'conn-1',
+        message: /vramMB must be a positive finite number/,
+      },
+      {
+        name: 'infinite VRAM',
+        value: registration('w1', WorkerTier.TIER_3, Number.POSITIVE_INFINITY),
+        connectionId: 'conn-1',
+        message: /vramMB must be a positive finite number/,
+      },
+      {
+        name: 'blank connectionId',
+        value: registration('w1'),
+        connectionId: '   ',
+        message: /connectionId must be a non-empty string/,
+      },
+    ];
+
+    for (const candidate of cases) {
+      expect(
+        () => registry.register(candidate.value, candidate.connectionId),
+        candidate.name,
+      ).toThrow(candidate.message);
+      expect(registry.size, candidate.name).toBe(0);
+    }
+  });
+
   it('same workerId + same connection keeps the generation (capability refresh)', () => {
     const first = registry.register(registration('w1', WorkerTier.TIER_3, 4096), 'conn-1');
     const second = registry.register(registration('w1', WorkerTier.TIER_3, 8192), 'conn-1');
     expect(second.kind).toBe('updated');
     expect(second.generation).toBe(first.generation);
     expect(registry.get(workerId('w1'))?.vramMB).toBe(8192);
+  });
+
+  it('rejects an invalid same-connection refresh without mutating the existing worker', () => {
+    const first = registry.register(registration('w1', WorkerTier.TIER_2, 4096), 'conn-1');
+    const before = { ...registry.get(workerId('w1'))! };
+
+    expect(() => registry.register(
+      registration('w1', WorkerTier.TIER_2, Number.NaN),
+      'conn-1',
+    )).toThrow(/vramMB must be a positive finite number/);
+
+    expect(registry.get(workerId('w1'))).toEqual(before);
+    expect(registry.get(workerId('w1'))?.generation).toBe(first.generation);
   });
 
   it('re-registration on a new connection revokes the old generation (reconnect)', () => {
@@ -59,6 +127,20 @@ describe('WorkerRegistry', () => {
     const revoked = registry.getByGeneration(first.generation);
     expect(revoked?.stage).toBe(WorkerStage.Revoked);
     expect(revoked?.revokedAt).toBeDefined();
+  });
+
+  it('rejects an invalid reconnect before revoking the current generation', () => {
+    const first = registry.register(registration('w1', WorkerTier.TIER_1, 8192), 'conn-1');
+    const before = { ...registry.get(workerId('w1'))! };
+
+    expect(() => registry.register(
+      registration('w1', 0 as WorkerTier, 8192),
+      'conn-2',
+    )).toThrow(/worker tier must be 1, 2, or 3/);
+
+    expect(registry.get(workerId('w1'))).toEqual(before);
+    expect(registry.getByGeneration(first.generation)?.stage).toBe(WorkerStage.Idle);
+    expect(registry.getByGeneration(first.generation)?.revokedAt).toBeUndefined();
   });
 
   it('heartbeat from an unknown worker is a structured error', () => {
