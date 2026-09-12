@@ -114,11 +114,16 @@ export function validateSmolLm2P0Manifest(manifest) {
   if (!Array.isArray(boundary.tensors) || boundary.tensors.length !== contract.boundaryTensorCount) {
     throw new Error(`P0 manifest boundary.tensors must contain exactly ${contract.boundaryTensorCount} entries`);
   }
+  const boundaryNames = new Set();
   for (const [index, tensor] of boundary.tensors.entries()) {
     if (!tensor || typeof tensor !== 'object' || Array.isArray(tensor)
       || typeof tensor.name !== 'string' || tensor.name.length === 0) {
       throw new Error(`P0 manifest boundary.tensors[${index}] must declare a non-empty name`);
     }
+    if (boundaryNames.has(tensor.name)) {
+      throw new Error(`P0 manifest boundary.tensors contains duplicate tensor name: ${tensor.name}`);
+    }
+    boundaryNames.add(tensor.name);
   }
 
   if (!Array.isArray(root.segments) || root.segments.length !== 2) {
