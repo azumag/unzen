@@ -30,6 +30,8 @@ const GENERATED_SCHEMA_VERSION = '1.0.0';
 const GENERATED_KIND = 'unzen-budgeted-multi-segment-onnx';
 const GENERATED_LAYOUT = 'per-segment-external-data';
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const WINDOWS_RESERVED_DEVICE_STEMS = new Set(['CON', 'PRN', 'AUX', 'NUL']);
+const WINDOWS_RESERVED_PORT_PATTERN = /^(?:COM|LPT)(?:[1-9]|[¹²³])$/;
 
 export interface GeneratedOnnxManifestImportOptions {
   readonly modelId: string;
@@ -420,7 +422,25 @@ function isSafeRelativePath(path: string): boolean {
     return false;
   }
   const parts = path.split('/');
-  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..');
+  return parts.every(
+    (part) =>
+      part.length > 0 &&
+      part !== '.' &&
+      part !== '..' &&
+      !isWindowsPathAlias(part),
+  );
+}
+
+function isWindowsPathAlias(part: string): boolean {
+  // Keep the runtime boundary aligned with the Python producer/verifiers. On
+  // Windows, trailing dots/spaces are trimmed and DOS device basenames remain
+  // special even with an extension, so accepting them would make path identity
+  // depend on the consumer platform.
+  if (part.endsWith('.') || part.endsWith(' ')) {
+    return true;
+  }
+  const stem = part.split('.', 1)[0].toUpperCase();
+  return WINDOWS_RESERVED_DEVICE_STEMS.has(stem) || WINDOWS_RESERVED_PORT_PATTERN.test(stem);
 }
 
 function requireSha256(value: unknown, path: string): string {

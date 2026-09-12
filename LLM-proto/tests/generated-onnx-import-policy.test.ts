@@ -90,6 +90,52 @@ describe('generated ONNX import product policy', () => {
     },
   );
 
+  it.each([
+    'CON.onnx',
+    'aux.weights',
+    'COM1.bin',
+    'lpt9.dat',
+    'COM¹.cache',
+    'LPT³.tmp',
+    'weights.',
+    'weights ',
+    'nested/PRN.bin',
+  ])('rejects Windows-alias graph path %s', async (path) => {
+    const input = generated();
+    const segments = input.segments as Record<string, unknown>[];
+    segments[0].path = path;
+
+    await expect(importGeneratedOnnxSplitManifest(input, options))
+      .rejects.toThrow(/safe relative path/);
+  });
+
+  it.each(['NUL.data', 'COM2.bin', 'LPT².dat', 'nested/chunk. ', 'nested/aux.bin'])(
+    'rejects Windows-alias external-data path %s',
+    async (path) => {
+      const input = generated();
+      const segments = input.segments as Record<string, unknown>[];
+      const externalData = segments[0].externalData as Record<string, unknown>[];
+      externalData[0].location = path;
+
+      await expect(importGeneratedOnnxSplitManifest(input, options))
+        .rejects.toThrow(/safe relative path/);
+    },
+  );
+
+  it('preserves ordinary nested relative artifact paths', async () => {
+    const input = generated();
+    const segments = input.segments as Record<string, unknown>[];
+    segments[0].path = 'graphs/segment0.onnx';
+    const externalData = segments[0].externalData as Record<string, unknown>[];
+    externalData[0].location = 'weights/chunk-0001.bin';
+
+    const manifest = await importGeneratedOnnxSplitManifest(input, options);
+    expect(manifest.segments[0].components?.map((component) => component.path)).toEqual([
+      'graphs/segment0.onnx',
+      'weights/chunk-0001.bin',
+    ]);
+  });
+
   it('rejects credentials in the artifact base URL', async () => {
     await expect(importGeneratedOnnxSplitManifest(
       generated(),
