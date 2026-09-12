@@ -1,6 +1,6 @@
 # Adaptive worker telemetry contract
 
-`AdaptiveChunkDispatcher` treats worker telemetry as an untrusted coordinator-side input. Runtime validation happens before worker state or artifact-residency state is mutated, so malformed or corrupted heartbeats cannot make a worker appear healthier or more capable than its last known-good state.
+`AdaptiveChunkDispatcher` treats worker telemetry and registration metadata as untrusted coordinator-side input. Runtime validation happens before worker state or artifact-residency state is mutated, so malformed or corrupted registrations/heartbeats cannot make a worker appear healthier or more capable than its last known-good state.
 
 ## Numeric domain
 
@@ -20,6 +20,12 @@ The following ratios must be finite and inside `[0, 1]`:
 
 Zero throughput is intentionally valid. In particular, `checkpointBytesPerSecond = 0` remains a valid observation and produces an infinite checkpoint-transfer estimate instead of inventing throughput.
 
+## Worker registration metadata
+
+`registerWorker()` accepts only the three runtime tier values defined by `WorkerTier`: `TIER_1`, `TIER_2`, and `TIER_3`. The TypeScript enum is not treated as runtime validation because network/deserialized callers can still supply arbitrary values.
+
+Tier validation happens before telemetry validation, cache-residency synchronization, or worker-map replacement. This prevents an invalid tier from falling through the non-Tier-3 routing paths and gaining multi-segment or rolling-assignment eligibility. It also means a rejected re-registration cannot replace an existing valid worker's tier, telemetry, or cache state.
+
 ## Dispatcher numeric configuration
 
 Dispatcher configuration is validated at construction before any worker or routing state exists:
@@ -33,7 +39,7 @@ These guards keep `NaN`, invalid infinities, zero divisors, and negative limits 
 
 ## Atomic heartbeat rule
 
-`registerWorker()` validates telemetry before synchronizing cache residency or inserting worker state. `updateHeartbeat()` validates the entire telemetry object before synchronizing cache residency and before replacing the existing telemetry snapshot.
+`registerWorker()` validates registration metadata and telemetry before synchronizing cache residency or inserting worker state. `updateHeartbeat()` validates the entire telemetry object before synchronizing cache residency and before replacing the existing telemetry snapshot.
 
 Therefore an invalid heartbeat:
 
@@ -45,4 +51,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration, invalid heartbeat atomicity, valid telemetry boundaries, and invalid dispatcher numeric configuration. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, valid telemetry boundaries, and invalid dispatcher numeric configuration. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
