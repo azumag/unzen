@@ -170,6 +170,8 @@ export class WorkerRegistry {
 
   /** Workers whose heartbeat is older than `timeoutMs` (excludes revoked). */
   listTimedOut(timeoutMs: number, now = Date.now()): readonly WorkerRecord[] {
+    this.assertValidHeartbeatTimeout(timeoutMs);
+
     const timedOut: WorkerRecord[] = [];
     for (const worker of this.store.listWorkers()) {
       if (worker.stage === WorkerStageValue.Revoked) continue;
@@ -263,6 +265,15 @@ export class WorkerRegistry {
     if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
       throw new Error(
         `requiredVramMB must be a positive finite number; found ${String(requiredVramMB)}`,
+      );
+    }
+  }
+
+  /** Fail closed before malformed timeout arithmetic can corrupt liveness decisions. */
+  private assertValidHeartbeatTimeout(timeoutMs: number): void {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(
+        `timeoutMs must be a positive finite number; found ${String(timeoutMs)}`,
       );
     }
   }
