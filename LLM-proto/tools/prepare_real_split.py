@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import BinaryIO
 
@@ -132,6 +133,23 @@ def repack_segment_external_data(
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
     try:
+        # Open and size-check every source before the destination exists or is
+        # truncated. Missing/unreadable/truncated inputs therefore fail without
+        # leaving a misleading partial repack artifact behind.
+        for _, _, source_path, source_offset, length in prepared:
+            source_key = str(source_path.resolve())
+            source = open_sources.get(source_key)
+            if source is None:
+                source = source_path.open("rb")
+                open_sources[source_key] = source
+            file_size = os.fstat(source.fileno()).st_size
+            if source_offset + length > file_size:
+                raise ValueError(
+                    "external-data range exceeds source file: "
+                    f"source={source_path}, offset={source_offset}, "
+                    f"length={length}, fileBytes={file_size}"
+                )
+
         with output_data_path.open("wb") as destination:
             for initializer, location, source_path, source_offset, length in prepared:
                 key = (location, source_offset, length)
@@ -139,10 +157,7 @@ def repack_segment_external_data(
                 if destination_offset is None:
                     destination_offset = destination.tell()
                     source_key = str(source_path.resolve())
-                    source = open_sources.get(source_key)
-                    if source is None:
-                        source = source_path.open("rb")
-                        open_sources[source_key] = source
+                    source = open_sources[source_key]
                     _copy_range(source, destination, source_offset, length)
                     range_offsets[key] = destination_offset
 

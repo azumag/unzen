@@ -18,7 +18,14 @@ from prepare_real_split import repack_segment_external_data  # noqa: E402
 
 
 class RepackSourceAliasSafetyTest(unittest.TestCase):
-    def _write_external_model(self, model_path: Path, location: str = "weights.bin") -> None:
+    def _write_external_model(
+        self,
+        model_path: Path,
+        location: str = "weights.bin",
+        *,
+        offset: int = 0,
+        length: int = 4,
+    ) -> None:
         initializer = TensorProto()
         initializer.name = "weight"
         initializer.data_type = TensorProto.FLOAT
@@ -26,8 +33,8 @@ class RepackSourceAliasSafetyTest(unittest.TestCase):
         initializer.data_location = TensorProto.EXTERNAL
         for key, value in (
             ("location", location),
-            ("offset", "0"),
-            ("length", "4"),
+            ("offset", str(offset)),
+            ("length", str(length)),
         ):
             entry = initializer.external_data.add()
             entry.key = key
@@ -97,6 +104,54 @@ class RepackSourceAliasSafetyTest(unittest.TestCase):
 
             self.assertEqual(source.read_bytes(), original)
             self.assertTrue(destination.is_symlink())
+
+    def test_missing_source_does_not_create_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path)
+            destination = output_dir / "segment0.onnx_data"
+
+            with self.assertRaises(FileNotFoundError):
+                repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    destination.name,
+                )
+
+            self.assertFalse(destination.exists())
+
+    def test_out_of_bounds_source_does_not_modify_existing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+
+            source = source_dir / "weights.bin"
+            source.write_bytes(b"\x00\x01")
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path, length=4)
+            destination = output_dir / "segment0.onnx_data"
+            existing = b"keep-existing-destination"
+            destination.write_bytes(existing)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "external-data range exceeds source file",
+            ):
+                repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    destination.name,
+                )
+
+            self.assertEqual(destination.read_bytes(), existing)
 
     def test_repacks_to_distinct_destination_without_mutating_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
