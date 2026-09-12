@@ -103,7 +103,9 @@ def _prepared_artifact_file(raw: str, output_dir: Path, *, field: str) -> Path:
         raise RuntimeError(
             f"generated P0 {field} escapes output directory: {candidate} -> {resolved}"
         ) from error
-    return candidate
+    # Keep the path identity that passed containment validation. Returning the
+    # unresolved candidate would re-follow symlinks during the later stat().
+    return resolved
 
 
 def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
