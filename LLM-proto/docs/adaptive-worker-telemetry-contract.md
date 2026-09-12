@@ -37,6 +37,12 @@ Dispatcher configuration is validated at construction before any worker or routi
 
 These guards keep `NaN`, invalid infinities, zero divisors, negative limits, and malformed runtime values out of VRAM-fit, lifetime, checkpoint-transfer, and score calculations. In particular, `configuredVramLimitMB` is checked for its runtime type before any numeric comparison, so values such as a `Symbol` cannot escape the canonical validation error through JavaScript coercion behavior.
 
+## Segment configuration ownership
+
+`segments` is copied into a dispatcher-owned frozen snapshot before its index and VRAM geometry is accepted. Scheduling, span-fit calculations, cache-hit range checks, and artifact-ledger compatibility all use that same validated snapshot. The caller may retain and mutate the original array or its segment objects, but those later mutations cannot change the dispatcher's routing geometry or introduce an unvalidated `estimatedVramMB` value after construction.
+
+This matters because TypeScript `readonly` annotations do not prevent runtime mutation. Without a defensive snapshot, changing a validated `estimatedVramMB` to `NaN` after construction could make JavaScript fit comparisons fail open, while pushing or removing array entries could change assignment and cache-index ranges without rerunning constructor validation.
+
 ## Atomic heartbeat rule
 
 `registerWorker()` validates registration metadata and telemetry before synchronizing cache residency or inserting worker state. `updateHeartbeat()` validates the entire telemetry object before synchronizing cache residency and before replacing the existing telemetry snapshot.
@@ -51,4 +57,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, valid telemetry boundaries, and invalid dispatcher numeric configuration. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, valid telemetry boundaries, invalid dispatcher numeric configuration, and post-construction segment mutation isolation. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
