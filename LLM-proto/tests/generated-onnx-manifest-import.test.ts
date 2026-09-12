@@ -189,7 +189,7 @@ describe('importGeneratedOnnxSplitManifest', () => {
       .rejects.toThrow(/contiguous/);
   });
 
-  it.each(['startLayer', 'endLayer'] as const)(
+  it.each(['index', 'startLayer', 'endLayer'] as const)(
     'rejects unsafe integer generated %s before span conversion',
     async (field) => {
       const input = generatedManifest();
