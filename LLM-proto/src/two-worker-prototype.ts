@@ -75,8 +75,23 @@ const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
 
 export class AllowlistedPrototypeTransport {
   private readonly connectionLog: string[] = [];
+  private readonly allowedOrigins: readonly string[];
 
-  constructor(private readonly allowedOrigins: readonly string[]) {}
+  constructor(allowedOrigins: readonly string[]) {
+    const canonicalOrigins = allowedOrigins.map((value, index) => {
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        throw new Error(`Invalid prototype allowlist URL at index ${index}: ${value}`);
+      }
+      if (parsed.origin === 'null') {
+        throw new Error(`Prototype allowlist URL must have a network origin: ${value}`);
+      }
+      return parsed.origin;
+    });
+    this.allowedOrigins = Object.freeze([...new Set(canonicalOrigins)]);
+  }
 
   connect(url: string): void {
     const origin = new URL(url).origin;
