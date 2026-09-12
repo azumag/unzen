@@ -18,9 +18,18 @@ The following ratios must be finite and inside `[0, 1]`:
 - `cpuBusyRatio`
 - `failureRate`
 
-`loadBudgetRatio` is dispatcher configuration rather than worker telemetry. It must be finite and inside `(0, 1]`. This prevents invalid budget comparisons and division from turning `NaN`, infinity, zero, or negative configuration into a fail-open scheduling result.
-
 Zero throughput is intentionally valid. In particular, `checkpointBytesPerSecond = 0` remains a valid observation and produces an infinite checkpoint-transfer estimate instead of inventing throughput.
+
+## Dispatcher numeric configuration
+
+Dispatcher configuration is validated at construction before any worker or routing state exists:
+
+- `loadBudgetRatio` must be finite and inside `(0, 1]`.
+- `longLivedWorkerMs` must be finite and non-negative. Zero is valid and makes every otherwise-eligible worker immediately satisfy the age threshold.
+- `configuredVramLimitMB` must be non-negative; finite values impose a cap and positive infinity keeps the existing unlimited default.
+- `checkpointBytes` must be a positive finite number.
+
+These guards keep `NaN`, invalid infinities, zero divisors, and negative limits out of VRAM-fit, lifetime, checkpoint-transfer, and score calculations.
 
 ## Atomic heartbeat rule
 
@@ -36,4 +45,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration, invalid heartbeat atomicity, valid boundary values, and invalid `loadBudgetRatio`. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry is physically accurate or independently measured.
+The tests exercise invalid registration, invalid heartbeat atomicity, valid telemetry boundaries, and invalid dispatcher numeric configuration. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry is physically accurate or independently measured.
