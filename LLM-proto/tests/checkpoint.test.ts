@@ -101,11 +101,15 @@ describe('CheckpointStore', () => {
       ['fractional', 1.5],
       ['NaN', Number.NaN],
       ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
-    ])('rejects %s get() segment indexes before reading state', (_label, segmentIndex) => {
+      ['numeric string', '0'],
+      ['symbol', Symbol('segment')],
+    ])('rejects %s get() segment indexes before reading state', (_label, rawSegmentIndex) => {
       const checkpoint = makeCheckpoint(reqId, 0);
       store.save(checkpoint);
 
-      expect(() => store.get(reqId, segmentIndex)).toThrow(/non-negative safe integer/);
+      expect(() =>
+        store.get(reqId, rawSegmentIndex as unknown as number),
+      ).toThrow(/non-negative safe integer/);
       expect(store.size).toBe(1);
       expect(store.get(reqId, 0)).toEqual(checkpoint);
     });
