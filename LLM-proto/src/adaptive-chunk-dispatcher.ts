@@ -141,14 +141,18 @@ export class AdaptiveChunkDispatcher {
   private readonly configuredVramLimitMB: number;
   private readonly checkpointBytes: number;
   private readonly artifactResidencyLedger?: ArtifactResidencyLedger;
+  private readonly segments: readonly SegmentConfig[];
   private assignmentCounter = 0;
   private requestCounter = 0;
 
-  constructor(private readonly options: AdaptiveChunkDispatcherOptions) {
-    if (options.segments.length === 0) {
+  constructor(options: AdaptiveChunkDispatcherOptions) {
+    const segments = Object.freeze(
+      options.segments.map((segment) => Object.freeze({ ...segment })),
+    );
+    if (segments.length === 0) {
       throw new Error('AdaptiveChunkDispatcher requires at least one segment');
     }
-    for (const [arrayIndex, segment] of options.segments.entries()) {
+    for (const [arrayIndex, segment] of segments.entries()) {
       if (segment.index !== arrayIndex) {
         throw new Error(
           `AdaptiveChunkDispatcher requires segment indexes 0..n-1; ` +
@@ -161,6 +165,7 @@ export class AdaptiveChunkDispatcher {
         );
       }
     }
+    this.segments = segments;
 
     const loadBudgetRatio = options.loadBudgetRatio === undefined
       ? DEFAULT_LOAD_BUDGET_RATIO
@@ -201,7 +206,7 @@ export class AdaptiveChunkDispatcher {
     this.configuredVramLimitMB = configuredVramLimitMB;
     this.checkpointBytes = checkpointBytes;
     this.artifactResidencyLedger = options.artifactResidencyLedger;
-    this.artifactResidencyLedger?.assertCompatibleSegments(options.segments);
+    this.artifactResidencyLedger?.assertCompatibleSegments(this.segments);
   }
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
@@ -250,7 +255,7 @@ export class AdaptiveChunkDispatcher {
     let nextSegment = 0;
     let previousAssignment: AdaptiveChunkAssignmentReport | undefined;
 
-    while (nextSegment < this.options.segments.length) {
+    while (nextSegment < this.segments.length) {
       for (const worker of this.workers.values()) {
         if (this.isOverBudget(worker.telemetry) && !skippedWorkerIds.has(worker.id)) {
           skippedWorkerIds.add(worker.id);
@@ -280,7 +285,7 @@ export class AdaptiveChunkDispatcher {
       const selected = candidates[0];
       const chunkLength = Math.min(
         selected.targetChunkLength,
-        this.options.segments.length - nextSegment,
+        this.segments.length - nextSegment,
       );
       const endSegment = nextSegment + chunkLength - 1;
       const missingArtifacts = this.artifactResidencyLedger?.missingArtifacts(
@@ -439,8 +444,8 @@ export class AdaptiveChunkDispatcher {
   private computeMaximumSpanLength(availableVramMB: number, startSegment: number): number {
     let consumedVramMB = 0;
     let maximumSpanLength = 0;
-    for (let index = startSegment; index < this.options.segments.length; index++) {
-      const nextVramMB = this.options.segments[index].estimatedVramMB;
+    for (let index = startSegment; index < this.segments.length; index++) {
+      const nextVramMB = this.segments[index].estimatedVramMB;
       if (consumedVramMB + nextVramMB > availableVramMB) break;
       consumedVramMB += nextVramMB;
       maximumSpanLength++;
@@ -454,10 +459,10 @@ export class AdaptiveChunkDispatcher {
     let consumedVramMB = 0;
     let maximumSpanLength = 0;
 
-    for (let end = 0; end < this.options.segments.length; end++) {
-      consumedVramMB += this.options.segments[end].estimatedVramMB;
+    for (let end = 0; end < this.segments.length; end++) {
+      consumedVramMB += this.segments[end].estimatedVramMB;
       while (consumedVramMB > availableVramMB && start <= end) {
-        consumedVramMB -= this.options.segments[start].estimatedVramMB;
+        consumedVramMB -= this.segments[start].estimatedVramMB;
         start++;
       }
       maximumSpanLength = Math.max(maximumSpanLength, end - start + 1);
@@ -708,10 +713,10 @@ export class AdaptiveChunkDispatcher {
       if (
         !Number.isInteger(segmentIndex) ||
         segmentIndex < 0 ||
-        segmentIndex >= this.options.segments.length
+        segmentIndex >= this.segments.length
       ) {
         throw new Error(
-          `cache hit segment ${segmentIndex} is outside 0..${this.options.segments.length - 1}`,
+          `cache hit segment ${segmentIndex} is outside 0..${this.segments.length - 1}`,
         );
       }
     }
