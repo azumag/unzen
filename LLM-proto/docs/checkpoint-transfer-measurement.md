@@ -16,8 +16,8 @@ the measurement can advance to manual browser/WebGPU validation.
 |---|---|
 | `createDefaultCheckpointMeasurementManifest()` | Builds the default manifest from `evaluateWebGpu30BFeasibility()` so byte and timing deltas stay comparable with the 30B gate |
 | `createCheckpointPayload()` | Generates a deterministic hidden-state checkpoint payload from `[batchSize, sequenceLength, hiddenSize]` and dtype |
-| `serializeCheckpointPayload()` | Encodes checkpoint metadata plus hidden states into one binary payload |
-| `deserializeCheckpointPayload()` | Restores metadata and hidden states for round-trip validation |
+| `serializeCheckpointPayload()` | Validates and encodes checkpoint metadata plus hidden states into one binary payload |
+| `deserializeCheckpointPayload()` | Validates and restores metadata and hidden states for round-trip validation |
 | `measureCheckpointSerializationAndTransfer()` | Reports size, serialization/deserialization duration, transfer estimate, observed duration, throughput, retry count, and failure reason |
 
 The default manifest matches the WebGPU 30B gate's `[1, 512, 6656]` float16
@@ -52,6 +52,15 @@ transfer durations, retry-backoff totals, and their final sum use checked
 addition/multiplication. A syntactically valid manifest therefore cannot produce
 an `Infinity` or precision-lost timing report merely through extreme but valid
 numeric inputs.
+
+Checkpoint envelope validation is symmetric at the relay boundary. Before
+serialization, the outbound checkpoint must have a non-empty request ID, a
+non-negative safe segment index, `Uint8Array` hidden states, valid tensor
+metadata, and a hidden-state byte length that exactly matches the declared
+shape/dtype. The serializer writes only the validated canonical header fields
+and checks frame-length arithmetic before allocation. The deserializer applies
+the same metadata rules to the received header and independently verifies the
+actual payload byte length.
 
 Serialized checkpoint requirements:
 
