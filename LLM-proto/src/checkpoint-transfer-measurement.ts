@@ -92,6 +92,8 @@ export function createDefaultCheckpointMeasurementManifest(
 export function measureCheckpointSerializationAndTransfer(
   manifest: CheckpointTransferMeasurementManifest,
 ): CheckpointTransferMeasurementReport {
+  validateCheckpointTransferMeasurementManifest(manifest);
+
   const checkpoint = createCheckpointPayload(manifest);
   const serialized = serializeCheckpointPayload(checkpoint);
   const payloadBytes = checkpoint.hiddenStates.byteLength;
@@ -132,6 +134,8 @@ export function measureCheckpointSerializationAndTransfer(
 export function createCheckpointPayload(
   manifest: CheckpointTransferMeasurementManifest,
 ): Checkpoint {
+  validateCheckpointPayloadInputs(manifest);
+
   const payloadBytes = computeCheckpointPayloadBytes(manifest.tensor);
   const hiddenStates = new Uint8Array(payloadBytes);
 
@@ -175,20 +179,43 @@ export function serializeCheckpointPayload(checkpoint: Checkpoint): SerializedCh
 }
 
 export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint {
+  if (serialized.byteLength < 4) {
+    throw new Error('serialized checkpoint must contain a 4-byte header length');
+  }
+
   const headerBytes = new DataView(
     serialized.buffer,
     serialized.byteOffset,
     serialized.byteLength,
   ).getUint32(0, true);
+  if (headerBytes === 0 || headerBytes > serialized.byteLength - 4) {
+    throw new Error('serialized checkpoint header length is out of bounds');
+  }
+
   const headerStart = 4;
   const payloadStart = headerStart + headerBytes;
-  const header = JSON.parse(
-    new TextDecoder().decode(serialized.slice(headerStart, payloadStart)),
-  ) as {
-    readonly requestId: string;
-    readonly segmentIndex: number;
-    readonly metadata: Checkpoint['metadata'];
-  };
+  let parsedHeader: unknown;
+  try {
+    parsedHeader = JSON.parse(
+      new TextDecoder().decode(serialized.slice(headerStart, payloadStart)),
+    );
+  } catch {
+    throw new Error('serialized checkpoint header must be valid JSON');
+  }
+
+  const header = validateSerializedCheckpointHeader(parsedHeader);
+  const expectedPayloadBytes = computeCheckpointPayloadBytes({
+    batchSize: header.metadata.shape[0],
+    sequenceLength: header.metadata.shape[1],
+    hiddenSize: header.metadata.shape[2],
+    dtype: header.metadata.dtype,
+  });
+  const actualPayloadBytes = serialized.byteLength - payloadStart;
+  if (actualPayloadBytes !== expectedPayloadBytes) {
+    throw new Error(
+      `serialized checkpoint payload length mismatch: expected ${expectedPayloadBytes}, got ${actualPayloadBytes}`,
+    );
+  }
 
   return {
     requestId: inferenceRequestId(header.requestId),
@@ -199,7 +226,182 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
 }
 
 export function computeCheckpointPayloadBytes(tensor: CheckpointTensorSpec): number {
-  return tensor.batchSize * tensor.sequenceLength * tensor.hiddenSize * BYTES_PER_DTYPE[tensor.dtype];
+  validateCheckpointTensorSpec(tensor);
+
+  const batchSequence = checkedMultiplySafeInteger(
+    tensor.batchSize,
+    tensor.sequenceLength,
+    'checkpoint tensor element count',
+  );
+  const elementCount = checkedMultiplySafeInteger(
+    batchSequence,
+    tensor.hiddenSize,
+    'checkpoint tensor element count',
+  );
+  return checkedMultiplySafeInteger(
+    elementCount,
+    BYTES_PER_DTYPE[tensor.dtype],
+    'checkpoint payload byte length',
+  );
+}
+
+function validateCheckpointTransferMeasurementManifest(
+  manifest: CheckpointTransferMeasurementManifest,
+): void {
+  validateCheckpointPayloadInputs(manifest);
+  assertPositiveFiniteNumber(manifest.serializationBytesPerSecond, 'serializationBytesPerSecond');
+  assertPositiveFiniteNumber(manifest.deserializationBytesPerSecond, 'deserializationBytesPerSecond');
+  assertPositiveFiniteNumber(
+    manifest.coordinatorTransferBytesPerSecond,
+    'coordinatorTransferBytesPerSecond',
+  );
+  assertPositiveFiniteNumber(manifest.maxTransferMs, 'maxTransferMs');
+  assertNonNegativeSafeInteger(manifest.maxRetries, 'maxRetries');
+  assertNonNegativeSafeInteger(manifest.retryBackoffMs, 'retryBackoffMs');
+
+  if (manifest.simulatedFailuresBeforeSuccess !== undefined) {
+    assertNonNegativeSafeInteger(
+      manifest.simulatedFailuresBeforeSuccess,
+      'simulatedFailuresBeforeSuccess',
+    );
+  }
+  if (manifest.expectedCheckpointBytes !== undefined) {
+    assertPositiveSafeInteger(manifest.expectedCheckpointBytes, 'expectedCheckpointBytes');
+  }
+  if (manifest.expectedCheckpointTransferMs !== undefined) {
+    assertNonNegativeFiniteNumber(
+      manifest.expectedCheckpointTransferMs,
+      'expectedCheckpointTransferMs',
+    );
+  }
+}
+
+function validateCheckpointPayloadInputs(
+  manifest: Pick<CheckpointTransferMeasurementManifest, 'requestId' | 'segmentIndex' | 'tensor'>,
+): void {
+  if (typeof manifest.requestId !== 'string' || manifest.requestId.trim().length === 0) {
+    throw new Error('requestId must be a non-empty string');
+  }
+  assertNonNegativeSafeInteger(manifest.segmentIndex, 'segmentIndex');
+  validateCheckpointTensorSpec(manifest.tensor);
+}
+
+function validateCheckpointTensorSpec(tensor: CheckpointTensorSpec): void {
+  if (!tensor || typeof tensor !== 'object') {
+    throw new Error('tensor must be an object');
+  }
+  assertPositiveSafeInteger(tensor.batchSize, 'tensor.batchSize');
+  assertPositiveSafeInteger(tensor.sequenceLength, 'tensor.sequenceLength');
+  assertPositiveSafeInteger(tensor.hiddenSize, 'tensor.hiddenSize');
+  if (!isCheckpointMeasurementDtype(tensor.dtype)) {
+    throw new Error(`tensor.dtype must be one of: ${Object.keys(BYTES_PER_DTYPE).join(', ')}`);
+  }
+}
+
+function validateSerializedCheckpointHeader(value: unknown): {
+  readonly requestId: string;
+  readonly segmentIndex: number;
+  readonly metadata: {
+    readonly shape: readonly [number, number, number];
+    readonly dtype: CheckpointMeasurementDtype;
+    readonly sequenceLength: number;
+    readonly timestamp: number;
+  };
+} {
+  if (!isRecord(value)) {
+    throw new Error('serialized checkpoint header must be an object');
+  }
+
+  const requestId = value.requestId;
+  if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+    throw new Error('serialized checkpoint requestId must be a non-empty string');
+  }
+
+  const segmentIndex = value.segmentIndex;
+  assertNonNegativeSafeInteger(segmentIndex, 'serialized checkpoint segmentIndex');
+
+  const metadata = value.metadata;
+  if (!isRecord(metadata)) {
+    throw new Error('serialized checkpoint metadata must be an object');
+  }
+
+  const shape = metadata.shape;
+  if (!Array.isArray(shape) || shape.length !== 3) {
+    throw new Error('serialized checkpoint metadata.shape must contain exactly 3 dimensions');
+  }
+  const batchSize = shape[0];
+  const sequenceLength = shape[1];
+  const hiddenSize = shape[2];
+  assertPositiveSafeInteger(batchSize, 'serialized checkpoint metadata.shape[0]');
+  assertPositiveSafeInteger(sequenceLength, 'serialized checkpoint metadata.shape[1]');
+  assertPositiveSafeInteger(hiddenSize, 'serialized checkpoint metadata.shape[2]');
+
+  const dtype = metadata.dtype;
+  if (!isCheckpointMeasurementDtype(dtype)) {
+    throw new Error(`serialized checkpoint metadata.dtype must be one of: ${Object.keys(BYTES_PER_DTYPE).join(', ')}`);
+  }
+
+  const declaredSequenceLength = metadata.sequenceLength;
+  assertPositiveSafeInteger(
+    declaredSequenceLength,
+    'serialized checkpoint metadata.sequenceLength',
+  );
+  if (declaredSequenceLength !== sequenceLength) {
+    throw new Error('serialized checkpoint metadata.sequenceLength must match metadata.shape[1]');
+  }
+
+  const timestamp = metadata.timestamp;
+  assertNonNegativeSafeInteger(timestamp, 'serialized checkpoint metadata.timestamp');
+
+  return {
+    requestId,
+    segmentIndex,
+    metadata: {
+      shape: [batchSize, sequenceLength, hiddenSize],
+      dtype,
+      sequenceLength: declaredSequenceLength,
+      timestamp,
+    },
+  };
+}
+
+function isCheckpointMeasurementDtype(value: unknown): value is CheckpointMeasurementDtype {
+  return value === 'float16' || value === 'float32' || value === 'int8';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertPositiveSafeInteger(value: unknown, fieldName: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${fieldName} must be a positive safe integer`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: unknown, fieldName: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative safe integer`);
+  }
+}
+
+function assertPositiveFiniteNumber(value: unknown, fieldName: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${fieldName} must be a positive finite number`);
+  }
+}
+
+function assertNonNegativeFiniteNumber(value: unknown, fieldName: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative finite number`);
+  }
+}
+
+function checkedMultiplySafeInteger(left: number, right: number, fieldName: string): number {
+  if (left > Math.floor(Number.MAX_SAFE_INTEGER / right)) {
+    throw new Error(`${fieldName} exceeds Number.MAX_SAFE_INTEGER`);
+  }
+  return left * right;
 }
 
 function measureCoordinatorTransfer(
@@ -268,8 +470,8 @@ function selectFailureReason(
 }
 
 function ceilDurationMs(bytes: number, bytesPerSecond: number): number {
-  if (bytesPerSecond <= 0) {
-    throw new Error('bytesPerSecond must be greater than 0');
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    throw new Error('bytesPerSecond must be a positive finite number');
   }
 
   return Math.ceil((bytes / bytesPerSecond) * 1000);
