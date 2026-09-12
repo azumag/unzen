@@ -23,8 +23,15 @@ describe('browser segment artifact budget', () => {
     });
   });
 
-  it('rejects invalid byte sizes', () => {
-    expect(() => evaluateBrowserSegmentArtifactBytes(-1)).toThrow(/non-negative safe integer/);
-    expect(() => evaluateBrowserSegmentArtifactBytes(Number.MAX_VALUE)).toThrow(/non-negative safe integer/);
+  it('rejects structurally impossible or unsafe byte sizes before tier classification', () => {
+    for (const byteSize of [
+      0,
+      -1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(() => evaluateBrowserSegmentArtifactBytes(byteSize)).toThrow(/positive safe integer/);
+    }
   });
 });
