@@ -14,7 +14,7 @@ export type WorkerId = string & { readonly __brand: 'WorkerId' };
 export type InferenceRequestId = string & { readonly __brand: 'InferenceRequestId' };
 
 function assertNonEmptyIdentifier(value: string, kind: string): void {
-  if (value.trim().length === 0) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`${kind} must be a non-empty string`);
   }
 }
