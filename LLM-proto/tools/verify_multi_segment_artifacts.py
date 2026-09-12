@@ -12,7 +12,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import stat
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
@@ -24,12 +26,41 @@ WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 
 
-def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Return descriptor metadata that must remain stable while hashing."""
+
+    return (
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _measure_file(path: Path, *, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
+    """Measure one stable opened file identity and fail closed on mutation."""
+
     digest = hashlib.sha256()
     with path.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"artifact must be a regular file: {path}")
         while chunk := handle.read(chunk_size):
             digest.update(chunk)
-    return digest.hexdigest()
+        after = os.fstat(handle.fileno())
+        if _stat_fingerprint(after) != _stat_fingerprint(before):
+            raise RuntimeError(f"artifact changed while being measured: {path}")
+        return before.st_size, digest.hexdigest()
+
+
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Compatibility wrapper returning the descriptor-pinned SHA-256 digest."""
+
+    _, digest = _measure_file(path, chunk_size=chunk_size)
+    return digest
 
 
 def _non_empty_string(raw: object, *, field: str) -> str:
@@ -188,13 +219,12 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         expected_graph_sha = _canonical_sha256(
             raw_segment.get("sha256"), field=f"segments[{index}].sha256"
         )
-        observed_graph_sha = sha256_file(graph_path)
+        graph_bytes, observed_graph_sha = _measure_file(graph_path)
         if observed_graph_sha != expected_graph_sha:
             raise ValueError(
                 f"segment {index} graph SHA-256 mismatch: "
                 f"expected={expected_graph_sha}, observed={observed_graph_sha}"
             )
-        graph_bytes = graph_path.stat().st_size
 
         raw_external = raw_segment.get("externalData")
         if not isinstance(raw_external, list):
@@ -221,7 +251,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                 raise FileNotFoundError(f"segment external data not found: {external_path}")
 
             expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
-            observed_bytes = external_path.stat().st_size
+            observed_bytes, observed_sha = _measure_file(external_path)
             if observed_bytes != expected_bytes:
                 raise ValueError(
                     f"segment {index} external-data size mismatch for {location}: "
@@ -230,7 +260,6 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             expected_sha = _canonical_sha256(
                 raw_entry.get("sha256"), field=f"{field_prefix}.sha256"
             )
-            observed_sha = sha256_file(external_path)
             if observed_sha != expected_sha:
                 raise ValueError(
                     f"segment {index} external-data SHA-256 mismatch for {location}: "
