@@ -74,6 +74,10 @@ export class SpanRouter {
    * estimates. With an artifact ledger, workers that already hold a contiguous
    * prefix at the current boundary are ranked ahead of cold workers;
    * equal-locality candidates retain stable tier/capacity ordering.
+   *
+   * Ranking is a preference, not a correctness constraint. If the highest-ranked
+   * worker would strand a later segment that only another worker can execute, the
+   * router backtracks to the next candidate instead of rejecting a feasible route.
    */
   computeRoute(startSegment = 0): Route | null {
     if (
@@ -88,29 +92,54 @@ export class SpanRouter {
     }
     if (startSegment === this.segments.length) return [];
 
-    const route: Span[] = [];
-    const usedWorkers = new Set<WorkerId>();
-    let nextSegment = startSegment;
+    return this.searchRoute(startSegment, new Set<WorkerId>(), new Set<string>());
+  }
 
-    while (nextSegment < this.segments.length) {
-      const candidates = this.rankWorkers(nextSegment, usedWorkers);
-      const selected = candidates[0];
-      if (!selected) return null;
+  /**
+   * Search ranked candidates in preference order, memoizing dead-end states so
+   * unequal shard sizes cannot turn a locally attractive worker into a false
+   * global "no route" result.
+   */
+  private searchRoute(
+    startSegment: number,
+    usedWorkers: ReadonlySet<WorkerId>,
+    failedStates: Set<string>,
+  ): Span[] | null {
+    if (startSegment === this.segments.length) return [];
 
+    const stateKey = JSON.stringify([
+      startSegment,
+      [...usedWorkers].map(String).sort(),
+    ]);
+    if (failedStates.has(stateKey)) return null;
+
+    const candidates = this.rankWorkers(startSegment, usedWorkers);
+    for (const selected of candidates) {
       const spanSize = Math.min(
         selected.maxSpan,
-        this.segments.length - nextSegment,
+        this.segments.length - startSegment,
       );
-      route.push({
-        workerId: selected.worker.id,
-        startSegment: nextSegment,
-        endSegment: nextSegment + spanSize - 1,
-      });
-      usedWorkers.add(selected.worker.id);
-      nextSegment += spanSize;
+      const nextUsedWorkers = new Set(usedWorkers);
+      nextUsedWorkers.add(selected.worker.id);
+      const suffix = this.searchRoute(
+        startSegment + spanSize,
+        nextUsedWorkers,
+        failedStates,
+      );
+      if (suffix !== null) {
+        return [
+          {
+            workerId: selected.worker.id,
+            startSegment,
+            endSegment: startSegment + spanSize - 1,
+          },
+          ...suffix,
+        ];
+      }
     }
 
-    return route;
+    failedStates.add(stateKey);
+    return null;
   }
 
   /** Rank idle, unused workers for the current segment boundary. */

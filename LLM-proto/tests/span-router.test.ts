@@ -226,6 +226,21 @@ describe('SpanRouter', () => {
     ]);
   });
 
+  it('backtracks when the preferred worker is required by a later larger segment', () => {
+    const large = workerId('large');
+    const small = workerId('small');
+    pool.register({ workerId: large, tier: WorkerTier.TIER_1, vramMB: 8000 });
+    pool.register({ workerId: small, tier: WorkerTier.TIER_3, vramMB: 2000 });
+
+    const { segments } = makeManifestBackedSegments([2000, 8000]);
+    const route = new SpanRouter(segments, pool).computeRoute();
+
+    expect(route).toEqual([
+      { workerId: small, startSegment: 0, endSegment: 0 },
+      { workerId: large, startSegment: 1, endSegment: 1 },
+    ]);
+  });
+
   it('prefers a worker with an adjacent resident artifact prefix and groups it as a span', () => {
     const cachedVisitor = workerId('cached-visitor');
     const coldStable = workerId('cold-stable');
