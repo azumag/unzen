@@ -203,24 +203,28 @@ export function validateWorkerCapability(
   }
 
   const contextWindow = capability.contextWindowTokens;
-  if (typeof contextWindow !== 'number' || !Number.isInteger(contextWindow) || contextWindow <= 0) {
+  const contextWindowValid =
+    typeof contextWindow === 'number' && Number.isSafeInteger(contextWindow) && contextWindow > 0;
+  if (!contextWindowValid) {
     issue(
       issues,
       'invalid-context-window',
       '$.contextWindowTokens',
-      'contextWindowTokens must be a positive integer',
+      'contextWindowTokens must be a positive safe integer',
     );
   }
   const usage = capability.currentContextUsageTokens;
   if (usage !== undefined) {
-    if (typeof usage !== 'number' || !Number.isInteger(usage) || usage < 0) {
+    const usageValid =
+      typeof usage === 'number' && Number.isSafeInteger(usage) && usage >= 0;
+    if (!usageValid) {
       issue(
         issues,
         'invalid-context-window',
         '$.currentContextUsageTokens',
-        'currentContextUsageTokens must be a non-negative integer',
+        'currentContextUsageTokens must be a non-negative safe integer',
       );
-    } else if (typeof contextWindow === 'number' && usage > contextWindow) {
+    } else if (contextWindowValid && usage > contextWindow) {
       issue(
         issues,
         'invalid-context-window',
@@ -273,14 +277,14 @@ export function validateWorkerCapability(
 
   if (
     typeof capability.maxConcurrency !== 'number' ||
-    !Number.isInteger(capability.maxConcurrency) ||
+    !Number.isSafeInteger(capability.maxConcurrency) ||
     capability.maxConcurrency <= 0
   ) {
     issue(
       issues,
       'invalid-max-concurrency',
       '$.maxConcurrency',
-      'maxConcurrency must be a positive integer',
+      'maxConcurrency must be a positive safe integer',
     );
   }
 
