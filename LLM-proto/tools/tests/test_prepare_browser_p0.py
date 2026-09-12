@@ -78,6 +78,84 @@ class BrowserP0BudgetTest(unittest.TestCase):
                 5120,
             )
 
+    def test_budget_accepts_nested_relative_artifact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "segment0.onnx").write_bytes(b"g" * 1024)
+            (nested / "segment0.onnx_data").write_bytes(b"w" * 2048)
+            manifest = {
+                "segments": [{
+                    "index": 0,
+                    "path": "nested/segment0.onnx",
+                    "externalData": [{
+                        "location": "nested/segment0.onnx_data",
+                        "bytes": 2048,
+                    }],
+                }]
+            }
+
+            apply_browser_budget(manifest, root)
+
+            self.assertEqual(manifest["segments"][0]["browserArtifactBytes"], 3072)
+
+    def test_budget_rejects_unsafe_cross_platform_graph_paths(self) -> None:
+        unsafe_paths = (
+            "../outside.onnx",
+            "/absolute/segment0.onnx",
+            r"C:\escape\segment0.onnx",
+            "CON.onnx",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for graph_path in unsafe_paths:
+                manifest = {
+                    "segments": [{"index": 0, "path": graph_path, "externalData": []}]
+                }
+                with self.subTest(graph_path=graph_path):
+                    with self.assertRaisesRegex(RuntimeError, "unsafe segment graph path"):
+                        apply_browser_budget(manifest, root)
+
+    def test_budget_rejects_unsafe_external_data_location(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "segment0.onnx").write_bytes(b"g" * 1024)
+            manifest = {
+                "segments": [{
+                    "index": 0,
+                    "path": "segment0.onnx",
+                    "externalData": [{"location": "../weights.bin", "bytes": 1024}],
+                }]
+            }
+
+            with self.assertRaisesRegex(RuntimeError, r"unsafe externalData\[0\]\.location"):
+                apply_browser_budget(manifest, root)
+
+    def test_budget_rejects_symlink_parent_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            root = workspace / "output"
+            root.mkdir()
+            outside = workspace / "outside"
+            outside.mkdir()
+            (outside / "segment0.onnx").write_bytes(b"g" * 1024)
+            escape = root / "escape"
+            try:
+                escape.symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"symlink creation unavailable: {error}")
+            manifest = {
+                "segments": [{
+                    "index": 0,
+                    "path": "escape/segment0.onnx",
+                    "externalData": [],
+                }]
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "escapes output directory"):
+                apply_browser_budget(manifest, root)
+
     def test_budget_rejects_external_data_size_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -112,7 +190,7 @@ class BrowserP0BudgetTest(unittest.TestCase):
                 }]
             }
 
-            with self.assertRaisesRegex(RuntimeError, "external-data file is missing"):
+            with self.assertRaisesRegex(RuntimeError, r"externalData\[0\]\.location is missing"):
                 apply_browser_budget(manifest, root)
 
     def test_p0_fails_instead_of_silently_accepting_an_oversized_shard(self) -> None:

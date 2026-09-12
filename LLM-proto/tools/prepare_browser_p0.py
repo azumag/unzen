@@ -17,7 +17,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from prepare_real_split import prepare_real_split
+from prepare_real_split import _relative_artifact_path, prepare_real_split
 
 MODEL_ID = "onnx-community/SmolLM2-135M-ONNX"
 MODEL_REVISION = "0d747f789bcf79b9b57a4be7f3277b64c185f8ef"
@@ -85,13 +85,36 @@ def verify_pinned_source_external_data(manifest: dict[str, object]) -> None:
         )
 
 
+def _prepared_artifact_file(raw: str, output_dir: Path, *, field: str) -> Path:
+    try:
+        relative = _relative_artifact_path(raw, field=field)
+    except ValueError as error:
+        raise RuntimeError(str(error)) from error
+
+    candidate = output_dir / relative
+    if not candidate.is_file():
+        raise RuntimeError(f"generated P0 {field} is missing: {candidate}")
+
+    root = output_dir.resolve()
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise RuntimeError(
+            f"generated P0 {field} escapes output directory: {candidate} -> {resolved}"
+        ) from error
+    return candidate
+
+
 def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
     graph_name = segment.get("path")
     if not isinstance(graph_name, str) or not graph_name:
         raise RuntimeError("generated P0 segment path must be a non-empty string")
-    graph_path = output_dir / graph_name
-    if not graph_path.is_file():
-        raise RuntimeError(f"generated P0 segment graph is missing: {graph_path}")
+    graph_path = _prepared_artifact_file(
+        graph_name,
+        output_dir,
+        field="segment graph path",
+    )
 
     total = graph_path.stat().st_size
     external_entries = segment.get("externalData", [])
@@ -116,9 +139,11 @@ def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
                 f"generated P0 externalData[{index}].bytes must be a non-negative integer"
             )
 
-        external_path = output_dir / location
-        if not external_path.is_file():
-            raise RuntimeError(f"generated P0 external-data file is missing: {external_path}")
+        external_path = _prepared_artifact_file(
+            location,
+            output_dir,
+            field=f"externalData[{index}].location",
+        )
         observed_bytes = external_path.stat().st_size
         if observed_bytes != declared_bytes:
             raise RuntimeError(
