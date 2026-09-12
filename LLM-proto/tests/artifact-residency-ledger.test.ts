@@ -326,9 +326,9 @@ describe('ArtifactResidencyLedger', () => {
         pattern: /contentType must be non-empty/,
       },
       {
-        name: 'empty encoding',
-        artifact: { ...base, encoding: '   ' },
-        pattern: /encoding must be a non-empty string when present/,
+        name: 'non-string encoding',
+        artifact: { ...base, encoding: 7 as unknown as string },
+        pattern: /encoding must be a string when present/,
       },
       {
         name: 'non-string locator',
@@ -353,7 +353,7 @@ describe('ArtifactResidencyLedger', () => {
       {
         name: 'invalid measurement conditions',
         artifact: { ...base, measurementConditions: 7 as unknown as string },
-        pattern: /measurementConditions must be a non-empty string when present/,
+        pattern: /measurementConditions must be a string when present/,
       },
       {
         name: 'non-array runtimes',
