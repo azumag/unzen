@@ -28,9 +28,7 @@ export class CheckpointStore {
       !Number.isSafeInteger(segmentIndex) ||
       segmentIndex < 0
     ) {
-      throw new Error(
-        `checkpoint segmentIndex must be a non-negative safe integer; found ${segmentIndex}`,
-      );
+      throw new Error('checkpoint segmentIndex must be a non-negative safe integer');
     }
   }
 
