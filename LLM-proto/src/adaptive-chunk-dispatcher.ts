@@ -162,13 +162,18 @@ export class AdaptiveChunkDispatcher {
       }
     }
 
+    const loadBudgetRatio = options.loadBudgetRatio ?? DEFAULT_LOAD_BUDGET_RATIO;
+    if (!Number.isFinite(loadBudgetRatio) || loadBudgetRatio <= 0 || loadBudgetRatio > 1) {
+      throw new Error('loadBudgetRatio must be a finite number in (0, 1]');
+    }
+
     this.coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
     this.cdnUrl = options.cdnUrl ?? DEFAULT_CDN_URL;
     this.transport = options.transport ?? new AllowlistedPrototypeTransport([
       this.coordinatorUrl,
       this.cdnUrl,
     ]);
-    this.loadBudgetRatio = options.loadBudgetRatio ?? DEFAULT_LOAD_BUDGET_RATIO;
+    this.loadBudgetRatio = loadBudgetRatio;
     this.longLivedWorkerMs = options.longLivedWorkerMs ?? DEFAULT_LONG_LIVED_WORKER_MS;
     this.configuredVramLimitMB = options.configuredVramLimitMB ?? Number.POSITIVE_INFINITY;
     this.checkpointBytes = options.checkpointBytes ?? DEFAULT_CHECKPOINT_BYTES;
@@ -178,6 +183,7 @@ export class AdaptiveChunkDispatcher {
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     const id = workerId(registration.id);
+    this.validateTelemetry(registration.telemetry);
     const cacheHits = this.validateAndSynchronizeCacheResidency(id, registration.telemetry);
     this.workers.set(id, {
       id,
@@ -194,9 +200,9 @@ export class AdaptiveChunkDispatcher {
       throw new Error(`Unknown adaptive worker: ${worker}`);
     }
 
-    // Validate and atomically replace the ledger entry before mutating the
-    // local worker state. A malformed heartbeat therefore leaves both views
-    // unchanged instead of partially applying its cache inventory.
+    // Validate telemetry before touching either cache-residency view. Invalid
+    // heartbeats must preserve the last known-good telemetry and cache state.
+    this.validateTelemetry(telemetry);
     const cacheHits = this.validateAndSynchronizeCacheResidency(worker, telemetry);
     state.telemetry = telemetry;
     state.residentSegments.clear();
@@ -611,6 +617,17 @@ export class AdaptiveChunkDispatcher {
     };
   }
 
+  private validateTelemetry(telemetry: WorkerTelemetry): void {
+    assertFiniteNonNegative('uptimeMs', telemetry.uptimeMs);
+    assertFiniteNonNegative('vramFreeMB', telemetry.vramFreeMB);
+    assertUnitRatio('gpuBusyRatio', telemetry.gpuBusyRatio);
+    assertUnitRatio('cpuBusyRatio', telemetry.cpuBusyRatio);
+    assertFiniteNonNegative('tokensPerSecond', telemetry.tokensPerSecond);
+    assertFiniteNonNegative('checkpointBytesPerSecond', telemetry.checkpointBytesPerSecond);
+    assertUnitRatio('failureRate', telemetry.failureRate);
+    assertFiniteNonNegative('heartbeatJitterMs', telemetry.heartbeatJitterMs);
+  }
+
   private validateAndSynchronizeCacheResidency(
     worker: WorkerId,
     telemetry: WorkerTelemetry,
@@ -682,6 +699,18 @@ export class AdaptiveChunkDispatcher {
     }
 
     return Math.round((this.checkpointBytes / telemetry.checkpointBytesPerSecond) * 1000);
+  }
+}
+
+function assertFiniteNonNegative(name: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a finite non-negative number`);
+  }
+}
+
+function assertUnitRatio(name: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${name} must be a finite number in [0, 1]`);
   }
 }
 
