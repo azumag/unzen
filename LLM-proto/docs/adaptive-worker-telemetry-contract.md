@@ -32,10 +32,10 @@ Dispatcher configuration is validated at construction before any worker or routi
 
 - `loadBudgetRatio` must be finite and inside `(0, 1]`.
 - `longLivedWorkerMs` must be finite and non-negative. Zero is valid and makes every otherwise-eligible worker immediately satisfy the age threshold.
-- `configuredVramLimitMB` must be non-negative; finite values impose a cap and positive infinity keeps the existing unlimited default.
+- `configuredVramLimitMB` must be a JavaScript `number` at runtime and must be non-negative. Finite values impose a cap and positive infinity keeps the existing unlimited default. Only an omitted/`undefined` option selects that default; `null`, strings, booleans, objects, arrays, symbols, and other non-number values are rejected rather than coerced or treated as unlimited.
 - `checkpointBytes` must be a positive finite number.
 
-These guards keep `NaN`, invalid infinities, zero divisors, and negative limits out of VRAM-fit, lifetime, checkpoint-transfer, and score calculations.
+These guards keep `NaN`, invalid infinities, zero divisors, negative limits, and malformed runtime values out of VRAM-fit, lifetime, checkpoint-transfer, and score calculations. In particular, `configuredVramLimitMB` is checked for its runtime type before any numeric comparison, so values such as a `Symbol` cannot escape the canonical validation error through JavaScript coercion behavior.
 
 ## Atomic heartbeat rule
 
