@@ -96,6 +96,20 @@ describe('CheckpointStore', () => {
       expect(store.size).toBe(0);
     });
 
+    it.each([
+      ['negative', -1],
+      ['fractional', 1.5],
+      ['NaN', Number.NaN],
+      ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
+    ])('rejects %s get() segment indexes before reading state', (_label, segmentIndex) => {
+      const checkpoint = makeCheckpoint(reqId, 0);
+      store.save(checkpoint);
+
+      expect(() => store.get(reqId, segmentIndex)).toThrow(/non-negative safe integer/);
+      expect(store.size).toBe(1);
+      expect(store.get(reqId, 0)).toEqual(checkpoint);
+    });
+
     it('rejects empty hidden states before mutating the store', () => {
       const checkpoint: Checkpoint = {
         ...makeCheckpoint(reqId, 0),
