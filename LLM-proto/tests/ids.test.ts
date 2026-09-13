@@ -69,11 +69,20 @@ describe('ids', () => {
     expect(g1).toMatch(/-gen[0-9a-z]+$/);
   });
 
-  it('brands an API caller idempotency key', () => {
-    const key = idempotencyKey('my-shop-invoice-42');
-    // The branded type is a plain string at runtime.
-    expect(String(key)).toBe('my-shop-invoice-42');
+  it('brands an API caller idempotency key without canonicalizing its identity', () => {
+    const key = idempotencyKey('  my-shop-invoice-42  ');
+    // Branding is validation only: otherwise-valid caller identity remains exact.
+    expect(String(key)).toBe('  my-shop-invoice-42  ');
   });
+
+  it.each([null, undefined, 42, true, {}, [], Symbol('key'), '', '   '])(
+    'rejects malformed runtime idempotency key %p before branding',
+    (value) => {
+      expect(() => idempotencyKey(value as never)).toThrow(
+        'idempotencyKey must be a non-empty string',
+      );
+    },
+  );
 
   it('generated request IDs are compatible with the InferenceRequestId brand', () => {
     const id: InferenceRequestId = generateRequestId();
