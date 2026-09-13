@@ -28,14 +28,16 @@ The existing final/non-final boundary rules remain authoritative:
 - a non-final segment/span must produce one;
 - non-final checkpoint identity must match the request and completed boundary.
 
-Before nested checkpoint fields are read, the checkpoint must itself be a non-null, non-array object. Its `requestId` must be a string and its `segmentIndex` a non-negative safe integer. `CheckpointStore` remains the authority for the full checkpoint payload contract, including hidden-state and metadata validation; the pipeline only validates enough of the envelope to avoid unsafe dereference and to prove routing identity before durable commit.
+Before nested checkpoint fields are read, the checkpoint must itself be a non-null, non-array object. Its `requestId` must be a string and its `segmentIndex` a non-negative safe integer. `CheckpointStore.assertValidCheckpoint()` is then used as the single full-payload authority for hidden-state and metadata validation. `CheckpointStore.save()` applies the same validation again while taking its ownership-isolated snapshot.
+
+For both pipeline paths, that durable snapshot is committed while the assigned worker is still inside the failure boundary. `Pipeline` commits an intermediate checkpoint before `markIdle()`. `SpanPipeline` commits it before both `markIdle()` and artifact-residency recording. If save-time validation or snapshotting fails, the worker is disconnected rather than becoming reusable with an uncommitted boundary.
 
 ## Final output boundary
 
-A final segment/span must produce an output object. Before `tokens` or `text` are returned to the caller, the output must be a non-null, non-array object, `tokens` must be an array, and `text` must be a string. Non-final results continue to reject any output before it can be accepted.
+A final segment/span must produce an output object. Before `tokens` or `text` are returned to the caller, the output must be a non-null, non-array object, `tokens` must be an array of non-negative safe integers, and `text` must be a string. Non-final results continue to reject any output before it can be accepted.
 
 ## Failure behavior
 
-Malformed worker results fail closed with `PipelineError` or `SpanPipelineError`. The worker is disconnected, no malformed checkpoint is committed, and request cleanup removes any retained checkpoints on terminal failure. The checks intentionally run before worker-idle and artifact-residency commit points.
+Malformed worker results fail closed with `PipelineError` or `SpanPipelineError`. The worker is disconnected, no malformed checkpoint is committed, and request cleanup removes any retained checkpoints on terminal failure. The checks and checkpoint snapshot commit intentionally run before worker-idle and artifact-residency commit points.
 
 These checks are runtime protocol hardening only. They do not provide real-model WebGPU, physical GPU-memory, multi-browser relay, or worker-loss-resume evidence for issue #167 and do not change the production/HOLD scope in issue #158.
