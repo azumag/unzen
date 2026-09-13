@@ -762,10 +762,10 @@ export class DurableCoordinator {
     if (!Array.isArray(candidate.tokens)) {
       return 'final output tokens must be an array';
     }
-    if (!candidate.tokens.every(
-      (token) => typeof token === 'number' && Number.isSafeInteger(token) && token >= 0,
-    )) {
-      return 'final output tokens must contain non-negative safe integers';
+    for (const token of candidate.tokens) {
+      if (typeof token !== 'number' || !Number.isSafeInteger(token) || token < 0) {
+        return 'final output tokens must contain non-negative safe integers';
+      }
     }
     if (typeof candidate.text !== 'string') {
       return 'final output text must be a string';
@@ -798,7 +798,7 @@ export class DurableCoordinator {
     const isFinal = result.identity.segmentIndex === record.totalSegments - 1;
 
     if (isFinal) {
-      if (!result.output) return { kind: 'output-missing' };
+      if (result.output === undefined) return { kind: 'output-missing' };
       const outputError = this.finalOutputEnvelopeError(result.output);
       if (outputError !== undefined) {
         this.recordSuppression(result.identity, outputError, now);
@@ -833,7 +833,7 @@ export class DurableCoordinator {
       return { kind: 'protocol-violation', message: `completion conflict at stage ${record.stage}` };
     }
 
-    if (!result.checkpoint) {
+    if (result.checkpoint === undefined) {
       this.recordSuppression(result.identity, 'missing-checkpoint', now);
       return { kind: 'protocol-violation', message: 'intermediate segment produced no checkpoint' };
     }
