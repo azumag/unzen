@@ -4,7 +4,101 @@ import {
   SimulatedPrototypeWorker,
   TwoWorkerPrototypeRunner,
   TWO_WORKER_PROTOTYPE_SEGMENTS,
+  type PrototypeWorkerOptions,
 } from '../src/two-worker-prototype.js';
+import { WorkerTier } from '../src/types.js';
+
+describe('SimulatedPrototypeWorker runtime options', () => {
+  it.each([
+    null,
+    undefined,
+    42,
+    'worker',
+    [],
+    Symbol('worker-options'),
+    () => undefined,
+  ])('rejects malformed top-level option containers before field access', (options) => {
+    expect(() => new SimulatedPrototypeWorker(
+      options as unknown as PrototypeWorkerOptions,
+    )).toThrow(/prototype worker options must be a non-null object/);
+  });
+
+  it.each([-1, 2, 0.5, '0', null, undefined, Symbol('segment')])(
+    'rejects invalid segment indexes',
+    (segmentIndex) => {
+      expect(() => new SimulatedPrototypeWorker({
+        id: 'worker-a',
+        segmentIndex: segmentIndex as 0,
+        webgpuAdapter: 'adapter-a',
+        vramMB: 4096,
+      })).toThrow(/prototype worker segmentIndex must be 0 or 1/);
+    },
+  );
+
+  it.each([null, undefined, 42, {}, [], Symbol('adapter'), '', '   '])(
+    'rejects malformed WebGPU adapter metadata',
+    (webgpuAdapter) => {
+      expect(() => new SimulatedPrototypeWorker({
+        id: 'worker-a',
+        segmentIndex: 0,
+        webgpuAdapter: webgpuAdapter as string,
+        vramMB: 4096,
+      })).toThrow(/prototype worker webgpuAdapter must be a non-empty string/);
+    },
+  );
+
+  it.each([
+    0,
+    -1,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    '4096',
+    null,
+    undefined,
+    {},
+    [],
+    Symbol('vram'),
+  ])('rejects malformed VRAM metadata', (vramMB) => {
+    expect(() => new SimulatedPrototypeWorker({
+      id: 'worker-a',
+      segmentIndex: 0,
+      webgpuAdapter: 'adapter-a',
+      vramMB: vramMB as number,
+    })).toThrow(/prototype worker vramMB must be a positive finite number/);
+  });
+
+  it.each([null, 0, 1, 'false', {}, [], Symbol('fail-first')])(
+    'rejects malformed failFirstRun flags',
+    (failFirstRun) => {
+      expect(() => new SimulatedPrototypeWorker({
+        id: 'worker-a',
+        segmentIndex: 0,
+        webgpuAdapter: 'adapter-a',
+        vramMB: 4096,
+        failFirstRun: failFirstRun as boolean,
+      })).toThrow(/prototype worker failFirstRun must be a boolean when provided/);
+    },
+  );
+
+  it('preserves valid metadata and undefined failFirstRun defaults', () => {
+    const worker = new SimulatedPrototypeWorker({
+      id: 'worker-a',
+      segmentIndex: 0,
+      webgpuAdapter: 'adapter-a',
+      vramMB: 4096,
+    });
+
+    expect(worker.id).toBe('worker-a');
+    expect(worker.segmentIndex).toBe(0);
+    expect(worker.snapshotMetadata()).toEqual({
+      webgpuAdapter: 'adapter-a',
+      tier: WorkerTier.TIER_2,
+      vramMB: 4096,
+      cachedSegments: [],
+    });
+  });
+});
 
 describe('TwoWorkerPrototypeRunner', () => {
   it('compares the fixed 2-worker split path with the single-worker reference path', async () => {
