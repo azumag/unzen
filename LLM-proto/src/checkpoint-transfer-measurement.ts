@@ -196,16 +196,17 @@ export function serializeCheckpointPayload(checkpoint: Checkpoint): SerializedCh
 }
 
 export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint {
-  if (serialized.byteLength < 4) {
+  const frame = validateSerializedCheckpointFrame(serialized);
+  if (frame.byteLength < 4) {
     throw new Error('serialized checkpoint must contain a 4-byte header length');
   }
 
   const headerBytes = new DataView(
-    serialized.buffer,
-    serialized.byteOffset,
-    serialized.byteLength,
+    frame.buffer,
+    frame.byteOffset,
+    frame.byteLength,
   ).getUint32(0, true);
-  if (headerBytes === 0 || headerBytes > serialized.byteLength - 4) {
+  if (headerBytes === 0 || headerBytes > frame.byteLength - 4) {
     throw new Error('serialized checkpoint header length is out of bounds');
   }
 
@@ -214,7 +215,7 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
   let parsedHeader: unknown;
   try {
     parsedHeader = JSON.parse(
-      new TextDecoder().decode(serialized.slice(headerStart, payloadStart)),
+      new TextDecoder().decode(frame.slice(headerStart, payloadStart)),
     );
   } catch {
     throw new Error('serialized checkpoint header must be valid JSON');
@@ -227,7 +228,7 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
     hiddenSize: header.metadata.shape[2],
     dtype: header.metadata.dtype,
   });
-  const actualPayloadBytes = serialized.byteLength - payloadStart;
+  const actualPayloadBytes = frame.byteLength - payloadStart;
   if (actualPayloadBytes !== expectedPayloadBytes) {
     throw new Error(
       `serialized checkpoint payload length mismatch: expected ${expectedPayloadBytes}, got ${actualPayloadBytes}`,
@@ -237,7 +238,7 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
   return {
     requestId: inferenceRequestId(header.requestId),
     segmentIndex: header.segmentIndex,
-    hiddenStates: serialized.slice(payloadStart),
+    hiddenStates: frame.slice(payloadStart),
     metadata: header.metadata,
   };
 }
@@ -296,6 +297,9 @@ function validateCheckpointTransferMeasurementManifest(
 function validateCheckpointPayloadInputs(
   manifest: Pick<CheckpointTransferMeasurementManifest, 'requestId' | 'segmentIndex' | 'tensor'>,
 ): void {
+  if (!isRecord(manifest)) {
+    throw new Error('checkpoint measurement manifest must be an object');
+  }
   if (typeof manifest.requestId !== 'string' || manifest.requestId.trim().length === 0) {
     throw new Error('requestId must be a non-empty string');
   }
@@ -313,6 +317,13 @@ function validateCheckpointTensorSpec(tensor: CheckpointTensorSpec): void {
   if (!isCheckpointMeasurementDtype(tensor.dtype)) {
     throw new Error(`tensor.dtype must be one of: ${Object.keys(BYTES_PER_DTYPE).join(', ')}`);
   }
+}
+
+function validateSerializedCheckpointFrame(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array)) {
+    throw new Error('serialized checkpoint must be a Uint8Array');
+  }
+  return value;
 }
 
 function validateCheckpointForSerialization(checkpoint: Checkpoint): ReturnType<typeof validateSerializedCheckpointHeader> {
