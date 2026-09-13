@@ -116,12 +116,8 @@ export class Pipeline {
         );
       }
 
-      // Store checkpoint for intermediate segments
-      if (result.checkpoint) {
-        this.checkpointStore.save(result.checkpoint);
-      }
-
-      // Final segment produces the output
+      // Final segment produces the output. Intermediate checkpoints are already
+      // committed inside the retry boundary before their worker becomes reusable.
       if (i === request.totalSegments - 1) {
         if (!result.output) {
           request.status = InferenceStatus.FAILED;
@@ -219,6 +215,18 @@ export class Pipeline {
         // echoed execution identity and checkpoint/output boundary before the
         // worker becomes reusable or any state is committed.
         this.assertSegmentResult(request, worker.id, segmentIndex, result);
+        if (result.checkpoint !== undefined) {
+          try {
+            this.checkpointStore.save(result.checkpoint);
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : 'unknown checkpoint commit error';
+            throw new PipelineError(
+              `checkpoint commit failed after segment ${segmentIndex}: ${detail}`,
+              request.id,
+              segmentIndex,
+            );
+          }
+        }
         this.workerPool.markIdle(worker.id);
         return result;
       } catch (error) {
