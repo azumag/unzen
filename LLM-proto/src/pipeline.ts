@@ -59,6 +59,14 @@ const DEFAULT_OPTIONS: PipelineOptions = {
   retryDelayMs: 1_000,
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
 export class Pipeline {
   private readonly options: PipelineOptions;
 
@@ -233,11 +241,32 @@ export class Pipeline {
     request: InferenceRequest,
     workerId: WorkerId,
     segmentIndex: number,
-    result: SegmentResult,
-  ): void {
+    result: unknown,
+  ): asserts result is SegmentResult {
+    if (!isRecord(result)) {
+      throw new PipelineError(
+        'segment result must be a non-null, non-array object',
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (typeof result.requestId !== 'string') {
+      throw new PipelineError(
+        'segment result requestId must be a string',
+        request.id,
+        segmentIndex,
+      );
+    }
     if (result.requestId !== request.id) {
       throw new PipelineError(
         `segment result request ${result.requestId} does not match ${request.id}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (!isNonNegativeSafeInteger(result.segmentIndex)) {
+      throw new PipelineError(
+        'segment result segmentIndex must be a non-negative safe integer',
         request.id,
         segmentIndex,
       );
@@ -249,6 +278,13 @@ export class Pipeline {
         segmentIndex,
       );
     }
+    if (typeof result.workerId !== 'string') {
+      throw new PipelineError(
+        'segment result workerId must be a string',
+        request.id,
+        segmentIndex,
+      );
+    }
     if (result.workerId !== workerId) {
       throw new PipelineError(
         `segment result worker ${result.workerId} does not match assigned worker ${workerId}`,
@@ -256,7 +292,11 @@ export class Pipeline {
         segmentIndex,
       );
     }
-    if (!Number.isFinite(result.processingTimeMs) || result.processingTimeMs < 0) {
+    if (
+      typeof result.processingTimeMs !== 'number' ||
+      !Number.isFinite(result.processingTimeMs) ||
+      result.processingTimeMs < 0
+    ) {
       throw new PipelineError(
         'segment processingTimeMs must be a non-negative finite number',
         request.id,
@@ -283,6 +323,27 @@ export class Pipeline {
           segmentIndex,
         );
       }
+      if (!isRecord(result.output)) {
+        throw new PipelineError(
+          'final segment output must be a non-null, non-array object',
+          request.id,
+          segmentIndex,
+        );
+      }
+      if (!Array.isArray(result.output.tokens)) {
+        throw new PipelineError(
+          'final segment output tokens must be an array',
+          request.id,
+          segmentIndex,
+        );
+      }
+      if (typeof result.output.text !== 'string') {
+        throw new PipelineError(
+          'final segment output text must be a string',
+          request.id,
+          segmentIndex,
+        );
+      }
       return;
     }
 
@@ -300,9 +361,30 @@ export class Pipeline {
         segmentIndex,
       );
     }
+    if (!isRecord(result.checkpoint)) {
+      throw new PipelineError(
+        'segment result checkpoint must be a non-null, non-array object',
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (typeof result.checkpoint.requestId !== 'string') {
+      throw new PipelineError(
+        'checkpoint requestId must be a string',
+        request.id,
+        segmentIndex,
+      );
+    }
     if (result.checkpoint.requestId !== request.id) {
       throw new PipelineError(
         `checkpoint request ${result.checkpoint.requestId} does not match ${request.id}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    if (!isNonNegativeSafeInteger(result.checkpoint.segmentIndex)) {
+      throw new PipelineError(
+        'checkpoint segmentIndex must be a non-negative safe integer',
         request.id,
         segmentIndex,
       );
