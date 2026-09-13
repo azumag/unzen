@@ -116,7 +116,9 @@ describe('DurableCoordinator removeWorker runtime worker-ID boundary', () => {
 
     coord.removeWorker(stableWorker);
 
-    expect(repo.workerReads).toBe(1);
+    // One read selects the current generation and the second is the existing
+    // revokeGeneration() generation fence before durable removal.
+    expect(repo.workerReads).toBe(2);
     expect(repo.activeLeaseListings).toBe(1);
     expect(repo.listWorkers()).toEqual([]);
     expect(coord.workerCount).toBe(0);
