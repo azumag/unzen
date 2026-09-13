@@ -30,8 +30,15 @@ function diagnosticValue(value) {
   }
 }
 
+function requireRecord(value, label) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value;
+}
+
 function segmentLabel(segment) {
-  const index = segment?.index;
+  const index = segment.index;
   return `segment ${index === undefined || index === null ? '?' : diagnosticValue(index)}`;
 }
 
@@ -46,13 +53,22 @@ function safeBytes(value, label) {
   return value;
 }
 
+function positiveBytes(value, label) {
+  const bytes = safeBytes(value, label);
+  if (bytes === 0) {
+    throw new Error(`${label} must be greater than zero`);
+  }
+  return bytes;
+}
+
 export function planSegmentArtifactBudget(segment, mode = 'absolute') {
   if (!['p0', 'absolute'].includes(mode)) {
     throw new Error(`unsupported browser artifact budget mode: ${diagnosticValue(mode)}`);
   }
-  const label = segmentLabel(segment);
-  const declaredBytes = safeBytes(segment?.browserArtifactBytes, `${label} browserArtifactBytes`);
-  const externalData = segment?.externalData ?? [];
+  const validatedSegment = requireRecord(segment, 'segment artifact budget input');
+  const label = segmentLabel(validatedSegment);
+  const declaredBytes = safeBytes(validatedSegment.browserArtifactBytes, `${label} browserArtifactBytes`);
+  const externalData = validatedSegment.externalData ?? [];
   if (!Array.isArray(externalData) || externalData.length === 0) {
     throw new Error(`${label} must declare external data`);
   }
@@ -93,19 +109,40 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
 }
 
 export function verifyActualSegmentArtifactBudget(plan, reports) {
+  const validatedPlan = requireRecord(plan, 'artifact budget plan');
+  if (!Array.isArray(reports)) {
+    throw new Error('artifact reports must be an array');
+  }
+
+  const declaredBytes = positiveBytes(validatedPlan.declaredBytes, 'artifact plan declaredBytes');
+  const requiredMaxBytes = positiveBytes(
+    validatedPlan.requiredMaxBytes,
+    'artifact plan requiredMaxBytes',
+  );
+  const absoluteMaxBytes = positiveBytes(
+    validatedPlan.absoluteMaxBytes,
+    'artifact plan absoluteMaxBytes',
+  );
+  if (requiredMaxBytes > absoluteMaxBytes) {
+    throw new Error('artifact plan requiredMaxBytes must not exceed absoluteMaxBytes');
+  }
+  if (declaredBytes > requiredMaxBytes || declaredBytes > absoluteMaxBytes) {
+    throw new Error('artifact plan declaredBytes must not exceed runtime limits');
+  }
+
   const actualBytes = reports.reduce((sum, report, index) => {
     return sum + safeBytes(report?.bytes, `artifact report[${index}].bytes`);
   }, 0);
-  if (actualBytes !== plan.declaredBytes) {
+  if (actualBytes !== declaredBytes) {
     throw new Error(
-      `segment artifact actual byte size does not match manifest: ${actualBytes} != ${plan.declaredBytes}`,
+      `segment artifact actual byte size does not match manifest: ${actualBytes} != ${declaredBytes}`,
     );
   }
-  if (actualBytes > plan.requiredMaxBytes || actualBytes > plan.absoluteMaxBytes) {
+  if (actualBytes > requiredMaxBytes || actualBytes > absoluteMaxBytes) {
     throw new Error(`segment artifact actual byte size exceeds runtime budget: ${actualBytes}`);
   }
   return {
-    ...plan,
+    ...validatedPlan,
     actualBytes,
     actualMatchesDeclared: true,
     verdict: 'accepted',
