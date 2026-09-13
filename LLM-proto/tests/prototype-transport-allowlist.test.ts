@@ -36,6 +36,63 @@ describe('AllowlistedPrototypeTransport origin contract', () => {
     expect(transport.allowlist).toEqual(['https://coordinator.example']);
   });
 
+  it('returns immutable connection-history snapshots without exposing the backing log', () => {
+    const transport = new AllowlistedPrototypeTransport(['https://coordinator.example']);
+    transport.connect('https://coordinator.example/one');
+    transport.connect('https://coordinator.example/two');
+
+    const allConnections = transport.connections;
+    const sinceOne = transport.connectionsSince(1);
+
+    expect(allConnections).toEqual([
+      'https://coordinator.example',
+      'https://coordinator.example',
+    ]);
+    expect(sinceOne).toEqual(['https://coordinator.example']);
+    expect(Object.isFrozen(allConnections)).toBe(true);
+    expect(Object.isFrozen(sinceOne)).toBe(true);
+    expect(() => (allConnections as string[]).pop()).toThrow();
+    expect(() => (sinceOne as string[]).push('https://outside.example')).toThrow();
+
+    expect(transport.connectionCount).toBe(2);
+    expect(transport.connections).toEqual([
+      'https://coordinator.example',
+      'https://coordinator.example',
+    ]);
+  });
+
+  it('validates connection-history indexes before reading history', () => {
+    const transport = new AllowlistedPrototypeTransport(['https://coordinator.example']);
+    transport.connect('https://coordinator.example/one');
+    const count = transport.connectionCount;
+
+    const emptySnapshot = transport.connectionsSince(count);
+    expect(emptySnapshot).toEqual([]);
+    expect(Object.isFrozen(emptySnapshot)).toBe(true);
+
+    const malformedIndexes: readonly unknown[] = [
+      -1,
+      0.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      count + 1,
+      '0',
+      null,
+      undefined,
+      {},
+      [],
+      Symbol('history-index'),
+    ];
+    for (const malformedIndex of malformedIndexes) {
+      expect(() => transport.connectionsSince(malformedIndex as number)).toThrow(
+        /connection history index must be a non-negative safe integer within the current connection history/,
+      );
+      expect(transport.connectionCount).toBe(count);
+      expect(transport.connections).toEqual(['https://coordinator.example']);
+    }
+  });
+
   it('fails closed when an allowlist entry has no valid network origin', () => {
     expect(() => new AllowlistedPrototypeTransport(['/relative/path'])).toThrow(
       /Invalid prototype allowlist URL/,

@@ -120,7 +120,7 @@ export class AllowlistedPrototypeTransport {
   }
 
   get connections(): readonly string[] {
-    return this.connectionLog;
+    return Object.freeze([...this.connectionLog]);
   }
 
   get connectionCount(): number {
@@ -128,7 +128,17 @@ export class AllowlistedPrototypeTransport {
   }
 
   connectionsSince(index: number): readonly string[] {
-    return this.connectionLog.slice(index);
+    if (
+      typeof index !== 'number' ||
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index > this.connectionLog.length
+    ) {
+      throw new Error(
+        'prototype connection history index must be a non-negative safe integer within the current connection history',
+      );
+    }
+    return Object.freeze(this.connectionLog.slice(index));
   }
 }
 
