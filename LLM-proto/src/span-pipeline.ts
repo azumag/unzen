@@ -390,6 +390,12 @@ export class SpanPipeline {
           request.id,
         );
       }
+      if (!result.output.tokens.every(isNonNegativeSafeInteger)) {
+        throw new SpanPipelineError(
+          'final span output tokens must contain non-negative safe integers',
+          request.id,
+        );
+      }
       if (typeof result.output.text !== 'string') {
         throw new SpanPipelineError(
           'final span output text must be a string',
@@ -439,6 +445,15 @@ export class SpanPipeline {
       throw new SpanPipelineError(
         `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
         `span end ${span.endSegment}`,
+        request.id,
+      );
+    }
+    try {
+      CheckpointStore.assertValidCheckpoint(result.checkpoint);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown checkpoint validation error';
+      throw new SpanPipelineError(
+        `invalid checkpoint from span ${span.startSegment}..${span.endSegment}: ${detail}`,
         request.id,
       );
     }
