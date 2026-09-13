@@ -142,6 +142,40 @@ describe('DurableCoordinator ExecutionResult runtime envelope', () => {
     expect(repo.getActiveLease(identity.requestId)).toBeDefined();
   });
 
+  it('treats a present null final output as malformed rather than missing', async () => {
+    const repo = new InMemoryRepository();
+    const coord = coordinator(repo, 1);
+    const identity = placeRunning(repo, coord.manifestDigest, 1, 0);
+
+    await expect(coord.handleWorkerResult({
+      identity,
+      output: null,
+      processingTimeMs: 2,
+    } as never)).resolves.toEqual({
+      kind: 'protocol-violation',
+      message: 'final output must be a non-null, non-array object',
+    });
+    expect(repo.getResult(identity.requestId)).toBeUndefined();
+  });
+
+  it('rejects sparse final token arrays instead of skipping holes', async () => {
+    const repo = new InMemoryRepository();
+    const coord = coordinator(repo, 1);
+    const identity = placeRunning(repo, coord.manifestDigest, 1, 0);
+    const sparse = [1, 2, 3];
+    delete sparse[1];
+
+    await expect(coord.handleWorkerResult({
+      identity,
+      output: { tokens: sparse, text: 'bad' },
+      processingTimeMs: 2,
+    })).resolves.toEqual({
+      kind: 'protocol-violation',
+      message: 'final output tokens must contain non-negative safe integers',
+    });
+    expect(repo.getResult(identity.requestId)).toBeUndefined();
+  });
+
   it('commits an ownership-isolated copy of validated final output', async () => {
     const repo = new InMemoryRepository();
     const coord = coordinator(repo, 1);
@@ -171,6 +205,22 @@ describe('DurableCoordinator ExecutionResult runtime envelope', () => {
     } as never);
 
     expect(acceptance.kind).toBe('checkpoint-rejected');
+    expect(repo.getCheckpoint(identity.requestId, 0)).toBeUndefined();
+  });
+
+  it('treats a present null checkpoint as a malformed checkpoint envelope', async () => {
+    const repo = new InMemoryRepository();
+    const coord = coordinator(repo, 2);
+    const identity = placeRunning(repo, coord.manifestDigest, 2, 0);
+
+    await expect(coord.handleWorkerResult({
+      identity,
+      checkpoint: null,
+      processingTimeMs: 1,
+    } as never)).resolves.toEqual({
+      kind: 'checkpoint-rejected',
+      message: 'checkpoint envelope must be an object',
+    });
     expect(repo.getCheckpoint(identity.requestId, 0)).toBeUndefined();
   });
 
