@@ -31,8 +31,15 @@ runtime trust boundaries. Invalid values are rejected before allocation or
 timing arithmetic rather than being allowed to become `NaN`, `Infinity`, a
 wrapped precision value, or a misleading measurement.
 
+Before any manifest field is read, the public measurement and payload-generation
+paths require a non-null, non-array object. Asserted or decoded values such as
+`null`, primitives, arrays, symbols, or binary views therefore fail with the
+measurement-manifest contract error rather than an incidental JavaScript field
+access failure.
+
 Manifest requirements:
 
+- the top-level manifest is a non-null, non-array object;
 - `requestId` is a non-empty string.
 - `segmentIndex` is a non-negative JavaScript safe integer.
 - tensor dimensions are positive JavaScript safe integers and `dtype` is one of
@@ -58,12 +65,15 @@ serialization, the outbound checkpoint must have a non-empty request ID, a
 non-negative safe segment index, `Uint8Array` hidden states, valid tensor
 metadata, and a hidden-state byte length that exactly matches the declared
 shape/dtype. The serializer writes only the validated canonical header fields
-and checks frame-length arithmetic before allocation. The deserializer applies
-the same metadata rules to the received header and independently verifies the
-actual payload byte length.
+and checks frame-length arithmetic before allocation. The deserializer first
+requires the top-level received frame itself to be a `Uint8Array`, before any
+`byteLength`, buffer, slice, or decode access; it then applies the same metadata
+rules to the received header and independently verifies the actual payload byte
+length.
 
 Serialized checkpoint requirements:
 
+- the top-level frame is a `Uint8Array`;
 - the frame contains the four-byte little-endian header-length prefix;
 - the declared header length is non-zero and contained by the frame;
 - the header is valid JSON with a non-empty request ID, non-negative safe
