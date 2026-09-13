@@ -82,15 +82,18 @@ export class LeaseManager {
   }
 
   getActive(requestId: InferenceRequestId): Lease | undefined {
+    this.assertValidRequestIdentity(requestId);
     return this.store.getActiveLease(requestId);
   }
 
   isActive(requestId: InferenceRequestId): boolean {
+    this.assertValidRequestIdentity(requestId);
     return this.store.getActiveLease(requestId) !== undefined;
   }
 
   /** Reclaim the active lease of a request (on completion/cancel/retry). */
   reclaimByRequest(requestId: InferenceRequestId): void {
+    this.assertValidRequestIdentity(requestId);
     const lease = this.store.getActiveLease(requestId);
     if (lease) this.store.deleteLease(lease.leaseId);
   }
@@ -109,6 +112,7 @@ export class LeaseManager {
 
   /** Reclaim every lease held by a revoked worker generation. */
   reclaimByWorkerGeneration(workerId: WorkerId, generation: WorkerGeneration): void {
+    this.assertValidWorkerGenerationIdentity(workerId, generation);
     for (const lease of this.store.listActiveLeases()) {
       if (lease.workerId === workerId && lease.workerGeneration === generation) {
         this.store.deleteLease(lease.leaseId);
@@ -134,5 +138,31 @@ export class LeaseManager {
       return { ok: false, reason: 'segment-mismatch' };
     }
     return { ok: true };
+  }
+
+  /** Validate a direct request-ID lookup before durable lease repository access. */
+  private assertValidRequestIdentity(requestId: unknown): void {
+    if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+      throw new UnzenError(
+        'lease requestId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Validate worker ownership identity before active-lease enumeration. */
+  private assertValidWorkerGenerationIdentity(workerId: unknown, generation: unknown): void {
+    if (typeof workerId !== 'string' || workerId.trim().length === 0) {
+      throw new UnzenError(
+        'lease workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+    if (typeof generation !== 'string' || generation.trim().length === 0) {
+      throw new UnzenError(
+        'lease worker generation must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
   }
 }
