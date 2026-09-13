@@ -75,7 +75,18 @@ describe('DurableCoordinator submission options runtime envelope', () => {
     },
   );
 
-  it.each(['1000', Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, Symbol('timeout'), {}])(
+  it.each([
+    null,
+    true,
+    [],
+    '1000',
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    -1,
+    Symbol('timeout'),
+    {},
+  ])(
     'rejects malformed timeoutMs %p before idempotency or durable mutation',
     (timeoutMs) => {
       const repo = new CountingRepository();
