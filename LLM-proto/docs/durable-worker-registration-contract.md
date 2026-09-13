@@ -2,20 +2,26 @@
 
 `WorkerRegistry.register()` is a runtime trust boundary. TypeScript types describe coordinator code, but they do not validate worker registration payloads decoded from WebSocket / JSON traffic.
 
-Before the registry reads or mutates durable routing state, a registration must satisfy all of the following:
+Before the registry reads registration fields or mutates durable routing state, the registration envelope itself must be a non-null, non-array object. After that container check, a registration must satisfy all of the following:
 
 - `workerId` is a non-empty, non-whitespace string.
 - `tier` is exactly `WorkerTier.TIER_1`, `TIER_2`, or `TIER_3`.
 - `vramMB` is finite and greater than zero.
 - `connectionId` is a non-empty, non-whitespace string.
 
-Validation happens before existing-worker lookup, capability refresh, revocation, generation creation, or repository writes. Consequently, a rejected same-connection refresh cannot poison an existing worker's tier/VRAM, and a rejected reconnect cannot revoke the currently valid generation.
+Validation happens before existing-worker lookup, capability refresh, revocation, generation creation, or repository writes. Consequently, a rejected malformed envelope cannot trigger incidental field-access failures after state has changed, a rejected same-connection refresh cannot poison an existing worker's tier/VRAM, and a rejected reconnect cannot revoke the currently valid generation.
 
 Valid registration semantics are unchanged:
 
 - a new worker creates a fresh generation;
 - the same worker on the same connection refreshes capability fields while preserving its generation;
 - the same worker on a different connection revokes the old generation and creates a new one.
+
+## Busy-state segment cursor
+
+`WorkerRegistry.markBusy()` is also a runtime boundary because decoded coordinator data can reach the segment cursor even when TypeScript declares it as `number`.
+
+Before reading or mutating the worker record, `segmentIndex` must be a non-negative safe integer. Negative, fractional, `NaN`, infinite, unsafe-integer, and non-number asserted values are rejected before `stage` or `currentSegment` can change. For an otherwise-valid segment index, the existing generation fence is unchanged: unknown workers and stale generations remain no-ops, while the current generation transitions to `busy` and stores that segment index.
 
 ## Revoked-generation snapshot isolation
 

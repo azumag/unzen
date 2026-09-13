@@ -132,6 +132,7 @@ export class WorkerRegistry {
   }
 
   markBusy(workerId: WorkerId, generation: WorkerGeneration, segmentIndex: number): void {
+    this.assertValidSegmentIndex(segmentIndex);
     const record = this.store.getWorker(workerId);
     if (!record || generation !== record.generation) return;
     record.stage = WorkerStageValue.Busy;
@@ -235,6 +236,14 @@ export class WorkerRegistry {
     connectionId: string,
   ): void {
     if (
+      typeof registration !== 'object' ||
+      registration === null ||
+      Array.isArray(registration)
+    ) {
+      throw new Error('worker registration must be a non-null object');
+    }
+
+    if (
       typeof registration.workerId !== 'string' ||
       registration.workerId.trim().length === 0
     ) {
@@ -274,6 +283,15 @@ export class WorkerRegistry {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new Error(
         `timeoutMs must be a positive finite number; found ${String(timeoutMs)}`,
+      );
+    }
+  }
+
+  /** Keep the durable busy-state cursor within the model's non-negative segment domain. */
+  private assertValidSegmentIndex(segmentIndex: number): void {
+    if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) {
+      throw new Error(
+        `segmentIndex must be a non-negative safe integer; found ${String(segmentIndex)}`,
       );
     }
   }
