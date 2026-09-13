@@ -60,7 +60,9 @@ Snapshotting itself is also a runtime trust boundary. Before the dispatcher spre
 - every cache-artifact `segmentIndex` to be a runtime `number` before normal range validation;
 - every cache-artifact `sha256` to be a runtime `string` before canonical digest validation.
 
-These checks intentionally happen before defensive copying. As a result, asserted or decoded values such as `null`, primitive telemetry, iterable strings in `cacheHits`, object-shaped substitutes for arrays, malformed cache-artifact entries, and non-string digest values are rejected by explicit validation rather than incidental spread/map/property coercion failures. Numeric cache-index range checks, canonical SHA-256 checks, manifest identity checks, and duplicate detection still run afterward against the dispatcher-owned snapshot.
+After snapshotting, every `cacheHits` entry must also be a runtime JavaScript `number` before integer or segment-range checks. Non-number asserted or decoded values such as strings, objects, booleans, and `Symbol` values are rejected with an intentional dispatcher validation error without interpolating/coercing the untrusted value. Numeric values then continue through the existing non-negative integer and active segment-range contract.
+
+These checks intentionally happen before defensive copying where container shape itself could otherwise trigger spread/map failures, and before any untrusted cache-hit element is used in range-error formatting. As a result, asserted or decoded values such as `null`, primitive telemetry, iterable strings in `cacheHits`, object-shaped substitutes for arrays, malformed cache-artifact entries, non-string digest values, and non-number cache-hit entries are rejected by explicit validation rather than incidental spread/map/property/interpolation coercion failures. Numeric cache-index range checks, canonical SHA-256 checks, manifest identity checks, and duplicate detection still run afterward against the dispatcher-owned snapshot.
 
 ## Atomic heartbeat rule
 
@@ -76,4 +78,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, and post-acceptance telemetry mutation isolation. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes and cache-hit element types, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, and post-acceptance telemetry mutation isolation. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
