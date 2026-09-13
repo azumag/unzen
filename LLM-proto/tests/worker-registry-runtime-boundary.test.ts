@@ -8,6 +8,7 @@ import { workerId, WorkerTier, type WorkerId } from '../src/types.js';
 
 class CountingRepository extends InMemoryRepository {
   workerReads = 0;
+  workerListings = 0;
 
   override getWorker(
     ...args: Parameters<InMemoryRepository['getWorker']>
@@ -16,8 +17,17 @@ class CountingRepository extends InMemoryRepository {
     return super.getWorker(...args);
   }
 
+  override listWorkers(): ReturnType<InMemoryRepository['listWorkers']> {
+    this.workerListings += 1;
+    return super.listWorkers();
+  }
+
   resetWorkerReads(): void {
     this.workerReads = 0;
+  }
+
+  resetWorkerListings(): void {
+    this.workerListings = 0;
   }
 }
 
@@ -138,6 +148,23 @@ describe('WorkerRegistry runtime boundaries', () => {
 
       expect(() => run(registry, id, generateWorkerGeneration())).not.toThrow();
       expect(repository.listWorkers()).toEqual([before]);
+    },
+  );
+
+  it.each(malformedIdentityValues)(
+    'rejects malformed generation lookup %p before active-worker enumeration',
+    (malformed) => {
+      const repository = new CountingRepository();
+      const registry = new WorkerRegistry(repository);
+      registry.register(validRegistration(), 'conn-1');
+      repository.resetWorkerListings();
+
+      expectProtocolViolation(
+        () => registry.getByGeneration(malformed as never),
+        'worker generation lookup must be a non-empty string',
+      );
+
+      expect(repository.workerListings).toBe(0);
     },
   );
 

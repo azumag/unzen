@@ -212,6 +212,7 @@ export class WorkerRegistry {
 
   /** Look up a record by generation (current or revoked). */
   getByGeneration(generation: WorkerGeneration): WorkerRecord | undefined {
+    this.assertValidGenerationLookup(generation);
     for (const worker of this.store.listWorkers()) {
       if (worker.generation === generation) return worker;
     }
@@ -296,6 +297,16 @@ export class WorkerRegistry {
     if (typeof workerId !== 'string' || workerId.trim().length === 0) {
       throw new UnzenError(
         'worker lookup workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Validate generation lookup identity before active-worker enumeration or archive access. */
+  private assertValidGenerationLookup(generation: unknown): void {
+    if (typeof generation !== 'string' || generation.trim().length === 0) {
+      throw new UnzenError(
+        'worker generation lookup must be a non-empty string',
         ErrorCode.ProtocolViolation,
       );
     }
