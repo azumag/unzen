@@ -70,6 +70,15 @@ interface SegmentExecutionOutput {
   readonly checkpointBytes: number;
 }
 
+interface ValidatedSegmentExecutionInput {
+  readonly requestId: string;
+  readonly prompt: string;
+  readonly checkpointHiddenStates?: Uint8Array;
+  readonly coordinatorUrl: string;
+  readonly cdnUrl: string;
+  readonly transport: AllowlistedPrototypeTransport;
+}
+
 interface TwoWorkerPrototypeRunnerDependencies {
   readonly transport?: AllowlistedPrototypeTransport;
   readonly segment0?: SimulatedPrototypeWorker;
@@ -187,8 +196,12 @@ export class SimulatedPrototypeWorker {
   }
 
   async execute(input: SegmentExecutionInput): Promise<SegmentExecutionOutput> {
-    input.transport.connect(input.coordinatorUrl);
-    input.transport.connect(`${input.cdnUrl}/models/proto-2b-q4/seg-${this.segmentIndex}.bin`);
+    const validatedInput = validateSegmentExecutionInput(input, this.segmentIndex);
+
+    validatedInput.transport.connect(validatedInput.coordinatorUrl);
+    validatedInput.transport.connect(
+      `${validatedInput.cdnUrl}/models/proto-2b-q4/seg-${this.segmentIndex}.bin`,
+    );
 
     if (this.shouldFailFirstRun) {
       this.shouldFailFirstRun = false;
@@ -200,8 +213,8 @@ export class SimulatedPrototypeWorker {
     const startedAt = Date.now();
 
     if (this.segmentIndex === 0) {
-      const normalizedPrompt = normalizePrompt(input.prompt);
-      const checkpoint = makePrototypeCheckpoint(input.requestId, 0, normalizedPrompt);
+      const normalizedPrompt = normalizePrompt(validatedInput.prompt);
+      const checkpoint = makePrototypeCheckpoint(validatedInput.requestId, 0, normalizedPrompt);
       return {
         checkpoint,
         latencyMs: Date.now() - startedAt,
@@ -210,17 +223,20 @@ export class SimulatedPrototypeWorker {
       };
     }
 
-    if (!input.checkpoint) {
+    const hiddenStates = validatedInput.checkpointHiddenStates;
+    if (!hiddenStates) {
       throw new Error('Segment 1 requires a relayed checkpoint');
     }
 
-    input.transport.connect(`${input.coordinatorUrl}/checkpoint/${input.requestId}/0`);
-    const hiddenText = bytesToText(input.checkpoint.hiddenStates);
+    validatedInput.transport.connect(
+      `${validatedInput.coordinatorUrl}/checkpoint/${validatedInput.requestId}/0`,
+    );
+    const hiddenText = bytesToText(hiddenStates);
     return {
       text: finalizeText(hiddenText),
       latencyMs: Date.now() - startedAt,
       cacheHit,
-      checkpointBytes: input.checkpoint.hiddenStates.byteLength,
+      checkpointBytes: hiddenStates.byteLength,
     };
   }
 
@@ -419,6 +435,49 @@ function assertPrototypeWorkerOptionsContainer(
   if (typeof options !== 'object' || options === null || Array.isArray(options)) {
     throw new Error('prototype worker options must be a non-null object');
   }
+}
+
+function validateSegmentExecutionInput(
+  input: unknown,
+  segmentIndex: 0 | 1,
+): ValidatedSegmentExecutionInput {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('prototype worker execution input must be a non-null object');
+  }
+
+  const candidate = input as Record<string, unknown>;
+  const requestId = inferenceRequestId(candidate.requestId as string);
+  const prompt = validatePrototypePrompt(candidate.prompt);
+  const coordinatorUrl = validatePrototypeNetworkUrl(
+    candidate.coordinatorUrl,
+    'prototype worker coordinatorUrl',
+  );
+  const cdnUrl = validatePrototypeNetworkUrl(candidate.cdnUrl, 'prototype worker cdnUrl');
+  if (!(candidate.transport instanceof AllowlistedPrototypeTransport)) {
+    throw new Error('prototype worker transport must be an AllowlistedPrototypeTransport');
+  }
+
+  let checkpointHiddenStates: Uint8Array | undefined;
+  if (segmentIndex === 1) {
+    const checkpoint = candidate.checkpoint;
+    if (typeof checkpoint !== 'object' || checkpoint === null || Array.isArray(checkpoint)) {
+      throw new Error('prototype segment 1 requires a checkpoint object');
+    }
+    const hiddenStates = (checkpoint as Record<string, unknown>).hiddenStates;
+    if (!(hiddenStates instanceof Uint8Array)) {
+      throw new Error('prototype segment 1 checkpoint hiddenStates must be a Uint8Array');
+    }
+    checkpointHiddenStates = hiddenStates;
+  }
+
+  return {
+    requestId,
+    prompt,
+    checkpointHiddenStates,
+    coordinatorUrl,
+    cdnUrl,
+    transport: candidate.transport,
+  };
 }
 
 function validateTwoWorkerPrototypeRunnerDependencies(
