@@ -33,6 +33,14 @@ export class CheckpointStore {
   }
 
   private static assertValidCheckpoint(checkpoint: Checkpoint): void {
+    if (
+      typeof checkpoint !== 'object' ||
+      checkpoint === null ||
+      Array.isArray(checkpoint)
+    ) {
+      throw new Error('checkpoint must be a non-null object');
+    }
+
     CheckpointStore.assertValidRequestId(checkpoint.requestId);
     CheckpointStore.assertValidSegmentIndex(checkpoint.segmentIndex);
 
