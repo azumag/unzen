@@ -217,6 +217,7 @@ export class WorkerRegistry {
   }
 
   get(workerId: WorkerId): WorkerRecord | undefined {
+    this.assertValidLookupIdentity(workerId);
     return this.store.getWorker(workerId);
   }
 
@@ -282,6 +283,16 @@ export class WorkerRegistry {
     if (typeof generation !== 'string' || generation.trim().length === 0) {
       throw new UnzenError(
         'worker heartbeat generation must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Validate lookup identity before active-worker repository access. */
+  private assertValidLookupIdentity(workerId: unknown): void {
+    if (typeof workerId !== 'string' || workerId.trim().length === 0) {
+      throw new UnzenError(
+        'worker lookup workerId must be a non-empty string',
         ErrorCode.ProtocolViolation,
       );
     }
