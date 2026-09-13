@@ -7,6 +7,14 @@ import {
 const coordinatorUrl = 'https://coordinator.unzen.local';
 const cdnUrl = 'https://cdn.unzen.local';
 
+const malformedFieldCases: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+  ['requestId', { requestId: Symbol('request') }],
+  ['prompt', { prompt: 123 }],
+  ['coordinatorUrl', { coordinatorUrl: 'not-an-absolute-url' }],
+  ['cdnUrl', { cdnUrl: null }],
+  ['transport', { transport: {} }],
+];
+
 function makeTransport(): AllowlistedPrototypeTransport {
   return new AllowlistedPrototypeTransport([coordinatorUrl, cdnUrl]);
 }
@@ -58,36 +66,33 @@ describe('SimulatedPrototypeWorker execution envelope', () => {
     })).rejects.toThrow('Simulated worker loss');
   });
 
-  it.each([
-    ['requestId', { requestId: Symbol('request') }],
-    ['prompt', { prompt: 123 }],
-    ['coordinatorUrl', { coordinatorUrl: 'not-an-absolute-url' }],
-    ['cdnUrl', { cdnUrl: null }],
-    ['transport', { transport: {} }],
-  ])('preflights malformed %s before transport, cache, and fail-once state', async (_field, patch) => {
-    const worker = makeSegment0Worker(true);
-    const transport = makeTransport();
-    const input = {
-      requestId: 'request-1',
-      prompt: 'hello',
-      coordinatorUrl,
-      cdnUrl,
-      transport,
-      ...patch,
-    };
+  it.each(malformedFieldCases)(
+    'preflights malformed %s before transport, cache, and fail-once state',
+    async (_field, patch) => {
+      const worker = makeSegment0Worker(true);
+      const transport = makeTransport();
+      const input = {
+        requestId: 'request-1',
+        prompt: 'hello',
+        coordinatorUrl,
+        cdnUrl,
+        transport,
+        ...patch,
+      };
 
-    await expect(worker.execute(input as never)).rejects.toThrow();
-    expect(transport.connectionCount).toBe(0);
-    expect(worker.snapshotMetadata().cachedSegments).toEqual([]);
+      await expect(worker.execute(input as never)).rejects.toThrow();
+      expect(transport.connectionCount).toBe(0);
+      expect(worker.snapshotMetadata().cachedSegments).toEqual([]);
 
-    await expect(worker.execute({
-      requestId: 'request-2',
-      prompt: 'hello',
-      coordinatorUrl,
-      cdnUrl,
-      transport,
-    })).rejects.toThrow('Simulated worker loss');
-  });
+      await expect(worker.execute({
+        requestId: 'request-2',
+        prompt: 'hello',
+        coordinatorUrl,
+        cdnUrl,
+        transport,
+      })).rejects.toThrow('Simulated worker loss');
+    },
+  );
 
   it('rejects malformed segment-1 checkpoint hidden states before side effects', async () => {
     const worker = makeSegment1Worker(true);
