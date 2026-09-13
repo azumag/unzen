@@ -126,6 +126,7 @@ export class WorkerRegistry {
 
   /** Mark a worker disconnected, only for the current generation. */
   markDisconnected(workerId: WorkerId, generation: WorkerGeneration): void {
+    this.assertValidStateMutationIdentity(workerId, generation);
     const record = this.store.getWorker(workerId);
     if (!record || generation !== record.generation) return;
     record.stage = WorkerStageValue.Disconnected;
@@ -133,6 +134,7 @@ export class WorkerRegistry {
   }
 
   markBusy(workerId: WorkerId, generation: WorkerGeneration, segmentIndex: number): void {
+    this.assertValidStateMutationIdentity(workerId, generation);
     this.assertValidSegmentIndex(segmentIndex);
     const record = this.store.getWorker(workerId);
     if (!record || generation !== record.generation) return;
@@ -141,6 +143,7 @@ export class WorkerRegistry {
   }
 
   markIdle(workerId: WorkerId, generation: WorkerGeneration): void {
+    this.assertValidStateMutationIdentity(workerId, generation);
     const record = this.store.getWorker(workerId);
     if (!record || generation !== record.generation) return;
     record.stage = WorkerStageValue.Idle;
@@ -293,6 +296,22 @@ export class WorkerRegistry {
     if (typeof workerId !== 'string' || workerId.trim().length === 0) {
       throw new UnzenError(
         'worker lookup workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Validate worker state-transition identity before active-worker repository access. */
+  private assertValidStateMutationIdentity(workerId: unknown, generation: unknown): void {
+    if (typeof workerId !== 'string' || workerId.trim().length === 0) {
+      throw new UnzenError(
+        'worker state mutation workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+    if (typeof generation !== 'string' || generation.trim().length === 0) {
+      throw new UnzenError(
+        'worker state mutation generation must be a non-empty string',
         ErrorCode.ProtocolViolation,
       );
     }
