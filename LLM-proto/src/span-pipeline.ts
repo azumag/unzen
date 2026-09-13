@@ -72,6 +72,14 @@ const DEFAULT_OPTIONS: SpanPipelineOptions = {
   retryDelayMs: 1_000,
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
 export class SpanPipeline {
   private readonly options: SpanPipelineOptions;
 
@@ -294,18 +302,48 @@ export class SpanPipeline {
   private assertSpanResult(
     request: InferenceRequest,
     span: Span,
-    result: SpanResult,
+    result: unknown,
     isFinalSpan: boolean,
-  ): void {
+  ): asserts result is SpanResult {
+    if (!isRecord(result)) {
+      throw new SpanPipelineError(
+        'span result must be a non-null, non-array object',
+        request.id,
+      );
+    }
+    if (typeof result.requestId !== 'string') {
+      throw new SpanPipelineError(
+        'span result requestId must be a string',
+        request.id,
+      );
+    }
     if (result.requestId !== request.id) {
       throw new SpanPipelineError(
         `span result request ${result.requestId} does not match ${request.id}`,
         request.id,
       );
     }
+    if (typeof result.workerId !== 'string') {
+      throw new SpanPipelineError(
+        'span result workerId must be a string',
+        request.id,
+      );
+    }
     if (result.workerId !== span.workerId) {
       throw new SpanPipelineError(
         `span result worker ${result.workerId} does not match assigned worker ${span.workerId}`,
+        request.id,
+      );
+    }
+    if (!isNonNegativeSafeInteger(result.startSegment)) {
+      throw new SpanPipelineError(
+        'span result startSegment must be a non-negative safe integer',
+        request.id,
+      );
+    }
+    if (!isNonNegativeSafeInteger(result.endSegment)) {
+      throw new SpanPipelineError(
+        'span result endSegment must be a non-negative safe integer',
         request.id,
       );
     }
@@ -316,7 +354,11 @@ export class SpanPipeline {
         request.id,
       );
     }
-    if (!Number.isFinite(result.processingTimeMs) || result.processingTimeMs < 0) {
+    if (
+      typeof result.processingTimeMs !== 'number' ||
+      !Number.isFinite(result.processingTimeMs) ||
+      result.processingTimeMs < 0
+    ) {
       throw new SpanPipelineError(
         `span processingTimeMs must be a non-negative finite number`,
         request.id,
@@ -336,6 +378,24 @@ export class SpanPipeline {
           request.id,
         );
       }
+      if (!isRecord(result.output)) {
+        throw new SpanPipelineError(
+          'final span output must be a non-null, non-array object',
+          request.id,
+        );
+      }
+      if (!Array.isArray(result.output.tokens)) {
+        throw new SpanPipelineError(
+          'final span output tokens must be an array',
+          request.id,
+        );
+      }
+      if (typeof result.output.text !== 'string') {
+        throw new SpanPipelineError(
+          'final span output text must be a string',
+          request.id,
+        );
+      }
       return;
     }
 
@@ -351,9 +411,27 @@ export class SpanPipeline {
         request.id,
       );
     }
+    if (!isRecord(result.checkpoint)) {
+      throw new SpanPipelineError(
+        'span result checkpoint must be a non-null, non-array object',
+        request.id,
+      );
+    }
+    if (typeof result.checkpoint.requestId !== 'string') {
+      throw new SpanPipelineError(
+        'checkpoint requestId must be a string',
+        request.id,
+      );
+    }
     if (result.checkpoint.requestId !== request.id) {
       throw new SpanPipelineError(
         `checkpoint request ${result.checkpoint.requestId} does not match ${request.id}`,
+        request.id,
+      );
+    }
+    if (!isNonNegativeSafeInteger(result.checkpoint.segmentIndex)) {
+      throw new SpanPipelineError(
+        'checkpoint segmentIndex must be a non-negative safe integer',
         request.id,
       );
     }
