@@ -18,9 +18,11 @@ The pull execution loop never trusts a rejected result for worker isolation or a
 
 ## Checkpoint boundary
 
-Intermediate results still use `validateCheckpointEnvelope()` as the authoritative checkpoint runtime/integrity gate. Validation now happens before copying `checkpoint.payload`; malformed checkpoint containers or payload fields therefore cannot trigger a clone/property-access exception before the existing checkpoint-envelope checks run.
+Intermediate results still use `validateCheckpointEnvelope()` as the authoritative checkpoint runtime/integrity gate. Before the asynchronous integrity validation begins, the coordinator performs only the minimal copy-safe shape checks needed to establish an object container and `Uint8Array` payload, then snapshots the full envelope and copies the payload bytes into coordinator-owned memory.
 
-Only a successfully validated checkpoint is copied into coordinator-owned bytes and considered for durable commit. Existing lease re-check, cancellation re-check, request-stage check, TTL check, slot-conflict handling, and reclaim semantics remain unchanged.
+The authoritative validator runs against that ownership-isolated snapshot. This ordering satisfies both sides of the boundary: malformed checkpoint containers or payload values fail intentionally before cloning, while an executor cannot mutate its original payload or envelope fields during asynchronous digest validation and thereby change what is later committed.
+
+Only a successfully validated snapshot is considered for durable commit. Existing lease re-check, cancellation re-check, request-stage check, TTL check, slot-conflict handling, and reclaim semantics remain unchanged.
 
 ## Final output boundary
 
