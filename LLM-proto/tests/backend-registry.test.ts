@@ -205,6 +205,29 @@ describe('BackendRegistry (capability-based candidate selection)', () => {
     }
   });
 
+  it('fails closed malformed runtime capability envelopes without throwing', () => {
+    const validRequest = request({ maxTokens: 256, requiresStreaming: true });
+    const malformed: readonly unknown[] = [
+      null,
+      undefined,
+      [],
+      'capability',
+      1,
+      capabilityFor('server-fallback', { inputModalities: 'text' as unknown as WorkerCapability['inputModalities'] }),
+      capabilityFor('server-fallback', { contextWindowTokens: Number.NaN }),
+      capabilityFor('server-fallback', { contextWindowTokens: -1 }),
+      capabilityFor('server-fallback', { streaming: 'yes' as unknown as boolean }),
+      { ...capabilityFor('server-fallback'), schemaVersion: '99.0.0' },
+    ];
+
+    for (const candidate of malformed) {
+      expect(() =>
+        capabilityMatchesRequest(candidate as WorkerCapability, validRequest),
+      ).not.toThrow();
+      expect(capabilityMatchesRequest(candidate as WorkerCapability, validRequest)).toBe(false);
+    }
+  });
+
   it('excludes candidates that are not ready to execute (model preparation)', async () => {
     const registry = new BackendRegistry();
     await registry.register(
