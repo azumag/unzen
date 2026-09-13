@@ -224,7 +224,8 @@ export async function computeModelManifestDigest(
 /**
  * Verify an optional signature over the manifest digest. The verifier callback
  * is supplied by the caller (like evidence.ts trusted verifiers) so the
- * manifest module never embeds a key.
+ * manifest module never embeds a key. Runtime verifier implementations must
+ * resolve to the exact boolean `true`; every other value fails closed.
  */
 export async function verifyModelManifestSignature(
   manifest: SegmentedModelManifest,
@@ -233,7 +234,11 @@ export async function verifyModelManifestSignature(
   if (manifest.signature === undefined) {
     return true;
   }
-  return verify({ digest: manifest.manifestDigest, signature: manifest.signature });
+  const verified = await verify({
+    digest: manifest.manifestDigest,
+    signature: manifest.signature,
+  });
+  return verified === true;
 }
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
