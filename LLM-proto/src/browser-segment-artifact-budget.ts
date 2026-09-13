@@ -53,7 +53,7 @@ export function evaluateBrowserSegmentArtifactBytes(
     tier = 'rejected';
   }
 
-  return {
+  return Object.freeze({
     byteSize,
     tier,
     targetBytes: BROWSER_SEGMENT_TARGET_BYTES,
@@ -61,5 +61,5 @@ export function evaluateBrowserSegmentArtifactBytes(
     normalMaxBytes: BROWSER_SEGMENT_NORMAL_MAX_BYTES,
     absoluteMaxBytes: BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
     usable: tier !== 'rejected',
-  };
+  });
 }
