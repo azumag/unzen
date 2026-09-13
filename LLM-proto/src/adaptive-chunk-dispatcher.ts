@@ -152,22 +152,27 @@ export class AdaptiveChunkDispatcher {
   private requestCounter = 0;
 
   constructor(options: AdaptiveChunkDispatcherOptions) {
-    const segments = Object.freeze(
-      options.segments.map((segment) => Object.freeze({ ...segment })),
-    );
-    if (segments.length === 0) {
+    assertAdaptiveChunkDispatcherOptionsContainer(options);
+    if (!Array.isArray(options.segments)) {
+      throw new Error('AdaptiveChunkDispatcher segments must be an array');
+    }
+    if (options.segments.length === 0) {
       throw new Error('AdaptiveChunkDispatcher requires at least one segment');
     }
-    for (const [arrayIndex, segment] of segments.entries()) {
-      if (segment.index !== arrayIndex) {
+
+    const segments = Object.freeze(
+      (options.segments as readonly unknown[]).map((segment, arrayIndex) =>
+        Object.freeze(validateAdaptiveSegmentConfig(segment, arrayIndex)),
+      ),
+    );
+    for (let index = 1; index < segments.length; index++) {
+      const previous = segments[index - 1];
+      const current = segments[index];
+      if (current.layerStart !== previous.layerEnd + 1) {
         throw new Error(
-          `AdaptiveChunkDispatcher requires segment indexes 0..n-1; ` +
-          `expected ${arrayIndex}, found ${segment.index}`,
-        );
-      }
-      if (!Number.isFinite(segment.estimatedVramMB) || segment.estimatedVramMB <= 0) {
-        throw new Error(
-          `segment ${segment.index} estimatedVramMB must be a positive finite number`,
+          `AdaptiveChunkDispatcher segment layer ranges must be contiguous: ` +
+          `segment ${index - 1} ends at ${previous.layerEnd}, ` +
+          `segment ${index} starts at ${current.layerStart}`,
         );
       }
     }
@@ -745,6 +750,78 @@ export class AdaptiveChunkDispatcher {
 
     return Math.round((this.checkpointBytes / telemetry.checkpointBytesPerSecond) * 1000);
   }
+}
+
+function assertAdaptiveChunkDispatcherOptionsContainer(
+  value: unknown,
+): asserts value is AdaptiveChunkDispatcherOptions {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('AdaptiveChunkDispatcher options must be a non-null object');
+  }
+}
+
+function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): SegmentConfig {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`AdaptiveChunkDispatcher segment ${arrayIndex} must be an object`);
+  }
+  const segment = value as Record<string, unknown>;
+
+  if (
+    typeof segment.index !== 'number' ||
+    !Number.isSafeInteger(segment.index) ||
+    segment.index < 0
+  ) {
+    throw new Error(
+      'AdaptiveChunkDispatcher segment index must be a non-negative safe integer',
+    );
+  }
+  if (segment.index !== arrayIndex) {
+    throw new Error(
+      `AdaptiveChunkDispatcher requires segment indexes 0..n-1; ` +
+      `expected ${arrayIndex}, found ${segment.index}`,
+    );
+  }
+  if (
+    typeof segment.layerStart !== 'number' ||
+    !Number.isSafeInteger(segment.layerStart) ||
+    segment.layerStart < 0
+  ) {
+    throw new Error(
+      `AdaptiveChunkDispatcher segment ${arrayIndex} layerStart must be a non-negative safe integer`,
+    );
+  }
+  if (
+    typeof segment.layerEnd !== 'number' ||
+    !Number.isSafeInteger(segment.layerEnd) ||
+    segment.layerEnd < segment.layerStart
+  ) {
+    throw new Error(
+      `AdaptiveChunkDispatcher segment ${arrayIndex} layerEnd must be a safe integer ` +
+      `greater than or equal to layerStart`,
+    );
+  }
+  if (typeof segment.modelWeightHash !== 'string' || segment.modelWeightHash.trim().length === 0) {
+    throw new Error(
+      `AdaptiveChunkDispatcher segment ${arrayIndex} modelWeightHash must be a non-empty string`,
+    );
+  }
+  if (
+    typeof segment.estimatedVramMB !== 'number' ||
+    !Number.isFinite(segment.estimatedVramMB) ||
+    segment.estimatedVramMB <= 0
+  ) {
+    throw new Error(
+      `segment ${arrayIndex} estimatedVramMB must be a positive finite number`,
+    );
+  }
+
+  return {
+    index: segment.index,
+    layerStart: segment.layerStart,
+    layerEnd: segment.layerEnd,
+    modelWeightHash: segment.modelWeightHash,
+    estimatedVramMB: segment.estimatedVramMB,
+  };
 }
 
 function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
