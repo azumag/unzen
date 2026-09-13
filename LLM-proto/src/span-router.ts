@@ -53,25 +53,27 @@ export class SpanRouter {
     if (!Array.isArray(segments)) {
       throw new Error('SpanRouter segments must be an array');
     }
+
+    // Segment configs may cross a runtime/deserialization boundary even though
+    // callers see a TypeScript interface. Validate every field before creating
+    // the router-owned snapshot or delegating to manifest-backed residency
+    // checks, which otherwise assume string/numeric operations are safe.
     const segmentSnapshot = Object.freeze(
-      segments.map((segment) => Object.freeze({ ...segment })),
+      (segments as readonly unknown[]).map((segment, arrayIndex) =>
+        Object.freeze(validateSegmentConfig(segment, arrayIndex)),
+      ),
     );
-    for (const [arrayIndex, segment] of segmentSnapshot.entries()) {
-      if (typeof segment.index !== 'number') {
-        throw new Error('SpanRouter segment index must be a number');
-      }
-      if (segment.index !== arrayIndex) {
+    for (let index = 1; index < segmentSnapshot.length; index++) {
+      const previous = segmentSnapshot[index - 1];
+      const current = segmentSnapshot[index];
+      if (current.layerStart !== previous.layerEnd + 1) {
         throw new Error(
-          `SpanRouter requires segment indexes 0..n-1; ` +
-          `expected ${arrayIndex}, found ${segment.index}`,
-        );
-      }
-      if (!Number.isFinite(segment.estimatedVramMB) || segment.estimatedVramMB <= 0) {
-        throw new Error(
-          `segment ${segment.index} estimatedVramMB must be a positive finite number`,
+          `SpanRouter segment layer ranges must be contiguous: segment ${index - 1} ends at ` +
+          `${previous.layerEnd}, segment ${index} starts at ${current.layerStart}`,
         );
       }
     }
+
     this.segments = segmentSnapshot;
     this.artifactResidencyLedger?.assertCompatibleSegments(segmentSnapshot);
   }
@@ -239,4 +241,62 @@ export class SpanRouter {
     }
     return spanLength;
   }
+}
+
+function validateSegmentConfig(value: unknown, arrayIndex: number): SegmentConfig {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`SpanRouter segment ${arrayIndex} must be an object`);
+  }
+  const segment = value as Record<string, unknown>;
+
+  if (
+    typeof segment.index !== 'number' ||
+    !Number.isSafeInteger(segment.index) ||
+    segment.index < 0
+  ) {
+    throw new Error('SpanRouter segment index must be a non-negative safe integer');
+  }
+  if (segment.index !== arrayIndex) {
+    throw new Error(
+      `SpanRouter requires segment indexes 0..n-1; ` +
+      `expected ${arrayIndex}, found ${segment.index}`,
+    );
+  }
+
+  if (
+    typeof segment.layerStart !== 'number' ||
+    !Number.isSafeInteger(segment.layerStart) ||
+    segment.layerStart < 0
+  ) {
+    throw new Error(`SpanRouter segment ${arrayIndex} layerStart must be a non-negative safe integer`);
+  }
+  if (
+    typeof segment.layerEnd !== 'number' ||
+    !Number.isSafeInteger(segment.layerEnd) ||
+    segment.layerEnd < segment.layerStart
+  ) {
+    throw new Error(
+      `SpanRouter segment ${arrayIndex} layerEnd must be a safe integer greater than or equal to layerStart`,
+    );
+  }
+  if (typeof segment.modelWeightHash !== 'string' || segment.modelWeightHash.trim().length === 0) {
+    throw new Error(`SpanRouter segment ${arrayIndex} modelWeightHash must be a non-empty string`);
+  }
+  if (
+    typeof segment.estimatedVramMB !== 'number' ||
+    !Number.isFinite(segment.estimatedVramMB) ||
+    segment.estimatedVramMB <= 0
+  ) {
+    throw new Error(
+      `segment ${arrayIndex} estimatedVramMB must be a positive finite number`,
+    );
+  }
+
+  return {
+    index: segment.index,
+    layerStart: segment.layerStart,
+    layerEnd: segment.layerEnd,
+    modelWeightHash: segment.modelWeightHash,
+    estimatedVramMB: segment.estimatedVramMB,
+  };
 }
