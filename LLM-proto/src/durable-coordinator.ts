@@ -249,6 +249,36 @@ export class DurableCoordinator {
     return undefined;
   }
 
+  private submissionOptionFieldsError(input: unknown): string | undefined {
+    const candidate = input as Record<string, unknown>;
+    const timeoutMs = candidate.timeoutMs;
+    if (
+      timeoutMs !== undefined
+      && (
+        typeof timeoutMs !== 'number'
+        || !Number.isFinite(timeoutMs)
+        || timeoutMs < 0
+      )
+    ) {
+      return 'submission timeoutMs must be a non-negative finite number';
+    }
+
+    const signal = candidate.signal;
+    if (signal === undefined) return undefined;
+    if (typeof signal !== 'object' || signal === null || Array.isArray(signal)) {
+      return 'submission signal must be an AbortSignal-compatible object';
+    }
+    const signalCandidate = signal as Record<string, unknown>;
+    if (
+      typeof signalCandidate.aborted !== 'boolean'
+      || typeof signalCandidate.addEventListener !== 'function'
+      || typeof signalCandidate.removeEventListener !== 'function'
+    ) {
+      return 'submission signal must expose boolean aborted and event-listener methods';
+    }
+    return undefined;
+  }
+
   /**
    * Submit an inference request. Returns immediately with a submission handle;
    * execution runs in the background and the request advances through the
@@ -262,6 +292,10 @@ export class DurableCoordinator {
     const optionsEnvelopeError = this.submissionOptionsEnvelopeError(options);
     if (optionsEnvelopeError !== undefined) {
       throw new UnzenError(optionsEnvelopeError, ErrorCode.ProtocolViolation);
+    }
+    const optionFieldsError = this.submissionOptionFieldsError(options);
+    if (optionFieldsError !== undefined) {
+      throw new UnzenError(optionFieldsError, ErrorCode.ProtocolViolation);
     }
 
     const key = options.idempotencyKey !== undefined
