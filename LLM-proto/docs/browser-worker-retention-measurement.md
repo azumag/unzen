@@ -22,6 +22,25 @@ The default manifest uses long-lived Tier 1/2 sessions plus ordinary Tier 3 web
 visitor sessions. It includes one Tier 3 segment abandonment so the report can
 exercise checkpoint resume accounting without failing the default gate.
 
+## Runtime Input Contract
+
+`measureBrowserWorkerRetention()` is a runtime trust boundary. TypeScript types
+alone do not prove that a decoded or asserted manifest is safe to measure, so
+the complete consumed envelope is validated before percentile, sort, rate, retry,
+or telemetry calculations begin.
+
+The top-level value and telemetry baseline must be objects, `sessions` and
+`retentionWindowsMs` must be arrays, and at least one session is required. Each
+session requires a string worker ID, a valid `WorkerTier`, finite non-negative
+session duration and heartbeat jitter, and (when present) a non-negative safe
+integer `disconnectedDuringSegment`. Timing and delay fields must be finite and
+non-negative; retention/failure-rate thresholds must be finite values in
+`[0, 1]`; retention windows are likewise finite and non-negative.
+
+Malformed runtime input fails before a report is computed. This validation does
+not add a new content policy or change existing valid measurement semantics: the
+default manifest and current pass/fail thresholds remain unchanged.
+
 ## Report Fields
 
 `measureBrowserWorkerRetention()` returns:

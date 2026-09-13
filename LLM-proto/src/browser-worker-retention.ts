@@ -109,9 +109,7 @@ export function createDefaultBrowserRetentionManifest(): BrowserRetentionMeasure
 export function measureBrowserWorkerRetention(
   manifest: BrowserRetentionMeasurementManifest,
 ): BrowserRetentionMeasurementReport {
-  if (manifest.sessions.length === 0) {
-    throw new Error('Browser retention measurement requires at least one session');
-  }
+  assertBrowserRetentionMeasurementManifest(manifest);
 
   const durations = manifest.sessions.map((session) => session.sessionDurationMs).sort(sortNumber);
   const durationDistribution = {
@@ -161,6 +159,90 @@ export function measureBrowserWorkerRetention(
     adaptiveTelemetryComparison,
     failureReason,
   };
+}
+
+function assertBrowserRetentionMeasurementManifest(
+  value: unknown,
+): asserts value is BrowserRetentionMeasurementManifest {
+  assertRecord(value, 'Browser retention manifest');
+  if (typeof value.requestId !== 'string') {
+    throw new TypeError('Browser retention requestId must be a string');
+  }
+  if (!Array.isArray(value.sessions)) {
+    throw new TypeError('Browser retention sessions must be an array');
+  }
+  if (value.sessions.length === 0) {
+    throw new Error('Browser retention measurement requires at least one session');
+  }
+  value.sessions.forEach((session, index) => assertSessionSample(session, index));
+
+  assertNonNegativeFinite(value.segmentDurationMs, 'segmentDurationMs');
+  assertNonNegativeFinite(value.checkpointResumeMs, 'checkpointResumeMs');
+  assertNonNegativeFinite(value.retryBackoffMs, 'retryBackoffMs');
+  assertNonNegativeFinite(value.earlyAbandonThresholdMs, 'earlyAbandonThresholdMs');
+  assertNonNegativeFinite(value.maxRetryResumeImpactMs, 'maxRetryResumeImpactMs');
+  assertRate(value.maxEarlyAbandonRate, 'maxEarlyAbandonRate');
+  assertRate(value.minRetentionAtSegmentEnd, 'minRetentionAtSegmentEnd');
+
+  if (!Array.isArray(value.retentionWindowsMs)) {
+    throw new TypeError('Browser retention retentionWindowsMs must be an array');
+  }
+  value.retentionWindowsMs.forEach((windowMs, index) => {
+    assertNonNegativeFinite(windowMs, `retentionWindowsMs[${index}]`);
+  });
+
+  assertRecord(value.adaptiveTelemetryBaseline, 'Browser retention adaptiveTelemetryBaseline');
+  assertNonNegativeFinite(value.adaptiveTelemetryBaseline.uptimeMs, 'adaptiveTelemetryBaseline.uptimeMs');
+  assertRate(value.adaptiveTelemetryBaseline.failureRate, 'adaptiveTelemetryBaseline.failureRate');
+  assertNonNegativeFinite(
+    value.adaptiveTelemetryBaseline.heartbeatJitterMs,
+    'adaptiveTelemetryBaseline.heartbeatJitterMs',
+  );
+}
+
+function assertSessionSample(value: unknown, index: number): asserts value is BrowserWorkerSessionSample {
+  assertRecord(value, `Browser retention session[${index}]`);
+  if (typeof value.workerId !== 'string') {
+    throw new TypeError(`Browser retention session[${index}].workerId must be a string`);
+  }
+  if (
+    value.tier !== WorkerTier.TIER_1
+    && value.tier !== WorkerTier.TIER_2
+    && value.tier !== WorkerTier.TIER_3
+  ) {
+    throw new TypeError(`Browser retention session[${index}].tier must be a valid WorkerTier`);
+  }
+  assertNonNegativeFinite(value.sessionDurationMs, `session[${index}].sessionDurationMs`);
+  assertNonNegativeFinite(value.heartbeatJitterMs, `session[${index}].heartbeatJitterMs`);
+  if (value.disconnectedDuringSegment !== undefined) {
+    if (
+      typeof value.disconnectedDuringSegment !== 'number'
+      || !Number.isSafeInteger(value.disconnectedDuringSegment)
+      || value.disconnectedDuringSegment < 0
+    ) {
+      throw new TypeError(
+        `Browser retention session[${index}].disconnectedDuringSegment must be a non-negative safe integer`,
+      );
+    }
+  }
+}
+
+function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+}
+
+function assertNonNegativeFinite(value: unknown, label: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`Browser retention ${label} must be a non-negative finite number`);
+  }
+}
+
+function assertRate(value: unknown, label: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new TypeError(`Browser retention ${label} must be a finite number between 0 and 1`);
+  }
 }
 
 function computeRetryResumeImpact(manifest: BrowserRetentionMeasurementManifest) {
