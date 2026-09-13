@@ -206,17 +206,26 @@ export class AdaptiveChunkDispatcher {
       throw new Error('checkpointBytes must be a positive finite number');
     }
 
-    this.coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
-    this.cdnUrl = options.cdnUrl ?? DEFAULT_CDN_URL;
-    this.transport = options.transport ?? new AllowlistedPrototypeTransport([
-      this.coordinatorUrl,
-      this.cdnUrl,
+    const coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
+    const cdnUrl = options.cdnUrl ?? DEFAULT_CDN_URL;
+    const artifactResidencyLedger = options.artifactResidencyLedger;
+    const transport = options.transport ?? new AllowlistedPrototypeTransport([
+      coordinatorUrl,
+      cdnUrl,
     ]);
+    transport.assertConnectable(coordinatorUrl);
+    if (artifactResidencyLedger === undefined) {
+      transport.assertConnectable(cdnUrl);
+    }
+
+    this.coordinatorUrl = coordinatorUrl;
+    this.cdnUrl = cdnUrl;
+    this.transport = transport;
     this.loadBudgetRatio = loadBudgetRatio;
     this.longLivedWorkerMs = longLivedWorkerMs;
     this.configuredVramLimitMB = configuredVramLimitMB;
     this.checkpointBytes = checkpointBytes;
-    this.artifactResidencyLedger = options.artifactResidencyLedger;
+    this.artifactResidencyLedger = artifactResidencyLedger;
     this.artifactResidencyLedger?.assertCompatibleSegments(this.segments);
   }
 
@@ -316,21 +325,32 @@ export class AdaptiveChunkDispatcher {
         : this.allSegmentsResident(selected.worker, nextSegment, endSegment);
       const coldLoad = !cacheHit && !selected.rollingConsecutive;
       const checkpointTransferMs = this.estimateCheckpointTransferMs(selected.worker.telemetry);
+      const coordinatorConnectionUrl =
+        `${this.coordinatorUrl}/adaptive/${validatedRequestId}/chunk/${nextSegment}`;
+      const artifactConnectionUrls = missingArtifacts !== undefined
+        ? missingArtifacts.flatMap((artifact) =>
+          artifact.components?.map((component) => component.artifactLocator) ??
+          [artifact.artifactLocator],
+        )
+        : Array.from(
+          { length: endSegment - nextSegment + 1 },
+          (_, offset) => `${this.cdnUrl}/models/proto-2b-q4/seg-${nextSegment + offset}.bin`,
+        );
 
-      this.transport.connect(
-        `${this.coordinatorUrl}/adaptive/${validatedRequestId}/chunk/${nextSegment}`,
-      );
+      // Validate every target for this assignment before recording any
+      // simulated network activity or committing cache residency. A later bad
+      // component must not leave an earlier connection as a partial side effect.
+      this.transport.assertConnectable(coordinatorConnectionUrl);
+      for (const url of artifactConnectionUrls) {
+        this.transport.assertConnectable(url);
+      }
+
+      this.transport.connect(coordinatorConnectionUrl);
+      for (const url of artifactConnectionUrls) {
+        this.transport.connect(url);
+      }
+
       if (missingArtifacts !== undefined) {
-        // Validate every file locator for every logical bundle before committing
-        // any cache state. If a later component is rejected, the worker must not
-        // retain a partial segment-residency claim.
-        for (const artifact of missingArtifacts) {
-          const locators = artifact.components?.map((component) => component.artifactLocator) ??
-            [artifact.artifactLocator];
-          for (const locator of locators) {
-            this.transport.connect(locator);
-          }
-        }
         for (const artifact of missingArtifacts) {
           selected.worker.residentSegments.add(artifact.index);
           this.artifactResidencyLedger?.markResident(selected.worker.id, artifact.index);
@@ -339,7 +359,6 @@ export class AdaptiveChunkDispatcher {
         // Legacy prototype path retained for callers that do not yet supply a
         // validated model manifest and exact artifact inventory.
         for (let segment = nextSegment; segment <= endSegment; segment++) {
-          this.transport.connect(`${this.cdnUrl}/models/proto-2b-q4/seg-${segment}.bin`);
           selected.worker.residentSegments.add(segment);
         }
       }

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { AdaptiveChunkDispatcher, type WorkerTelemetry } from '../src/adaptive-chunk-dispatcher.js';
 import { ArtifactResidencyLedger } from '../src/artifact-residency-ledger.js';
 import type { SegmentArtifact } from '../src/model-manifest.js';
+import { AllowlistedPrototypeTransport } from '../src/two-worker-prototype.js';
 import { workerId, WorkerTier, type SegmentConfig } from '../src/types.js';
+
+const coordinatorUrl = 'https://coordinator.unzen.local';
+const cdnUrl = 'https://cdn.unzen.local';
 
 const telemetry: WorkerTelemetry = {
   uptimeMs: 60 * 60 * 1000,
@@ -75,9 +79,9 @@ describe('AdaptiveChunkDispatcher multi-file artifacts', () => {
 
     const cold = dispatcher.run('bundle-cold');
     expect(cold.transport.connections).toEqual([
-      'https://coordinator.unzen.local',
-      'https://cdn.unzen.local',
-      'https://cdn.unzen.local',
+      coordinatorUrl,
+      cdnUrl,
+      cdnUrl,
     ]);
     expect(cold.assignments[0].artifactResidency).toMatchObject({
       totalArtifactBytes: 300,
@@ -87,23 +91,67 @@ describe('AdaptiveChunkDispatcher multi-file artifacts', () => {
     expect(ledger.isResident(worker, 0)).toBe(true);
 
     const warm = dispatcher.run('bundle-warm');
-    expect(warm.transport.connections).toEqual(['https://coordinator.unzen.local']);
+    expect(warm.transport.connections).toEqual([coordinatorUrl]);
     expect(warm.assignments[0].cacheHit).toBe(true);
   });
 
-  it('does not mark a bundle resident when a later component origin is rejected', () => {
+  it('does not record partial transport history or residency when a later component is rejected', () => {
     const artifact = bundleArtifact(
       'https://outside.example/models/test/segment0.onnx_data',
     );
     const ledger = new ArtifactResidencyLedger([artifact]);
+    const transport = new AllowlistedPrototypeTransport([coordinatorUrl, cdnUrl]);
     const dispatcher = new AdaptiveChunkDispatcher({
       segments: [segmentConfig(artifact)],
       artifactResidencyLedger: ledger,
+      transport,
     });
     const worker = workerId('rejected-bundle-worker');
     dispatcher.registerWorker({ id: worker, tier: WorkerTier.TIER_2, telemetry });
 
     expect(() => dispatcher.run('bundle-rejected')).toThrow(/outside prototype allowlist/);
+    expect(transport.connectionCount).toBe(0);
     expect(ledger.isResident(worker, 0)).toBe(false);
+  });
+
+  it('rejects injected transport configuration before any adaptive run can begin', () => {
+    const artifact = bundleArtifact();
+    const segment = segmentConfig(artifact);
+
+    const coordinatorOnly = new AllowlistedPrototypeTransport([coordinatorUrl]);
+    expect(() => new AdaptiveChunkDispatcher({
+      segments: [segment],
+      transport: coordinatorOnly,
+    })).toThrow(`Connection outside prototype allowlist: ${cdnUrl}`);
+    expect(coordinatorOnly.connectionCount).toBe(0);
+
+    const cdnOnly = new AllowlistedPrototypeTransport([cdnUrl]);
+    expect(() => new AdaptiveChunkDispatcher({
+      segments: [segment],
+      transport: cdnOnly,
+    })).toThrow(`Connection outside prototype allowlist: ${coordinatorUrl}`);
+    expect(cdnOnly.connectionCount).toBe(0);
+  });
+
+  it('does not require the legacy cdnUrl when manifest locators are authoritative', () => {
+    const artifact = bundleArtifact();
+    const ledger = new ArtifactResidencyLedger([artifact]);
+    const transport = new AllowlistedPrototypeTransport([coordinatorUrl, cdnUrl]);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: [segmentConfig(artifact)],
+      artifactResidencyLedger: ledger,
+      transport,
+      cdnUrl: 'https://unused-legacy-cdn.example',
+    });
+    const worker = workerId('manifest-locator-worker');
+    dispatcher.registerWorker({ id: worker, tier: WorkerTier.TIER_2, telemetry });
+
+    const report = dispatcher.run('manifest-locators');
+    expect(report.transport.connections).toEqual([
+      coordinatorUrl,
+      cdnUrl,
+      cdnUrl,
+    ]);
+    expect(ledger.isResident(worker, 0)).toBe(true);
   });
 });
