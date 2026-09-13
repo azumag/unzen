@@ -1066,10 +1066,44 @@ export class DurableCoordinator {
 
   // --- Worker management ---
 
+  private workerRegistrationEnvelopeError(registration: unknown, connectionId: unknown): string | undefined {
+    if (typeof registration !== 'object' || registration === null || Array.isArray(registration)) {
+      return 'worker registration must be a non-null, non-array object';
+    }
+
+    const candidate = registration as Record<string, unknown>;
+    if (typeof candidate.workerId !== 'string' || candidate.workerId.trim().length === 0) {
+      return 'worker registration workerId must be a non-empty string';
+    }
+    if (
+      candidate.tier !== WorkerTier.TIER_1
+      && candidate.tier !== WorkerTier.TIER_2
+      && candidate.tier !== WorkerTier.TIER_3
+    ) {
+      return 'worker registration tier must be TIER_1, TIER_2, or TIER_3';
+    }
+    if (
+      typeof candidate.vramMB !== 'number'
+      || !Number.isFinite(candidate.vramMB)
+      || candidate.vramMB <= 0
+    ) {
+      return 'worker registration vramMB must be a positive finite number';
+    }
+    if (typeof connectionId !== 'string' || connectionId.trim().length === 0) {
+      return 'worker registration connectionId must be a non-empty string';
+    }
+    return undefined;
+  }
+
   registerWorker(
     registration: { readonly workerId: WorkerId; readonly tier: WorkerTier; readonly vramMB: number },
     connectionId: string,
   ) {
+    const envelopeError = this.workerRegistrationEnvelopeError(registration, connectionId);
+    if (envelopeError !== undefined) {
+      throw new UnzenError(envelopeError, ErrorCode.ProtocolViolation);
+    }
+
     if (registration.vramMB < this.manifest.runtimeRequirements.minimumVramMB) {
       throw new UnzenError(
         `worker ${registration.workerId} reports ${registration.vramMB}MB VRAM, below the ${this.manifest.runtimeRequirements.minimumVramMB}MB minimum for this model`,
