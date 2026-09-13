@@ -31,6 +31,75 @@ describe('WebGPU 30B partial inference feasibility gate', () => {
     });
   });
 
+  it('rejects malformed top-level and nested runtime containers before metadata arithmetic', () => {
+    const malformedTopLevels: unknown[] = [null, undefined, 42, 'manifest', Symbol('manifest'), []];
+    for (const malformed of malformedTopLevels) {
+      expect(() => evaluateWebGpu30BFeasibility(
+        malformed as WebGpu30BFeasibilityManifest,
+      )).toThrow('WebGPU feasibility manifest must be an object');
+    }
+
+    const base = createDefault30BFeasibilityManifest();
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      checkpointTensor: null,
+    } as unknown as WebGpu30BFeasibilityManifest)).toThrow('checkpointTensor must be an object');
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      dispatcherAssumptions: [],
+    } as unknown as WebGpu30BFeasibilityManifest)).toThrow('dispatcherAssumptions must be an object');
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      runtimeCandidates: {},
+    } as unknown as WebGpu30BFeasibilityManifest)).toThrow('runtimeCandidates must be an array');
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      model: { ...base.model, segments: {} },
+    } as unknown as WebGpu30BFeasibilityManifest)).toThrow('model.segments must be an array');
+  });
+
+  it('rejects malformed scalar metadata before NaN or Infinity can enter the report', () => {
+    const base = createDefault30BFeasibilityManifest();
+
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      dispatcherAssumptions: {
+        ...base.dispatcherAssumptions,
+        checkpointBytesPerSecond: Number.NaN,
+      },
+    })).toThrow('dispatcherAssumptions.checkpointBytesPerSecond must be a positive finite number');
+
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      model: {
+        ...base.model,
+        segments: base.model.segments.map((segment, index) => index === 0
+          ? { ...segment, estimatedMemoryMB: Number.POSITIVE_INFINITY }
+          : segment),
+      },
+    })).toThrow('model.segments[0].estimatedMemoryMB must be a positive finite number');
+
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      runtimeCandidates: base.runtimeCandidates.map((runtime, index) => index === 0
+        ? { ...runtime, supportedQuantizationBits: null }
+        : runtime),
+    } as unknown as WebGpu30BFeasibilityManifest)).toThrow(
+      'runtimeCandidates[0].supportedQuantizationBits must be an array',
+    );
+  });
+
+  it('rejects checkpoint arithmetic that exceeds safe integer precision', () => {
+    const base = createDefault30BFeasibilityManifest();
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      checkpointTensor: {
+        ...base.checkpointTensor,
+        batchSize: Number.MAX_SAFE_INTEGER,
+      },
+    })).toThrow('checkpoint tensor element count exceeds Number.MAX_SAFE_INTEGER');
+  });
+
   it('returns actionable failure reasons when the manifest cannot advance to WebGPU 30B', () => {
     const base = createDefault30BFeasibilityManifest();
     const manifest: WebGpu30BFeasibilityManifest = {
