@@ -4,7 +4,22 @@ import { ErrorCode, UnzenError } from '../src/errors.js';
 import { generateWorkerGeneration } from '../src/ids.js';
 import { WorkerStage } from '../src/durable-types.js';
 import { WorkerRegistry } from '../src/worker-registry.js';
-import { workerId, WorkerTier } from '../src/types.js';
+import { workerId, WorkerTier, type WorkerId } from '../src/types.js';
+
+class CountingRepository extends InMemoryRepository {
+  workerReads = 0;
+
+  override getWorker(
+    ...args: Parameters<InMemoryRepository['getWorker']>
+  ): ReturnType<InMemoryRepository['getWorker']> {
+    this.workerReads += 1;
+    return super.getWorker(...args);
+  }
+
+  resetWorkerReads(): void {
+    this.workerReads = 0;
+  }
+}
 
 function validRegistration(id = 'worker-1') {
   return {
@@ -26,6 +41,37 @@ function expectProtocolViolation(run: () => void, message: string): void {
   expect((thrown as Error).message).toBe(message);
 }
 
+const workerStateMutations = [
+  {
+    name: 'markDisconnected',
+    run: (registry: WorkerRegistry, id: WorkerId, generation: string) =>
+      registry.markDisconnected(id, generation as never),
+  },
+  {
+    name: 'markBusy',
+    run: (registry: WorkerRegistry, id: WorkerId, generation: string) =>
+      registry.markBusy(id, generation as never, 0),
+  },
+  {
+    name: 'markIdle',
+    run: (registry: WorkerRegistry, id: WorkerId, generation: string) =>
+      registry.markIdle(id, generation as never),
+  },
+] as const;
+
+const malformedIdentityValues: readonly unknown[] = [
+  null,
+  undefined,
+  1,
+  true,
+  [],
+  {},
+  Symbol('identity'),
+  () => undefined,
+  '',
+  '   ',
+];
+
 describe('WorkerRegistry runtime boundaries', () => {
   it.each([
     ['null', null],
@@ -42,6 +88,58 @@ describe('WorkerRegistry runtime boundaries', () => {
     );
     expect(registry.size).toBe(0);
   });
+
+  it.each(workerStateMutations)(
+    '$name rejects malformed worker IDs and generations before repository access',
+    ({ run }) => {
+      for (const malformed of malformedIdentityValues) {
+        const workerIdRepository = new CountingRepository();
+        const workerIdRegistry = new WorkerRegistry(workerIdRepository);
+        const id = workerId('worker-1');
+        const registration = workerIdRegistry.register(validRegistration(), 'conn-1');
+        const beforeWorkerId = { ...workerIdRepository.listWorkers()[0]! };
+        workerIdRepository.resetWorkerReads();
+
+        expectProtocolViolation(
+          () => run(workerIdRegistry, malformed as never, registration.generation),
+          'worker state mutation workerId must be a non-empty string',
+        );
+        expect(workerIdRepository.workerReads).toBe(0);
+        expect(workerIdRepository.listWorkers()).toEqual([beforeWorkerId]);
+
+        const generationRepository = new CountingRepository();
+        const generationRegistry = new WorkerRegistry(generationRepository);
+        const generationRegistration = generationRegistry.register(validRegistration(), 'conn-1');
+        const beforeGeneration = { ...generationRepository.listWorkers()[0]! };
+        generationRepository.resetWorkerReads();
+
+        expectProtocolViolation(
+          () => run(generationRegistry, id, malformed as never),
+          'worker state mutation generation must be a non-empty string',
+        );
+        expect(generationRepository.workerReads).toBe(0);
+        expect(generationRepository.listWorkers()).toEqual([beforeGeneration]);
+        expect(generationRegistration.generation).toBe(beforeGeneration.generation);
+      }
+    },
+  );
+
+  it.each(workerStateMutations)(
+    '$name preserves valid unknown-worker and stale-generation no-op semantics',
+    ({ run }) => {
+      const repository = new CountingRepository();
+      const registry = new WorkerRegistry(repository);
+      const id = workerId('worker-1');
+      registry.register(validRegistration(), 'conn-1');
+      const before = { ...repository.listWorkers()[0]! };
+
+      expect(() => run(registry, workerId('missing-worker'), generateWorkerGeneration())).not.toThrow();
+      expect(repository.listWorkers()).toEqual([before]);
+
+      expect(() => run(registry, id, generateWorkerGeneration())).not.toThrow();
+      expect(repository.listWorkers()).toEqual([before]);
+    },
+  );
 
   it.each([
     ['negative', -1],
@@ -79,16 +177,23 @@ describe('WorkerRegistry runtime boundaries', () => {
     expect(registry.get(id)).toEqual(before);
   });
 
-  it('still accepts a non-negative safe segment index for the current generation', () => {
+  it('preserves current-generation disconnected, busy, and idle transitions', () => {
     const repository = new InMemoryRepository();
     const registry = new WorkerRegistry(repository);
     const id = workerId('worker-1');
     const registration = registry.register(validRegistration(), 'conn-1');
 
-    registry.markBusy(id, registration.generation, 3);
+    registry.markDisconnected(id, registration.generation);
+    expect(registry.get(id)?.stage).toBe(WorkerStage.Disconnected);
+    expect(registry.get(id)?.currentSegment).toBeUndefined();
 
+    registry.markBusy(id, registration.generation, 3);
     expect(registry.get(id)?.stage).toBe(WorkerStage.Busy);
     expect(registry.get(id)?.currentSegment).toBe(3);
+
+    registry.markIdle(id, registration.generation);
+    expect(registry.get(id)?.stage).toBe(WorkerStage.Idle);
+    expect(registry.get(id)?.currentSegment).toBeUndefined();
   });
 
   it.each([null, undefined, 1, true, [], {}, Symbol('worker'), '', '   '])(
