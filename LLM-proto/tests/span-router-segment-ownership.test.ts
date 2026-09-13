@@ -50,4 +50,15 @@ describe('SpanRouter segment ownership', () => {
       new WorkerPool(),
     )).toThrow(/SpanRouter segments must be an array/);
   });
+
+  it.each([Symbol('bad-index'), '0', {}])(
+    'rejects non-number runtime segment index %s without coercion',
+    (runtimeIndex) => {
+      const segments = makeMutableSegments();
+      (segments[0] as { index: unknown }).index = runtimeIndex;
+
+      expect(() => new SpanRouter(segments, new WorkerPool()))
+        .toThrow(/SpanRouter segment index must be a number/);
+    },
+  );
 });
