@@ -198,6 +198,10 @@ export class Coordinator {
    * This is the main entry point for API customers.
    */
   async submitRequest(prompt: string): Promise<InferenceResult> {
+    if (typeof prompt !== 'string') {
+      throw new TypeError('Coordinator prompt must be a string');
+    }
+
     const request = this.createRequest(prompt);
     this.activeRequests.set(request.id, request);
 
