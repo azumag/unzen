@@ -117,18 +117,12 @@ export class AllowlistedPrototypeTransport {
   }
 
   connect(url: string): void {
-    const validatedUrl = validatePrototypeUrlString(url, 'prototype connection URL');
-    let parsed: URL;
-    try {
-      parsed = new URL(validatedUrl);
-    } catch {
-      throw new Error(`Invalid prototype connection URL: ${validatedUrl}`);
-    }
-    const origin = parsed.origin;
-    if (!this.allowedOrigins.includes(origin)) {
-      throw new Error(`Connection outside prototype allowlist: ${origin}`);
-    }
+    const origin = this.resolveAllowedOrigin(url);
     this.connectionLog.push(origin);
+  }
+
+  assertConnectable(url: string): void {
+    this.resolveAllowedOrigin(url);
   }
 
   get allowlist(): readonly string[] {
@@ -155,6 +149,21 @@ export class AllowlistedPrototypeTransport {
       );
     }
     return Object.freeze(this.connectionLog.slice(index));
+  }
+
+  private resolveAllowedOrigin(url: unknown): string {
+    const validatedUrl = validatePrototypeUrlString(url, 'prototype connection URL');
+    let parsed: URL;
+    try {
+      parsed = new URL(validatedUrl);
+    } catch {
+      throw new Error(`Invalid prototype connection URL: ${validatedUrl}`);
+    }
+    const origin = parsed.origin;
+    if (!this.allowedOrigins.includes(origin)) {
+      throw new Error(`Connection outside prototype allowlist: ${origin}`);
+    }
+    return origin;
   }
 }
 
@@ -300,6 +309,9 @@ export class TwoWorkerPrototypeRunner {
     const cdnUrl = options.cdnUrl === undefined
       ? DEFAULT_CDN_URL
       : validatePrototypeNetworkUrl(options.cdnUrl, 'prototype cdnUrl');
+
+    this.transport.assertConnectable(coordinatorUrl);
+    this.transport.assertConnectable(cdnUrl);
 
     const startedAt = Date.now();
     const transportStartIndex = this.transport.connectionCount;
