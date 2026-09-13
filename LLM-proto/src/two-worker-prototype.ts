@@ -262,17 +262,24 @@ export class TwoWorkerPrototypeRunner {
   }
 
   async run(options: TwoWorkerPrototypeOptions): Promise<PrototypeRunReport> {
+    assertTwoWorkerPrototypeOptionsContainer(options);
+    const prompt = validatePrototypePrompt(options.prompt);
+    const coordinatorUrl = options.coordinatorUrl === undefined
+      ? DEFAULT_COORDINATOR_URL
+      : validatePrototypeNetworkUrl(options.coordinatorUrl, 'prototype coordinatorUrl');
+    const cdnUrl = options.cdnUrl === undefined
+      ? DEFAULT_CDN_URL
+      : validatePrototypeNetworkUrl(options.cdnUrl, 'prototype cdnUrl');
+
     const startedAt = Date.now();
     const transportStartIndex = this.transport.connectionCount;
     const requestId = `proto-${++this.requestCounter}`;
-    const coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
-    const cdnUrl = options.cdnUrl ?? DEFAULT_CDN_URL;
-    const referenceText = runReferencePath(options.prompt);
+    const referenceText = runReferencePath(prompt);
     const segments: PrototypeSegmentReport[] = [];
 
     const segment0Result = await this.segment0.execute({
       requestId,
-      prompt: options.prompt,
+      prompt,
       coordinatorUrl,
       cdnUrl,
       transport: this.transport,
@@ -289,7 +296,7 @@ export class TwoWorkerPrototypeRunner {
 
     const segment1Result = await this.executeSegment1WithCheckpoint({
       requestId,
-      prompt: options.prompt,
+      prompt,
       checkpoint: segment0Result.checkpoint,
       coordinatorUrl,
       cdnUrl,
@@ -300,7 +307,7 @@ export class TwoWorkerPrototypeRunner {
     const splitText = segment1Result.output.text ?? '';
     return {
       requestId,
-      prompt: options.prompt,
+      prompt,
       referenceText,
       splitText,
       matchesReference: splitText === referenceText,
@@ -398,6 +405,35 @@ function assertPrototypeWorkerOptionsContainer(
   if (typeof options !== 'object' || options === null || Array.isArray(options)) {
     throw new Error('prototype worker options must be a non-null object');
   }
+}
+
+function assertTwoWorkerPrototypeOptionsContainer(
+  options: unknown,
+): asserts options is TwoWorkerPrototypeOptions {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new Error('two-worker prototype run options must be a non-null object');
+  }
+}
+
+function validatePrototypePrompt(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('two-worker prototype prompt must be a string');
+  }
+  return value;
+}
+
+function validatePrototypeNetworkUrl(value: unknown, label: string): string {
+  const validatedValue = validatePrototypeUrlString(value, label);
+  let parsed: URL;
+  try {
+    parsed = new URL(validatedValue);
+  } catch {
+    throw new Error(`${label} must be a valid absolute URL`);
+  }
+  if (parsed.origin === 'null') {
+    throw new Error(`${label} must have a network origin`);
+  }
+  return validatedValue;
 }
 
 function validatePrototypeSegmentIndex(value: unknown): 0 | 1 {

@@ -5,6 +5,7 @@ import {
   TwoWorkerPrototypeRunner,
   TWO_WORKER_PROTOTYPE_SEGMENTS,
   type PrototypeWorkerOptions,
+  type TwoWorkerPrototypeOptions,
 } from '../src/two-worker-prototype.js';
 import { WorkerTier } from '../src/types.js';
 
@@ -101,6 +102,94 @@ describe('SimulatedPrototypeWorker runtime options', () => {
 });
 
 describe('TwoWorkerPrototypeRunner', () => {
+  it.each([
+    null,
+    undefined,
+    42,
+    'run',
+    [],
+    Symbol('run-options'),
+    () => undefined,
+  ])('rejects malformed top-level run options before request allocation', async (options) => {
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const runner = new TwoWorkerPrototypeRunner({ transport });
+
+    await expect(runner.run(
+      options as unknown as TwoWorkerPrototypeOptions,
+    )).rejects.toThrow(/two-worker prototype run options must be a non-null object/);
+    expect(transport.connectionCount).toBe(0);
+
+    const report = await runner.run({ prompt: 'valid after invalid container' });
+    expect(report.requestId).toBe('proto-1');
+  });
+
+  it('preflights prompt and URL fields before request IDs, cache state, or transport history mutate', async () => {
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const runner = new TwoWorkerPrototypeRunner({
+      transport,
+      segment1Primary: new SimulatedPrototypeWorker({
+        id: 'seg1-primary',
+        segmentIndex: 1,
+        webgpuAdapter: 'mock-webgpu-b',
+        vramMB: 4096,
+        failFirstRun: false,
+      }),
+    });
+
+    const invalidRuns: readonly { readonly options: unknown; readonly error: RegExp }[] = [
+      { options: { prompt: 42 }, error: /prompt must be a string/ },
+      { options: { prompt: Symbol('prompt') }, error: /prompt must be a string/ },
+      {
+        options: { prompt: 'x', coordinatorUrl: '/relative' },
+        error: /coordinatorUrl must be a valid absolute URL/,
+      },
+      {
+        options: { prompt: 'x', coordinatorUrl: 'data:text\/plain,x' },
+        error: /coordinatorUrl must have a network origin/,
+      },
+      {
+        options: { prompt: 'x', cdnUrl: '' },
+        error: /cdnUrl must be a non-empty string/,
+      },
+      {
+        options: { prompt: 'x', cdnUrl: Symbol('cdn') },
+        error: /cdnUrl must be a non-empty string/,
+      },
+    ];
+
+    for (const { options, error } of invalidRuns) {
+      await expect(runner.run(options as TwoWorkerPrototypeOptions)).rejects.toThrow(error);
+      expect(transport.connectionCount).toBe(0);
+    }
+
+    const report = await runner.run({ prompt: 'valid after malformed fields' });
+    expect(report.requestId).toBe('proto-1');
+    expect(report.segments.map((segment) => segment.cacheHit)).toEqual([false, false]);
+  });
+
+  it('preserves existing empty and whitespace-only prompt normalization semantics', async () => {
+    const runner = new TwoWorkerPrototypeRunner({
+      segment1Primary: new SimulatedPrototypeWorker({
+        id: 'seg1-primary',
+        segmentIndex: 1,
+        webgpuAdapter: 'mock-webgpu-b',
+        vramMB: 4096,
+        failFirstRun: false,
+      }),
+    });
+
+    const report = await runner.run({ prompt: '   ' });
+    expect(report.prompt).toBe('   ');
+    expect(report.referenceText).toBe('proto-2b:');
+    expect(report.splitText).toBe('proto-2b:');
+  });
+
   it('compares the fixed 2-worker split path with the single-worker reference path', async () => {
     const runner = new TwoWorkerPrototypeRunner({
       segment1Primary: new SimulatedPrototypeWorker({
