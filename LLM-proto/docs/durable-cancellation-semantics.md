@@ -1,10 +1,10 @@
 # Durable cancellation semantics
 
-Issue #184 tightens `DurableCoordinator.cancel()` so cancellation is a durable request-state command rather than a lookup in one process-local `inFlight` map.
+Issue #184 tightens `DurableCoordinator.cancel()` so cancellation is a durable request-state command rather than a lookup in one process-local `inFlight` map. Issue #551 additionally makes the cancellation request ID an explicit runtime trust boundary.
 
 ## Rules
 
-1. `cancel(requestId)` first loads the durable request. Unknown request IDs fail with `ErrorCode.RequestNotFound`; no cancellation tombstone is created for an unknown ID.
+1. `cancel(requestId)` first validates that the runtime value is an actual non-empty string, before any durable lookup, state mutation, or diagnostic interpolation. Malformed values fail with `ErrorCode.ProtocolViolation`. Accepted strings are not trimmed or canonicalized. A valid non-empty but unknown request ID then fails with `ErrorCode.RequestNotFound`; no cancellation tombstone is created for either case.
 2. Completed and failed requests stay unchanged. The returned acknowledgement reports `already-completed` or `already-failed`, and a completed result is never overwritten.
 3. For an active request, the Coordinator writes the durable `CancellationRecord` **before** aborting local work or invalidating the active lease. Any Coordinator instance that subsequently tries to dispatch or commit checks that record and fails closed.
 4. The request is moved to `cancelled`, checkpoints are removed, and the active lease is invalidated. The active attempt is marked `cancelled` when its lease identity is available.
@@ -26,4 +26,4 @@ Issue #184 tightens `DurableCoordinator.cancel()` so cancellation is a durable r
 
 The execution path checks durable cancellation before issuing a new assignment and again before accepting a worker result. Intermediate checkpoint validation also re-checks cancellation after its asynchronous digest verification, so a cancellation that races validation cannot commit afterward.
 
-This contract is exercised against both `InMemoryRepository` and clone-on-access `DurableObjectRepository` storage.
+This contract is exercised against both `InMemoryRepository` and clone-on-access `DurableObjectRepository` storage. The request-ID boundary is covered separately by `durable-cancellation-request-id-envelope.test.ts`, including coercion-sensitive malformed values and no-mutation assertions for request, lease, attempt, worker, cancellation, and suppression state.

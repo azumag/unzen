@@ -987,7 +987,19 @@ export class DurableCoordinator {
 
   // --- Cancellation ---
 
+  private cancellationRequestIdEnvelopeError(input: unknown): string | undefined {
+    if (typeof input !== 'string' || input.trim().length === 0) {
+      return 'cancellation requestId must be a non-empty string';
+    }
+    return undefined;
+  }
+
   cancel(requestId: InferenceRequestId): CancellationAck {
+    const envelopeError = this.cancellationRequestIdEnvelopeError(requestId);
+    if (envelopeError !== undefined) {
+      throw new UnzenError(envelopeError, ErrorCode.ProtocolViolation);
+    }
+
     const requestedAt = Date.now();
     const deadlineMs = this.options.cancelAckDeadlineMs;
     const request = this.repo.getRequest(requestId);
