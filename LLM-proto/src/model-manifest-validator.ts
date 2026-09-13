@@ -381,7 +381,11 @@ function validateQuantization(
     requirements !== undefined && Array.isArray(requirements.supportedQuantization)
       ? requirements.supportedQuantization
       : [];
-  if (!supported.some((value) => String(value).toLowerCase() === quantization.toLowerCase())) {
+  if (
+    !supported.some(
+      (value) => typeof value === 'string' && value.toLowerCase() === quantization.toLowerCase(),
+    )
+  ) {
     issue(
       issues,
       'unsupported-quantization',

@@ -62,6 +62,24 @@ describe('SegmentedModelManifest', () => {
     expect(Number.isNaN(parseQuantizationBits('4bit'))).toBe(true);
   });
 
+  it('rejects non-string quantization values without coercion', () => {
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        throw new Error('quantization coercion must not run');
+      },
+      toString() {
+        throw new Error('quantization toString must not run');
+      },
+    };
+
+    expect(
+      Number.isNaN(parseQuantizationBits(hostile as unknown as string)),
+    ).toBe(true);
+    expect(
+      Number.isNaN(parseQuantizationBits(Symbol('q4') as unknown as string)),
+    ).toBe(true);
+  });
+
   it('canonicalizes bundle components deterministically before hashing', async () => {
     const canonical = canonicalSegmentArtifactBundleFields([
       externalB,

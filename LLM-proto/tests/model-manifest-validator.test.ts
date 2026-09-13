@@ -265,6 +265,30 @@ describe('validateModelManifestShape (sync fail-fast structural checks)', () => 
     expect(codes(result)).toContain('unsupported-quantization');
   });
 
+  it('does not coerce malformed supportedQuantization entries', () => {
+    const manifest = createFixtureModelManifest();
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        throw new Error('supportedQuantization coercion must not run');
+      },
+      toString() {
+        throw new Error('supportedQuantization toString must not run');
+      },
+    };
+
+    const result = validateModelManifestShape({
+      ...manifest,
+      runtimeRequirements: {
+        ...manifest.runtimeRequirements,
+        supportedQuantization: [hostile],
+      },
+    });
+
+    expect(result.status).toBe('invalid');
+    expect(codes(result)).toContain('invalid-runtime-requirements');
+    expect(codes(result)).toContain('unsupported-quantization');
+  });
+
   it('rejects an invalid manifest digest format', () => {
     const result = validateModelManifestShape({
       ...createFixtureModelManifest(),
