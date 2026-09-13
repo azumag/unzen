@@ -56,6 +56,47 @@ describe('checkpoint serialization and transfer measurement gate', () => {
     expect([...restored.hiddenStates.slice(0, 8)]).toEqual([...checkpoint.hiddenStates.slice(0, 8)]);
   });
 
+  it('rejects malformed top-level measurement manifests before field access', () => {
+    const malformedManifests: unknown[] = [
+      null,
+      undefined,
+      42,
+      'manifest',
+      Symbol('manifest'),
+      [],
+      new Uint8Array(),
+    ];
+
+    for (const malformed of malformedManifests) {
+      expect(() => measureCheckpointSerializationAndTransfer(
+        malformed as CheckpointTransferMeasurementManifest,
+      )).toThrow('checkpoint measurement manifest must be an object');
+      expect(() => createCheckpointPayload(
+        malformed as CheckpointTransferMeasurementManifest,
+      )).toThrow('checkpoint measurement manifest must be an object');
+    }
+  });
+
+  it('rejects malformed top-level serialized frame containers before byte access', () => {
+    const malformedFrames: unknown[] = [
+      null,
+      undefined,
+      42,
+      'frame',
+      Symbol('frame'),
+      [],
+      new ArrayBuffer(4),
+      new Uint16Array(2),
+      new DataView(new ArrayBuffer(4)),
+    ];
+
+    for (const malformed of malformedFrames) {
+      expect(() => deserializeCheckpointPayload(malformed as Uint8Array)).toThrow(
+        'serialized checkpoint must be a Uint8Array',
+      );
+    }
+  });
+
   it('rejects malformed outbound checkpoint indexes before header encoding', () => {
     const base = createDefaultCheckpointMeasurementManifest();
     const checkpoint = createCheckpointPayload({
