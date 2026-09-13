@@ -60,6 +60,29 @@ describe('TwoWorkerPrototypeRunner constructor dependency envelope', () => {
     })).toThrow(/segment1Standby must target segment 1/);
   });
 
+  it('keeps accepted worker identity and role immutable after runner construction', async () => {
+    const segment0 = worker('stable-seg0', 0);
+    const segment1Primary = worker('stable-primary', 1);
+    const segment1Standby = worker('stable-standby', 1);
+    const runner = new TwoWorkerPrototypeRunner({
+      segment0,
+      segment1Primary,
+      segment1Standby,
+    });
+
+    expect(Reflect.set(segment0, 'segmentIndex', 1)).toBe(false);
+    expect(Reflect.set(segment1Primary, 'id', 'tampered-primary')).toBe(false);
+    expect(segment0.segmentIndex).toBe(0);
+    expect(segment1Primary.id).toBe('stable-primary');
+
+    const report = await runner.run({ prompt: 'identity remains stable' });
+    expect(report.matchesReference).toBe(true);
+    expect(report.segments.map((segment) => segment.workerId)).toEqual([
+      'stable-seg0',
+      'stable-primary',
+    ]);
+  });
+
   it('keeps valid custom dependency injection behavior', async () => {
     const transport = new AllowlistedPrototypeTransport([
       'https://coordinator.unzen.local',
