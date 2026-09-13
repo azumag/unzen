@@ -74,6 +74,15 @@ describe('withAbortableTimeout', () => {
     ).resolves.toBe('done');
   });
 
+  it('clears the armed timer when the factory completes first', async () => {
+    vi.useFakeTimers();
+
+    await expect(
+      withAbortableTimeout(() => Promise.resolve('done'), 10_000, 'seg'),
+    ).resolves.toBe('done');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('timeout rejection carries the segment-timeout code', async () => {
     vi.useFakeTimers();
     const pending = withAbortableTimeout(
