@@ -80,6 +80,33 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
+  if (options !== undefined && !isRecord(options)) {
+    throw new TypeError('SpanPipeline options must be a non-null, non-array object');
+  }
+
+  const merged = {
+    ...DEFAULT_OPTIONS,
+    ...(options ?? {}),
+  } as SpanPipelineOptions;
+
+  if (!isNonNegativeSafeInteger(merged.maxRetries)) {
+    throw new TypeError('SpanPipeline maxRetries must be a non-negative safe integer');
+  }
+  if (!isNonNegativeFiniteNumber(merged.perSegmentTimeoutMs)) {
+    throw new TypeError('SpanPipeline perSegmentTimeoutMs must be a non-negative finite number');
+  }
+  if (!isNonNegativeFiniteNumber(merged.retryDelayMs)) {
+    throw new TypeError('SpanPipeline retryDelayMs must be a non-negative finite number');
+  }
+
+  return merged;
+}
+
 export class SpanPipeline {
   private readonly options: SpanPipelineOptions;
 
@@ -90,7 +117,7 @@ export class SpanPipeline {
     private readonly executor: SpanExecutor,
     options?: Partial<SpanPipelineOptions>,
   ) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.options = resolveSpanPipelineOptions(options);
     this.options.artifactResidencyLedger?.assertCompatibleSegments(segments);
   }
 
