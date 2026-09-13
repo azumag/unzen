@@ -174,6 +174,37 @@ describe('BackendRegistry (capability-based candidate selection)', () => {
     expect(candidates).toEqual(['large-1']);
   });
 
+  it('honors valid streaming requirements without changing routing semantics', () => {
+    const nonStreaming = capabilityFor('server-fallback', { streaming: false });
+
+    expect(capabilityMatchesRequest(nonStreaming, request({ requiresStreaming: true }))).toBe(false);
+    expect(capabilityMatchesRequest(nonStreaming, request({ requiresStreaming: false }))).toBe(true);
+  });
+
+  it('fails closed malformed runtime request routing envelopes without throwing', () => {
+    const capability = capabilityFor('server-fallback');
+    const malformed: readonly unknown[] = [
+      null,
+      undefined,
+      [],
+      'request',
+      1,
+      { protocolVersion: INFERENCE_PROTOCOL_VERSION, maxTokens: Symbol('tokens') },
+      { protocolVersion: INFERENCE_PROTOCOL_VERSION, maxTokens: Number.NaN },
+      { protocolVersion: INFERENCE_PROTOCOL_VERSION, maxTokens: -1 },
+      { protocolVersion: INFERENCE_PROTOCOL_VERSION, maxTokens: 1.5 },
+      { protocolVersion: INFERENCE_PROTOCOL_VERSION, requiresStreaming: 'yes' },
+      { protocolVersion: Symbol('version') },
+    ];
+
+    for (const candidate of malformed) {
+      expect(() =>
+        capabilityMatchesRequest(capability, candidate as InferenceRequest),
+      ).not.toThrow();
+      expect(capabilityMatchesRequest(capability, candidate as InferenceRequest)).toBe(false);
+    }
+  });
+
   it('excludes candidates that are not ready to execute (model preparation)', async () => {
     const registry = new BackendRegistry();
     await registry.register(

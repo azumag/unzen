@@ -28,17 +28,46 @@ export interface CapabilityEntry {
   readonly backend?: InferenceBackend;
 }
 
+function isRoutingRequestEnvelope(value: unknown): value is InferenceRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+
+  const request = value as Record<string, unknown>;
+  if (
+    typeof request.protocolVersion !== 'string' ||
+    !isSupportedProtocolVersion(request.protocolVersion)
+  ) {
+    return false;
+  }
+  if (
+    request.maxTokens !== undefined &&
+    (
+      typeof request.maxTokens !== 'number' ||
+      !Number.isSafeInteger(request.maxTokens) ||
+      request.maxTokens < 0
+    )
+  ) {
+    return false;
+  }
+  if (
+    request.requiresStreaming !== undefined &&
+    typeof request.requiresStreaming !== 'boolean'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * True when a capability can satisfy a request. Used as the routing predicate
  * so every candidate kind is compared through the same capability input. A
- * request over an unsupported protocol version matches nothing (never trusted
- * silently).
+ * malformed routing envelope or request over an unsupported protocol version
+ * matches nothing (never trusted silently).
  */
 export function capabilityMatchesRequest(
   capability: WorkerCapability,
   request: InferenceRequest,
 ): boolean {
-  if (!isSupportedProtocolVersion(request.protocolVersion)) return false;
+  if (!isRoutingRequestEnvelope(request)) return false;
   if (!capability.inputModalities.includes('text')) return false;
   if (request.requiresStreaming === true && capability.streaming === false) return false;
   if (request.maxTokens !== undefined && capability.contextWindowTokens < request.maxTokens) {
