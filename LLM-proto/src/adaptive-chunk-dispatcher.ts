@@ -723,6 +723,9 @@ export class AdaptiveChunkDispatcher {
 
   private validateCacheHits(cacheHits: readonly number[]): void {
     for (const segmentIndex of cacheHits) {
+      if (typeof segmentIndex !== 'number') {
+        throw new Error('cache hit segment must be a number');
+      }
       if (
         !Number.isInteger(segmentIndex) ||
         segmentIndex < 0 ||
