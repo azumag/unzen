@@ -169,12 +169,12 @@ export class SimulatedPrototypeWorker {
     this.id = id;
     this.segmentIndex = segmentIndex;
     this.shouldFailFirstRun = options.failFirstRun ?? false;
-    this.metadata = {
+    this.metadata = Object.freeze({
       webgpuAdapter,
       tier: WorkerTier.TIER_2,
       vramMB,
-      cachedSegments: [],
-    };
+      cachedSegments: Object.freeze([] as number[]),
+    });
   }
 
   async execute(input: SegmentExecutionInput): Promise<SegmentExecutionOutput> {
