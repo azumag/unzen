@@ -71,7 +71,7 @@ export function withAbortableTimeout<T>(
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       signal?.removeEventListener('abort', onOuterAbort);
       action();
     };
