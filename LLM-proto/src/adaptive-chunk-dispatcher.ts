@@ -237,9 +237,10 @@ export class AdaptiveChunkDispatcher {
   }
 
   updateHeartbeat(worker: WorkerId, telemetry: WorkerTelemetry): void {
-    const state = this.workers.get(worker);
+    const validatedWorker = workerId(worker);
+    const state = this.workers.get(validatedWorker);
     if (!state) {
-      throw new Error(`Unknown adaptive worker: ${worker}`);
+      throw new Error(`Unknown adaptive worker: ${validatedWorker}`);
     }
 
     // Snapshot before validation so validation, cache synchronization, and the
@@ -248,7 +249,7 @@ export class AdaptiveChunkDispatcher {
     // Validate telemetry before touching either cache-residency view. Invalid
     // heartbeats must preserve the last known-good telemetry and cache state.
     this.validateTelemetry(telemetrySnapshot);
-    const cacheHits = this.validateAndSynchronizeCacheResidency(worker, telemetrySnapshot);
+    const cacheHits = this.validateAndSynchronizeCacheResidency(validatedWorker, telemetrySnapshot);
     state.telemetry = telemetrySnapshot;
     state.residentSegments.clear();
     for (const segment of cacheHits) {
