@@ -106,13 +106,28 @@ export class ArtifactResidencyLedger {
    * was hand-written inconsistently with this artifact inventory.
    */
   assertCompatibleSegments(segments: readonly SegmentConfig[]): void {
-    if (segments.length !== this.segmentCount) {
+    if (!Array.isArray(segments)) {
+      throw new Error('segment configs must be an array');
+    }
+
+    // This method is a public trust boundary too: callers can bypass the
+    // SpanRouter/AdaptiveChunkDispatcher validators with asserted or decoded
+    // runtime values. Validate and snapshot every field before .toLowerCase(),
+    // numeric comparisons, or artifact compatibility logic can observe it.
+    const validatedSegments = Object.freeze(
+      (segments as readonly unknown[]).map((segment, arrayIndex) =>
+        cloneAndValidateSegmentConfig(segment, arrayIndex),
+      ),
+    );
+
+    if (validatedSegments.length !== this.segmentCount) {
       throw new Error(
-        `segment config count ${segments.length} does not match artifact count ${this.segmentCount}`,
+        `segment config count ${validatedSegments.length} ` +
+        `does not match artifact count ${this.segmentCount}`,
       );
     }
 
-    const byIndex = new Map(segments.map((segment) => [segment.index, segment]));
+    const byIndex = new Map(validatedSegments.map((segment) => [segment.index, segment]));
     for (let index = 0; index < this.segmentCount; index++) {
       const artifact = this.getArtifact(index);
       const segment = byIndex.get(index);
@@ -310,6 +325,62 @@ export class ArtifactResidencyLedger {
       );
     }
   }
+}
+
+function cloneAndValidateSegmentConfig(input: unknown, arrayIndex: number): SegmentConfig {
+  if (!isRecord(input)) {
+    throw new Error(`segment config ${arrayIndex} must be an object`);
+  }
+
+  const index = input.index;
+  if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) {
+    throw new Error(`segment config ${arrayIndex} index must be a non-negative safe integer`);
+  }
+
+  const layerStart = input.layerStart;
+  if (
+    typeof layerStart !== 'number' ||
+    !Number.isSafeInteger(layerStart) ||
+    layerStart < 0
+  ) {
+    throw new Error(`segment config ${arrayIndex} layerStart must be a non-negative safe integer`);
+  }
+
+  const layerEnd = input.layerEnd;
+  if (
+    typeof layerEnd !== 'number' ||
+    !Number.isSafeInteger(layerEnd) ||
+    layerEnd < layerStart
+  ) {
+    throw new Error(
+      `segment config ${arrayIndex} layerEnd must be a safe integer ` +
+      `greater than or equal to layerStart`,
+    );
+  }
+
+  const modelWeightHash = input.modelWeightHash;
+  if (typeof modelWeightHash !== 'string' || modelWeightHash.trim().length === 0) {
+    throw new Error(`segment config ${arrayIndex} modelWeightHash must be a non-empty string`);
+  }
+
+  const estimatedVramMB = input.estimatedVramMB;
+  if (
+    typeof estimatedVramMB !== 'number' ||
+    !Number.isFinite(estimatedVramMB) ||
+    estimatedVramMB <= 0
+  ) {
+    throw new Error(
+      `segment config ${arrayIndex} estimatedVramMB must be a positive finite number`,
+    );
+  }
+
+  return Object.freeze({
+    index,
+    layerStart,
+    layerEnd,
+    modelWeightHash,
+    estimatedVramMB,
+  });
 }
 
 function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentArtifact {
