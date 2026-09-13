@@ -34,4 +34,18 @@ describe('browser segment artifact budget', () => {
       expect(() => evaluateBrowserSegmentArtifactBytes(byteSize)).toThrow(/positive safe integer/);
     }
   });
+
+  it.each([
+    null,
+    undefined,
+    '1',
+    true,
+    {},
+    [],
+    Symbol('bytes'),
+  ])('rejects asserted non-number runtime byte size %p without coercion errors', (byteSize) => {
+    expect(() => evaluateBrowserSegmentArtifactBytes(byteSize as never)).toThrow(
+      'segment artifact byte size must be a positive safe integer',
+    );
+  });
 });

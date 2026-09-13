@@ -9,7 +9,9 @@
  * This evaluator is also a structural fail-closed boundary. A segment artifact
  * must contain at least one byte; callers must not treat an impossible empty
  * artifact as a preferred/usable browser cache unit merely because it is under
- * the configured size ceilings.
+ * the configured size ceilings. Runtime callers are not trusted to preserve
+ * the TypeScript `number` annotation, so validation must not coerce or format
+ * an unvalidated value before its type has been established.
  */
 
 export const BROWSER_SEGMENT_TARGET_BYTES = 200 * 1024 * 1024;
@@ -32,8 +34,12 @@ export interface BrowserSegmentArtifactBudgetResult {
 export function evaluateBrowserSegmentArtifactBytes(
   byteSize: number,
 ): BrowserSegmentArtifactBudgetResult {
-  if (!Number.isSafeInteger(byteSize) || byteSize <= 0) {
-    throw new Error(`segment artifact byte size must be a positive safe integer: ${byteSize}`);
+  if (
+    typeof byteSize !== 'number'
+    || !Number.isSafeInteger(byteSize)
+    || byteSize <= 0
+  ) {
+    throw new Error('segment artifact byte size must be a positive safe integer');
   }
 
   let tier: BrowserSegmentArtifactTier;
