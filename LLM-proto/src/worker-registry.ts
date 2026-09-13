@@ -114,6 +114,7 @@ export class WorkerRegistry {
    * never revives a revoked generation.
    */
   heartbeat(workerId: WorkerId, generation: WorkerGeneration, now = Date.now()): void {
+    this.assertValidHeartbeatIdentity(workerId, generation);
     const record = this.store.getWorker(workerId);
     if (!record) throw new UnknownWorkerError(workerId);
     if (generation !== record.generation) throw new StaleGenerationError(workerId);
@@ -266,6 +267,22 @@ export class WorkerRegistry {
 
     if (typeof connectionId !== 'string' || connectionId.trim().length === 0) {
       throw new Error('connectionId must be a non-empty string');
+    }
+  }
+
+  /** Validate heartbeat identity before lookup or structured diagnostic interpolation. */
+  private assertValidHeartbeatIdentity(workerId: unknown, generation: unknown): void {
+    if (typeof workerId !== 'string' || workerId.trim().length === 0) {
+      throw new UnzenError(
+        'worker heartbeat workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+    if (typeof generation !== 'string' || generation.trim().length === 0) {
+      throw new UnzenError(
+        'worker heartbeat generation must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
     }
   }
 
