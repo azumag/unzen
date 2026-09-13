@@ -151,13 +151,28 @@ export class SimulatedPrototypeWorker {
   readonly metadata: PrototypeWorkerMetadata;
 
   constructor(options: PrototypeWorkerOptions) {
-    this.id = workerId(options.id);
-    this.segmentIndex = options.segmentIndex;
+    assertPrototypeWorkerOptionsContainer(options);
+    const id = workerId(options.id);
+    const segmentIndex = validatePrototypeSegmentIndex(options.segmentIndex);
+    const webgpuAdapter = validatePrototypeNonEmptyString(
+      options.webgpuAdapter,
+      'prototype worker webgpuAdapter',
+    );
+    const vramMB = validatePrototypePositiveFiniteNumber(
+      options.vramMB,
+      'prototype worker vramMB',
+    );
+    if (options.failFirstRun !== undefined && typeof options.failFirstRun !== 'boolean') {
+      throw new Error('prototype worker failFirstRun must be a boolean when provided');
+    }
+
+    this.id = id;
+    this.segmentIndex = segmentIndex;
     this.shouldFailFirstRun = options.failFirstRun ?? false;
     this.metadata = {
-      webgpuAdapter: options.webgpuAdapter,
+      webgpuAdapter,
       tier: WorkerTier.TIER_2,
-      vramMB: options.vramMB,
+      vramMB,
       cachedSegments: [],
     };
   }
@@ -375,6 +390,35 @@ function makePrototypeCheckpoint(
       timestamp: Date.now(),
     },
   };
+}
+
+function assertPrototypeWorkerOptionsContainer(
+  options: unknown,
+): asserts options is PrototypeWorkerOptions {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new Error('prototype worker options must be a non-null object');
+  }
+}
+
+function validatePrototypeSegmentIndex(value: unknown): 0 | 1 {
+  if (value !== 0 && value !== 1) {
+    throw new Error('prototype worker segmentIndex must be 0 or 1');
+  }
+  return value;
+}
+
+function validatePrototypeNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validatePrototypePositiveFiniteNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be a positive finite number`);
+  }
+  return value;
 }
 
 function validatePrototypeUrlString(value: unknown, label: string): string {
