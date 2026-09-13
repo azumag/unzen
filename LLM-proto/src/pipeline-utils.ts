@@ -47,6 +47,9 @@ export function withTimeout<T>(
  *
  * The factory promise, the timeout, and the external signal are raced so the
  * returned promise always settles even if the underlying work ignores abort.
+ * Runtime inputs are validated before timer/listener registration or factory
+ * invocation so malformed asserted/decoded values cannot partially arm the
+ * timeout machinery before failing.
  */
 export function withAbortableTimeout<T>(
   factory: (signal: AbortSignal) => Promise<T>,
@@ -54,8 +57,15 @@ export function withAbortableTimeout<T>(
   label: string,
   signal?: AbortSignal,
 ): Promise<T> {
-  const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
+    try {
+      assertAbortableTimeoutRuntimeEnvelope(factory, timeoutMs, label, signal);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const controller = new AbortController();
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (action: () => void): void => {
@@ -95,6 +105,37 @@ export function withAbortableTimeout<T>(
       (error) => finish(() => reject(error)),
     );
   });
+}
+
+function assertAbortableTimeoutRuntimeEnvelope(
+  factory: unknown,
+  timeoutMs: unknown,
+  label: unknown,
+  signal: unknown,
+): void {
+  if (typeof factory !== 'function') {
+    throw new TypeError('timeout factory must be a function');
+  }
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new TypeError('timeoutMs must be a finite non-negative number');
+  }
+  if (typeof label !== 'string' || label.trim().length === 0) {
+    throw new TypeError('timeout label must be a non-empty string');
+  }
+  if (signal === undefined) {
+    return;
+  }
+  if (
+    typeof signal !== 'object'
+    || signal === null
+    || typeof (signal as { aborted?: unknown }).aborted !== 'boolean'
+    || typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function'
+    || typeof (signal as { removeEventListener?: unknown }).removeEventListener !== 'function'
+  ) {
+    throw new TypeError(
+      'timeout signal must expose boolean aborted and callable addEventListener/removeEventListener',
+    );
+  }
 }
 
 /**
