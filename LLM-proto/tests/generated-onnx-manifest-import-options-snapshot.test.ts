@@ -130,4 +130,62 @@ describe('generated ONNX import option ownership', () => {
       minimumChromeVersion: '128',
     });
   });
+
+  it('captures a root accessor exactly once before validation and snapshot assembly', async () => {
+    const callerOwned = importOptions() as unknown as Record<string, unknown>;
+    let modelRevisionReads = 0;
+    Object.defineProperty(callerOwned, 'modelRevision', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        modelRevisionReads += 1;
+        return modelRevisionReads === 1 ? 'validated-revision' : 'mutated-revision';
+      },
+    });
+
+    const manifest = await importGeneratedOnnxSplitManifest(
+      generatedManifest(),
+      callerOwned as unknown as GeneratedOnnxManifestImportOptions,
+    );
+
+    expect(modelRevisionReads).toBe(1);
+    expect(manifest.modelRevision).toBe('validated-revision');
+  });
+
+  it('captures nested runtime requirement fields and array elements exactly once', async () => {
+    const callerOwned = importOptions();
+    let supportedQuantizationReads = 0;
+    let quantizationElementReads = 0;
+    const quantizations = ['q4'];
+    Object.defineProperty(quantizations, 0, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        quantizationElementReads += 1;
+        return quantizationElementReads === 1 ? 'q4' : 'invalid';
+      },
+    });
+
+    const runtimeRequirements = {
+      ...callerOwned.runtimeRequirements,
+    } as unknown as Record<string, unknown>;
+    Object.defineProperty(runtimeRequirements, 'supportedQuantization', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        supportedQuantizationReads += 1;
+        return supportedQuantizationReads === 1 ? quantizations : ['invalid'];
+      },
+    });
+
+    const options = {
+      ...callerOwned,
+      runtimeRequirements,
+    } as unknown as GeneratedOnnxManifestImportOptions;
+    const manifest = await importGeneratedOnnxSplitManifest(generatedManifest(), options);
+
+    expect(supportedQuantizationReads).toBe(1);
+    expect(quantizationElementReads).toBe(1);
+    expect(manifest.runtimeRequirements.supportedQuantization).toEqual(['q4']);
+  });
 });
