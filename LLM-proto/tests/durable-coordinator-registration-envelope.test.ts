@@ -130,10 +130,15 @@ describe('DurableCoordinator worker-registration runtime envelope', () => {
   it('preserves manifest minimum-VRAM rejection after runtime validation', () => {
     const coord = coordinator();
 
-    expect(() => coord.registerWorker(
-      { workerId: workerId('undersized-worker'), tier: WorkerTier.TIER_3, vramMB: 1024 },
-      'connection-a',
-    )).toMatchObject({ code: ErrorCode.UnsupportedRequest });
+    try {
+      coord.registerWorker(
+        { workerId: workerId('undersized-worker'), tier: WorkerTier.TIER_3, vramMB: 1024 },
+        'connection-a',
+      );
+      throw new Error('expected unsupported request');
+    } catch (error) {
+      expect(error).toMatchObject({ code: ErrorCode.UnsupportedRequest });
+    }
     expect(coord.workerCount).toBe(0);
   });
 
