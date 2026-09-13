@@ -80,7 +80,7 @@ export async function importGeneratedOnnxSplitManifest(
   input: unknown,
   options: GeneratedOnnxManifestImportOptions,
 ): Promise<SegmentedModelManifest> {
-  validateImportOptions(options);
+  const stableOptions = snapshotImportOptions(options);
   const generated = requireRecord(input, '$');
   requireExactString(generated, 'schemaVersion', GENERATED_SCHEMA_VERSION, '$');
   requireExactString(generated, 'kind', GENERATED_KIND, '$');
@@ -96,10 +96,10 @@ export async function importGeneratedOnnxSplitManifest(
   validateGeneratedGeometry(parsedSegments);
 
   const memoryEstimates = resolveMemoryEstimates(
-    options.estimatedMemoryMB,
+    stableOptions.estimatedMemoryMB,
     parsedSegments.length,
   );
-  const baseUrl = normalizeArtifactBaseUrl(options.artifactBaseUrl, options.source);
+  const baseUrl = normalizeArtifactBaseUrl(stableOptions.artifactBaseUrl, stableOptions.source);
   const runtimeSegments: SegmentArtifact[] = [];
 
   for (const [arrayIndex, segment] of parsedSegments.entries()) {
@@ -145,40 +145,40 @@ export async function importGeneratedOnnxSplitManifest(
       artifactLocator: graphLocator,
       components,
       estimatedMemoryMB: memoryEstimates[arrayIndex],
-      memoryBasis: options.memoryBasis,
-      compatibleRuntimes: [...options.compatibleRuntimes],
-      minimumRuntimeVersion: options.minimumRuntimeVersion,
-      ...(options.measurementConditions === undefined
+      memoryBasis: stableOptions.memoryBasis,
+      compatibleRuntimes: [...stableOptions.compatibleRuntimes],
+      minimumRuntimeVersion: stableOptions.minimumRuntimeVersion,
+      ...(stableOptions.measurementConditions === undefined
         ? {}
-        : { measurementConditions: options.measurementConditions }),
+        : { measurementConditions: stableOptions.measurementConditions }),
     };
     runtimeSegments.push(runtimeSegment);
   }
 
   const provisional: SegmentedModelManifest = {
     schemaVersion: MODEL_MANIFEST_SCHEMA_VERSION,
-    modelId: options.modelId,
-    modelRevision: options.modelRevision,
-    architecture: options.architecture,
-    parameterCount: options.parameterCount,
-    quantization: options.quantization,
+    modelId: stableOptions.modelId,
+    modelRevision: stableOptions.modelRevision,
+    architecture: stableOptions.architecture,
+    parameterCount: stableOptions.parameterCount,
+    quantization: stableOptions.quantization,
     totalLayers: parsedSegments[parsedSegments.length - 1].endLayer,
-    tokenizer: options.tokenizer,
+    tokenizer: stableOptions.tokenizer,
     segments: runtimeSegments,
-    checkpointFormat: options.checkpointFormat,
+    checkpointFormat: stableOptions.checkpointFormat,
     runtimeRequirements: {
-      ...options.runtimeRequirements,
-      supportedQuantization: [...options.runtimeRequirements.supportedQuantization],
+      ...stableOptions.runtimeRequirements,
+      supportedQuantization: [...stableOptions.runtimeRequirements.supportedQuantization],
     },
     manifestDigest: '0'.repeat(64),
-    source: options.source,
+    source: stableOptions.source,
   };
   const manifest: SegmentedModelManifest = {
     ...provisional,
     manifestDigest: await computeModelManifestDigest(provisional),
   };
   const validation = await validateModelManifest(manifest, {
-    allowedSources: [options.source],
+    allowedSources: [stableOptions.source],
   });
   if (validation.status !== 'valid') {
     const detail = validation.issues
@@ -359,8 +359,8 @@ function artifactLocator(baseUrl: URL, relativePath: string): string {
   return new URL(encoded, baseUrl).toString();
 }
 
-function validateImportOptions(options: GeneratedOnnxManifestImportOptions): void {
-  const candidate = requireRecord(options as unknown, 'options');
+function snapshotImportOptions(input: unknown): GeneratedOnnxManifestImportOptions {
+  const candidate = requireRecord(input, 'options');
   for (const [name, value] of Object.entries({
     modelId: candidate.modelId,
     modelRevision: candidate.modelRevision,
@@ -393,14 +393,17 @@ function validateImportOptions(options: GeneratedOnnxManifestImportOptions): voi
   }
 
   const estimatedMemoryMB = candidate.estimatedMemoryMB;
+  let stableEstimatedMemoryMB: number | readonly number[];
   if (typeof estimatedMemoryMB === 'number') {
-    requirePositiveFiniteNumber(estimatedMemoryMB, 'estimatedMemoryMB');
+    stableEstimatedMemoryMB = requirePositiveFiniteNumber(estimatedMemoryMB, 'estimatedMemoryMB');
   } else if (Array.isArray(estimatedMemoryMB)) {
     if (estimatedMemoryMB.length === 0) {
       throw new Error('estimatedMemoryMB array must be non-empty');
     }
-    estimatedMemoryMB.forEach((value, index) =>
-      requirePositiveFiniteNumber(value, `estimatedMemoryMB[${index}]`),
+    stableEstimatedMemoryMB = Object.freeze(
+      estimatedMemoryMB.map((value, index) =>
+        requirePositiveFiniteNumber(value, `estimatedMemoryMB[${index}]`),
+      ),
     );
   } else {
     throw new Error('estimatedMemoryMB must be a positive number or non-empty number array');
@@ -415,12 +418,13 @@ function validateImportOptions(options: GeneratedOnnxManifestImportOptions): voi
   ) {
     throw new Error('compatibleRuntimes must be a non-empty string array');
   }
+  const compatibleRuntimes = Object.freeze([...(candidate.compatibleRuntimes as string[])]);
 
   const runtimeRequirements = requireRecord(
     candidate.runtimeRequirements,
     'runtimeRequirements',
   );
-  requirePositiveFiniteNumber(
+  const minimumVramMB = requirePositiveFiniteNumber(
     runtimeRequirements.minimumVramMB,
     'runtimeRequirements.minimumVramMB',
   );
@@ -441,6 +445,35 @@ function validateImportOptions(options: GeneratedOnnxManifestImportOptions): voi
       throw new Error(`runtimeRequirements.${field} must be a non-empty string`);
     }
   }
+
+  const stableRuntimeRequirements: ModelRuntimeRequirements = Object.freeze({
+    minimumVramMB,
+    supportedQuantization: Object.freeze([
+      ...(runtimeRequirements.supportedQuantization as string[]),
+    ]),
+    minimumRuntimeVersion: runtimeRequirements.minimumRuntimeVersion as string,
+    minimumChromeVersion: runtimeRequirements.minimumChromeVersion as string,
+  });
+
+  return Object.freeze({
+    modelId: candidate.modelId as string,
+    modelRevision: candidate.modelRevision as string,
+    architecture: candidate.architecture as string,
+    parameterCount: candidate.parameterCount as number,
+    quantization: candidate.quantization as string,
+    tokenizer: candidate.tokenizer as string,
+    checkpointFormat: candidate.checkpointFormat as string,
+    artifactBaseUrl: candidate.artifactBaseUrl,
+    estimatedMemoryMB: stableEstimatedMemoryMB,
+    memoryBasis: candidate.memoryBasis as MemoryBasis,
+    ...(candidate.measurementConditions === undefined
+      ? {}
+      : { measurementConditions: candidate.measurementConditions as string }),
+    compatibleRuntimes,
+    minimumRuntimeVersion: candidate.minimumRuntimeVersion as string,
+    runtimeRequirements: stableRuntimeRequirements,
+    source: candidate.source as ModelManifestSource,
+  });
 }
 
 function requireRecord(value: unknown, path: string): Record<string, unknown> {
