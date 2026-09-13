@@ -22,6 +22,7 @@ import {
   type SegmentArtifact,
   type SegmentedModelManifest,
 } from './model-manifest.js';
+import { snapshotValidatedModelManifest } from './model-manifest-snapshot.js';
 
 export type ModelManifestValidationStatus = 'valid' | 'invalid';
 
@@ -156,7 +157,11 @@ export function validateModelManifestShape(
   if (issues.length > 0) {
     return result('invalid', issues);
   }
-  return result('valid', issues, input as unknown as SegmentedModelManifest);
+  return result(
+    'valid',
+    issues,
+    snapshotValidatedModelManifest(input as unknown as SegmentedModelManifest),
+  );
 }
 
 /**
