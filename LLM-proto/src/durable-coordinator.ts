@@ -634,8 +634,11 @@ export class DurableCoordinator {
           case 'duplicate':
             return result;
           default:
-            this.isolateWorker(result.identity);
-            this.updateAttemptOutcome(result.identity.requestId, result.identity.attemptId, 'suppressed', this.acceptanceErrorCode(acceptance), Date.now());
+            // The worker result is untrusted; use the assignment identity for
+            // isolation/accounting so a malformed result cannot trigger a
+            // second unsafe dereference while handling the protocol violation.
+            this.isolateWorker(assignment);
+            this.updateAttemptOutcome(requestId, attemptId, 'suppressed', this.acceptanceErrorCode(acceptance), Date.now());
             this.finalizeStage(
               requestId,
               'failed',
@@ -717,7 +720,65 @@ export class DurableCoordinator {
     }
   }
 
+  private executionResultEnvelopeError(input: unknown): string | undefined {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return 'execution result must be a non-null, non-array object';
+    }
+
+    const result = input as Record<string, unknown>;
+    if (typeof result.identity !== 'object' || result.identity === null || Array.isArray(result.identity)) {
+      return 'execution result identity must be a non-null, non-array object';
+    }
+
+    const identity = result.identity as Record<string, unknown>;
+    for (const field of ['requestId', 'attemptId', 'leaseId', 'workerId', 'workerGeneration'] as const) {
+      const value = identity[field];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        return `execution result ${field} must be a non-empty string`;
+      }
+    }
+    if (
+      typeof identity.segmentIndex !== 'number'
+      || !Number.isSafeInteger(identity.segmentIndex)
+      || identity.segmentIndex < 0
+    ) {
+      return 'execution result segmentIndex must be a non-negative safe integer';
+    }
+    if (
+      typeof result.processingTimeMs !== 'number'
+      || !Number.isFinite(result.processingTimeMs)
+      || result.processingTimeMs < 0
+    ) {
+      return 'execution result processingTimeMs must be a non-negative finite number';
+    }
+    return undefined;
+  }
+
+  private finalOutputEnvelopeError(output: unknown): string | undefined {
+    if (typeof output !== 'object' || output === null || Array.isArray(output)) {
+      return 'final output must be a non-null, non-array object';
+    }
+    const candidate = output as Record<string, unknown>;
+    if (!Array.isArray(candidate.tokens)) {
+      return 'final output tokens must be an array';
+    }
+    if (!candidate.tokens.every(
+      (token) => typeof token === 'number' && Number.isSafeInteger(token) && token >= 0,
+    )) {
+      return 'final output tokens must contain non-negative safe integers';
+    }
+    if (typeof candidate.text !== 'string') {
+      return 'final output text must be a string';
+    }
+    return undefined;
+  }
+
   async acceptResult(result: ExecutionResult, now = Date.now()): Promise<SegmentAcceptance> {
+    const envelopeError = this.executionResultEnvelopeError(result);
+    if (envelopeError !== undefined) {
+      return { kind: 'protocol-violation', message: envelopeError };
+    }
+
     const record = this.repo.getRequest(result.identity.requestId);
     if (!record) {
       this.recordSuppression(result.identity, 'request-not-found', now);
@@ -738,13 +799,22 @@ export class DurableCoordinator {
 
     if (isFinal) {
       if (!result.output) return { kind: 'output-missing' };
+      const outputError = this.finalOutputEnvelopeError(result.output);
+      if (outputError !== undefined) {
+        this.recordSuppression(result.identity, outputError, now);
+        return { kind: 'protocol-violation', message: outputError };
+      }
+      const output = {
+        tokens: [...result.output.tokens],
+        text: result.output.text,
+      };
       const commit = this.repo.commitCompletion(
         result.identity.requestId,
         'running',
         {
           requestId: result.identity.requestId,
-          tokens: result.output.tokens,
-          text: result.output.text,
+          tokens: output.tokens,
+          text: output.text,
           totalTimeMs: now - (record.startedAt ?? record.createdAt),
           segmentsCompleted: record.totalSegments,
         },
@@ -753,7 +823,7 @@ export class DurableCoordinator {
       if (commit === 'committed') {
         this.updateAttemptOutcome(result.identity.requestId, result.identity.attemptId, 'completed', undefined, now);
         this.repo.deleteCheckpointsForRequest(result.identity.requestId);
-        return { kind: 'accepted', isFinal: true, output: result.output };
+        return { kind: 'accepted', isFinal: true, output };
       }
       if (commit === 'duplicate') {
         this.recordSuppression(result.identity, 'duplicate-completion', now);
@@ -767,11 +837,7 @@ export class DurableCoordinator {
       this.recordSuppression(result.identity, 'missing-checkpoint', now);
       return { kind: 'protocol-violation', message: 'intermediate segment produced no checkpoint' };
     }
-    const checkpoint: CheckpointEnvelope = {
-      ...result.checkpoint,
-      payload: new Uint8Array(result.checkpoint.payload),
-    };
-    const validation = await validateCheckpointEnvelope(checkpoint, {
+    const validation = await validateCheckpointEnvelope(result.checkpoint, {
       requestId: result.identity.requestId,
       segmentIndex: result.identity.segmentIndex,
       workerId: result.identity.workerId,
@@ -786,6 +852,10 @@ export class DurableCoordinator {
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-rejected', message: validation.message };
     }
+    const checkpoint: CheckpointEnvelope = {
+      ...result.checkpoint,
+      payload: new Uint8Array(result.checkpoint.payload),
+    };
 
     const commitNow = Math.max(now, Date.now());
     if (this.repo.getCancellation(result.identity.requestId)) {
