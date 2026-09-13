@@ -8,6 +8,11 @@ import {
   type CheckpointTransferMeasurementManifest,
 } from '../src/checkpoint-transfer-measurement.js';
 import type { Checkpoint } from '../src/types.js';
+import {
+  createDefault30BFeasibilityManifest,
+  evaluateWebGpu30BFeasibility,
+  type WebGpu30BFeasibilityReport,
+} from '../src/webgpu-30b-feasibility.js';
 
 function createSerializedFrame(header: unknown, payloadBytes = 0): Uint8Array {
   const encodedHeader = new TextEncoder().encode(JSON.stringify(header));
@@ -39,6 +44,42 @@ describe('checkpoint serialization and transfer measurement gate', () => {
     });
     expect(report.serializedBytes).toBeGreaterThan(report.payloadBytes);
     expect(report.observedThroughputBytesPerSecond).toBeGreaterThan(16_000_000);
+  });
+
+  it('rejects malformed supplied feasibility reports before shape/index access', () => {
+    const malformedReports: unknown[] = [null, 42, 'report', Symbol('report'), []];
+    for (const malformed of malformedReports) {
+      expect(() => createDefaultCheckpointMeasurementManifest(
+        malformed as WebGpu30BFeasibilityReport,
+      )).toThrow('checkpoint feasibility report must be an object');
+    }
+  });
+
+  it('validates consumed feasibility report shape and measurement scalars', () => {
+    const base = evaluateWebGpu30BFeasibility(createDefault30BFeasibilityManifest());
+
+    expect(() => createDefaultCheckpointMeasurementManifest({
+      ...base,
+      checkpointTensorShape: null,
+    } as unknown as WebGpu30BFeasibilityReport)).toThrow(
+      'checkpoint feasibility report checkpointTensorShape must contain exactly 3 dimensions',
+    );
+    expect(() => createDefaultCheckpointMeasurementManifest({
+      ...base,
+      checkpointTensorShape: [1, 0, 6656],
+    })).toThrow(
+      'checkpoint feasibility report checkpointTensorShape[1] must be a positive safe integer',
+    );
+    expect(() => createDefaultCheckpointMeasurementManifest({
+      ...base,
+      checkpointBytes: Number.NaN,
+    })).toThrow('checkpoint feasibility report checkpointBytes must be a positive safe integer');
+    expect(() => createDefaultCheckpointMeasurementManifest({
+      ...base,
+      checkpointTransferMs: 1.5,
+    })).toThrow(
+      'checkpoint feasibility report checkpointTransferMs must be a non-negative safe integer',
+    );
   });
 
   it('round-trips generated hidden-state payloads with metadata intact', () => {

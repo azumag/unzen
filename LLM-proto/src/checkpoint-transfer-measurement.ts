@@ -71,6 +71,8 @@ export function createDefaultCheckpointMeasurementManifest(
     createDefault30BFeasibilityManifest(),
   ),
 ): CheckpointTransferMeasurementManifest {
+  validateCheckpointFeasibilityReport(feasibilityReport);
+
   return {
     requestId: 'checkpoint-measurement-default',
     segmentIndex: 3,
@@ -260,6 +262,25 @@ export function computeCheckpointPayloadBytes(tensor: CheckpointTensorSpec): num
     elementCount,
     BYTES_PER_DTYPE[tensor.dtype],
     'checkpoint payload byte length',
+  );
+}
+
+function validateCheckpointFeasibilityReport(value: unknown): asserts value is WebGpu30BFeasibilityReport {
+  if (!isRecord(value)) {
+    throw new Error('checkpoint feasibility report must be an object');
+  }
+
+  const shape = value.checkpointTensorShape;
+  if (!Array.isArray(shape) || shape.length !== 3) {
+    throw new Error('checkpoint feasibility report checkpointTensorShape must contain exactly 3 dimensions');
+  }
+  assertPositiveSafeInteger(shape[0], 'checkpoint feasibility report checkpointTensorShape[0]');
+  assertPositiveSafeInteger(shape[1], 'checkpoint feasibility report checkpointTensorShape[1]');
+  assertPositiveSafeInteger(shape[2], 'checkpoint feasibility report checkpointTensorShape[2]');
+  assertPositiveSafeInteger(value.checkpointBytes, 'checkpoint feasibility report checkpointBytes');
+  assertNonNegativeSafeInteger(
+    value.checkpointTransferMs,
+    'checkpoint feasibility report checkpointTransferMs',
   );
 }
 

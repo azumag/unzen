@@ -24,6 +24,15 @@ The default manifest matches the WebGPU 30B gate's `[1, 512, 6656]` float16
 checkpoint tensor. That produces a `6,815,744` byte hidden-state payload and a
 `407ms` transfer estimate at `16 MiB/s`.
 
+When a caller supplies a feasibility report explicitly to
+`createDefaultCheckpointMeasurementManifest()`, the helper validates the report
+before indexing the tensor shape. The report must be a non-null, non-array
+object; `checkpointTensorShape` must contain exactly three positive safe
+integers; `checkpointBytes` must be a positive safe integer; and
+`checkpointTransferMs` must be a non-negative safe integer. Omitting the
+argument keeps the existing default path through the validated feasibility
+evaluator.
+
 ## Runtime Input Contract
 
 The measurement harness treats its manifest and serialized checkpoint frame as
