@@ -30,6 +30,8 @@ const GENERATED_SCHEMA_VERSION = '1.0.0';
 const GENERATED_KIND = 'unzen-budgeted-multi-segment-onnx';
 const GENERATED_LAYOUT = 'per-segment-external-data';
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const QUANTIZATION_PATTERN = /^(?:q|int|fp|bf)[0-9]+$/i;
+const MEMORY_BASIS_VALUES = new Set<MemoryBasis>(['measured', 'budgeted', 'estimated']);
 const WINDOWS_RESERVED_DEVICE_STEMS = new Set(['CON', 'PRN', 'AUX', 'NUL']);
 const WINDOWS_RESERVED_PORT_PATTERN = /^(?:COM|LPT)(?:[1-9]|[¹²³])$/;
 
@@ -358,31 +360,86 @@ function artifactLocator(baseUrl: URL, relativePath: string): string {
 }
 
 function validateImportOptions(options: GeneratedOnnxManifestImportOptions): void {
+  const candidate = requireRecord(options as unknown, 'options');
   for (const [name, value] of Object.entries({
-    modelId: options.modelId,
-    modelRevision: options.modelRevision,
-    architecture: options.architecture,
-    quantization: options.quantization,
-    tokenizer: options.tokenizer,
-    checkpointFormat: options.checkpointFormat,
-    minimumRuntimeVersion: options.minimumRuntimeVersion,
+    modelId: candidate.modelId,
+    modelRevision: candidate.modelRevision,
+    architecture: candidate.architecture,
+    quantization: candidate.quantization,
+    tokenizer: candidate.tokenizer,
+    checkpointFormat: candidate.checkpointFormat,
+    minimumRuntimeVersion: candidate.minimumRuntimeVersion,
   })) {
     if (typeof value !== 'string' || value.trim().length === 0) {
       throw new Error(`${name} must be a non-empty string`);
     }
   }
-  requirePositiveFiniteNumber(options.parameterCount, 'parameterCount');
-  if (options.source !== 'fixture' && options.source !== 'production') {
+
+  requirePositiveFiniteNumber(candidate.parameterCount, 'parameterCount');
+  if (candidate.source !== 'fixture' && candidate.source !== 'production') {
     throw new Error("source must be 'fixture' or 'production'");
   }
+  if (typeof candidate.artifactBaseUrl !== 'string') {
+    throw new Error('artifactBaseUrl must be a string');
+  }
+  if (!MEMORY_BASIS_VALUES.has(candidate.memoryBasis as MemoryBasis)) {
+    throw new Error("memoryBasis must be 'measured', 'budgeted', or 'estimated'");
+  }
   if (
-    !Array.isArray(options.compatibleRuntimes) ||
-    options.compatibleRuntimes.length === 0 ||
-    !options.compatibleRuntimes.every(
+    candidate.measurementConditions !== undefined &&
+    typeof candidate.measurementConditions !== 'string'
+  ) {
+    throw new Error('measurementConditions must be a string when present');
+  }
+
+  const estimatedMemoryMB = candidate.estimatedMemoryMB;
+  if (typeof estimatedMemoryMB === 'number') {
+    requirePositiveFiniteNumber(estimatedMemoryMB, 'estimatedMemoryMB');
+  } else if (Array.isArray(estimatedMemoryMB)) {
+    if (estimatedMemoryMB.length === 0) {
+      throw new Error('estimatedMemoryMB array must be non-empty');
+    }
+    estimatedMemoryMB.forEach((value, index) =>
+      requirePositiveFiniteNumber(value, `estimatedMemoryMB[${index}]`),
+    );
+  } else {
+    throw new Error('estimatedMemoryMB must be a positive number or non-empty number array');
+  }
+
+  if (
+    !Array.isArray(candidate.compatibleRuntimes) ||
+    candidate.compatibleRuntimes.length === 0 ||
+    !candidate.compatibleRuntimes.every(
       (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
     )
   ) {
     throw new Error('compatibleRuntimes must be a non-empty string array');
+  }
+
+  const runtimeRequirements = requireRecord(
+    candidate.runtimeRequirements,
+    'runtimeRequirements',
+  );
+  requirePositiveFiniteNumber(
+    runtimeRequirements.minimumVramMB,
+    'runtimeRequirements.minimumVramMB',
+  );
+  if (
+    !Array.isArray(runtimeRequirements.supportedQuantization) ||
+    runtimeRequirements.supportedQuantization.length === 0 ||
+    !runtimeRequirements.supportedQuantization.every(
+      (value) => typeof value === 'string' && QUANTIZATION_PATTERN.test(value),
+    )
+  ) {
+    throw new Error(
+      'runtimeRequirements.supportedQuantization must be a non-empty array of quantization strings',
+    );
+  }
+  for (const field of ['minimumRuntimeVersion', 'minimumChromeVersion'] as const) {
+    const value = runtimeRequirements[field];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new Error(`runtimeRequirements.${field} must be a non-empty string`);
+    }
   }
 }
 
