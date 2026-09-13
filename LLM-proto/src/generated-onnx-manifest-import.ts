@@ -87,10 +87,15 @@ export async function importGeneratedOnnxSplitManifest(
   requireExactString(generated, 'artifactLayout', GENERATED_LAYOUT, '$');
 
   const budget = parseBudget(generated.browserArtifactBudget);
-  if (!Array.isArray(generated.segments) || generated.segments.length === 0) {
+  const rawSegments = generated.segments;
+  if (!Array.isArray(rawSegments)) {
     throw new Error('$.segments must be a non-empty array');
   }
-  const parsedSegments = generated.segments.map((segment, index) =>
+  const generatedSegments = snapshotArrayValues(rawSegments);
+  if (generatedSegments.length === 0) {
+    throw new Error('$.segments must be a non-empty array');
+  }
+  const parsedSegments = generatedSegments.map((segment, index) =>
     parseGeneratedSegment(segment, index, budget),
   );
   validateGeneratedGeometry(parsedSegments);
@@ -259,10 +264,12 @@ function parseGeneratedSegment(
 
   const graphPath = requireSafeRelativePath(segment.path, `${path}.path`);
   const graphSha256 = requireSha256(segment.sha256, `${path}.sha256`);
-  if (!Array.isArray(segment.externalData)) {
+  const rawExternalData = segment.externalData;
+  if (!Array.isArray(rawExternalData)) {
     throw new Error(`${path}.externalData must be an array`);
   }
-  const externalData = segment.externalData.map((entry, externalIndex) => {
+  const externalDataValues = snapshotArrayValues(rawExternalData);
+  const externalData = externalDataValues.map((entry, externalIndex) => {
     const externalPath = `${path}.externalData[${externalIndex}]`;
     const record = requireRecord(entry, externalPath);
     return {
