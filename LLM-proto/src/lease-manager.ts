@@ -125,6 +125,7 @@ export class LeaseManager {
    * Requires an EXACT match on every identity field plus a live lease.
    */
   match(identity: ResultIdentity, now: number): IdentityMatch {
+    this.assertValidResultIdentity(identity, now);
     const lease = this.store.getActiveLease(identity.requestId);
     if (!lease) return { ok: false, reason: 'no-active-lease' };
     if (now > lease.expiresAt) return { ok: false, reason: 'lease-expired' };
@@ -161,6 +162,48 @@ export class LeaseManager {
     if (typeof generation !== 'string' || generation.trim().length === 0) {
       throw new UnzenError(
         'lease worker generation must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Validate result/failure identity before lease lookup or expiry comparison. */
+  private assertValidResultIdentity(identity: unknown, now: unknown): void {
+    if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
+      throw new UnzenError(
+        'lease result identity must be a non-null object',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+
+    const candidate = identity as Record<string, unknown>;
+    const stringFields = [
+      'requestId',
+      'attemptId',
+      'leaseId',
+      'workerId',
+      'workerGeneration',
+    ] as const;
+    for (const field of stringFields) {
+      const value = candidate[field];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new UnzenError(
+          `lease result identity ${field} must be a non-empty string`,
+          ErrorCode.ProtocolViolation,
+        );
+      }
+    }
+
+    if (!Number.isSafeInteger(candidate.segmentIndex) || (candidate.segmentIndex as number) < 0) {
+      throw new UnzenError(
+        'lease result identity segmentIndex must be a non-negative safe integer',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+
+    if (typeof now !== 'number' || !Number.isFinite(now)) {
+      throw new UnzenError(
+        'lease match now must be a finite number',
         ErrorCode.ProtocolViolation,
       );
     }
