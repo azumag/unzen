@@ -192,12 +192,123 @@ describe('withAbortableTimeout', () => {
 });
 
 describe('legacy withTimeout / delay', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('withTimeout still races and rejects', async () => {
     vi.useFakeTimers();
     const pending = withTimeout(new Promise(() => {}), 50, 'seg');
     const assertion = expect(pending).rejects.toThrow('seg timed out after 50ms');
     await vi.advanceTimersByTimeAsync(50);
     await assertion;
+  });
+
+  it('propagates successful and rejected promise settlement while clearing timers', async () => {
+    vi.useFakeTimers();
+
+    await expect(withTimeout(Promise.resolve('ok'), 100, 'seg')).resolves.toBe('ok');
+    expect(vi.getTimerCount()).toBe(0);
+
+    const failure = new Error('boom');
+    await expect(withTimeout(Promise.reject(failure), 100, 'seg')).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    -1,
+    '100',
+  ])('rejects malformed legacy timeout %p before arming a timer', async (timeoutMs) => {
+    vi.useFakeTimers();
+
+    const pending = withTimeout(
+      Promise.resolve('ok'),
+      timeoutMs as unknown as number,
+      'seg',
+    );
+
+    await expect(pending).rejects.toThrow('timeoutMs must be a finite non-negative number');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects malformed legacy labels before arming a timer', async () => {
+    vi.useFakeTimers();
+
+    const pending = withTimeout(
+      Promise.resolve('ok'),
+      100,
+      Symbol('seg') as unknown as string,
+    );
+
+    await expect(pending).rejects.toThrow('timeout label must be a non-empty string');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([null, 42, {}, { then: null }])(
+    'rejects malformed legacy promise-like input %p before arming a timer',
+    async (promiseLike) => {
+      vi.useFakeTimers();
+
+      const pending = withTimeout(
+        promiseLike as unknown as Promise<unknown>,
+        100,
+        'seg',
+      );
+
+      await expect(pending).rejects.toThrow('timeout promise-like must expose a callable then');
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('rejects a throwing then getter before arming a timer', async () => {
+    vi.useFakeTimers();
+    const promiseLike = Object.defineProperty({}, 'then', {
+      get() {
+        throw new Error('getter exploded');
+      },
+    });
+
+    const pending = withTimeout(
+      promiseLike as unknown as Promise<unknown>,
+      100,
+      'seg',
+    );
+
+    await expect(pending).rejects.toThrow('timeout promise-like must expose a callable then');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('accepts structurally compatible promise-like inputs', async () => {
+    vi.useFakeTimers();
+    const then = vi.fn((resolve: (value: string) => void) => resolve('structural'));
+    const promiseLike = { then } as unknown as Promise<string>;
+
+    await expect(withTimeout(promiseLike, 100, 'seg')).resolves.toBe('structural');
+    expect(then).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('preserves timeoutMs=0 as an immediate timeout for pending work', async () => {
+    vi.useFakeTimers();
+    const pending = withTimeout(new Promise(() => {}), 0, 'seg');
+    const assertion = expect(pending).rejects.toThrow('seg timed out after 0ms');
+
+    await vi.advanceTimersByTimeAsync(0);
+    await assertion;
+  });
+
+  it('clears the timer when a structural thenable throws during subscription', async () => {
+    vi.useFakeTimers();
+    const promiseLike = {
+      then() {
+        throw new Error('subscription failed');
+      },
+    } as unknown as Promise<unknown>;
+
+    await expect(withTimeout(promiseLike, 100, 'seg')).rejects.toThrow('subscription failed');
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('delay(0) resolves immediately (fake-timer friendly)', async () => {

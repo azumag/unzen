@@ -7,12 +7,21 @@
 
 import { SegmentTimeoutError } from './errors.js';
 
+type TimeoutThen<T> = (
+  onFulfilled: (value: T) => unknown,
+  onRejected: (reason: unknown) => unknown,
+) => unknown;
+
 /**
  * Race a promise against a timeout. Rejects with an Error if the timeout fires first.
  *
  * Known limitation: the underlying promise is not cancelled when the timeout fires.
  * In production, callers should pass an AbortSignal to the underlying operation
  * so it can be cancelled cooperatively when the timeout triggers.
+ *
+ * Runtime inputs are preflighted before timer registration. The promise check is
+ * structural rather than `instanceof Promise` so cross-realm promises and valid
+ * thenables retain the established compatibility surface.
  */
 export function withTimeout<T>(
   promise: Promise<T>,
@@ -20,15 +29,67 @@ export function withTimeout<T>(
   label: string,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    let then: TimeoutThen<T>;
+    try {
+      then = assertLegacyTimeoutRuntimeEnvelope<T>(promise, timeoutMs, label);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (action: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      action();
+    };
+
+    timer = setTimeout(() => {
+      finish(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)));
     }, timeoutMs);
 
-    promise.then(
-      (result) => { clearTimeout(timer); resolve(result); },
-      (error) => { clearTimeout(timer); reject(error); },
-    );
+    try {
+      then.call(
+        promise,
+        (result) => finish(() => resolve(result)),
+        (error) => finish(() => reject(error)),
+      );
+    } catch (error) {
+      finish(() => reject(error));
+    }
   });
+}
+
+function assertLegacyTimeoutRuntimeEnvelope<T>(
+  promise: unknown,
+  timeoutMs: unknown,
+  label: unknown,
+): TimeoutThen<T> {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new TypeError('timeoutMs must be a finite non-negative number');
+  }
+  if (typeof label !== 'string' || label.trim().length === 0) {
+    throw new TypeError('timeout label must be a non-empty string');
+  }
+  if (
+    (typeof promise !== 'object' || promise === null)
+    && typeof promise !== 'function'
+  ) {
+    throw new TypeError('timeout promise-like must expose a callable then');
+  }
+
+  let then: unknown;
+  try {
+    then = (promise as { then?: unknown }).then;
+  } catch {
+    throw new TypeError('timeout promise-like must expose a callable then');
+  }
+  if (typeof then !== 'function') {
+    throw new TypeError('timeout promise-like must expose a callable then');
+  }
+  return then as TimeoutThen<T>;
 }
 
 /**
