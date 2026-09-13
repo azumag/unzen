@@ -50,9 +50,9 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
   });
 
   it.each([
-    [null, /segment 0 must be an object/],
-    [[], /segment 0 must be an object/],
-    [Symbol('segment'), /segment 0 must be an object/],
+    [[null], /segment 0 must be an object/],
+    [[[]], /segment 0 must be an object/],
+    [[Symbol('segment')], /segment 0 must be an object/],
     [
       malformedSegment((segment) => { segment.index = '0'; }),
       /segment index must be a non-negative safe integer/,
@@ -72,6 +72,14 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
     [
       malformedSegment((segment) => { segment.layerStart = Number.MAX_SAFE_INTEGER + 1; }),
       /layerStart must be a non-negative safe integer/,
+    ],
+    [
+      malformedSegment((segment) => { segment.layerEnd = '7'; }),
+      /layerEnd must be a safe integer greater than or equal to layerStart/,
+    ],
+    [
+      malformedSegment((segment) => { segment.layerEnd = Number.MAX_SAFE_INTEGER + 1; }),
+      /layerEnd must be a safe integer greater than or equal to layerStart/,
     ],
     [
       malformedSegment((segment) => { segment.layerEnd = -1; }),
@@ -101,10 +109,7 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
       malformedSegment((segment) => { segment.estimatedVramMB = 0; }),
       /estimatedVramMB must be a positive finite number/,
     ],
-  ] as const)('rejects malformed segment values deterministically', (segmentOrSegments, expected) => {
-    const segments = Array.isArray(segmentOrSegments)
-      ? segmentOrSegments
-      : [segmentOrSegments];
+  ] as const)('rejects malformed segment values deterministically', (segments, expected) => {
     expect(construct({ segments })).toThrow(expected);
   });
 
