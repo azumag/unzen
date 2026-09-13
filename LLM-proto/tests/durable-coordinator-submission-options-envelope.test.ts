@@ -32,9 +32,31 @@ function coordinator(repo: CountingRepository): DurableCoordinator {
   return new DurableCoordinator(
     executor,
     createFixtureModelManifest({ totalSegments: 1 }),
-    { allowFixtureManifest: true },
+    { allowFixtureManifest: true, maxRetries: 0, retryDelayMs: 0 },
     repo,
   );
+}
+
+function expectRejectedBeforeMutation(
+  coord: DurableCoordinator,
+  repo: CountingRepository,
+  options: unknown,
+  expectedMessage: string,
+): void {
+  let thrown: unknown;
+  try {
+    coord.submit('prompt', options as never);
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown).toBeInstanceOf(UnzenError);
+  expect((thrown as UnzenError).code).toBe(ErrorCode.ProtocolViolation);
+  expect((thrown as Error).message).toBe(expectedMessage);
+  expect(repo.idempotencyReads).toBe(0);
+  expect(repo.idempotencyWrites).toBe(0);
+  expect(repo.listRequests()).toEqual([]);
+  expect(coord.activeRequestCount).toBe(0);
 }
 
 describe('DurableCoordinator submission options runtime envelope', () => {
@@ -44,20 +66,94 @@ describe('DurableCoordinator submission options runtime envelope', () => {
       const repo = new CountingRepository();
       const coord = coordinator(repo);
 
-      let thrown: unknown;
-      try {
-        coord.submit('prompt', options as never);
-      } catch (error) {
-        thrown = error;
-      }
-
-      expect(thrown).toBeInstanceOf(UnzenError);
-      expect((thrown as UnzenError).code).toBe(ErrorCode.ProtocolViolation);
-      expect((thrown as Error).message).toBe('submission options must be a non-null, non-array object');
-      expect(repo.idempotencyReads).toBe(0);
-      expect(repo.idempotencyWrites).toBe(0);
-      expect(repo.listRequests()).toEqual([]);
-      expect(coord.activeRequestCount).toBe(0);
+      expectRejectedBeforeMutation(
+        coord,
+        repo,
+        options,
+        'submission options must be a non-null, non-array object',
+      );
     },
   );
+
+  it.each(['1000', Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, Symbol('timeout'), {}])(
+    'rejects malformed timeoutMs %p before idempotency or durable mutation',
+    (timeoutMs) => {
+      const repo = new CountingRepository();
+      const coord = coordinator(repo);
+
+      expectRejectedBeforeMutation(
+        coord,
+        repo,
+        { idempotencyKey: 'must-not-bind', timeoutMs },
+        'submission timeoutMs must be a non-negative finite number',
+      );
+    },
+  );
+
+  it.each([null, 42, 'signal', [], Symbol('signal')])(
+    'rejects non-object signal %p before idempotency or durable mutation',
+    (signal) => {
+      const repo = new CountingRepository();
+      const coord = coordinator(repo);
+
+      expectRejectedBeforeMutation(
+        coord,
+        repo,
+        { idempotencyKey: 'must-not-bind', signal },
+        'submission signal must be an AbortSignal-compatible object',
+      );
+    },
+  );
+
+  it.each([
+    {},
+    { aborted: false },
+    { aborted: false, addEventListener() {} },
+    { aborted: false, removeEventListener() {} },
+    { aborted: 'false', addEventListener() {}, removeEventListener() {} },
+    { aborted: false, addEventListener: true, removeEventListener() {} },
+    { aborted: false, addEventListener() {}, removeEventListener: true },
+  ])('rejects signal with malformed AbortSignal surface %# before durable mutation', (signal) => {
+    const repo = new CountingRepository();
+    const coord = coordinator(repo);
+
+    expectRejectedBeforeMutation(
+      coord,
+      repo,
+      { idempotencyKey: 'must-not-bind', signal },
+      'submission signal must expose boolean aborted and event-listener methods',
+    );
+  });
+
+  it('accepts a structurally compatible cross-realm-style signal without instanceof checks', async () => {
+    const repo = new CountingRepository();
+    const coord = coordinator(repo);
+    let added = 0;
+    let removed = 0;
+    const signal = {
+      aborted: false,
+      addEventListener(type: string) {
+        if (type === 'abort') added += 1;
+      },
+      removeEventListener(type: string) {
+        if (type === 'abort') removed += 1;
+      },
+    };
+
+    const submission = coord.submit('prompt', { signal: signal as unknown as AbortSignal });
+    expect(added).toBe(1);
+    await submission.result.catch(() => undefined);
+    expect(removed).toBe(1);
+    expect(coord.activeRequestCount).toBe(0);
+  });
+
+  it('preserves timeoutMs=0 as the existing immediate-deadline value', async () => {
+    const repo = new CountingRepository();
+    const coord = coordinator(repo);
+
+    const submission = coord.submit('prompt', { timeoutMs: 0 });
+    expect(coord.getRequestRecord(submission.requestId)?.timeoutMs).toBe(0);
+    await submission.result.catch(() => undefined);
+    expect(coord.activeRequestCount).toBe(0);
+  });
 });
