@@ -32,7 +32,12 @@ export class CheckpointStore {
     }
   }
 
-  private static assertValidCheckpoint(checkpoint: Checkpoint): void {
+  /**
+   * Validate an untrusted checkpoint envelope without mutating the store.
+   * Pipeline result boundaries use the same authority as save() so malformed
+   * worker payloads are rejected before a worker becomes reusable.
+   */
+  static assertValidCheckpoint(checkpoint: unknown): asserts checkpoint is Checkpoint {
     if (
       typeof checkpoint !== 'object' ||
       checkpoint === null ||
@@ -41,14 +46,15 @@ export class CheckpointStore {
       throw new Error('checkpoint must be a non-null object');
     }
 
-    CheckpointStore.assertValidRequestId(checkpoint.requestId);
-    CheckpointStore.assertValidSegmentIndex(checkpoint.segmentIndex);
+    const candidate = checkpoint as Checkpoint;
+    CheckpointStore.assertValidRequestId(candidate.requestId);
+    CheckpointStore.assertValidSegmentIndex(candidate.segmentIndex);
 
-    if (!(checkpoint.hiddenStates instanceof Uint8Array) || checkpoint.hiddenStates.byteLength === 0) {
+    if (!(candidate.hiddenStates instanceof Uint8Array) || candidate.hiddenStates.byteLength === 0) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
 
-    const metadata = checkpoint.metadata;
+    const metadata = candidate.metadata;
     if (metadata === null || typeof metadata !== 'object') {
       throw new Error('checkpoint metadata must be an object');
     }
