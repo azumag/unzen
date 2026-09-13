@@ -242,6 +242,13 @@ export class DurableCoordinator {
 
   // --- Submission ---
 
+  private submissionOptionsEnvelopeError(input: unknown): string | undefined {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return 'submission options must be a non-null, non-array object';
+    }
+    return undefined;
+  }
+
   /**
    * Submit an inference request. Returns immediately with a submission handle;
    * execution runs in the background and the request advances through the
@@ -252,6 +259,11 @@ export class DurableCoordinator {
     prompt: string,
     options: { readonly idempotencyKey?: string; readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
   ): DurableSubmission {
+    const optionsEnvelopeError = this.submissionOptionsEnvelopeError(options);
+    if (optionsEnvelopeError !== undefined) {
+      throw new UnzenError(optionsEnvelopeError, ErrorCode.ProtocolViolation);
+    }
+
     const key = options.idempotencyKey !== undefined
       ? brandIdempotencyKey(options.idempotencyKey)
       : undefined;
