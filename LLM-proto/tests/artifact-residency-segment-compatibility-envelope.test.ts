@@ -9,7 +9,7 @@ function makeArtifacts(): SegmentArtifact[] {
     layerStart: index * 4,
     layerEnd: index * 4 + 3,
     byteSize: 100 + index * 100,
-    sha256: (index + 1).toString(16).padStart(64, '0'),
+    sha256: (index === 0 ? 'a' : 'b').repeat(64),
     contentType: 'application/onnx',
     artifactLocator: `https://cdn.unzen.local/model/segment-${index}.onnx`,
     estimatedMemoryMB: 512 + index * 128,
