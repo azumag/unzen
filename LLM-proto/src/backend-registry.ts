@@ -19,7 +19,7 @@
  */
 import type { InferenceBackend, InferenceRequest, WorkerCapability } from './inference-backend.js';
 import { isSupportedProtocolVersion } from './inference-backend.js';
-import { assertValidWorkerCapability } from './inference-capability.js';
+import { assertValidWorkerCapability, validateWorkerCapability } from './inference-capability.js';
 
 /** A single routable entry: the capability (and optional backend). */
 export interface CapabilityEntry {
@@ -57,17 +57,22 @@ function isRoutingRequestEnvelope(value: unknown): value is InferenceRequest {
   return true;
 }
 
+function isRoutingCapabilityEnvelope(value: unknown): value is WorkerCapability {
+  return validateWorkerCapability(value).status === 'valid';
+}
+
 /**
  * True when a capability can satisfy a request. Used as the routing predicate
- * so every candidate kind is compared through the same capability input. A
- * malformed routing envelope or request over an unsupported protocol version
- * matches nothing (never trusted silently).
+ * so every candidate kind is compared through the same capability input.
+ * Malformed capability/request envelopes and unsupported protocol versions
+ * match nothing (never trusted silently).
  */
 export function capabilityMatchesRequest(
   capability: WorkerCapability,
   request: InferenceRequest,
 ): boolean {
   if (!isRoutingRequestEnvelope(request)) return false;
+  if (!isRoutingCapabilityEnvelope(capability)) return false;
   if (!capability.inputModalities.includes('text')) return false;
   if (request.requiresStreaming === true && capability.streaming === false) return false;
   if (request.maxTokens !== undefined && capability.contextWindowTokens < request.maxTokens) {
