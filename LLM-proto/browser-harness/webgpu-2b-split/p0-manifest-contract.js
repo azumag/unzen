@@ -24,6 +24,34 @@ export const SMOLLM2_P0_CONTRACT = Object.freeze({
   requiredTier: 'preferred',
 });
 
+function diagnosticValue(value) {
+  // P0 mismatch diagnostics are part of a runtime trust boundary. Never call
+  // user-defined object coercion while reporting malformed asserted/JSON data.
+  if (value === null) return 'null';
+  switch (typeof value) {
+    case 'string':
+      return value;
+    case 'number':
+      if (Number.isNaN(value)) return 'NaN';
+      if (value === Number.POSITIVE_INFINITY) return 'Infinity';
+      if (value === Number.NEGATIVE_INFINITY) return '-Infinity';
+      return `${value}`;
+    case 'boolean':
+      return value ? 'true' : 'false';
+    case 'bigint':
+      return `${value}n`;
+    case 'undefined':
+      return 'undefined';
+    case 'symbol':
+      return value.description === undefined ? 'Symbol' : `Symbol(${value.description})`;
+    case 'function':
+      return '[function]';
+    case 'object':
+    default:
+      return '[object]';
+  }
+}
+
 function objectField(value, field) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`P0 manifest ${field} must be an object`);
@@ -33,7 +61,9 @@ function objectField(value, field) {
 
 function exact(value, expected, field) {
   if (value !== expected) {
-    throw new Error(`P0 manifest ${field} mismatch: expected ${String(expected)}, got ${String(value)}`);
+    throw new Error(
+      `P0 manifest ${field} mismatch: expected ${diagnosticValue(expected)}, got ${diagnosticValue(value)}`,
+    );
   }
 }
 
@@ -51,11 +81,12 @@ function canonicalSha256(value, field) {
   return value;
 }
 
-export function validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize }) {
+export function validateSmolLm2P0RuntimeParameters(parameters) {
+  const runtime = objectField(parameters, 'runtime parameters');
   const contract = SMOLLM2_P0_CONTRACT;
-  exact(modelId, contract.modelId, 'runtime.modelId');
-  exact(kvHeads, contract.kvHeads, 'runtime.kvHeads');
-  exact(headSize, contract.headSize, 'runtime.headSize');
+  exact(runtime.modelId, contract.modelId, 'runtime.modelId');
+  exact(runtime.kvHeads, contract.kvHeads, 'runtime.kvHeads');
+  exact(runtime.headSize, contract.headSize, 'runtime.headSize');
   return {
     status: 'pass',
     modelId: contract.modelId,
@@ -133,7 +164,9 @@ export function validateSmolLm2P0Manifest(manifest) {
   for (const segment of root.segments) {
     const entry = objectField(segment, 'segments[]');
     if (!Number.isSafeInteger(entry.index) || ![0, 1].includes(entry.index) || segmentsByIndex.has(entry.index)) {
-      throw new Error(`P0 manifest has invalid or duplicate segment index: ${String(entry.index)}`);
+      throw new Error(
+        `P0 manifest has invalid or duplicate segment index: ${diagnosticValue(entry.index)}`,
+      );
     }
     const bytes = positiveSafeInteger(entry.browserArtifactBytes, `segments[${entry.index}].browserArtifactBytes`);
     if (bytes > contract.preferredMaxBytes) {
@@ -168,7 +201,9 @@ export function validateSmolLm2P0Manifest(manifest) {
   for (const report of budget.segments) {
     const entry = objectField(report, 'browserArtifactBudget.segments[]');
     if (!Number.isSafeInteger(entry.index) || !segmentsByIndex.has(entry.index) || budgetIndexes.has(entry.index)) {
-      throw new Error(`P0 manifest has invalid or duplicate budget segment index: ${String(entry.index)}`);
+      throw new Error(
+        `P0 manifest has invalid or duplicate budget segment index: ${diagnosticValue(entry.index)}`,
+      );
     }
     budgetIndexes.add(entry.index);
     const bytes = positiveSafeInteger(
