@@ -184,6 +184,7 @@ export class WorkerRegistry {
 
   /** Revoke a generation: mark revoked, record it, and remove from active set. */
   revokeGeneration(workerId: WorkerId, generation: WorkerGeneration, now = Date.now()): void {
+    this.assertValidRevocationIdentity(workerId, generation);
     const record = this.store.getWorker(workerId);
     if (record && record.generation === generation) {
       this.revoke(record, now);
@@ -281,6 +282,22 @@ export class WorkerRegistry {
     if (typeof generation !== 'string' || generation.trim().length === 0) {
       throw new UnzenError(
         'worker heartbeat generation must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Validate revocation identity before active lookup or revoked-generation archive mutation. */
+  private assertValidRevocationIdentity(workerId: unknown, generation: unknown): void {
+    if (typeof workerId !== 'string' || workerId.trim().length === 0) {
+      throw new UnzenError(
+        'worker revocation workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+    if (typeof generation !== 'string' || generation.trim().length === 0) {
+      throw new UnzenError(
+        'worker revocation generation must be a non-empty string',
         ErrorCode.ProtocolViolation,
       );
     }

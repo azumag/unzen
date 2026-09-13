@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { InMemoryRepository } from '../src/durable-repository.js';
+import { ErrorCode, UnzenError } from '../src/errors.js';
 import { generateWorkerGeneration } from '../src/ids.js';
 import { WorkerStage } from '../src/durable-types.js';
 import { WorkerRegistry } from '../src/worker-registry.js';
@@ -11,6 +12,18 @@ function validRegistration(id = 'worker-1') {
     tier: WorkerTier.TIER_2,
     vramMB: 4096,
   };
+}
+
+function expectProtocolViolation(run: () => void, message: string): void {
+  let thrown: unknown;
+  try {
+    run();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(UnzenError);
+  expect((thrown as UnzenError).code).toBe(ErrorCode.ProtocolViolation);
+  expect((thrown as Error).message).toBe(message);
 }
 
 describe('WorkerRegistry runtime boundaries', () => {
@@ -76,5 +89,83 @@ describe('WorkerRegistry runtime boundaries', () => {
 
     expect(registry.get(id)?.stage).toBe(WorkerStage.Busy);
     expect(registry.get(id)?.currentSegment).toBe(3);
+  });
+
+  it.each([null, undefined, 1, true, [], {}, Symbol('worker'), '', '   '])(
+    'rejects malformed revocation workerId %p before worker or archive mutation',
+    (value) => {
+      const repository = new InMemoryRepository();
+      const registry = new WorkerRegistry(repository);
+      const id = workerId('worker-1');
+      const registration = registry.register(validRegistration(), 'conn-1');
+      const before = { ...registry.get(id)! };
+
+      expectProtocolViolation(
+        () => registry.revokeGeneration(value as never, registration.generation),
+        'worker revocation workerId must be a non-empty string',
+      );
+
+      expect(registry.get(id)).toEqual(before);
+      expect(registry.size).toBe(1);
+      expect(registry.getByGeneration(registration.generation)).toEqual(before);
+    },
+  );
+
+  it.each([null, undefined, 1, true, [], {}, Symbol('generation'), '', '   '])(
+    'rejects malformed revocation generation %p before worker or archive mutation',
+    (value) => {
+      const repository = new InMemoryRepository();
+      const registry = new WorkerRegistry(repository);
+      const id = workerId('worker-1');
+      const registration = registry.register(validRegistration(), 'conn-1');
+      const before = { ...registry.get(id)! };
+
+      expectProtocolViolation(
+        () => registry.revokeGeneration(id, value as never),
+        'worker revocation generation must be a non-empty string',
+      );
+
+      expect(registry.get(id)).toEqual(before);
+      expect(registry.size).toBe(1);
+      expect(registry.getByGeneration(registration.generation)).toEqual(before);
+    },
+  );
+
+  it('preserves valid current-generation revocation', () => {
+    const repository = new InMemoryRepository();
+    const registry = new WorkerRegistry(repository);
+    const id = workerId('worker-1');
+    const registration = registry.register(validRegistration(), 'conn-1');
+
+    registry.revokeGeneration(id, registration.generation, 1234);
+
+    expect(registry.get(id)).toBeUndefined();
+    expect(registry.size).toBe(0);
+    expect(registry.getByGeneration(registration.generation)).toMatchObject({
+      workerId: id,
+      generation: registration.generation,
+      stage: WorkerStage.Revoked,
+      revokedAt: 1234,
+    });
+  });
+
+  it('preserves valid stale-generation archival without replacing the active worker', () => {
+    const repository = new InMemoryRepository();
+    const registry = new WorkerRegistry(repository);
+    const id = workerId('worker-1');
+    const current = registry.register(validRegistration(), 'conn-1');
+    const before = { ...registry.get(id)! };
+    const staleGeneration = generateWorkerGeneration();
+
+    registry.revokeGeneration(id, staleGeneration, 2345);
+
+    expect(registry.get(id)).toEqual(before);
+    expect(registry.getByGeneration(current.generation)).toEqual(before);
+    expect(registry.getByGeneration(staleGeneration)).toMatchObject({
+      workerId: id,
+      generation: staleGeneration,
+      stage: WorkerStage.Revoked,
+      revokedAt: 2345,
+    });
   });
 });
