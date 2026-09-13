@@ -214,6 +214,7 @@ describe('DurableCoordinator ExecutionFailure runtime envelope', () => {
       outcome: 'failed',
       errorCode: ErrorCode.ProtocolViolation,
     });
-    expect(coord.getWorker(identity.workerId)?.stage).toBe(WorkerStage.Revoked);
+    expect(coord.getWorker(identity.workerId)).toBeUndefined();
+    expect(coord.idleWorkerCount).toBe(0);
   });
 });
