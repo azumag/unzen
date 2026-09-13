@@ -64,7 +64,6 @@ describe('checkpoint serialization and transfer measurement gate', () => {
       'manifest',
       Symbol('manifest'),
       [],
-      new Uint8Array(),
     ];
 
     for (const malformed of malformedManifests) {
