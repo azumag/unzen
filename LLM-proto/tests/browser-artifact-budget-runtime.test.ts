@@ -79,6 +79,37 @@ describe('browser runtime artifact budget', () => {
       /artifact report\[1\]\.bytes must be a non-negative safe integer/,
     );
   });
+
+  it('does not invoke hostile coercion hooks while reporting malformed budget input', () => {
+    let coercions = 0;
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error('artifact budget coercion must not run');
+      },
+      toString() {
+        coercions += 1;
+        throw new Error('artifact budget toString must not run');
+      },
+    };
+
+    expect(() => planSegmentArtifactBudget({
+      index: hostile,
+      browserArtifactBytes: hostile,
+      externalData: [{ bytes: 4 }],
+    }, 'p0')).toThrow(/segment \[object\] browserArtifactBytes must be a non-negative safe integer: \[object\]/);
+
+    expect(() => planSegmentArtifactBudget(segment(10, 4), hostile)).toThrow(
+      /unsupported browser artifact budget mode: \[object\]/,
+    );
+
+    const plan = planSegmentArtifactBudget(segment(10, 4), 'p0');
+    expect(() => verifyActualSegmentArtifactBudget(plan, [{ bytes: 6 }, { bytes: hostile }])).toThrow(
+      /artifact report\[1\]\.bytes must be a non-negative safe integer: \[object\]/,
+    );
+
+    expect(coercions).toBe(0);
+  });
 });
 
 describe('bounded browser artifact stream reads', () => {
