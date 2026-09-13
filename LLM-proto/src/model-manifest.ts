@@ -139,11 +139,18 @@ export function parseQuantizationBits(quantization: string): number {
  * Deployment locators are deliberately excluded: publishing identical bytes at
  * a new CDN URL does not change model-weight identity. The outer manifest
  * digest still covers all locators and therefore detects routing tampering.
+ *
+ * This function is also a runtime trust boundary. Component descriptors can be
+ * reconstructed from generated JSON or asserted across TypeScript boundaries,
+ * so every value is validated before array sorting, string comparison, or
+ * canonical field access. This keeps malformed evidence from failing through
+ * incidental JavaScript coercion/TypeErrors and makes bundle hashing fail closed.
  */
 export function canonicalSegmentArtifactBundleFields(
   components: readonly SegmentArtifactComponent[],
 ): readonly Record<string, unknown>[] {
-  return [...components]
+  const validated = validateSegmentArtifactBundleComponents(components);
+  return [...validated]
     .sort((left, right) =>
       componentRoleOrder(left.role) - componentRoleOrder(right.role) ||
       left.path.localeCompare(right.path),
@@ -223,6 +230,96 @@ export async function verifyModelManifestSignature(
     return true;
   }
   return verify({ digest: manifest.manifestDigest, signature: manifest.signature });
+}
+
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+
+function validateSegmentArtifactBundleComponents(
+  input: unknown,
+): readonly SegmentArtifactComponent[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new Error('segment artifact bundle components must be a non-empty array');
+  }
+
+  const paths = new Set<string>();
+  let graphCount = 0;
+  const validated: SegmentArtifactComponent[] = [];
+
+  for (const [index, rawComponent] of input.entries()) {
+    if (!isRecord(rawComponent)) {
+      throw new Error(`segment artifact bundle component ${index} must be an object`);
+    }
+
+    const role = rawComponent.role;
+    if (role !== 'graph' && role !== 'external-data') {
+      throw new Error(
+        `segment artifact bundle component ${index} role must be 'graph' or 'external-data'`,
+      );
+    }
+    if (role === 'graph') {
+      graphCount += 1;
+    }
+
+    const path = requireNonEmptyString(
+      rawComponent.path,
+      `segment artifact bundle component ${index} path`,
+    );
+    if (paths.has(path)) {
+      throw new Error(`segment artifact bundle contains duplicate component path: ${path}`);
+    }
+    paths.add(path);
+
+    const byteSize = rawComponent.byteSize;
+    if (typeof byteSize !== 'number' || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
+      throw new Error(
+        `segment artifact bundle component ${index} byteSize must be a positive safe integer`,
+      );
+    }
+
+    const sha256 = rawComponent.sha256;
+    if (typeof sha256 !== 'string' || !SHA256_HEX_PATTERN.test(sha256)) {
+      throw new Error(
+        `segment artifact bundle component ${index} sha256 must be a canonical lowercase SHA-256 digest`,
+      );
+    }
+
+    const contentType = requireNonEmptyString(
+      rawComponent.contentType,
+      `segment artifact bundle component ${index} contentType`,
+    );
+    const artifactLocator = requireNonEmptyString(
+      rawComponent.artifactLocator,
+      `segment artifact bundle component ${index} artifactLocator`,
+    );
+
+    validated.push({
+      role,
+      path,
+      byteSize,
+      sha256,
+      contentType,
+      artifactLocator,
+    });
+  }
+
+  if (graphCount !== 1) {
+    throw new Error(
+      `segment artifact bundle must contain exactly one graph component; found ${graphCount}`,
+    );
+  }
+
+  return validated;
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function componentRoleOrder(role: SegmentArtifactComponentRole): number {
