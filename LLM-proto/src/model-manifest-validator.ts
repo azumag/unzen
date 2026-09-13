@@ -28,6 +28,7 @@ export type ModelManifestValidationStatus = 'valid' | 'invalid';
 
 export type ModelManifestValidationIssueCode =
   | 'invalid-manifest'
+  | 'invalid-validation-options'
   | 'unsupported-schema-version'
   | 'fixture-manifest-not-allowed'
   | 'invalid-model-metadata'
@@ -110,13 +111,17 @@ export function validateModelManifestShape(
   options: ModelManifestValidationOptions = {},
 ): ModelManifestValidationResult {
   const issues: ModelManifestValidationIssue[] = [];
+  const stableOptions = snapshotValidationOptions(options, issues);
+  if (stableOptions === undefined) {
+    return result('invalid', issues);
+  }
   if (!isRecord(input)) {
     issue(issues, 'invalid-manifest', '$', 'model manifest must be an object');
     return result('invalid', issues);
   }
 
   const manifest = input as Record<string, unknown>;
-  const supported = options.supportedSchemaVersions ?? [MODEL_MANIFEST_SCHEMA_VERSION];
+  const supported = stableOptions.supportedSchemaVersions ?? [MODEL_MANIFEST_SCHEMA_VERSION];
   if (typeof manifest.schemaVersion !== 'string' || manifest.schemaVersion.trim().length === 0) {
     issue(issues, 'invalid-manifest', '$.schemaVersion', 'schemaVersion must be a non-empty string');
   } else if (!supported.includes(manifest.schemaVersion)) {
@@ -128,7 +133,7 @@ export function validateModelManifestShape(
     );
   }
 
-  const allowedSources = options.allowedSources ?? ['production', 'fixture'];
+  const allowedSources = stableOptions.allowedSources ?? ['production', 'fixture'];
   if (
     typeof manifest.source !== 'string' ||
     (manifest.source !== 'production' && manifest.source !== 'fixture')
@@ -172,7 +177,13 @@ export async function validateModelManifest(
   input: unknown,
   options: ModelManifestValidationOptions = {},
 ): Promise<ModelManifestValidationResult> {
-  const shape = validateModelManifestShape(input, options);
+  const optionIssues: ModelManifestValidationIssue[] = [];
+  const stableOptions = snapshotValidationOptions(options, optionIssues);
+  if (stableOptions === undefined) {
+    return result('invalid', optionIssues);
+  }
+
+  const shape = validateModelManifestShape(input, stableOptions);
   if (shape.status !== 'valid' || shape.manifest === undefined) {
     return shape;
   }
@@ -212,7 +223,7 @@ export async function validateModelManifest(
       issue(issues, 'invalid-signature', '$.signature', 'signature must be a non-empty string');
       return result('invalid', issues, manifest);
     }
-    if (options.verifySignature === undefined) {
+    if (stableOptions.verifySignature === undefined) {
       issue(
         issues,
         'signature-verifier-unavailable',
@@ -221,7 +232,7 @@ export async function validateModelManifest(
       );
       return result('invalid', issues, manifest);
     }
-    const verifies = await verifyModelManifestSignature(manifest, options.verifySignature);
+    const verifies = await verifyModelManifestSignature(manifest, stableOptions.verifySignature);
     if (!verifies) {
       issue(
         issues,
@@ -249,6 +260,79 @@ export function assertValidModelManifest(
     throw new Error(`model manifest validation failed: ${detail}`);
   }
   return validation.manifest;
+}
+
+function snapshotValidationOptions(
+  input: unknown,
+  issues: ModelManifestValidationIssue[],
+): ModelManifestValidationOptions | undefined {
+  if (!isRecord(input)) {
+    issue(
+      issues,
+      'invalid-validation-options',
+      '$options',
+      'model manifest validation options must be an object',
+    );
+    return undefined;
+  }
+
+  const rawSupported = input.supportedSchemaVersions;
+  let supportedSchemaVersions: readonly string[] | undefined;
+  if (rawSupported !== undefined) {
+    if (!Array.isArray(rawSupported) || !rawSupported.every((value) => typeof value === 'string')) {
+      issue(
+        issues,
+        'invalid-validation-options',
+        '$options.supportedSchemaVersions',
+        'supportedSchemaVersions must be an array of strings when provided',
+      );
+    } else {
+      supportedSchemaVersions = Object.freeze([...(rawSupported as string[])]);
+    }
+  }
+
+  const rawAllowed = input.allowedSources;
+  let allowedSources: readonly ModelManifestSource[] | undefined;
+  if (rawAllowed !== undefined) {
+    if (
+      !Array.isArray(rawAllowed) ||
+      !rawAllowed.every((value) => value === 'production' || value === 'fixture')
+    ) {
+      issue(
+        issues,
+        'invalid-validation-options',
+        '$options.allowedSources',
+        "allowedSources must contain only 'production' or 'fixture' when provided",
+      );
+    } else {
+      allowedSources = Object.freeze([...(rawAllowed as ModelManifestSource[])]);
+    }
+  }
+
+  const rawVerifier = input.verifySignature;
+  let verifySignature: ModelManifestValidationOptions['verifySignature'];
+  if (rawVerifier !== undefined) {
+    if (typeof rawVerifier !== 'function') {
+      issue(
+        issues,
+        'invalid-validation-options',
+        '$options.verifySignature',
+        'verifySignature must be a function when provided',
+      );
+    } else {
+      verifySignature = rawVerifier as ModelManifestValidationOptions['verifySignature'];
+    }
+  }
+
+  if (issues.length > 0) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    supportedSchemaVersions,
+    allowedSources,
+    verifySignature,
+  });
 }
 
 function validateModelMetadata(
