@@ -95,7 +95,10 @@ export function generateWorkerGeneration(): WorkerGeneration {
   return generate('gen') as WorkerGeneration;
 }
 
-/** Brand an API caller-supplied idempotency key. */
+/** Brand an API caller-supplied idempotency key after runtime validation. */
 export function idempotencyKey(key: string): IdempotencyKey {
+  if (typeof key !== 'string' || key.trim().length === 0) {
+    throw new Error('idempotencyKey must be a non-empty string');
+  }
   return key as IdempotencyKey;
 }
