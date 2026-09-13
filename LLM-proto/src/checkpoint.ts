@@ -131,10 +131,11 @@ export class CheckpointStore {
     atOrBeforeSegmentIndex = Number.MAX_SAFE_INTEGER,
   ): Checkpoint | undefined {
     CheckpointStore.assertValidRequestId(requestId);
-    if (!Number.isSafeInteger(atOrBeforeSegmentIndex)) {
-      throw new Error(
-        `atOrBeforeSegmentIndex must be a safe integer; found ${atOrBeforeSegmentIndex}`,
-      );
+    if (
+      typeof atOrBeforeSegmentIndex !== 'number'
+      || !Number.isSafeInteger(atOrBeforeSegmentIndex)
+    ) {
+      throw new Error('atOrBeforeSegmentIndex must be a safe integer');
     }
     if (atOrBeforeSegmentIndex < 0) return undefined;
 
