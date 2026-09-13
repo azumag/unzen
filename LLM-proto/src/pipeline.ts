@@ -67,6 +67,33 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function resolvePipelineOptions(options: unknown): PipelineOptions {
+  if (options !== undefined && !isRecord(options)) {
+    throw new TypeError('Pipeline options must be a non-null, non-array object');
+  }
+
+  const merged = {
+    ...DEFAULT_OPTIONS,
+    ...(options ?? {}),
+  } as PipelineOptions;
+
+  if (!isNonNegativeSafeInteger(merged.maxRetries)) {
+    throw new TypeError('Pipeline maxRetries must be a non-negative safe integer');
+  }
+  if (!isNonNegativeFiniteNumber(merged.segmentTimeoutMs)) {
+    throw new TypeError('Pipeline segmentTimeoutMs must be a non-negative finite number');
+  }
+  if (!isNonNegativeFiniteNumber(merged.retryDelayMs)) {
+    throw new TypeError('Pipeline retryDelayMs must be a non-negative finite number');
+  }
+
+  return merged;
+}
+
 export class Pipeline {
   private readonly options: PipelineOptions;
 
@@ -77,7 +104,7 @@ export class Pipeline {
     private readonly executor: SegmentExecutor,
     options?: Partial<PipelineOptions>,
   ) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.options = resolvePipelineOptions(options);
   }
 
   /**
