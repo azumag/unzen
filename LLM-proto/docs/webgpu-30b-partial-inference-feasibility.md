@@ -56,6 +56,39 @@ conditions: WebGPU support, layer-boundary execution, checkpoint resume, and
 quantization compatibility. Failed candidates remain useful because their
 failure reasons should become the next implementation issue.
 
+## Runtime Input Contract
+
+`evaluateWebGpu30BFeasibility()` is also a public runtime boundary. Before it
+performs multiplication, division, comparisons, or `.map()` calls, it validates
+the containers and scalar metadata it directly consumes. This keeps asserted or
+decoded malformed values from turning into incidental JavaScript exceptions,
+`NaN`, `Infinity`, or precision-lost measurement reports.
+
+The runtime envelope requires:
+
+- a non-null, non-array top-level manifest and model object;
+- non-empty model identity, revision, manifest digest, and quantization strings,
+  plus a positive finite parameter count;
+- an array of segment objects whose indexes/layer bounds are non-negative safe
+  integers and whose memory estimates are positive finite numbers;
+- a checkpoint-tensor object with three positive safe-integer dimensions and a
+  `float16` or `float32` dtype;
+- finite worker/transfer budgets and dispatcher assumptions, with a strictly
+  positive checkpoint throughput;
+- a runtime-candidate array containing only known runtime names, boolean
+  capability flags, and positive safe-integer quantization-bit entries.
+
+Derived checkpoint element/byte counts use checked safe-integer multiplication,
+and the transfer estimate must also remain a non-negative safe integer. These
+runtime checks are deliberately separate from *feasibility* checks: a valid q8
+manifest, an over-budget segment, excessive worker load, or non-contiguous layer
+ranges still produce the existing `status=fail` report instead of throwing a
+runtime-contract exception.
+
+This hardening remains metadata-only. It does not establish actual model bytes,
+physical WebGPU memory usage, browser-to-Coordinator relay latency, or
+worker-loss resume evidence.
+
 ## Report Fields
 
 `evaluateWebGpu30BFeasibility()` returns:
