@@ -77,6 +77,84 @@ describe('browser worker retention measurement gate', () => {
     });
   });
 
+  it('rejects malformed top-level manifests before measurement field access', () => {
+    for (const malformed of [null, undefined, 'manifest', 1, true, [], Symbol('manifest')]) {
+      expect(() => measureBrowserWorkerRetention(
+        malformed as BrowserRetentionMeasurementManifest,
+      )).toThrow(/manifest must be an object/i);
+    }
+  });
+
+  it('rejects malformed session containers and consumed session fields', () => {
+    const base = createDefaultBrowserRetentionManifest();
+    const first = base.sessions[0];
+    const malformedSessions: readonly unknown[] = [
+      null,
+      [],
+      'session',
+      { ...first, workerId: 1 },
+      { ...first, tier: 9 },
+      { ...first, sessionDurationMs: -1 },
+      { ...first, sessionDurationMs: Number.NaN },
+      { ...first, heartbeatJitterMs: Number.POSITIVE_INFINITY },
+      { ...first, disconnectedDuringSegment: -1 },
+      { ...first, disconnectedDuringSegment: 1.5 },
+    ];
+
+    expect(() => measureBrowserWorkerRetention({
+      ...base,
+      sessions: 'sessions' as unknown as BrowserRetentionMeasurementManifest['sessions'],
+    })).toThrow(/sessions must be an array/i);
+    expect(() => measureBrowserWorkerRetention({ ...base, sessions: [] })).toThrow(
+      /requires at least one session/i,
+    );
+
+    for (const malformed of malformedSessions) {
+      expect(() => measureBrowserWorkerRetention({
+        ...base,
+        sessions: [malformed as BrowserRetentionMeasurementManifest['sessions'][number]],
+      })).toThrow(/browser retention/i);
+    }
+  });
+
+  it('rejects invalid timing, rate, retention-window, and telemetry inputs', () => {
+    const base = createDefaultBrowserRetentionManifest();
+    const malformed: readonly BrowserRetentionMeasurementManifest[] = [
+      { ...base, requestId: 1 as unknown as string },
+      { ...base, segmentDurationMs: -1 },
+      { ...base, checkpointResumeMs: Number.NaN },
+      { ...base, retryBackoffMs: Number.POSITIVE_INFINITY },
+      { ...base, earlyAbandonThresholdMs: -1 },
+      { ...base, maxRetryResumeImpactMs: Number.NEGATIVE_INFINITY },
+      { ...base, maxEarlyAbandonRate: 1.01 },
+      { ...base, minRetentionAtSegmentEnd: -0.01 },
+      { ...base, retentionWindowsMs: [30_000, Number.NaN] },
+      {
+        ...base,
+        adaptiveTelemetryBaseline: null as unknown as BrowserRetentionMeasurementManifest['adaptiveTelemetryBaseline'],
+      },
+      {
+        ...base,
+        adaptiveTelemetryBaseline: { ...base.adaptiveTelemetryBaseline, uptimeMs: -1 },
+      },
+      {
+        ...base,
+        adaptiveTelemetryBaseline: { ...base.adaptiveTelemetryBaseline, failureRate: 2 },
+      },
+      {
+        ...base,
+        adaptiveTelemetryBaseline: {
+          ...base.adaptiveTelemetryBaseline,
+          heartbeatJitterMs: Number.POSITIVE_INFINITY,
+        },
+      },
+    ];
+
+    for (const manifest of malformed) {
+      expect(() => measureBrowserWorkerRetention(manifest)).toThrow(/browser retention/i);
+    }
+  });
+
   it('fails when early browser abandonment exceeds the scale-up gate', () => {
     const base = createDefaultBrowserRetentionManifest();
     const manifest: BrowserRetentionMeasurementManifest = {
