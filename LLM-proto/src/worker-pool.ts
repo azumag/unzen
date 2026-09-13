@@ -157,6 +157,14 @@ export class WorkerPool {
    */
   private assertValidRegistration(registration: WorkerRegistration): void {
     if (
+      typeof registration !== 'object' ||
+      registration === null ||
+      Array.isArray(registration)
+    ) {
+      throw new Error('worker registration must be a non-null object');
+    }
+
+    if (
       typeof registration.workerId !== 'string' ||
       registration.workerId.trim().length === 0
     ) {
