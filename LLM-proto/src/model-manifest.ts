@@ -264,6 +264,11 @@ function validateSegmentArtifactBundleComponents(
       rawComponent.path,
       `segment artifact bundle component ${index} path`,
     );
+    if (!isSafeRelativeArtifactPath(path)) {
+      throw new Error(
+        `segment artifact bundle component ${index} path must be a safe relative POSIX path`,
+      );
+    }
     if (paths.has(path)) {
       throw new Error(`segment artifact bundle contains duplicate component path: ${path}`);
     }
@@ -316,6 +321,12 @@ function requireNonEmptyString(value: unknown, field: string): string {
     throw new Error(`${field} must be a non-empty string`);
   }
   return value;
+}
+
+function isSafeRelativeArtifactPath(path: string): boolean {
+  if (path.length === 0 || path.startsWith('/') || path.includes('\\')) return false;
+  const parts = path.split('/');
+  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
