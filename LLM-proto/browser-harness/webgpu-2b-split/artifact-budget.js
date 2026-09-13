@@ -1,34 +1,69 @@
 export const BROWSER_SEGMENT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024;
 export const BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES = 1024 * 1024 * 1024;
 
+function diagnosticValue(value) {
+  // Diagnostics must never invoke user-defined coercion hooks on malformed
+  // runtime input. Preserve useful primitive rendering while describing
+  // objects/functions structurally instead of calling String(value).
+  if (value === null) return 'null';
+  switch (typeof value) {
+    case 'string':
+      return value;
+    case 'number':
+      if (Number.isNaN(value)) return 'NaN';
+      if (value === Number.POSITIVE_INFINITY) return 'Infinity';
+      if (value === Number.NEGATIVE_INFINITY) return '-Infinity';
+      return `${value}`;
+    case 'boolean':
+      return value ? 'true' : 'false';
+    case 'bigint':
+      return `${value}n`;
+    case 'undefined':
+      return 'undefined';
+    case 'symbol':
+      return value.description === undefined ? 'Symbol' : `Symbol(${value.description})`;
+    case 'function':
+      return '[function]';
+    case 'object':
+    default:
+      return '[object]';
+  }
+}
+
+function segmentLabel(segment) {
+  const index = segment?.index;
+  return `segment ${index === undefined || index === null ? '?' : diagnosticValue(index)}`;
+}
+
 function safeBytes(value, label) {
   // Manifest byte counts are an exact JSON contract. Reject numeric strings,
   // booleans, and other coercible values rather than normalizing them with
   // Number(), so runtime budget decisions cannot silently accept malformed
   // manifests.
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${label} must be a non-negative safe integer: ${String(value)}`);
+    throw new Error(`${label} must be a non-negative safe integer: ${diagnosticValue(value)}`);
   }
   return value;
 }
 
 export function planSegmentArtifactBudget(segment, mode = 'absolute') {
   if (!['p0', 'absolute'].includes(mode)) {
-    throw new Error(`unsupported browser artifact budget mode: ${mode}`);
+    throw new Error(`unsupported browser artifact budget mode: ${diagnosticValue(mode)}`);
   }
-  const declaredBytes = safeBytes(segment?.browserArtifactBytes, `segment ${segment?.index ?? '?'} browserArtifactBytes`);
+  const label = segmentLabel(segment);
+  const declaredBytes = safeBytes(segment?.browserArtifactBytes, `${label} browserArtifactBytes`);
   const externalData = segment?.externalData ?? [];
   if (!Array.isArray(externalData) || externalData.length === 0) {
-    throw new Error(`segment ${segment?.index ?? '?'} must declare external data`);
+    throw new Error(`${label} must declare external data`);
   }
   const externalDeclaredBytes = externalData.reduce(
-    (sum, entry, index) => sum + safeBytes(entry?.bytes, `segment ${segment?.index ?? '?'} externalData[${index}].bytes`),
+    (sum, entry, index) => sum + safeBytes(entry?.bytes, `${label} externalData[${index}].bytes`),
     0,
   );
   const graphDeclaredBytes = declaredBytes - externalDeclaredBytes;
   if (!Number.isSafeInteger(graphDeclaredBytes) || graphDeclaredBytes <= 0) {
     throw new Error(
-      `segment ${segment?.index ?? '?'} browserArtifactBytes must exceed declared external-data bytes`,
+      `${label} browserArtifactBytes must exceed declared external-data bytes`,
     );
   }
 
@@ -37,12 +72,12 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     : BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES;
   if (declaredBytes > BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES) {
     throw new Error(
-      `segment ${segment?.index ?? '?'} exceeds the absolute browser artifact limit: ${declaredBytes} > ${BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES}`,
+      `${label} exceeds the absolute browser artifact limit: ${declaredBytes} > ${BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES}`,
     );
   }
   if (declaredBytes > requiredMaxBytes) {
     throw new Error(
-      `segment ${segment?.index ?? '?'} exceeds ${mode} browser artifact budget: ${declaredBytes} > ${requiredMaxBytes}`,
+      `${label} exceeds ${mode} browser artifact budget: ${declaredBytes} > ${requiredMaxBytes}`,
     );
   }
 
