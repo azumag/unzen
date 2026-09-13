@@ -6,6 +6,7 @@ import {
   TWO_WORKER_PROTOTYPE_SEGMENTS,
   type PrototypeWorkerOptions,
 } from '../src/two-worker-prototype.js';
+import { WorkerTier } from '../src/types.js';
 
 describe('SimulatedPrototypeWorker runtime options', () => {
   it.each([
@@ -92,7 +93,7 @@ describe('SimulatedPrototypeWorker runtime options', () => {
     expect(worker.segmentIndex).toBe(0);
     expect(worker.snapshotMetadata()).toEqual({
       webgpuAdapter: 'adapter-a',
-      tier: 'tier-2',
+      tier: WorkerTier.TIER_2,
       vramMB: 4096,
       cachedSegments: [],
     });
