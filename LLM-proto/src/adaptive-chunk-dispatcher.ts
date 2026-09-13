@@ -221,6 +221,7 @@ export class AdaptiveChunkDispatcher {
   }
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
+    assertAdaptiveWorkerRegistrationContainer(registration);
     const id = workerId(registration.id);
     assertWorkerTier(registration.tier);
     const telemetry = snapshotWorkerTelemetry(registration.telemetry);
@@ -749,6 +750,14 @@ export class AdaptiveChunkDispatcher {
     }
 
     return Math.round((this.checkpointBytes / telemetry.checkpointBytesPerSecond) * 1000);
+  }
+}
+
+function assertAdaptiveWorkerRegistrationContainer(
+  value: unknown,
+): asserts value is AdaptiveWorkerRegistration {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('adaptive worker registration must be a non-null object');
   }
 }
 
