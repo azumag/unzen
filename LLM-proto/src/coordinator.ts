@@ -66,6 +66,54 @@ const DEFAULT_OPTIONS: CoordinatorOptions = {
   retryDelayMs: 1_000,
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function resolveCoordinatorOptions(options: unknown): CoordinatorOptions {
+  if (options !== undefined && !isRecord(options)) {
+    throw new TypeError('Coordinator options must be a non-null, non-array object');
+  }
+
+  const merged = {
+    ...DEFAULT_OPTIONS,
+    ...(options ?? {}),
+  } as CoordinatorOptions;
+
+  for (const [field, value] of [
+    ['heartbeatIntervalMs', merged.heartbeatIntervalMs],
+    ['heartbeatTimeoutMs', merged.heartbeatTimeoutMs],
+    ['segmentTimeoutMs', merged.segmentTimeoutMs],
+    ['retryDelayMs', merged.retryDelayMs],
+  ] as const) {
+    if (!isNonNegativeFiniteNumber(value)) {
+      throw new TypeError(`Coordinator ${field} must be a non-negative finite number`);
+    }
+  }
+  if (!isNonNegativeSafeInteger(merged.maxRetries)) {
+    throw new TypeError('Coordinator maxRetries must be a non-negative safe integer');
+  }
+  if (merged.totalSegments !== undefined && !isNonNegativeSafeInteger(merged.totalSegments)) {
+    throw new TypeError('Coordinator totalSegments must be a non-negative safe integer');
+  }
+  if (
+    merged.allowFixtureManifest !== undefined &&
+    typeof merged.allowFixtureManifest !== 'boolean'
+  ) {
+    throw new TypeError('Coordinator allowFixtureManifest must be a boolean');
+  }
+
+  return merged;
+}
+
 export class Coordinator {
   private readonly workerPool: WorkerPool;
   private readonly checkpointStore: CheckpointStore;
@@ -82,7 +130,7 @@ export class Coordinator {
     manifest: SegmentedModelManifest,
     options?: Partial<CoordinatorOptions>,
   ) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.options = resolveCoordinatorOptions(options);
 
     // Fail fast at startup (issue #102): an invalid, placeholder-hash, or
     // non-production manifest must never drive an execution plan.
