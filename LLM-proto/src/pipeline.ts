@@ -337,6 +337,13 @@ export class Pipeline {
           segmentIndex,
         );
       }
+      if (!result.output.tokens.every(isNonNegativeSafeInteger)) {
+        throw new PipelineError(
+          'final segment output tokens must contain non-negative safe integers',
+          request.id,
+          segmentIndex,
+        );
+      }
       if (typeof result.output.text !== 'string') {
         throw new PipelineError(
           'final segment output text must be a string',
@@ -393,6 +400,16 @@ export class Pipeline {
       throw new PipelineError(
         `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
         `completed segment ${segmentIndex}`,
+        request.id,
+        segmentIndex,
+      );
+    }
+    try {
+      CheckpointStore.assertValidCheckpoint(result.checkpoint);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown checkpoint validation error';
+      throw new PipelineError(
+        `invalid checkpoint from segment ${segmentIndex}: ${detail}`,
         request.id,
         segmentIndex,
       );
