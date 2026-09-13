@@ -130,6 +130,10 @@ export function segmentConfigsFromManifest(
 
 /** Parse a quantization string like 'q4' / 'fp16' / 'bf16' into a bit width. */
 export function parseQuantizationBits(quantization: string): number {
+  // Public helpers can be reached through asserted/deserialized values even
+  // when their TypeScript signature says `string`. Do not let RegExp.exec()
+  // coerce objects, Symbols, or proxies through user-defined conversion hooks.
+  if (typeof quantization !== 'string') return Number.NaN;
   const match = /^(?:q|int|fp|bf)([0-9]+)$/i.exec(quantization);
   return match ? Number(match[1]) : Number.NaN;
 }
