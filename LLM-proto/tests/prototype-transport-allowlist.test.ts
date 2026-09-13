@@ -44,4 +44,60 @@ describe('AllowlistedPrototypeTransport origin contract', () => {
       /must have a network origin/,
     );
   });
+
+  it.each([
+    null,
+    undefined,
+    42,
+    'https://coordinator.example',
+    {},
+    Symbol('allowlist'),
+    () => undefined,
+  ])('rejects malformed top-level allowlists before iteration', (allowedOrigins) => {
+    expect(() => new AllowlistedPrototypeTransport(
+      allowedOrigins as unknown as readonly string[],
+    )).toThrow(/prototype allowedOrigins must be an array/);
+  });
+
+  it.each([null, undefined, 42, {}, [], Symbol('origin'), '', '   '])(
+    'rejects malformed allowlist entries with a deterministic validation error',
+    (origin) => {
+      expect(() => new AllowlistedPrototypeTransport([
+        origin as unknown as string,
+      ])).toThrow(/prototype allowlist URL at index 0 must be a non-empty string/);
+    },
+  );
+
+  it('rejects malformed connection URLs before mutating the connection log', () => {
+    const transport = new AllowlistedPrototypeTransport(['https://coordinator.example']);
+    transport.connect('https://coordinator.example/healthy');
+    const expectedConnections = ['https://coordinator.example'];
+
+    const malformedUrls: readonly unknown[] = [
+      null,
+      undefined,
+      42,
+      {},
+      [],
+      Symbol('connection'),
+      '',
+      '   ',
+    ];
+    for (const malformedUrl of malformedUrls) {
+      expect(() => transport.connect(malformedUrl as string)).toThrow(
+        /prototype connection URL must be a non-empty string/,
+      );
+      expect(transport.connections).toEqual(expectedConnections);
+    }
+
+    expect(() => transport.connect('/relative/path')).toThrow(
+      /Invalid prototype connection URL/,
+    );
+    expect(transport.connections).toEqual(expectedConnections);
+
+    expect(() => transport.connect('https://outside.example/path')).toThrow(
+      /outside prototype allowlist/,
+    );
+    expect(transport.connections).toEqual(expectedConnections);
+  });
 });

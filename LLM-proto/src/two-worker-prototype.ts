@@ -78,15 +78,22 @@ export class AllowlistedPrototypeTransport {
   private readonly allowedOrigins: readonly string[];
 
   constructor(allowedOrigins: readonly string[]) {
-    const canonicalOrigins = allowedOrigins.map((value, index) => {
+    if (!Array.isArray(allowedOrigins)) {
+      throw new Error('prototype allowedOrigins must be an array');
+    }
+    const canonicalOrigins = (allowedOrigins as readonly unknown[]).map((value, index) => {
+      const validatedValue = validatePrototypeUrlString(
+        value,
+        `prototype allowlist URL at index ${index}`,
+      );
       let parsed: URL;
       try {
-        parsed = new URL(value);
+        parsed = new URL(validatedValue);
       } catch {
-        throw new Error(`Invalid prototype allowlist URL at index ${index}: ${value}`);
+        throw new Error(`Invalid prototype allowlist URL at index ${index}: ${validatedValue}`);
       }
       if (parsed.origin === 'null') {
-        throw new Error(`Prototype allowlist URL must have a network origin: ${value}`);
+        throw new Error(`Prototype allowlist URL must have a network origin: ${validatedValue}`);
       }
       return parsed.origin;
     });
@@ -94,7 +101,14 @@ export class AllowlistedPrototypeTransport {
   }
 
   connect(url: string): void {
-    const origin = new URL(url).origin;
+    const validatedUrl = validatePrototypeUrlString(url, 'prototype connection URL');
+    let parsed: URL;
+    try {
+      parsed = new URL(validatedUrl);
+    } catch {
+      throw new Error(`Invalid prototype connection URL: ${validatedUrl}`);
+    }
+    const origin = parsed.origin;
     if (!this.allowedOrigins.includes(origin)) {
       throw new Error(`Connection outside prototype allowlist: ${origin}`);
     }
@@ -351,6 +365,13 @@ function makePrototypeCheckpoint(
       timestamp: Date.now(),
     },
   };
+}
+
+function validatePrototypeUrlString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
 }
 
 function normalizePrompt(prompt: string): string {
