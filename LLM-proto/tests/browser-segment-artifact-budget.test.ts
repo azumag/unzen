@@ -23,6 +23,34 @@ describe('browser segment artifact budget', () => {
     });
   });
 
+  it('returns a frozen policy snapshot that cast-based mutation cannot rewrite', () => {
+    const result = evaluateBrowserSegmentArtifactBytes(BROWSER_SEGMENT_TARGET_BYTES);
+    expect(Object.isFrozen(result)).toBe(true);
+
+    const attemptedMutations = {
+      byteSize: 1,
+      tier: 'rejected',
+      targetBytes: 1,
+      preferredMaxBytes: 1,
+      normalMaxBytes: 1,
+      absoluteMaxBytes: 1,
+      usable: false,
+    } as const;
+    for (const [key, value] of Object.entries(attemptedMutations)) {
+      expect(Reflect.set(result as object, key, value)).toBe(false);
+    }
+
+    expect(result).toEqual({
+      byteSize: BROWSER_SEGMENT_TARGET_BYTES,
+      tier: 'preferred',
+      targetBytes: BROWSER_SEGMENT_TARGET_BYTES,
+      preferredMaxBytes: BROWSER_SEGMENT_PREFERRED_MAX_BYTES,
+      normalMaxBytes: BROWSER_SEGMENT_NORMAL_MAX_BYTES,
+      absoluteMaxBytes: BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
+      usable: true,
+    });
+  });
+
   it('rejects structurally impossible or unsafe byte sizes before tier classification', () => {
     for (const byteSize of [
       0,
