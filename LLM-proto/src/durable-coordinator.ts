@@ -242,6 +242,13 @@ export class DurableCoordinator {
 
   // --- Submission ---
 
+  private submissionPromptError(input: unknown): string | undefined {
+    if (typeof input !== 'string') {
+      return 'submission prompt must be a string';
+    }
+    return undefined;
+  }
+
   private submissionOptionsEnvelopeError(input: unknown): string | undefined {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
       return 'submission options must be a non-null, non-array object';
@@ -289,6 +296,10 @@ export class DurableCoordinator {
     prompt: string,
     options: { readonly idempotencyKey?: string; readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
   ): DurableSubmission {
+    const promptError = this.submissionPromptError(prompt);
+    if (promptError !== undefined) {
+      throw new UnzenError(promptError, ErrorCode.ProtocolViolation);
+    }
     const optionsEnvelopeError = this.submissionOptionsEnvelopeError(options);
     if (optionsEnvelopeError !== undefined) {
       throw new UnzenError(optionsEnvelopeError, ErrorCode.ProtocolViolation);
