@@ -361,47 +361,70 @@ function artifactLocator(baseUrl: URL, relativePath: string): string {
 
 function snapshotImportOptions(input: unknown): GeneratedOnnxManifestImportOptions {
   const candidate = requireRecord(input, 'options');
+
+  // Capture every caller-owned field once before validation. Accessor-backed
+  // objects and Proxies must not be able to return one value for validation and
+  // another value while the stable snapshot is assembled.
+  const rawModelId = candidate.modelId;
+  const rawModelRevision = candidate.modelRevision;
+  const rawArchitecture = candidate.architecture;
+  const rawParameterCount = candidate.parameterCount;
+  const rawQuantization = candidate.quantization;
+  const rawTokenizer = candidate.tokenizer;
+  const rawCheckpointFormat = candidate.checkpointFormat;
+  const rawArtifactBaseUrl = candidate.artifactBaseUrl;
+  const rawEstimatedMemoryMB = candidate.estimatedMemoryMB;
+  const rawMemoryBasis = candidate.memoryBasis;
+  const rawMeasurementConditions = candidate.measurementConditions;
+  const rawCompatibleRuntimes = candidate.compatibleRuntimes;
+  const rawMinimumRuntimeVersion = candidate.minimumRuntimeVersion;
+  const rawRuntimeRequirements = candidate.runtimeRequirements;
+  const rawSource = candidate.source;
+
   for (const [name, value] of Object.entries({
-    modelId: candidate.modelId,
-    modelRevision: candidate.modelRevision,
-    architecture: candidate.architecture,
-    quantization: candidate.quantization,
-    tokenizer: candidate.tokenizer,
-    checkpointFormat: candidate.checkpointFormat,
-    minimumRuntimeVersion: candidate.minimumRuntimeVersion,
+    modelId: rawModelId,
+    modelRevision: rawModelRevision,
+    architecture: rawArchitecture,
+    quantization: rawQuantization,
+    tokenizer: rawTokenizer,
+    checkpointFormat: rawCheckpointFormat,
+    minimumRuntimeVersion: rawMinimumRuntimeVersion,
   })) {
     if (typeof value !== 'string' || value.trim().length === 0) {
       throw new Error(`${name} must be a non-empty string`);
     }
   }
 
-  requirePositiveFiniteNumber(candidate.parameterCount, 'parameterCount');
-  if (candidate.source !== 'fixture' && candidate.source !== 'production') {
+  const parameterCount = requirePositiveFiniteNumber(rawParameterCount, 'parameterCount');
+  if (rawSource !== 'fixture' && rawSource !== 'production') {
     throw new Error("source must be 'fixture' or 'production'");
   }
-  if (typeof candidate.artifactBaseUrl !== 'string') {
+  if (typeof rawArtifactBaseUrl !== 'string') {
     throw new Error('artifactBaseUrl must be a string');
   }
-  if (!MEMORY_BASIS_VALUES.has(candidate.memoryBasis as MemoryBasis)) {
+  if (!MEMORY_BASIS_VALUES.has(rawMemoryBasis as MemoryBasis)) {
     throw new Error("memoryBasis must be 'measured', 'budgeted', or 'estimated'");
   }
   if (
-    candidate.measurementConditions !== undefined &&
-    typeof candidate.measurementConditions !== 'string'
+    rawMeasurementConditions !== undefined &&
+    typeof rawMeasurementConditions !== 'string'
   ) {
     throw new Error('measurementConditions must be a string when present');
   }
 
-  const estimatedMemoryMB = candidate.estimatedMemoryMB;
   let stableEstimatedMemoryMB: number | readonly number[];
-  if (typeof estimatedMemoryMB === 'number') {
-    stableEstimatedMemoryMB = requirePositiveFiniteNumber(estimatedMemoryMB, 'estimatedMemoryMB');
-  } else if (Array.isArray(estimatedMemoryMB)) {
-    if (estimatedMemoryMB.length === 0) {
+  if (typeof rawEstimatedMemoryMB === 'number') {
+    stableEstimatedMemoryMB = requirePositiveFiniteNumber(
+      rawEstimatedMemoryMB,
+      'estimatedMemoryMB',
+    );
+  } else if (Array.isArray(rawEstimatedMemoryMB)) {
+    const estimatedMemoryValues = snapshotArrayValues(rawEstimatedMemoryMB);
+    if (estimatedMemoryValues.length === 0) {
       throw new Error('estimatedMemoryMB array must be non-empty');
     }
     stableEstimatedMemoryMB = Object.freeze(
-      estimatedMemoryMB.map((value, index) =>
+      estimatedMemoryValues.map((value, index) =>
         requirePositiveFiniteNumber(value, `estimatedMemoryMB[${index}]`),
       ),
     );
@@ -409,29 +432,42 @@ function snapshotImportOptions(input: unknown): GeneratedOnnxManifestImportOptio
     throw new Error('estimatedMemoryMB must be a positive number or non-empty number array');
   }
 
+  if (!Array.isArray(rawCompatibleRuntimes)) {
+    throw new Error('compatibleRuntimes must be a non-empty string array');
+  }
+  const compatibleRuntimeValues = snapshotArrayValues(rawCompatibleRuntimes);
   if (
-    !Array.isArray(candidate.compatibleRuntimes) ||
-    candidate.compatibleRuntimes.length === 0 ||
-    !candidate.compatibleRuntimes.every(
+    compatibleRuntimeValues.length === 0 ||
+    !compatibleRuntimeValues.every(
       (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
     )
   ) {
     throw new Error('compatibleRuntimes must be a non-empty string array');
   }
-  const compatibleRuntimes = Object.freeze([...(candidate.compatibleRuntimes as string[])]);
+  const compatibleRuntimes = Object.freeze(compatibleRuntimeValues as string[]);
 
   const runtimeRequirements = requireRecord(
-    candidate.runtimeRequirements,
+    rawRuntimeRequirements,
     'runtimeRequirements',
   );
+  const rawMinimumVramMB = runtimeRequirements.minimumVramMB;
+  const rawSupportedQuantization = runtimeRequirements.supportedQuantization;
+  const rawRequirementsMinimumRuntimeVersion = runtimeRequirements.minimumRuntimeVersion;
+  const rawMinimumChromeVersion = runtimeRequirements.minimumChromeVersion;
+
   const minimumVramMB = requirePositiveFiniteNumber(
-    runtimeRequirements.minimumVramMB,
+    rawMinimumVramMB,
     'runtimeRequirements.minimumVramMB',
   );
+  if (!Array.isArray(rawSupportedQuantization)) {
+    throw new Error(
+      'runtimeRequirements.supportedQuantization must be a non-empty array of quantization strings',
+    );
+  }
+  const supportedQuantizationValues = snapshotArrayValues(rawSupportedQuantization);
   if (
-    !Array.isArray(runtimeRequirements.supportedQuantization) ||
-    runtimeRequirements.supportedQuantization.length === 0 ||
-    !runtimeRequirements.supportedQuantization.every(
+    supportedQuantizationValues.length === 0 ||
+    !supportedQuantizationValues.every(
       (value) => typeof value === 'string' && QUANTIZATION_PATTERN.test(value),
     )
   ) {
@@ -439,8 +475,10 @@ function snapshotImportOptions(input: unknown): GeneratedOnnxManifestImportOptio
       'runtimeRequirements.supportedQuantization must be a non-empty array of quantization strings',
     );
   }
-  for (const field of ['minimumRuntimeVersion', 'minimumChromeVersion'] as const) {
-    const value = runtimeRequirements[field];
+  for (const [field, value] of [
+    ['minimumRuntimeVersion', rawRequirementsMinimumRuntimeVersion],
+    ['minimumChromeVersion', rawMinimumChromeVersion],
+  ] as const) {
     if (typeof value !== 'string' || value.trim().length === 0) {
       throw new Error(`runtimeRequirements.${field} must be a non-empty string`);
     }
@@ -448,32 +486,39 @@ function snapshotImportOptions(input: unknown): GeneratedOnnxManifestImportOptio
 
   const stableRuntimeRequirements: ModelRuntimeRequirements = Object.freeze({
     minimumVramMB,
-    supportedQuantization: Object.freeze([
-      ...(runtimeRequirements.supportedQuantization as string[]),
-    ]),
-    minimumRuntimeVersion: runtimeRequirements.minimumRuntimeVersion as string,
-    minimumChromeVersion: runtimeRequirements.minimumChromeVersion as string,
+    supportedQuantization: Object.freeze(supportedQuantizationValues as string[]),
+    minimumRuntimeVersion: rawRequirementsMinimumRuntimeVersion as string,
+    minimumChromeVersion: rawMinimumChromeVersion as string,
   });
 
   return Object.freeze({
-    modelId: candidate.modelId as string,
-    modelRevision: candidate.modelRevision as string,
-    architecture: candidate.architecture as string,
-    parameterCount: candidate.parameterCount as number,
-    quantization: candidate.quantization as string,
-    tokenizer: candidate.tokenizer as string,
-    checkpointFormat: candidate.checkpointFormat as string,
-    artifactBaseUrl: candidate.artifactBaseUrl,
+    modelId: rawModelId as string,
+    modelRevision: rawModelRevision as string,
+    architecture: rawArchitecture as string,
+    parameterCount,
+    quantization: rawQuantization as string,
+    tokenizer: rawTokenizer as string,
+    checkpointFormat: rawCheckpointFormat as string,
+    artifactBaseUrl: rawArtifactBaseUrl,
     estimatedMemoryMB: stableEstimatedMemoryMB,
-    memoryBasis: candidate.memoryBasis as MemoryBasis,
-    ...(candidate.measurementConditions === undefined
+    memoryBasis: rawMemoryBasis as MemoryBasis,
+    ...(rawMeasurementConditions === undefined
       ? {}
-      : { measurementConditions: candidate.measurementConditions as string }),
+      : { measurementConditions: rawMeasurementConditions }),
     compatibleRuntimes,
-    minimumRuntimeVersion: candidate.minimumRuntimeVersion as string,
+    minimumRuntimeVersion: rawMinimumRuntimeVersion as string,
     runtimeRequirements: stableRuntimeRequirements,
-    source: candidate.source as ModelManifestSource,
+    source: rawSource as ModelManifestSource,
   });
+}
+
+function snapshotArrayValues(value: readonly unknown[]): unknown[] {
+  const length = value.length;
+  const snapshot = new Array<unknown>(length);
+  for (let index = 0; index < length; index++) {
+    snapshot[index] = value[index];
+  }
+  return snapshot;
 }
 
 function requireRecord(value: unknown, path: string): Record<string, unknown> {
