@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DurableCoordinator } from '../src/durable-coordinator.js';
 import type { DurableSegmentExecutor } from '../src/durable-coordinator.js';
 import { InMemoryRepository } from '../src/durable-repository.js';
@@ -90,6 +90,24 @@ describe('DurableCoordinator submission options runtime envelope', () => {
     },
   );
 
+  it('rejects malformed timeoutMs before creating a deadline timer', () => {
+    const repo = new CountingRepository();
+    const coord = coordinator(repo);
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    try {
+      expectRejectedBeforeMutation(
+        coord,
+        repo,
+        { idempotencyKey: 'must-not-bind', timeoutMs: '1000' },
+        'submission timeoutMs must be a non-negative finite number',
+      );
+      expect(timerSpy).not.toHaveBeenCalled();
+    } finally {
+      timerSpy.mockRestore();
+    }
+  });
+
   it.each([null, 42, 'signal', [], Symbol('signal')])(
     'rejects non-object signal %p before idempotency or durable mutation',
     (signal) => {
@@ -123,6 +141,31 @@ describe('DurableCoordinator submission options runtime envelope', () => {
       { idempotencyKey: 'must-not-bind', signal },
       'submission signal must expose boolean aborted and event-listener methods',
     );
+  });
+
+  it('rejects malformed signal before invoking listener methods', () => {
+    const repo = new CountingRepository();
+    const coord = coordinator(repo);
+    let added = 0;
+    let removed = 0;
+    const signal = {
+      aborted: 'false',
+      addEventListener() {
+        added += 1;
+      },
+      removeEventListener() {
+        removed += 1;
+      },
+    };
+
+    expectRejectedBeforeMutation(
+      coord,
+      repo,
+      { idempotencyKey: 'must-not-bind', signal },
+      'submission signal must expose boolean aborted and event-listener methods',
+    );
+    expect(added).toBe(0);
+    expect(removed).toBe(0);
   });
 
   it('accepts a structurally compatible cross-realm-style signal without instanceof checks', async () => {
