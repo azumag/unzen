@@ -226,6 +226,13 @@ export class SpanPipeline {
         );
         this.assertSpanResult(request, span, result, isFinalSpan);
 
+        // Commit the validated checkpoint snapshot before the worker becomes
+        // reusable or its artifact residency is trusted. A save-time failure
+        // therefore stays inside the disconnect/clear failure boundary.
+        if (!isFinalSpan) {
+          this.checkpointStore.save(result.checkpoint!);
+        }
+
         this.workerPool.markIdle(span.workerId);
         this.options.artifactResidencyLedger?.markResidentRange(
           span.workerId,
@@ -234,9 +241,6 @@ export class SpanPipeline {
         );
 
         if (!isFinalSpan) {
-          // assertSpanResult guarantees the checkpoint exists and matches the
-          // completed boundary before it reaches durable storage.
-          this.checkpointStore.save(result.checkpoint!);
           request.currentSegment = span.endSegment + 1;
           continue;
         }
