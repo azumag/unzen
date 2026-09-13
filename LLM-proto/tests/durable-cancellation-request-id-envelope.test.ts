@@ -10,6 +10,7 @@ import {
   generateRequestId,
 } from '../src/ids.js';
 import { workerId, WorkerTier } from '../src/types.js';
+import type { InferenceRequestId } from '../src/types.js';
 import type { ResultIdentity } from '../src/durable-types.js';
 
 const executor: DurableSegmentExecutor = {
@@ -17,6 +18,15 @@ const executor: DurableSegmentExecutor = {
     throw new Error('executor should not run');
   },
 };
+
+class CountingRepository extends InMemoryRepository {
+  requestLookups = 0;
+
+  override getRequest(requestId: InferenceRequestId) {
+    this.requestLookups += 1;
+    return super.getRequest(requestId);
+  }
+}
 
 function coordinator(repo: InMemoryRepository): DurableCoordinator {
   return new DurableCoordinator(
@@ -103,16 +113,18 @@ describe('DurableCoordinator cancellation requestId runtime envelope', () => {
   it.each([null, undefined, 0, true, [], {}, Symbol('request'), '', '   '])(
     'rejects malformed request id %p before durable lookup or mutation',
     (value) => {
-      const repo = new InMemoryRepository();
+      const repo = new CountingRepository();
       const coord = coordinator(repo);
       const identity = placeRunning(coord, repo);
       const beforeRequest = { ...repo.getRequest(identity.requestId)! };
       const beforeLease = { ...repo.getActiveLease(identity.requestId)! };
       const beforeAttempts = repo.listAttempts(identity.requestId).map((attempt) => ({ ...attempt }));
       const beforeWorker = { ...coord.getWorker(identity.workerId)! };
+      const requestLookupsBeforeCancel = repo.requestLookups;
 
       expectProtocolViolation(() => coord.cancel(value as never));
 
+      expect(repo.requestLookups).toBe(requestLookupsBeforeCancel);
       expect(repo.getRequest(identity.requestId)).toEqual(beforeRequest);
       expect(repo.getActiveLease(identity.requestId)).toEqual(beforeLease);
       expect(repo.listAttempts(identity.requestId)).toEqual(beforeAttempts);
