@@ -48,6 +48,7 @@ import {
   UnzenError,
   UnzenCancelledError,
   classifyError,
+  classifyErrorCode,
   retryPolicyFor,
   isIsolatable,
   RetryPolicy,
@@ -754,6 +755,42 @@ export class DurableCoordinator {
     return undefined;
   }
 
+  private executionFailureEnvelopeError(input: unknown): string | undefined {
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return 'execution failure must be a non-null, non-array object';
+    }
+
+    const failure = input as Record<string, unknown>;
+    if (typeof failure.identity !== 'object' || failure.identity === null || Array.isArray(failure.identity)) {
+      return 'execution failure identity must be a non-null, non-array object';
+    }
+
+    const identity = failure.identity as Record<string, unknown>;
+    for (const field of ['requestId', 'attemptId', 'leaseId', 'workerId', 'workerGeneration'] as const) {
+      const value = identity[field];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        return `execution failure ${field} must be a non-empty string`;
+      }
+    }
+    if (
+      typeof identity.segmentIndex !== 'number'
+      || !Number.isSafeInteger(identity.segmentIndex)
+      || identity.segmentIndex < 0
+    ) {
+      return 'execution failure segmentIndex must be a non-negative safe integer';
+    }
+    if (
+      typeof failure.code !== 'string'
+      || classifyErrorCode(failure.code) === undefined
+    ) {
+      return 'execution failure code must be a recognized ErrorCode';
+    }
+    if (typeof failure.message !== 'string') {
+      return 'execution failure message must be a string';
+    }
+    return undefined;
+  }
+
   private finalOutputEnvelopeError(output: unknown): string | undefined {
     if (typeof output !== 'object' || output === null || Array.isArray(output)) {
       return 'final output must be a non-null, non-array object';
@@ -921,6 +958,11 @@ export class DurableCoordinator {
   }
 
   handleWorkerFailure(failure: ExecutionFailure): void {
+    const envelopeError = this.executionFailureEnvelopeError(failure);
+    if (envelopeError !== undefined) {
+      throw new UnzenError(envelopeError, ErrorCode.ProtocolViolation);
+    }
+
     if (this.repo.getCancellation(failure.identity.requestId)) {
       this.recordSuppression(failure.identity, 'request-cancelled');
       this.updateAttemptOutcome(
