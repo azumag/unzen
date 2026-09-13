@@ -83,6 +83,36 @@ describe('SmolLM2 P0 manifest provenance contract', () => {
     })).toThrow(/runtime\.kvHeads mismatch/);
   });
 
+  it.each([null, undefined, 'runtime', 42, [], Symbol('runtime')])(
+    'rejects malformed runtime-parameter containers before field reads: %s',
+    (parameters) => {
+      expect(() => validateSmolLm2P0RuntimeParameters(parameters)).toThrow(
+        'P0 manifest runtime parameters must be an object',
+      );
+    },
+  );
+
+  it('reports hostile runtime mismatch values without invoking coercion hooks', () => {
+    let coercions = 0;
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error('P0 contract coercion must not run');
+      },
+      toString() {
+        coercions += 1;
+        throw new Error('P0 contract toString must not run');
+      },
+    };
+
+    expect(() => validateSmolLm2P0RuntimeParameters({
+      modelId: hostile,
+      kvHeads: SMOLLM2_P0_CONTRACT.kvHeads,
+      headSize: SMOLLM2_P0_CONTRACT.headSize,
+    })).toThrow(/runtime\.modelId mismatch: expected onnx-community\/SmolLM2-135M-ONNX, got \[object\]/);
+    expect(coercions).toBe(0);
+  });
+
   it('accepts the pinned source, geometry and preferred-budget contract', () => {
     expect(validateSmolLm2P0Manifest(validManifest())).toEqual({
       status: 'pass',
@@ -141,5 +171,33 @@ describe('SmolLM2 P0 manifest provenance contract', () => {
     const manifest = validManifest();
     (manifest.segments[0] as any).browserArtifactBytes = String(manifest.segments[0].browserArtifactBytes);
     expect(() => validateSmolLm2P0Manifest(manifest)).toThrow(/positive safe integer/);
+  });
+
+  it('reports hostile segment indexes without invoking coercion hooks', () => {
+    let coercions = 0;
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error('P0 segment index coercion must not run');
+      },
+      toString() {
+        coercions += 1;
+        throw new Error('P0 segment index toString must not run');
+      },
+    };
+
+    const segmentManifest = validManifest();
+    (segmentManifest.segments[0] as any).index = hostile;
+    expect(() => validateSmolLm2P0Manifest(segmentManifest)).toThrow(
+      /invalid or duplicate segment index: \[object\]/,
+    );
+
+    const budgetManifest = validManifest();
+    (budgetManifest.browserArtifactBudget.segments[0] as any).index = hostile;
+    expect(() => validateSmolLm2P0Manifest(budgetManifest)).toThrow(
+      /invalid or duplicate budget segment index: \[object\]/,
+    );
+
+    expect(coercions).toBe(0);
   });
 });
