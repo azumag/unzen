@@ -96,6 +96,11 @@ describe('SegmentedModelManifest', () => {
       'component 0 path must be a non-empty string',
     ],
     [
+      'unsafe relative path',
+      [{ ...graphComponent, path: '../segment0.onnx' }],
+      'component 0 path must be a safe relative POSIX path',
+    ],
+    [
       'unsafe byte size',
       [{ ...graphComponent, byteSize: Number.MAX_SAFE_INTEGER + 1 }],
       'component 0 byteSize must be a positive safe integer',
