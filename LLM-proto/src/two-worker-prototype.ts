@@ -175,6 +175,8 @@ export class SimulatedPrototypeWorker {
 
     this.id = id;
     this.segmentIndex = segmentIndex;
+    Object.defineProperty(this, 'id', { writable: false, configurable: false });
+    Object.defineProperty(this, 'segmentIndex', { writable: false, configurable: false });
     this.shouldFailFirstRun = options.failFirstRun ?? false;
     this.metadata = Object.freeze({
       webgpuAdapter,
