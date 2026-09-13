@@ -837,7 +837,30 @@ export class DurableCoordinator {
       this.recordSuppression(result.identity, 'missing-checkpoint', now);
       return { kind: 'protocol-violation', message: 'intermediate segment produced no checkpoint' };
     }
-    const validation = await validateCheckpointEnvelope(result.checkpoint, {
+
+    // Snapshot the untrusted executor-owned checkpoint before any async
+    // integrity work. A minimal copy-safe shape gate prevents incidental
+    // property/constructor errors, while validation below remains authoritative
+    // for every identity, digest, timing, size, and TTL field.
+    const checkpointCandidate = result.checkpoint as unknown;
+    if (typeof checkpointCandidate !== 'object' || checkpointCandidate === null || Array.isArray(checkpointCandidate)) {
+      const message = 'checkpoint envelope must be an object';
+      this.recordSuppression(result.identity, message, now);
+      this.isolateWorker(result.identity);
+      return { kind: 'checkpoint-rejected', message };
+    }
+    const checkpointRecord = checkpointCandidate as Record<string, unknown>;
+    if (!(checkpointRecord.payload instanceof Uint8Array)) {
+      const message = 'checkpoint payload must be a Uint8Array';
+      this.recordSuppression(result.identity, message, now);
+      this.isolateWorker(result.identity);
+      return { kind: 'checkpoint-rejected', message };
+    }
+    const checkpoint: CheckpointEnvelope = {
+      ...(checkpointRecord as unknown as CheckpointEnvelope),
+      payload: new Uint8Array(checkpointRecord.payload),
+    };
+    const validation = await validateCheckpointEnvelope(checkpoint, {
       requestId: result.identity.requestId,
       segmentIndex: result.identity.segmentIndex,
       workerId: result.identity.workerId,
@@ -852,10 +875,6 @@ export class DurableCoordinator {
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-rejected', message: validation.message };
     }
-    const checkpoint: CheckpointEnvelope = {
-      ...result.checkpoint,
-      payload: new Uint8Array(result.checkpoint.payload),
-    };
 
     const commitNow = Math.max(now, Date.now());
     if (this.repo.getCancellation(result.identity.requestId)) {
