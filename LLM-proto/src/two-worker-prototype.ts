@@ -70,6 +70,13 @@ interface SegmentExecutionOutput {
   readonly checkpointBytes: number;
 }
 
+interface TwoWorkerPrototypeRunnerDependencies {
+  readonly transport?: AllowlistedPrototypeTransport;
+  readonly segment0?: SimulatedPrototypeWorker;
+  readonly segment1Primary?: SimulatedPrototypeWorker;
+  readonly segment1Standby?: SimulatedPrototypeWorker;
+}
+
 const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
 
@@ -230,35 +237,40 @@ export class TwoWorkerPrototypeRunner {
   private readonly segment1Standby: SimulatedPrototypeWorker;
   private requestCounter = 0;
 
-  constructor(options?: {
-    readonly transport?: AllowlistedPrototypeTransport;
-    readonly segment0?: SimulatedPrototypeWorker;
-    readonly segment1Primary?: SimulatedPrototypeWorker;
-    readonly segment1Standby?: SimulatedPrototypeWorker;
-  }) {
-    this.transport = options?.transport ?? new AllowlistedPrototypeTransport([
+  constructor(options?: TwoWorkerPrototypeRunnerDependencies) {
+    const dependencies = validateTwoWorkerPrototypeRunnerDependencies(options);
+    const transport = dependencies.transport ?? new AllowlistedPrototypeTransport([
       DEFAULT_COORDINATOR_URL,
       DEFAULT_CDN_URL,
     ]);
-    this.segment0 = options?.segment0 ?? new SimulatedPrototypeWorker({
+    const segment0 = dependencies.segment0 ?? new SimulatedPrototypeWorker({
       id: 'proto-worker-seg0',
       segmentIndex: 0,
       webgpuAdapter: 'mock-webgpu-adapter-a',
       vramMB: 4096,
     });
-    this.segment1Primary = options?.segment1Primary ?? new SimulatedPrototypeWorker({
+    const segment1Primary = dependencies.segment1Primary ?? new SimulatedPrototypeWorker({
       id: 'proto-worker-seg1-primary',
       segmentIndex: 1,
       webgpuAdapter: 'mock-webgpu-adapter-b',
       vramMB: 4096,
       failFirstRun: true,
     });
-    this.segment1Standby = options?.segment1Standby ?? new SimulatedPrototypeWorker({
+    const segment1Standby = dependencies.segment1Standby ?? new SimulatedPrototypeWorker({
       id: 'proto-worker-seg1-standby',
       segmentIndex: 1,
       webgpuAdapter: 'mock-webgpu-adapter-c',
       vramMB: 4096,
     });
+
+    assertPrototypeRunnerWorkerRole(segment0, 0, 'segment0');
+    assertPrototypeRunnerWorkerRole(segment1Primary, 1, 'segment1Primary');
+    assertPrototypeRunnerWorkerRole(segment1Standby, 1, 'segment1Standby');
+
+    this.transport = transport;
+    this.segment0 = segment0;
+    this.segment1Primary = segment1Primary;
+    this.segment1Standby = segment1Standby;
   }
 
   async run(options: TwoWorkerPrototypeOptions): Promise<PrototypeRunReport> {
@@ -404,6 +416,45 @@ function assertPrototypeWorkerOptionsContainer(
 ): asserts options is PrototypeWorkerOptions {
   if (typeof options !== 'object' || options === null || Array.isArray(options)) {
     throw new Error('prototype worker options must be a non-null object');
+  }
+}
+
+function validateTwoWorkerPrototypeRunnerDependencies(
+  options: unknown,
+): TwoWorkerPrototypeRunnerDependencies {
+  if (options === undefined) {
+    return {};
+  }
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new Error('two-worker prototype runner options must be a non-null object when provided');
+  }
+
+  const dependencies = options as Record<string, unknown>;
+  if (
+    dependencies.transport !== undefined &&
+    !(dependencies.transport instanceof AllowlistedPrototypeTransport)
+  ) {
+    throw new Error('two-worker prototype runner transport must be an AllowlistedPrototypeTransport');
+  }
+  for (const field of ['segment0', 'segment1Primary', 'segment1Standby'] as const) {
+    const worker = dependencies[field];
+    if (worker !== undefined && !(worker instanceof SimulatedPrototypeWorker)) {
+      throw new Error(`two-worker prototype runner ${field} must be a SimulatedPrototypeWorker`);
+    }
+  }
+
+  return options as TwoWorkerPrototypeRunnerDependencies;
+}
+
+function assertPrototypeRunnerWorkerRole(
+  worker: SimulatedPrototypeWorker,
+  expectedSegmentIndex: 0 | 1,
+  role: 'segment0' | 'segment1Primary' | 'segment1Standby',
+): void {
+  if (worker.segmentIndex !== expectedSegmentIndex) {
+    throw new Error(
+      `two-worker prototype runner ${role} must target segment ${expectedSegmentIndex}`,
+    );
   }
 }
 
