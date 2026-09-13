@@ -57,6 +57,9 @@ export class SpanRouter {
       segments.map((segment) => Object.freeze({ ...segment })),
     );
     for (const [arrayIndex, segment] of segmentSnapshot.entries()) {
+      if (typeof segment.index !== 'number') {
+        throw new Error('SpanRouter segment index must be a number');
+      }
       if (segment.index !== arrayIndex) {
         throw new Error(
           `SpanRouter requires segment indexes 0..n-1; ` +
@@ -89,6 +92,9 @@ export class SpanRouter {
    * router backtracks to the next candidate instead of rejecting a feasible route.
    */
   computeRoute(startSegment = 0): Route | null {
+    if (typeof startSegment !== 'number') {
+      throw new Error('startSegment must be a number');
+    }
     if (
       !Number.isInteger(startSegment) ||
       startSegment < 0 ||
