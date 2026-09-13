@@ -110,6 +110,52 @@ describe('browser runtime artifact budget', () => {
 
     expect(coercions).toBe(0);
   });
+
+  it.each([null, undefined, 'segment', 42, [], Symbol('segment')])(
+    'rejects malformed segment top-level containers before field reads: %s',
+    (input) => {
+      expect(() => planSegmentArtifactBudget(input, 'p0')).toThrow(
+        'segment artifact budget input must be an object',
+      );
+    },
+  );
+
+  it.each([null, undefined, 'reports', 42, {}, Symbol('reports')])(
+    'rejects non-array artifact reports before reduce: %s',
+    (reports) => {
+      const plan = planSegmentArtifactBudget(segment(10, 4), 'p0');
+      expect(() => verifyActualSegmentArtifactBudget(plan, reports)).toThrow(
+        'artifact reports must be an array',
+      );
+    },
+  );
+
+  it('validates artifact plan byte fields and limit relationships before report arithmetic', () => {
+    const plan = planSegmentArtifactBudget(segment(10, 4), 'p0');
+
+    expect(() => verifyActualSegmentArtifactBudget(null, [])).toThrow(
+      'artifact budget plan must be an object',
+    );
+    expect(() => verifyActualSegmentArtifactBudget({ ...plan, declaredBytes: '10' }, [])).toThrow(
+      /artifact plan declaredBytes must be a non-negative safe integer/,
+    );
+    expect(() => verifyActualSegmentArtifactBudget({ ...plan, declaredBytes: 0 }, [])).toThrow(
+      'artifact plan declaredBytes must be greater than zero',
+    );
+    expect(() => verifyActualSegmentArtifactBudget({ ...plan, requiredMaxBytes: 0 }, [])).toThrow(
+      'artifact plan requiredMaxBytes must be greater than zero',
+    );
+    expect(() => verifyActualSegmentArtifactBudget({
+      ...plan,
+      requiredMaxBytes: BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES + 1,
+    }, [])).toThrow('artifact plan requiredMaxBytes must not exceed absoluteMaxBytes');
+    expect(() => verifyActualSegmentArtifactBudget({
+      ...plan,
+      declaredBytes: 11,
+      requiredMaxBytes: 10,
+      absoluteMaxBytes: 20,
+    }, [])).toThrow('artifact plan declaredBytes must not exceed runtime limits');
+  });
 });
 
 describe('bounded browser artifact stream reads', () => {
