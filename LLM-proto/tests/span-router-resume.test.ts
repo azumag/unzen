@@ -26,4 +26,13 @@ describe('SpanRouter suffix routing', () => {
     expect(() => new SpanRouter(makeSegments(3), new WorkerPool()).computeRoute(startSegment))
       .toThrow(/startSegment/);
   });
+
+  it.each([Symbol('bad-start'), '0', {}])(
+    'rejects a non-number runtime start segment without coercion',
+    (runtimeStartSegment) => {
+      expect(() => new SpanRouter(makeSegments(3), new WorkerPool()).computeRoute(
+        runtimeStartSegment as unknown as number,
+      )).toThrow(/startSegment must be a number/);
+    },
+  );
 });
