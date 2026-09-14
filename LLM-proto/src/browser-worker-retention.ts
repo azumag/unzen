@@ -109,9 +109,9 @@ export function createDefaultBrowserRetentionManifest(): BrowserRetentionMeasure
 export function measureBrowserWorkerRetention(
   manifest: BrowserRetentionMeasurementManifest,
 ): BrowserRetentionMeasurementReport {
-  assertBrowserRetentionMeasurementManifest(manifest);
+  const ownedManifest = snapshotBrowserRetentionMeasurementManifest(manifest);
 
-  const durations = manifest.sessions.map((session) => session.sessionDurationMs).sort(sortNumber);
+  const durations = ownedManifest.sessions.map((session) => session.sessionDurationMs).sort(sortNumber);
   const durationDistribution = {
     minMs: durations[0],
     p50Ms: percentileNearestRank(durations, 0.5),
@@ -119,38 +119,38 @@ export function measureBrowserWorkerRetention(
     maxMs: durations[durations.length - 1],
   };
   const earlyAbandonRate = rate(
-    manifest.sessions.filter(
-      (session) => session.sessionDurationMs < manifest.earlyAbandonThresholdMs,
+    ownedManifest.sessions.filter(
+      (session) => session.sessionDurationMs < ownedManifest.earlyAbandonThresholdMs,
     ).length,
-    manifest.sessions.length,
+    ownedManifest.sessions.length,
   );
-  const retentionCurve = manifest.retentionWindowsMs.map((windowMs) => {
-    const retainedCount = manifest.sessions.filter(
+  const retentionCurve = ownedManifest.retentionWindowsMs.map((windowMs) => {
+    const retainedCount = ownedManifest.sessions.filter(
       (session) => session.sessionDurationMs >= windowMs,
     ).length;
     return {
       windowMs,
       retainedCount,
-      retentionRate: rate(retainedCount, manifest.sessions.length),
+      retentionRate: rate(retainedCount, ownedManifest.sessions.length),
     };
   });
-  const retryResumeImpact = computeRetryResumeImpact(manifest);
+  const retryResumeImpact = computeRetryResumeImpact(ownedManifest);
   const adaptiveTelemetryComparison = compareWithAdaptiveTelemetry(
-    manifest,
+    ownedManifest,
     durationDistribution.p50Ms,
   );
-  const tierBreakdown = buildTierBreakdown(manifest);
+  const tierBreakdown = buildTierBreakdown(ownedManifest);
   const failureReason = selectFailureReason(
-    manifest,
+    ownedManifest,
     earlyAbandonRate,
     retentionCurve,
     retryResumeImpact.estimatedDelayMs,
   );
 
   return {
-    requestId: manifest.requestId,
+    requestId: ownedManifest.requestId,
     status: failureReason ? 'fail' : 'pass',
-    sessionCount: manifest.sessions.length,
+    sessionCount: ownedManifest.sessions.length,
     tierBreakdown,
     durationDistribution,
     retentionCurve,
@@ -161,70 +161,139 @@ export function measureBrowserWorkerRetention(
   };
 }
 
-function assertBrowserRetentionMeasurementManifest(
+function snapshotBrowserRetentionMeasurementManifest(
   value: unknown,
-): asserts value is BrowserRetentionMeasurementManifest {
+): BrowserRetentionMeasurementManifest {
   assertRecord(value, 'Browser retention manifest');
-  if (typeof value.requestId !== 'string') {
+
+  const requestId = value.requestId;
+  if (typeof requestId !== 'string') {
     throw new TypeError('Browser retention requestId must be a string');
   }
-  if (!Array.isArray(value.sessions)) {
+
+  const sessionsValue = value.sessions;
+  if (!Array.isArray(sessionsValue)) {
     throw new TypeError('Browser retention sessions must be an array');
   }
-  if (value.sessions.length === 0) {
+  const sessionCount = sessionsValue.length;
+  if (sessionCount === 0) {
     throw new Error('Browser retention measurement requires at least one session');
   }
-  value.sessions.forEach((session, index) => assertSessionSample(session, index));
 
-  assertNonNegativeFinite(value.segmentDurationMs, 'segmentDurationMs');
-  assertNonNegativeFinite(value.checkpointResumeMs, 'checkpointResumeMs');
-  assertNonNegativeFinite(value.retryBackoffMs, 'retryBackoffMs');
-  assertNonNegativeFinite(value.earlyAbandonThresholdMs, 'earlyAbandonThresholdMs');
-  assertNonNegativeFinite(value.maxRetryResumeImpactMs, 'maxRetryResumeImpactMs');
-  assertRate(value.maxEarlyAbandonRate, 'maxEarlyAbandonRate');
-  assertRate(value.minRetentionAtSegmentEnd, 'minRetentionAtSegmentEnd');
+  // Capture top-level array membership before touching any session fields. A
+  // getter on an early session therefore cannot swap a later caller-owned slot
+  // and change which sessions are measured by this invocation.
+  const sessionMembers: unknown[] = new Array(sessionCount);
+  for (let index = 0; index < sessionCount; index += 1) {
+    sessionMembers[index] = sessionsValue[index];
+  }
+  const sessions = Object.freeze(
+    sessionMembers.map((session, index) => snapshotSessionSample(session, index)),
+  );
 
-  if (!Array.isArray(value.retentionWindowsMs)) {
+  const segmentDurationMs = value.segmentDurationMs;
+  assertNonNegativeFinite(segmentDurationMs, 'segmentDurationMs');
+  const checkpointResumeMs = value.checkpointResumeMs;
+  assertNonNegativeFinite(checkpointResumeMs, 'checkpointResumeMs');
+  const retryBackoffMs = value.retryBackoffMs;
+  assertNonNegativeFinite(retryBackoffMs, 'retryBackoffMs');
+  const earlyAbandonThresholdMs = value.earlyAbandonThresholdMs;
+  assertNonNegativeFinite(earlyAbandonThresholdMs, 'earlyAbandonThresholdMs');
+  const maxRetryResumeImpactMs = value.maxRetryResumeImpactMs;
+  assertNonNegativeFinite(maxRetryResumeImpactMs, 'maxRetryResumeImpactMs');
+  const maxEarlyAbandonRate = value.maxEarlyAbandonRate;
+  assertRate(maxEarlyAbandonRate, 'maxEarlyAbandonRate');
+  const minRetentionAtSegmentEnd = value.minRetentionAtSegmentEnd;
+  assertRate(minRetentionAtSegmentEnd, 'minRetentionAtSegmentEnd');
+
+  const retentionWindowsValue = value.retentionWindowsMs;
+  if (!Array.isArray(retentionWindowsValue)) {
     throw new TypeError('Browser retention retentionWindowsMs must be an array');
   }
-  value.retentionWindowsMs.forEach((windowMs, index) => {
+  const retentionWindowCount = retentionWindowsValue.length;
+  const retentionWindowsMs: number[] = new Array(retentionWindowCount);
+  for (let index = 0; index < retentionWindowCount; index += 1) {
+    const windowMs = retentionWindowsValue[index];
     assertNonNegativeFinite(windowMs, `retentionWindowsMs[${index}]`);
-  });
+    retentionWindowsMs[index] = windowMs;
+  }
 
-  assertRecord(value.adaptiveTelemetryBaseline, 'Browser retention adaptiveTelemetryBaseline');
-  assertNonNegativeFinite(value.adaptiveTelemetryBaseline.uptimeMs, 'adaptiveTelemetryBaseline.uptimeMs');
-  assertRate(value.adaptiveTelemetryBaseline.failureRate, 'adaptiveTelemetryBaseline.failureRate');
+  const adaptiveTelemetryBaselineValue = value.adaptiveTelemetryBaseline;
+  assertRecord(
+    adaptiveTelemetryBaselineValue,
+    'Browser retention adaptiveTelemetryBaseline',
+  );
+  const baselineUptimeMs = adaptiveTelemetryBaselineValue.uptimeMs;
+  assertNonNegativeFinite(baselineUptimeMs, 'adaptiveTelemetryBaseline.uptimeMs');
+  const baselineFailureRate = adaptiveTelemetryBaselineValue.failureRate;
+  assertRate(baselineFailureRate, 'adaptiveTelemetryBaseline.failureRate');
+  const baselineHeartbeatJitterMs = adaptiveTelemetryBaselineValue.heartbeatJitterMs;
   assertNonNegativeFinite(
-    value.adaptiveTelemetryBaseline.heartbeatJitterMs,
+    baselineHeartbeatJitterMs,
     'adaptiveTelemetryBaseline.heartbeatJitterMs',
   );
+
+  return Object.freeze({
+    requestId,
+    sessions,
+    segmentDurationMs,
+    checkpointResumeMs,
+    retryBackoffMs,
+    earlyAbandonThresholdMs,
+    retentionWindowsMs: Object.freeze(retentionWindowsMs),
+    maxEarlyAbandonRate,
+    minRetentionAtSegmentEnd,
+    maxRetryResumeImpactMs,
+    adaptiveTelemetryBaseline: Object.freeze({
+      uptimeMs: baselineUptimeMs,
+      failureRate: baselineFailureRate,
+      heartbeatJitterMs: baselineHeartbeatJitterMs,
+    }),
+  });
 }
 
-function assertSessionSample(value: unknown, index: number): asserts value is BrowserWorkerSessionSample {
+function snapshotSessionSample(value: unknown, index: number): BrowserWorkerSessionSample {
   assertRecord(value, `Browser retention session[${index}]`);
-  if (typeof value.workerId !== 'string') {
+
+  const workerId = value.workerId;
+  if (typeof workerId !== 'string') {
     throw new TypeError(`Browser retention session[${index}].workerId must be a string`);
   }
+
+  const tier = value.tier;
   if (
-    value.tier !== WorkerTier.TIER_1
-    && value.tier !== WorkerTier.TIER_2
-    && value.tier !== WorkerTier.TIER_3
+    tier !== WorkerTier.TIER_1
+    && tier !== WorkerTier.TIER_2
+    && tier !== WorkerTier.TIER_3
   ) {
     throw new TypeError(`Browser retention session[${index}].tier must be a valid WorkerTier`);
   }
-  assertNonNegativeFinite(value.sessionDurationMs, `session[${index}].sessionDurationMs`);
-  assertNonNegativeFinite(value.heartbeatJitterMs, `session[${index}].heartbeatJitterMs`);
-  if (value.disconnectedDuringSegment !== undefined) {
+
+  const sessionDurationMs = value.sessionDurationMs;
+  assertNonNegativeFinite(sessionDurationMs, `session[${index}].sessionDurationMs`);
+  const heartbeatJitterMs = value.heartbeatJitterMs;
+  assertNonNegativeFinite(heartbeatJitterMs, `session[${index}].heartbeatJitterMs`);
+
+  const disconnectedDuringSegment = value.disconnectedDuringSegment;
+  if (disconnectedDuringSegment !== undefined) {
     if (
-      typeof value.disconnectedDuringSegment !== 'number'
-      || !Number.isSafeInteger(value.disconnectedDuringSegment)
-      || value.disconnectedDuringSegment < 0
+      typeof disconnectedDuringSegment !== 'number'
+      || !Number.isSafeInteger(disconnectedDuringSegment)
+      || disconnectedDuringSegment < 0
     ) {
       throw new TypeError(
         `Browser retention session[${index}].disconnectedDuringSegment must be a non-negative safe integer`,
       );
     }
   }
+
+  return Object.freeze({
+    workerId,
+    tier,
+    sessionDurationMs,
+    heartbeatJitterMs,
+    ...(disconnectedDuringSegment === undefined ? {} : { disconnectedDuringSegment }),
+  });
 }
 
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
