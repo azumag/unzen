@@ -6,6 +6,7 @@ import {
 import { InMemoryRepository } from '../src/durable-repository.js';
 import { ErrorCode, UnzenError } from '../src/errors.js';
 import { createFixtureModelManifest } from '../src/model-manifest-fixtures.js';
+import { WorkerTier, workerId } from '../src/types.js';
 
 const executor: DurableSegmentExecutor = {
   execute: async () => {
@@ -143,19 +144,25 @@ describe('DurableCoordinator submission option ownership', () => {
     const coord = new DurableCoordinator(
       {
         execute: async (_workerId, _assignment, options) => new Promise((_resolve, reject) => {
-          options?.signal?.addEventListener('abort', () => reject(new DOMException('AbortError', 'AbortError')), { once: true });
+          const signal = options?.signal;
+          const rejectAbort = () => reject(new DOMException('AbortError', 'AbortError'));
+          if (signal?.aborted) rejectAbort();
+          else signal?.addEventListener('abort', rejectAbort, { once: true });
         }),
       },
       createFixtureModelManifest({ totalSegments: 1 }),
       { allowFixtureManifest: true, maxRetries: 0, retryDelayMs: 0 },
       repo,
     );
+    coord.registerWorker(
+      { workerId: workerId('signal-worker'), tier: WorkerTier.TIER_2, vramMB: 8_192 },
+      'signal-connection',
+    );
 
-    // The request will fail without a registered worker, but the wrapper must
-    // preserve the signal object itself rather than freezing `aborted` state.
     const submission = coord.submit('signal prompt', { signal: controller.signal });
     controller.abort();
-    await expect(submission.result).rejects.toBeInstanceOf(Error);
-    expect(controller.signal.aborted).toBe(true);
+
+    await expect(submission.result).rejects.toMatchObject({ code: ErrorCode.UserCancellation });
+    expect(repo.getRequest(submission.requestId)?.stage).toBe('cancelled');
   });
 });
