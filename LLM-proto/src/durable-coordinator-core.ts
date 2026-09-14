@@ -944,15 +944,22 @@ export class DurableCoordinator {
       return { kind: 'checkpoint-rejected', message };
     }
     const checkpointRecord = checkpointCandidate as Record<string, unknown>;
-    if (!(checkpointRecord.payload instanceof Uint8Array)) {
+    const checkpointPayload = checkpointRecord.payload;
+    if (!(checkpointPayload instanceof Uint8Array)) {
       const message = 'checkpoint payload must be a Uint8Array';
+      this.recordSuppression(result.identity, message, now);
+      this.isolateWorker(result.identity);
+      return { kind: 'checkpoint-rejected', message };
+    }
+    if (checkpointPayload.byteLength > this.options.maxCheckpointBytes) {
+      const message = `checkpoint payload ${checkpointPayload.byteLength}B exceeds the ${this.options.maxCheckpointBytes}B limit`;
       this.recordSuppression(result.identity, message, now);
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-rejected', message };
     }
     const checkpoint: CheckpointEnvelope = {
       ...(checkpointRecord as unknown as CheckpointEnvelope),
-      payload: new Uint8Array(checkpointRecord.payload),
+      payload: new Uint8Array(checkpointPayload),
     };
     const validation = await validateCheckpointEnvelope(checkpoint, {
       requestId: result.identity.requestId,
