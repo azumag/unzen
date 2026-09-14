@@ -94,6 +94,29 @@ describe('SimulatedPrototypeWorker execution envelope', () => {
     },
   );
 
+  it('captures the validated execution transport exactly once', async () => {
+    const worker = makeSegment0Worker();
+    const transport = makeTransport();
+    let transportReads = 0;
+    const input = {
+      requestId: 'request-owned-transport',
+      prompt: 'hello',
+      coordinatorUrl,
+      cdnUrl,
+      get transport() {
+        transportReads++;
+        return transportReads === 1 ? transport : {};
+      },
+    };
+
+    const output = await worker.execute(input as never);
+
+    expect(transportReads).toBe(1);
+    expect(output.checkpoint?.hiddenStates).toEqual(new TextEncoder().encode('HELLO'));
+    expect(transport.connectionCount).toBe(2);
+    expect(worker.snapshotMetadata().cachedSegments).toEqual([0]);
+  });
+
   it('rejects malformed segment-1 checkpoint hidden states before side effects', async () => {
     const worker = makeSegment1Worker(true);
     const transport = makeTransport();
