@@ -28,14 +28,111 @@ function construct(
   );
 }
 
+function readOptions(pipeline: Pipeline): PipelineOptions {
+  return (pipeline as unknown as { readonly options: PipelineOptions }).options;
+}
+
 describe('Pipeline runtime option envelope', () => {
   it('accepts defaults and preserves explicit zero retry/timeout/delay semantics', () => {
-    expect(() => construct()).not.toThrow();
-    expect(() => construct({
+    expect(readOptions(construct())).toEqual({
+      maxRetries: 2,
+      segmentTimeoutMs: 30_000,
+      retryDelayMs: 1_000,
+    });
+    expect(readOptions(construct({
       maxRetries: 0,
       segmentTimeoutMs: 0,
       retryDelayMs: 0,
-    })).not.toThrow();
+    }))).toEqual({
+      maxRetries: 0,
+      segmentTimeoutMs: 0,
+      retryDelayMs: 0,
+    });
+    expect(readOptions(construct({
+      maxRetries: 4,
+      segmentTimeoutMs: 12_345,
+      retryDelayMs: 67,
+    }))).toEqual({
+      maxRetries: 4,
+      segmentTimeoutMs: 12_345,
+      retryDelayMs: 67,
+    });
+  });
+
+  it('reads declared fields once without enumerating unrelated caller properties', () => {
+    const reads = {
+      maxRetries: 0,
+      segmentTimeoutMs: 0,
+      retryDelayMs: 0,
+    };
+    const target = Object.defineProperties({}, {
+      maxRetries: {
+        enumerable: true,
+        get: () => {
+          reads.maxRetries += 1;
+          return reads.maxRetries === 1 ? 4 : -1;
+        },
+      },
+      segmentTimeoutMs: {
+        enumerable: true,
+        get: () => {
+          reads.segmentTimeoutMs += 1;
+          return reads.segmentTimeoutMs === 1 ? 12_345 : Number.NaN;
+        },
+      },
+      retryDelayMs: {
+        enumerable: true,
+        get: () => {
+          reads.retryDelayMs += 1;
+          return reads.retryDelayMs === 1 ? 67 : Number.NEGATIVE_INFINITY;
+        },
+      },
+      unrelated: {
+        enumerable: true,
+        get: () => {
+          throw new Error('unrelated getter must not run');
+        },
+      },
+    });
+    const options = new Proxy(target, {
+      ownKeys: () => {
+        throw new Error('caller options must not be enumerated');
+      },
+    }) as Partial<PipelineOptions>;
+
+    expect(readOptions(construct(options))).toEqual({
+      maxRetries: 4,
+      segmentTimeoutMs: 12_345,
+      retryDelayMs: 67,
+    });
+    expect(reads).toEqual({
+      maxRetries: 1,
+      segmentTimeoutMs: 1,
+      retryDelayMs: 1,
+    });
+  });
+
+  it('preserves spread-era defaults for inherited and non-enumerable declared fields', () => {
+    let inheritedReads = 0;
+    const prototype = Object.defineProperty({}, 'maxRetries', {
+      enumerable: true,
+      get: () => {
+        inheritedReads += 1;
+        return 9;
+      },
+    });
+    const options = Object.create(prototype) as Partial<PipelineOptions>;
+    Object.defineProperty(options, 'segmentTimeoutMs', {
+      enumerable: false,
+      value: 12_345,
+    });
+
+    expect(readOptions(construct(options))).toEqual({
+      maxRetries: 2,
+      segmentTimeoutMs: 30_000,
+      retryDelayMs: 1_000,
+    });
+    expect(inheritedReads).toBe(0);
   });
 
   it('rejects malformed top-level option containers before executor work', () => {

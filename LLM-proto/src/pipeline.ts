@@ -71,27 +71,56 @@ function isNonNegativeFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function readOwnEnumerableOption<T extends object, K extends keyof T>(
+  source: T | undefined,
+  key: K,
+): T[K] | undefined {
+  if (source === undefined) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (descriptor === undefined || descriptor.enumerable !== true) return undefined;
+  return source[key];
+}
+
 function resolvePipelineOptions(options: unknown): PipelineOptions {
   if (options !== undefined && !isRecord(options)) {
     throw new TypeError('Pipeline options must be a non-null, non-array object');
   }
 
-  const merged = {
-    ...DEFAULT_OPTIONS,
-    ...(options ?? {}),
-  } as PipelineOptions;
+  // Runtime callers can supply accessor/Proxy-backed objects despite the static
+  // Partial<PipelineOptions> type. Read only declared own-enumerable fields,
+  // exactly once, so validation and retained state are bound to the same value
+  // without enumerating unrelated properties or changing spread-era inheritance
+  // semantics.
+  const source = options as Partial<PipelineOptions> | undefined;
+  const capturedMaxRetries = readOwnEnumerableOption(source, 'maxRetries');
+  const capturedSegmentTimeoutMs = readOwnEnumerableOption(source, 'segmentTimeoutMs');
+  const capturedRetryDelayMs = readOwnEnumerableOption(source, 'retryDelayMs');
 
-  if (!isNonNegativeSafeInteger(merged.maxRetries)) {
+  const maxRetries = capturedMaxRetries === undefined
+    ? DEFAULT_OPTIONS.maxRetries
+    : capturedMaxRetries;
+  const segmentTimeoutMs = capturedSegmentTimeoutMs === undefined
+    ? DEFAULT_OPTIONS.segmentTimeoutMs
+    : capturedSegmentTimeoutMs;
+  const retryDelayMs = capturedRetryDelayMs === undefined
+    ? DEFAULT_OPTIONS.retryDelayMs
+    : capturedRetryDelayMs;
+
+  if (!isNonNegativeSafeInteger(maxRetries)) {
     throw new TypeError('Pipeline maxRetries must be a non-negative safe integer');
   }
-  if (!isNonNegativeFiniteNumber(merged.segmentTimeoutMs)) {
+  if (!isNonNegativeFiniteNumber(segmentTimeoutMs)) {
     throw new TypeError('Pipeline segmentTimeoutMs must be a non-negative finite number');
   }
-  if (!isNonNegativeFiniteNumber(merged.retryDelayMs)) {
+  if (!isNonNegativeFiniteNumber(retryDelayMs)) {
     throw new TypeError('Pipeline retryDelayMs must be a non-negative finite number');
   }
 
-  return merged;
+  return {
+    maxRetries,
+    segmentTimeoutMs,
+    retryDelayMs,
+  };
 }
 
 export class Pipeline {
