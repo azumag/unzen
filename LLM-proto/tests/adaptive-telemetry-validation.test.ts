@@ -61,6 +61,52 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
     })).not.toThrow();
   });
 
+  it.each([
+    ['loadBudgetRatio', 0.5, Number.NaN],
+    ['longLivedWorkerMs', 1_000, Number.NaN],
+    ['configuredVramLimitMB', 4_096, -1],
+    ['checkpointBytes', 1_024, 0],
+  ] as const)(
+    'reads explicit dispatcher option %s exactly once',
+    (field, acceptedValue, alteredValue) => {
+      let reads = 0;
+      const options = { segments: makeSegments(1) } as AdaptiveChunkDispatcherOptions;
+      Object.defineProperty(options, field, {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return reads === 1 ? acceptedValue : alteredValue;
+        },
+      });
+
+      expect(() => new AdaptiveChunkDispatcher(options)).not.toThrow();
+      expect(reads).toBe(1);
+    },
+  );
+
+  it.each([
+    'loadBudgetRatio',
+    'longLivedWorkerMs',
+    'configuredVramLimitMB',
+    'checkpointBytes',
+  ] as const)(
+    'reads omitted/defaulted dispatcher option %s exactly once',
+    (field) => {
+      let reads = 0;
+      const options = { segments: makeSegments(1) } as AdaptiveChunkDispatcherOptions;
+      Object.defineProperty(options, field, {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return undefined;
+        },
+      });
+
+      expect(() => new AdaptiveChunkDispatcher(options)).not.toThrow();
+      expect(reads).toBe(1);
+    },
+  );
+
   it.each([0, 4, 99, 'tier-1'])(
     'rejects invalid worker tier %s before registration',
     (tier) => {

@@ -28,7 +28,9 @@ Tier validation happens before telemetry validation, cache-residency synchroniza
 
 ## Dispatcher numeric configuration
 
-Dispatcher configuration is validated at construction before any worker or routing state exists. Optional numeric defaults are applied only when the field is omitted or explicitly `undefined`; an explicit `null` is treated as malformed runtime input and reaches the field-specific numeric validator instead of silently selecting a default.
+Dispatcher configuration is validated at construction before any worker or routing state exists. Each numeric option is read from the caller-owned options object exactly once; the captured value is then used for default selection, validation, and stored dispatcher state. Optional numeric defaults are applied only when that captured value is `undefined`; an explicit `null` is treated as malformed runtime input and reaches the field-specific numeric validator instead of silently selecting a default.
+
+This single-read boundary also applies to accessor- or Proxy-backed options. A getter cannot return a valid value during the default check and a different value during assignment, and constructor-side effects do not run twice merely because an explicit value was supplied.
 
 - `loadBudgetRatio` must be finite and inside `(0, 1]`.
 - `longLivedWorkerMs` must be finite and non-negative. Zero is valid and makes every otherwise-eligible worker immediately satisfy the age threshold.
@@ -82,4 +84,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes and cache-hit element types, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, post-acceptance telemetry mutation isolation, single-read collection/identity accessors, cache-artifact membership mutation during identity reads, and caller-cache mutation from scalar telemetry getters. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes and cache-hit element types, valid telemetry boundaries, invalid dispatcher numeric configuration, explicit/defaulted numeric option single-read accessors, post-construction segment mutation isolation, post-acceptance telemetry mutation isolation, single-read collection/identity accessors, cache-artifact membership mutation during identity reads, and caller-cache mutation from scalar telemetry getters. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
