@@ -68,14 +68,18 @@ export interface CreateCheckpointEnvelopeInput {
   readonly previousCheckpointDigest?: string;
 }
 
+async function digestOwnedBytes(data: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** Lowercase hex SHA-256 over bytes (same crypto pattern as model-manifest). */
 export async function sha256Hex(data: Uint8Array): Promise<string> {
   // Copy into a fresh ArrayBuffer-typed view so crypto.subtle.digest accepts
   // it regardless of the source buffer's (possibly SharedArrayBuffer) type.
   const bytes = new Uint8Array(data.byteLength);
   bytes.set(data);
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return digestOwnedBytes(bytes);
 }
 
 /** Build an envelope, computing the payload digest and byte length. */
@@ -116,9 +120,7 @@ export async function verifyCheckpointDigest(
   return (await sha256Hex(envelope.payload)) === envelope.payloadDigest;
 }
 
-/** Invalid timing is unusable, just like an expired checkpoint. */
-export function isCheckpointExpired(envelope: CheckpointEnvelope, now: number): boolean {
-  const { createdAt, ttlMs } = envelope;
+function isCheckpointTimingExpired(createdAt: number, ttlMs: number, now: number): boolean {
   // JSON/runtime values are not guaranteed to satisfy the TypeScript type.
   // NaN, Infinity and coercible values must not disable the relay TTL gate.
   if (![now, createdAt, ttlMs].every((value) => Number.isFinite(value) && value >= 0)) {
@@ -126,6 +128,12 @@ export function isCheckpointExpired(envelope: CheckpointEnvelope, now: number): 
   }
   const expiresAt = createdAt + ttlMs;
   return expiresAt > Number.MAX_SAFE_INTEGER || now >= expiresAt;
+}
+
+/** Invalid timing is unusable, just like an expired checkpoint. */
+export function isCheckpointExpired(envelope: CheckpointEnvelope, now: number): boolean {
+  const { createdAt, ttlMs } = envelope;
+  return isCheckpointTimingExpired(createdAt, ttlMs, now);
 }
 
 /** The run context a checkpoint must match to be accepted at the boundary. */
@@ -158,65 +166,132 @@ function isNonEmptyRuntimeString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+interface CapturedCheckpointStructure {
+  readonly requestId: InferenceRequestId;
+  readonly attemptId: AttemptId;
+  readonly segmentIndex: number;
+  readonly workerId: WorkerId;
+  readonly workerGeneration: WorkerGeneration;
+  readonly modelManifestDigest: string;
+  readonly formatVersion: string;
+  readonly payloadLength: number;
+  readonly payloadDigest: string;
+  readonly previousCheckpointDigest?: string;
+  readonly payload: Uint8Array;
+}
+
+type CheckpointStructureCapture =
+  | { readonly ok: true; readonly value: CapturedCheckpointStructure }
+  | { readonly ok: false; readonly message: string };
+
 /**
- * Validate the envelope's own runtime structure before comparing it with
- * trusted coordinator state or hashing any payload bytes. TypeScript types do
- * not exist at the network/storage boundary, so every identity and byte/digest
- * field used below must prove its runtime shape first.
+ * Capture and validate the envelope fields that have structural constraints.
+ * Each caller-owned property is read once, in the same fail-fast order as the
+ * public validator, so later identity/size/digest checks operate only on owned
+ * primitive references rather than re-reading an accessor or Proxy.
  */
-function checkpointEnvelopeStructureError(input: unknown): string | undefined {
+function captureCheckpointStructure(input: unknown): CheckpointStructureCapture {
   if (typeof input !== 'object' || input === null) {
-    return 'checkpoint envelope must be an object';
+    return { ok: false, message: 'checkpoint envelope must be an object' };
   }
 
   const envelope = input as Record<string, unknown>;
-  for (const field of ['requestId', 'attemptId', 'workerId', 'workerGeneration', 'formatVersion'] as const) {
-    if (!isNonEmptyRuntimeString(envelope[field])) {
-      return `checkpoint ${field} must be a non-empty string`;
-    }
+
+  const requestId = envelope.requestId;
+  if (!isNonEmptyRuntimeString(requestId)) {
+    return { ok: false, message: 'checkpoint requestId must be a non-empty string' };
+  }
+  const attemptId = envelope.attemptId;
+  if (!isNonEmptyRuntimeString(attemptId)) {
+    return { ok: false, message: 'checkpoint attemptId must be a non-empty string' };
+  }
+  const workerId = envelope.workerId;
+  if (!isNonEmptyRuntimeString(workerId)) {
+    return { ok: false, message: 'checkpoint workerId must be a non-empty string' };
+  }
+  const workerGeneration = envelope.workerGeneration;
+  if (!isNonEmptyRuntimeString(workerGeneration)) {
+    return { ok: false, message: 'checkpoint workerGeneration must be a non-empty string' };
+  }
+  const formatVersion = envelope.formatVersion;
+  if (!isNonEmptyRuntimeString(formatVersion)) {
+    return { ok: false, message: 'checkpoint formatVersion must be a non-empty string' };
   }
 
+  const segmentIndex = envelope.segmentIndex;
   if (
-    typeof envelope.segmentIndex !== 'number' ||
-    !Number.isSafeInteger(envelope.segmentIndex) ||
-    envelope.segmentIndex < 0
+    typeof segmentIndex !== 'number' ||
+    !Number.isSafeInteger(segmentIndex) ||
+    segmentIndex < 0
   ) {
-    return 'checkpoint segmentIndex must be a non-negative safe integer';
-  }
-  if (!(envelope.payload instanceof Uint8Array)) {
-    return 'checkpoint payload must be a Uint8Array';
-  }
-  if (
-    typeof envelope.payloadLength !== 'number' ||
-    !Number.isSafeInteger(envelope.payloadLength) ||
-    envelope.payloadLength < 0
-  ) {
-    return 'checkpoint payloadLength must be a non-negative safe integer';
-  }
-  if (envelope.payloadLength !== envelope.payload.byteLength) {
-    return 'checkpoint payloadLength does not match payload byte length';
-  }
-  if (!isNonEmptyRuntimeString(envelope.modelManifestDigest) ||
-      !SHA256_HEX_PATTERN.test(envelope.modelManifestDigest)) {
-    return 'checkpoint modelManifestDigest must be canonical lowercase SHA-256';
-  }
-  if (!isNonEmptyRuntimeString(envelope.payloadDigest) ||
-      !SHA256_HEX_PATTERN.test(envelope.payloadDigest)) {
-    return 'checkpoint payloadDigest must be canonical lowercase SHA-256';
-  }
-  if (envelope.previousCheckpointDigest !== undefined &&
-      (!isNonEmptyRuntimeString(envelope.previousCheckpointDigest) ||
-       !SHA256_HEX_PATTERN.test(envelope.previousCheckpointDigest))) {
-    return 'checkpoint previousCheckpointDigest must be canonical lowercase SHA-256 when present';
+    return { ok: false, message: 'checkpoint segmentIndex must be a non-negative safe integer' };
   }
 
-  return undefined;
+  const payload = envelope.payload;
+  if (!(payload instanceof Uint8Array)) {
+    return { ok: false, message: 'checkpoint payload must be a Uint8Array' };
+  }
+
+  const payloadLength = envelope.payloadLength;
+  if (
+    typeof payloadLength !== 'number' ||
+    !Number.isSafeInteger(payloadLength) ||
+    payloadLength < 0
+  ) {
+    return { ok: false, message: 'checkpoint payloadLength must be a non-negative safe integer' };
+  }
+  if (payloadLength !== payload.byteLength) {
+    return { ok: false, message: 'checkpoint payloadLength does not match payload byte length' };
+  }
+
+  const modelManifestDigest = envelope.modelManifestDigest;
+  if (!isNonEmptyRuntimeString(modelManifestDigest) ||
+      !SHA256_HEX_PATTERN.test(modelManifestDigest)) {
+    return { ok: false, message: 'checkpoint modelManifestDigest must be canonical lowercase SHA-256' };
+  }
+
+  const payloadDigest = envelope.payloadDigest;
+  if (!isNonEmptyRuntimeString(payloadDigest) ||
+      !SHA256_HEX_PATTERN.test(payloadDigest)) {
+    return { ok: false, message: 'checkpoint payloadDigest must be canonical lowercase SHA-256' };
+  }
+
+  const previousCheckpointDigest = envelope.previousCheckpointDigest;
+  if (previousCheckpointDigest !== undefined &&
+      (!isNonEmptyRuntimeString(previousCheckpointDigest) ||
+       !SHA256_HEX_PATTERN.test(previousCheckpointDigest))) {
+    return {
+      ok: false,
+      message: 'checkpoint previousCheckpointDigest must be canonical lowercase SHA-256 when present',
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      requestId: requestId as InferenceRequestId,
+      attemptId: attemptId as AttemptId,
+      segmentIndex,
+      workerId: workerId as WorkerId,
+      workerGeneration: workerGeneration as WorkerGeneration,
+      modelManifestDigest,
+      formatVersion,
+      payloadLength,
+      payloadDigest,
+      previousCheckpointDigest,
+      payload,
+    },
+  };
 }
 
 /**
  * Validate an envelope against the run context at the Coordinator boundary.
  * Catches cross-request/cross-revision reuse, stale generations, tampered
  * payloads, over-sized payloads, and expired TTLs.
+ *
+ * This exported function is itself a runtime ownership boundary: metadata is
+ * single-read from caller-owned objects, the size ceiling is checked before a
+ * payload copy is allocated, and digest verification runs only on owned bytes.
  */
 export async function validateCheckpointEnvelope(
   envelope: CheckpointEnvelope,
@@ -228,44 +303,73 @@ export async function validateCheckpointEnvelope(
     message,
   });
 
-  const structureError = checkpointEnvelopeStructureError(envelope);
-  if (structureError !== undefined) {
-    return mismatch(structureError);
+  const captured = captureCheckpointStructure(envelope);
+  if (!captured.ok) {
+    return mismatch(captured.message);
+  }
+  const checkpoint = captured.value;
+
+  const expectedRequestId = expected.requestId;
+  if (checkpoint.requestId !== expectedRequestId) {
+    return mismatch(
+      `checkpoint belongs to request ${checkpoint.requestId}, expected ${expectedRequestId}`,
+    );
   }
 
-  if (envelope.requestId !== expected.requestId) {
+  const expectedSegmentIndex = expected.segmentIndex;
+  if (checkpoint.segmentIndex !== expectedSegmentIndex) {
     return mismatch(
-      `checkpoint belongs to request ${envelope.requestId}, expected ${expected.requestId}`,
+      `checkpoint produced by segment ${checkpoint.segmentIndex}, expected ${expectedSegmentIndex}`,
     );
   }
-  if (envelope.segmentIndex !== expected.segmentIndex) {
-    return mismatch(
-      `checkpoint produced by segment ${envelope.segmentIndex}, expected ${expected.segmentIndex}`,
-    );
-  }
-  if (envelope.workerId !== expected.workerId || envelope.workerGeneration !== expected.workerGeneration) {
+
+  const expectedWorkerId = expected.workerId;
+  if (checkpoint.workerId !== expectedWorkerId) {
     return mismatch('checkpoint was produced by a different worker/generation');
   }
-  if (envelope.modelManifestDigest !== expected.modelManifestDigest) {
+  const expectedWorkerGeneration = expected.workerGeneration;
+  if (checkpoint.workerGeneration !== expectedWorkerGeneration) {
+    return mismatch('checkpoint was produced by a different worker/generation');
+  }
+
+  const expectedModelManifestDigest = expected.modelManifestDigest;
+  if (checkpoint.modelManifestDigest !== expectedModelManifestDigest) {
     return mismatch('checkpoint was produced under a different model revision');
   }
-  if (envelope.formatVersion !== expected.formatVersion) {
+
+  const expectedFormatVersion = expected.formatVersion;
+  if (checkpoint.formatVersion !== expectedFormatVersion) {
     return mismatch('checkpoint format version does not match the run');
   }
+
   // An invalid configured ceiling must not turn the size comparison into an
   // always-false test and allow unbounded hashing/storage at this boundary.
-  if (!Number.isSafeInteger(expected.maxPayloadBytes) || expected.maxPayloadBytes < 0) {
+  const maxPayloadBytes = expected.maxPayloadBytes;
+  if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes < 0) {
     return mismatch('checkpoint payload byte limit must be a non-negative safe integer');
   }
-  if (envelope.payloadLength > expected.maxPayloadBytes) {
-    return mismatch(`checkpoint payload ${envelope.payloadLength}B exceeds the ${expected.maxPayloadBytes}B limit`);
+  if (checkpoint.payloadLength > maxPayloadBytes) {
+    return mismatch(`checkpoint payload ${checkpoint.payloadLength}B exceeds the ${maxPayloadBytes}B limit`);
   }
-  if (isCheckpointExpired(envelope, expected.now)) {
+
+  // Preserve the pre-existing call-order semantics: expected.now is observed
+  // before timing fields from the envelope. Each value is then retained once.
+  const now = expected.now;
+  const createdAt = envelope.createdAt;
+  const ttlMs = envelope.ttlMs;
+  if (isCheckpointTimingExpired(createdAt, ttlMs, now)) {
     return mismatch('checkpoint TTL expired');
   }
-  if (!(await verifyCheckpointDigest(envelope))) {
+
+  // The copy happens only after structure, identity, budget, and TTL checks.
+  // From this point through the async digest yield, caller mutation cannot
+  // change the bytes that are authenticated.
+  const ownedPayload = new Uint8Array(checkpoint.payloadLength);
+  ownedPayload.set(checkpoint.payload);
+  if ((await digestOwnedBytes(ownedPayload)) !== checkpoint.payloadDigest) {
     return mismatch('checkpoint payload digest mismatch');
   }
+
   return { ok: true };
 }
 
