@@ -214,9 +214,14 @@ export class DurableObjectRepository implements DurableRepository {
     if (!attempts) return;
     const attempt = attempts.find((candidate) => candidate.attemptId === attemptId);
     if (!attempt) return;
-    if (patch.finishedAt !== undefined) attempt.finishedAt = patch.finishedAt;
-    if (patch.outcome !== undefined) attempt.outcome = patch.outcome;
-    if (patch.errorCode !== undefined) attempt.errorCode = patch.errorCode;
+
+    const finishedAt = patch.finishedAt;
+    const outcome = patch.outcome;
+    const errorCode = patch.errorCode;
+
+    if (finishedAt !== undefined) attempt.finishedAt = finishedAt;
+    if (outcome !== undefined) attempt.outcome = outcome;
+    if (errorCode !== undefined) attempt.errorCode = errorCode;
     this.storage.put(key, attempts);
   }
 
