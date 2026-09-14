@@ -50,6 +50,34 @@ export type DurableRecoveryRunnerResult =
   | { readonly kind: 'terminal'; readonly stage: 'completed' | 'failed' | 'cancelled' }
   | { readonly kind: 'resumed'; readonly requestId: InferenceRequestId; readonly segmentIndex: number };
 
+function snapshotRecoveryRunnerOptions(
+  options: DurableRecoveryRunnerOptions,
+): DurableRecoveryRunnerOptions {
+  const ownerId = options.ownerId;
+  const ownershipTtlMs = options.ownershipTtlMs;
+  const ownershipRenewIntervalMs = options.ownershipRenewIntervalMs;
+  const pollIntervalMs = options.pollIntervalMs;
+  const maxRetries = options.maxRetries;
+  const manifestDigest = options.manifestDigest;
+  const now = options.now;
+  const sleep = options.sleep;
+  const signal = options.signal;
+  const onResume = options.onResume;
+
+  return Object.freeze({
+    ownerId,
+    ownershipTtlMs,
+    ownershipRenewIntervalMs,
+    pollIntervalMs,
+    maxRetries,
+    manifestDigest,
+    now,
+    sleep,
+    signal,
+    onResume,
+  });
+}
+
 function abortError(): DOMException {
   return new DOMException('AbortError', 'AbortError');
 }
@@ -105,18 +133,23 @@ export async function runDurableRecovery(
   requestId: InferenceRequestId,
   options: DurableRecoveryRunnerOptions,
 ): Promise<DurableRecoveryRunnerResult> {
-  const nowFn = options.now ?? Date.now;
-  const sleep = options.sleep ?? defaultSleep;
+  // A recovery lifecycle spans awaits and renewal callbacks. Own all consumed
+  // caller configuration before entering that lifecycle so getter/Proxy-backed
+  // input cannot change owner identity, timing, abort, or callback semantics
+  // after a claim has been established.
+  const ownedOptions = snapshotRecoveryRunnerOptions(options);
+  const nowFn = ownedOptions.now ?? Date.now;
+  const sleep = ownedOptions.sleep ?? defaultSleep;
 
   for (;;) {
-    if (options.signal?.aborted) throw abortError();
+    if (ownedOptions.signal?.aborted) throw abortError();
     const now = nowFn();
     const decision = beginDurableRecovery(repo, requestId, {
-      ownerId: options.ownerId,
+      ownerId: ownedOptions.ownerId,
       now,
-      ownershipTtlMs: options.ownershipTtlMs,
-      maxRetries: options.maxRetries,
-      manifestDigest: options.manifestDigest,
+      ownershipTtlMs: ownedOptions.ownershipTtlMs,
+      maxRetries: ownedOptions.maxRetries,
+      manifestDigest: ownedOptions.manifestDigest,
     });
 
     switch (decision.kind) {
@@ -125,39 +158,39 @@ export async function runDurableRecovery(
       case 'terminal':
         return { kind: 'terminal', stage: decision.stage };
       case 'owned-by-peer': {
-        const waitMs = boundedWaitMs(now, options.pollIntervalMs, [decision.ownership.expiresAt]);
-        await sleep(waitMs, options.signal);
+        const waitMs = boundedWaitMs(now, ownedOptions.pollIntervalMs, [decision.ownership.expiresAt]);
+        await sleep(waitMs, ownedOptions.signal);
         continue;
       }
       case 'wait-active-owner': {
-        const waitMs = boundedWaitMs(now, options.pollIntervalMs, [
+        const waitMs = boundedWaitMs(now, ownedOptions.pollIntervalMs, [
           decision.lease.expiresAt,
           decision.deadlineAt,
         ]);
-        await sleep(waitMs, options.signal);
+        await sleep(waitMs, ownedOptions.signal);
         continue;
       }
       case 'state-changed':
         // Another durable mutation won between planning and CAS. Yield before
         // replanning rather than spinning synchronously.
-        await sleep(Math.min(Math.max(1, options.pollIntervalMs), 10), options.signal);
+        await sleep(Math.min(Math.max(1, ownedOptions.pollIntervalMs), 10), ownedOptions.signal);
         continue;
       case 'resume-claimed': {
         const resumeController = new AbortController();
-        const stopForwarding = forwardAbort(options.signal, resumeController);
+        const stopForwarding = forwardAbort(ownedOptions.signal, resumeController);
         let ownershipLost = false;
         const renewEvery = Math.max(1, Math.min(
-          options.ownershipRenewIntervalMs,
-          Math.max(1, options.ownershipTtlMs - 1),
+          ownedOptions.ownershipRenewIntervalMs,
+          Math.max(1, ownedOptions.ownershipTtlMs - 1),
         ));
         const renewalTimer = setInterval(() => {
           const renewNow = nowFn();
           const claim = repo.claimRecoveryOwnership(
             {
               requestId,
-              ownerId: options.ownerId,
+              ownerId: ownedOptions.ownerId,
               claimedAt: decision.ownership.claimedAt,
-              expiresAt: renewNow + options.ownershipTtlMs,
+              expiresAt: renewNow + ownedOptions.ownershipTtlMs,
             },
             renewNow,
           );
@@ -168,7 +201,7 @@ export async function runDurableRecovery(
         }, renewEvery);
 
         try {
-          await options.onResume({
+          await ownedOptions.onResume({
             requestId,
             segmentIndex: decision.segmentIndex,
             checkpoint: decision.checkpoint,
@@ -190,7 +223,7 @@ export async function runDurableRecovery(
         } finally {
           clearInterval(renewalTimer);
           stopForwarding();
-          releaseDurableRecoveryOwnership(repo, requestId, options.ownerId);
+          releaseDurableRecoveryOwnership(repo, requestId, ownedOptions.ownerId);
         }
       }
     }
