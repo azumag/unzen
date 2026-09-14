@@ -14,7 +14,7 @@ import type {
   SegmentArtifactComponent,
   SegmentedModelManifest,
 } from './model-manifest.js';
-import type { SegmentConfig, WorkerId } from './types.js';
+import { workerId, type SegmentConfig, type WorkerId } from './types.js';
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const COMPONENT_ROLES = new Set(['graph', 'external-data']);
@@ -211,20 +211,22 @@ export class ArtifactResidencyLedger {
       next.add(segmentIndex);
     }
 
+    const stableWorker = workerId(worker);
     if (next.size === 0) {
-      this.residentByWorker.delete(worker);
+      this.residentByWorker.delete(stableWorker);
     } else {
-      this.residentByWorker.set(worker, next);
+      this.residentByWorker.set(stableWorker, next);
     }
-    return this.snapshot(worker);
+    return this.snapshot(stableWorker);
   }
 
   markResident(worker: WorkerId, segmentIndex: number): void {
     this.getArtifact(segmentIndex);
-    let residency = this.residentByWorker.get(worker);
+    const stableWorker = workerId(worker);
+    let residency = this.residentByWorker.get(stableWorker);
     if (!residency) {
       residency = new Set<number>();
-      this.residentByWorker.set(worker, residency);
+      this.residentByWorker.set(stableWorker, residency);
     }
     residency.add(segmentIndex);
   }
@@ -240,29 +242,31 @@ export class ArtifactResidencyLedger {
     for (const index of indexes) {
       this.getArtifact(index);
     }
+    const stableWorker = workerId(worker);
     for (const index of indexes) {
-      this.markResident(worker, index);
+      this.markResident(stableWorker, index);
     }
   }
 
   markEvicted(worker: WorkerId, segmentIndex: number): boolean {
     this.getArtifact(segmentIndex);
-    const residency = this.residentByWorker.get(worker);
+    const stableWorker = workerId(worker);
+    const residency = this.residentByWorker.get(stableWorker);
     if (!residency) return false;
     const removed = residency.delete(segmentIndex);
     if (residency.size === 0) {
-      this.residentByWorker.delete(worker);
+      this.residentByWorker.delete(stableWorker);
     }
     return removed;
   }
 
   clearWorker(worker: WorkerId): boolean {
-    return this.residentByWorker.delete(worker);
+    return this.residentByWorker.delete(workerId(worker));
   }
 
   isResident(worker: WorkerId, segmentIndex: number): boolean {
     this.getArtifact(segmentIndex);
-    return this.residentByWorker.get(worker)?.has(segmentIndex) ?? false;
+    return this.residentByWorker.get(workerId(worker))?.has(segmentIndex) ?? false;
   }
 
   /** Number of consecutive cached artifacts beginning at startSegment. */
@@ -280,12 +284,13 @@ export class ArtifactResidencyLedger {
       throw new Error('maximumLength must be a non-negative number');
     }
 
+    const stableWorker = workerId(worker);
     const limit = Number.isFinite(maximumLength)
       ? Math.min(this.segmentCount, startSegment + Math.floor(maximumLength))
       : this.segmentCount;
     let length = 0;
     for (let index = startSegment; index < limit; index++) {
-      if (!this.residentByWorker.get(worker)?.has(index)) break;
+      if (!this.residentByWorker.get(stableWorker)?.has(index)) break;
       length++;
     }
     return length;
@@ -297,9 +302,10 @@ export class ArtifactResidencyLedger {
     endSegment = this.segmentCount - 1,
   ): number {
     this.validateRange(startSegment, endSegment);
+    const stableWorker = workerId(worker);
     let bytes = 0;
     for (let index = startSegment; index <= endSegment; index++) {
-      if (this.residentByWorker.get(worker)?.has(index)) {
+      if (this.residentByWorker.get(stableWorker)?.has(index)) {
         bytes += this.getArtifact(index).byteSize;
       }
     }
@@ -321,9 +327,10 @@ export class ArtifactResidencyLedger {
     endSegment: number,
   ): readonly SegmentArtifact[] {
     this.validateRange(startSegment, endSegment);
+    const stableWorker = workerId(worker);
     const missing: SegmentArtifact[] = [];
     for (let index = startSegment; index <= endSegment; index++) {
-      if (!this.residentByWorker.get(worker)?.has(index)) {
+      if (!this.residentByWorker.get(stableWorker)?.has(index)) {
         missing.push(this.getArtifact(index));
       }
     }
@@ -338,13 +345,14 @@ export class ArtifactResidencyLedger {
   }
 
   snapshot(worker: WorkerId): WorkerArtifactResidencySnapshot {
-    const indexes = [...(this.residentByWorker.get(worker) ?? [])].sort((a, b) => a - b);
+    const stableWorker = workerId(worker);
+    const indexes = [...(this.residentByWorker.get(stableWorker) ?? [])].sort((a, b) => a - b);
     const residentArtifactBytes = indexes.reduce(
       (sum, index) => sum + this.getArtifact(index).byteSize,
       0,
     );
     return {
-      workerId: worker,
+      workerId: stableWorker,
       residentSegmentIndexes: indexes,
       residentArtifactBytes,
       totalArtifactBytes: this.totalArtifactBytes,
