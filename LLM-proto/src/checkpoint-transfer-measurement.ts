@@ -96,32 +96,31 @@ export function createDefaultCheckpointMeasurementManifest(
 export function measureCheckpointSerializationAndTransfer(
   manifest: CheckpointTransferMeasurementManifest,
 ): CheckpointTransferMeasurementReport {
-  validateCheckpointTransferMeasurementManifest(manifest);
-
-  const checkpoint = createCheckpointPayload(manifest);
+  const owned = snapshotCheckpointTransferMeasurementManifest(manifest);
+  const checkpoint = createCheckpointPayloadFromSnapshot(owned);
   const serialized = serializeCheckpointPayload(checkpoint);
   const payloadBytes = checkpoint.hiddenStates.byteLength;
-  const serializationMs = ceilDurationMs(payloadBytes, manifest.serializationBytesPerSecond);
-  const deserializationMs = ceilDurationMs(serialized.payloadBytes, manifest.deserializationBytesPerSecond);
-  const transferEstimateMs = ceilDurationMs(payloadBytes, manifest.coordinatorTransferBytesPerSecond);
-  const transferResult = measureCoordinatorTransfer(manifest, serialized.bytes.byteLength);
-  const comparison = compareWithFeasibilityGate(manifest, payloadBytes, transferEstimateMs);
+  const serializationMs = ceilDurationMs(payloadBytes, owned.serializationBytesPerSecond);
+  const deserializationMs = ceilDurationMs(serialized.payloadBytes, owned.deserializationBytesPerSecond);
+  const transferEstimateMs = ceilDurationMs(payloadBytes, owned.coordinatorTransferBytesPerSecond);
+  const transferResult = measureCoordinatorTransfer(owned, serialized.bytes.byteLength);
+  const comparison = compareWithFeasibilityGate(owned, payloadBytes, transferEstimateMs);
   const failureReason = selectFailureReason(
     transferResult.failureReason,
     transferEstimateMs,
     transferResult.observedTransferMs,
-    manifest.maxTransferMs,
+    owned.maxTransferMs,
   );
 
   return {
-    requestId: manifest.requestId,
+    requestId: owned.requestId,
     status: failureReason ? 'fail' : 'pass',
     tensorShape: [
-      manifest.tensor.batchSize,
-      manifest.tensor.sequenceLength,
-      manifest.tensor.hiddenSize,
+      owned.tensor.batchSize,
+      owned.tensor.sequenceLength,
+      owned.tensor.hiddenSize,
     ],
-    dtype: manifest.tensor.dtype,
+    dtype: owned.tensor.dtype,
     payloadBytes,
     serializedBytes: serialized.bytes.byteLength,
     serializationMs,
@@ -138,9 +137,14 @@ export function measureCheckpointSerializationAndTransfer(
 export function createCheckpointPayload(
   manifest: CheckpointTransferMeasurementManifest,
 ): Checkpoint {
-  validateCheckpointPayloadInputs(manifest);
+  const owned = snapshotCheckpointPayloadInputs(manifest);
+  return createCheckpointPayloadFromSnapshot(owned);
+}
 
-  const payloadBytes = computeCheckpointPayloadBytes(manifest.tensor);
+function createCheckpointPayloadFromSnapshot(
+  manifest: Pick<CheckpointTransferMeasurementManifest, 'requestId' | 'segmentIndex' | 'tensor'>,
+): Checkpoint {
+  const payloadBytes = computeCheckpointPayloadBytesFromSnapshot(manifest.tensor);
   const hiddenStates = new Uint8Array(payloadBytes);
 
   for (let index = 0; index < hiddenStates.length; index++) {
@@ -224,7 +228,7 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
   }
 
   const header = validateSerializedCheckpointHeader(parsedHeader);
-  const expectedPayloadBytes = computeCheckpointPayloadBytes({
+  const expectedPayloadBytes = computeCheckpointPayloadBytesFromSnapshot({
     batchSize: header.metadata.shape[0],
     sequenceLength: header.metadata.shape[1],
     hiddenSize: header.metadata.shape[2],
@@ -246,8 +250,11 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
 }
 
 export function computeCheckpointPayloadBytes(tensor: CheckpointTensorSpec): number {
-  validateCheckpointTensorSpec(tensor);
+  const owned = snapshotCheckpointTensorSpec(tensor);
+  return computeCheckpointPayloadBytesFromSnapshot(owned);
+}
 
+function computeCheckpointPayloadBytesFromSnapshot(tensor: CheckpointTensorSpec): number {
   const batchSequence = checkedMultiplySafeInteger(
     tensor.batchSize,
     tensor.sequenceLength,
@@ -284,60 +291,119 @@ function validateCheckpointFeasibilityReport(value: unknown): asserts value is W
   );
 }
 
-function validateCheckpointTransferMeasurementManifest(
-  manifest: CheckpointTransferMeasurementManifest,
-): void {
-  validateCheckpointPayloadInputs(manifest);
-  assertPositiveFiniteNumber(manifest.serializationBytesPerSecond, 'serializationBytesPerSecond');
-  assertPositiveFiniteNumber(manifest.deserializationBytesPerSecond, 'deserializationBytesPerSecond');
+function snapshotCheckpointTransferMeasurementManifest(
+  manifest: unknown,
+): CheckpointTransferMeasurementManifest {
+  const payload = snapshotCheckpointPayloadInputs(manifest);
+  const record = manifest as Record<string, unknown>;
+
+  const serializationBytesPerSecond = record.serializationBytesPerSecond;
+  assertPositiveFiniteNumber(serializationBytesPerSecond, 'serializationBytesPerSecond');
+
+  const deserializationBytesPerSecond = record.deserializationBytesPerSecond;
+  assertPositiveFiniteNumber(deserializationBytesPerSecond, 'deserializationBytesPerSecond');
+
+  const coordinatorTransferBytesPerSecond = record.coordinatorTransferBytesPerSecond;
   assertPositiveFiniteNumber(
-    manifest.coordinatorTransferBytesPerSecond,
+    coordinatorTransferBytesPerSecond,
     'coordinatorTransferBytesPerSecond',
   );
-  assertPositiveFiniteNumber(manifest.maxTransferMs, 'maxTransferMs');
-  assertNonNegativeSafeInteger(manifest.maxRetries, 'maxRetries');
-  assertNonNegativeSafeInteger(manifest.retryBackoffMs, 'retryBackoffMs');
 
-  if (manifest.simulatedFailuresBeforeSuccess !== undefined) {
+  const maxTransferMs = record.maxTransferMs;
+  assertPositiveFiniteNumber(maxTransferMs, 'maxTransferMs');
+
+  const maxRetries = record.maxRetries;
+  assertNonNegativeSafeInteger(maxRetries, 'maxRetries');
+
+  const retryBackoffMs = record.retryBackoffMs;
+  assertNonNegativeSafeInteger(retryBackoffMs, 'retryBackoffMs');
+
+  const simulatedFailuresBeforeSuccess = record.simulatedFailuresBeforeSuccess;
+  if (simulatedFailuresBeforeSuccess !== undefined) {
     assertNonNegativeSafeInteger(
-      manifest.simulatedFailuresBeforeSuccess,
+      simulatedFailuresBeforeSuccess,
       'simulatedFailuresBeforeSuccess',
     );
   }
-  if (manifest.expectedCheckpointBytes !== undefined) {
-    assertPositiveSafeInteger(manifest.expectedCheckpointBytes, 'expectedCheckpointBytes');
+
+  const expectedCheckpointBytes = record.expectedCheckpointBytes;
+  if (expectedCheckpointBytes !== undefined) {
+    assertPositiveSafeInteger(expectedCheckpointBytes, 'expectedCheckpointBytes');
   }
-  if (manifest.expectedCheckpointTransferMs !== undefined) {
+
+  const expectedCheckpointTransferMs = record.expectedCheckpointTransferMs;
+  if (expectedCheckpointTransferMs !== undefined) {
     assertNonNegativeFiniteNumber(
-      manifest.expectedCheckpointTransferMs,
+      expectedCheckpointTransferMs,
       'expectedCheckpointTransferMs',
     );
   }
+
+  return {
+    ...payload,
+    serializationBytesPerSecond,
+    deserializationBytesPerSecond,
+    coordinatorTransferBytesPerSecond,
+    maxTransferMs,
+    maxRetries,
+    retryBackoffMs,
+    simulatedFailuresBeforeSuccess,
+    expectedCheckpointBytes,
+    expectedCheckpointTransferMs,
+  };
 }
 
-function validateCheckpointPayloadInputs(
-  manifest: Pick<CheckpointTransferMeasurementManifest, 'requestId' | 'segmentIndex' | 'tensor'>,
-): void {
+function snapshotCheckpointPayloadInputs(
+  manifest: unknown,
+): Pick<CheckpointTransferMeasurementManifest, 'requestId' | 'segmentIndex' | 'tensor'> {
   if (!isRecord(manifest)) {
     throw new Error('checkpoint measurement manifest must be an object');
   }
-  if (typeof manifest.requestId !== 'string' || manifest.requestId.trim().length === 0) {
+
+  const requestId = manifest.requestId;
+  if (typeof requestId !== 'string' || requestId.trim().length === 0) {
     throw new Error('requestId must be a non-empty string');
   }
-  assertNonNegativeSafeInteger(manifest.segmentIndex, 'segmentIndex');
-  validateCheckpointTensorSpec(manifest.tensor);
+
+  const segmentIndex = manifest.segmentIndex;
+  assertNonNegativeSafeInteger(segmentIndex, 'segmentIndex');
+
+  const tensorValue = manifest.tensor;
+  const tensor = snapshotCheckpointTensorSpec(tensorValue);
+
+  return {
+    requestId,
+    segmentIndex,
+    tensor,
+  };
 }
 
-function validateCheckpointTensorSpec(tensor: CheckpointTensorSpec): void {
+function snapshotCheckpointTensorSpec(tensor: unknown): CheckpointTensorSpec {
   if (!tensor || typeof tensor !== 'object') {
     throw new Error('tensor must be an object');
   }
-  assertPositiveSafeInteger(tensor.batchSize, 'tensor.batchSize');
-  assertPositiveSafeInteger(tensor.sequenceLength, 'tensor.sequenceLength');
-  assertPositiveSafeInteger(tensor.hiddenSize, 'tensor.hiddenSize');
-  if (!isCheckpointMeasurementDtype(tensor.dtype)) {
+
+  const record = tensor as Record<string, unknown>;
+  const batchSize = record.batchSize;
+  assertPositiveSafeInteger(batchSize, 'tensor.batchSize');
+
+  const sequenceLength = record.sequenceLength;
+  assertPositiveSafeInteger(sequenceLength, 'tensor.sequenceLength');
+
+  const hiddenSize = record.hiddenSize;
+  assertPositiveSafeInteger(hiddenSize, 'tensor.hiddenSize');
+
+  const dtype = record.dtype;
+  if (!isCheckpointMeasurementDtype(dtype)) {
     throw new Error(`tensor.dtype must be one of: ${Object.keys(BYTES_PER_DTYPE).join(', ')}`);
   }
+
+  return {
+    batchSize,
+    sequenceLength,
+    hiddenSize,
+    dtype,
+  };
 }
 
 function validateSerializedCheckpointFrame(value: unknown): Uint8Array {
@@ -360,7 +426,7 @@ function validateCheckpointForSerialization(checkpoint: Checkpoint): ReturnType<
     segmentIndex: checkpoint.segmentIndex,
     metadata: checkpoint.metadata,
   });
-  const expectedPayloadBytes = computeCheckpointPayloadBytes({
+  const expectedPayloadBytes = computeCheckpointPayloadBytesFromSnapshot({
     batchSize: header.metadata.shape[0],
     sequenceLength: header.metadata.shape[1],
     hiddenSize: header.metadata.shape[2],
