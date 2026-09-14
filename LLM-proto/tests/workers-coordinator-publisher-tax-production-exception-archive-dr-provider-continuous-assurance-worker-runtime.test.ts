@@ -12,6 +12,7 @@ import {
 } from '../src/workers-coordinator-publisher-tax-production-exception-archive-dr-provider-continuous-assurance-worker-runtime-smoke.js';
 
 const SCHEDULED_AT = Date.parse('2026-08-20T00:30:00.000Z');
+const MINIFLARE_COLD_START_TEST_TIMEOUT_MS = 15_000;
 
 function engineResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -186,7 +187,7 @@ describe('publisher tax exception archive DR provider continuous assurance Worke
         await mf.dispose();
       }
     });
-  });
+  }, MINIFLARE_COLD_START_TEST_TIMEOUT_MS);
 
   it('serializes a concurrent duplicate while the first delivery owns the lease', async () => {
     await withPersistRoot(async (persistRoot) => {
@@ -219,7 +220,7 @@ describe('publisher tax exception archive DR provider continuous assurance Worke
         await mf.dispose();
       }
     });
-  });
+  }, MINIFLARE_COLD_START_TEST_TIMEOUT_MS);
 
   it('persists the original operational failure separately from pager failure', async () => {
     await withPersistRoot(async (persistRoot) => {
