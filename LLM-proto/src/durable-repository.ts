@@ -76,6 +76,34 @@ export function snapshotRecoveryOwnership(ownership: RecoveryOwnership): Recover
   return { requestId, ownerId, claimedAt, expiresAt };
 }
 
+/**
+ * Capture the complete active-lease identity without enumerating the caller
+ * object. Repository adapters persist and return only these plain snapshots so
+ * retained caller/read references cannot mutate lease identity or expiry.
+ */
+export function snapshotLease(lease: Lease): Lease {
+  const leaseId = lease.leaseId;
+  const requestId = lease.requestId;
+  const attemptId = lease.attemptId;
+  const workerId = lease.workerId;
+  const workerGeneration = lease.workerGeneration;
+  const segmentIndex = lease.segmentIndex;
+  const modelManifestDigest = lease.modelManifestDigest;
+  const issuedAt = lease.issuedAt;
+  const expiresAt = lease.expiresAt;
+  return {
+    leaseId,
+    requestId,
+    attemptId,
+    workerId,
+    workerGeneration,
+    segmentIndex,
+    modelManifestDigest,
+    issuedAt,
+    expiresAt,
+  };
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -255,11 +283,13 @@ export class InMemoryRepository implements DurableRepository {
   // --- lease ---
 
   putLease(lease: Lease): void {
-    this.activeLeases.set(lease.requestId, lease);
+    const owned = snapshotLease(lease);
+    this.activeLeases.set(owned.requestId, owned);
   }
 
   getActiveLease(requestId: InferenceRequestId): Lease | undefined {
-    return this.activeLeases.get(requestId);
+    const lease = this.activeLeases.get(requestId);
+    return lease === undefined ? undefined : snapshotLease(lease);
   }
 
   deleteLease(leaseId: LeaseId): void {
@@ -272,7 +302,7 @@ export class InMemoryRepository implements DurableRepository {
   }
 
   listActiveLeases(): readonly Lease[] {
-    return [...this.activeLeases.values()];
+    return [...this.activeLeases.values()].map(snapshotLease);
   }
 
   // --- checkpoint ---

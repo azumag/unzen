@@ -8,6 +8,7 @@
  */
 
 import {
+  snapshotLease,
   snapshotRecoveryOwnership,
   type AttemptPatch,
   type CheckpointStoreResult,
@@ -220,17 +221,19 @@ export class DurableObjectRepository implements DurableRepository {
 
   // leases
   putLease(lease: Lease): void {
-    const activeKey = leaseKey(lease.requestId);
+    const owned = snapshotLease(lease);
+    const activeKey = leaseKey(owned.requestId);
     const previous = this.storage.get<Lease>(activeKey);
-    if (previous && previous.leaseId !== lease.leaseId) {
+    if (previous && previous.leaseId !== owned.leaseId) {
       this.storage.delete(leaseIndexKey(previous.leaseId));
     }
-    this.storage.put(activeKey, lease);
-    this.storage.put(leaseIndexKey(lease.leaseId), lease.requestId);
+    this.storage.put(activeKey, owned);
+    this.storage.put(leaseIndexKey(owned.leaseId), owned.requestId);
   }
 
   getActiveLease(requestId: InferenceRequestId): Lease | undefined {
-    return this.storage.get<Lease>(leaseKey(requestId));
+    const lease = this.storage.get<Lease>(leaseKey(requestId));
+    return lease === undefined ? undefined : snapshotLease(lease);
   }
 
   deleteLease(leaseId: LeaseId): void {
@@ -244,7 +247,7 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   listActiveLeases(): readonly Lease[] {
-    return this.listValues<Lease>(P.lease);
+    return this.listValues<Lease>(P.lease).map(snapshotLease);
   }
 
   // checkpoints
