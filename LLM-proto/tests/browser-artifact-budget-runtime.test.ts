@@ -156,6 +156,46 @@ describe('browser runtime artifact budget', () => {
       absoluteMaxBytes: 20,
     }, [])).toThrow('artifact plan declaredBytes must not exceed runtime limits');
   });
+
+  it('snapshots caller-owned plan fields once before validation and result construction', () => {
+    const base = planSegmentArtifactBudget(segment(10, 4), 'p0');
+    const reads = {
+      declaredBytes: 0,
+      requiredMaxBytes: 0,
+      absoluteMaxBytes: 0,
+    };
+    const plan = {
+      ...base,
+      get declaredBytes() {
+        reads.declaredBytes += 1;
+        return reads.declaredBytes === 1 ? base.declaredBytes : base.declaredBytes + 100;
+      },
+      get requiredMaxBytes() {
+        reads.requiredMaxBytes += 1;
+        return reads.requiredMaxBytes === 1 ? base.requiredMaxBytes : 1;
+      },
+      get absoluteMaxBytes() {
+        reads.absoluteMaxBytes += 1;
+        return reads.absoluteMaxBytes === 1 ? base.absoluteMaxBytes : 1;
+      },
+    };
+
+    const result = verifyActualSegmentArtifactBudget(plan, [{ bytes: 6 }, { bytes: 4 }]);
+
+    expect(result).toMatchObject({
+      declaredBytes: base.declaredBytes,
+      requiredMaxBytes: base.requiredMaxBytes,
+      absoluteMaxBytes: base.absoluteMaxBytes,
+      actualBytes: 10,
+      actualMatchesDeclared: true,
+      verdict: 'accepted',
+    });
+    expect(reads).toEqual({
+      declaredBytes: 1,
+      requiredMaxBytes: 1,
+      absoluteMaxBytes: 1,
+    });
+  });
 });
 
 describe('bounded browser artifact stream reads', () => {
