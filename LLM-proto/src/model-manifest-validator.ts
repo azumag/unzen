@@ -101,6 +101,53 @@ const QUANTIZATION_PATTERN = /^(?:q|int|fp|bf)[0-9]+$/i;
 const MEMORY_BASIS_VALUES = ['measured', 'budgeted', 'estimated'] as const;
 const COMPONENT_ROLE_VALUES = ['graph', 'external-data'] as const;
 
+const MANIFEST_CANDIDATE_FIELDS = new Set<string>([
+  'schemaVersion',
+  'modelId',
+  'modelRevision',
+  'architecture',
+  'parameterCount',
+  'quantization',
+  'totalLayers',
+  'tokenizer',
+  'segments',
+  'checkpointFormat',
+  'runtimeRequirements',
+  'manifestDigest',
+  'signature',
+  'source',
+]);
+const RUNTIME_REQUIREMENT_CANDIDATE_FIELDS = new Set<string>([
+  'minimumVramMB',
+  'supportedQuantization',
+  'minimumRuntimeVersion',
+  'minimumChromeVersion',
+]);
+const SEGMENT_CANDIDATE_FIELDS = new Set<string>([
+  'index',
+  'layerStart',
+  'layerEnd',
+  'byteSize',
+  'sha256',
+  'contentType',
+  'encoding',
+  'artifactLocator',
+  'components',
+  'estimatedMemoryMB',
+  'memoryBasis',
+  'measurementConditions',
+  'compatibleRuntimes',
+  'minimumRuntimeVersion',
+]);
+const ARTIFACT_COMPONENT_CANDIDATE_FIELDS = new Set<string>([
+  'role',
+  'path',
+  'byteSize',
+  'sha256',
+  'contentType',
+  'artifactLocator',
+]);
+
 /**
  * Synchronous structural validation. This is the fail-fast gate used by the
  * Coordinator constructor: it never recomputes the digest (async crypto) but
@@ -267,107 +314,59 @@ export function assertValidModelManifest(
 
 /**
  * Copy every declared manifest field/container into plain owned objects before
- * structural validation. Each caller-owned property is read exactly once by
- * this boundary; all subsequent validation and async digest/signature work is
- * performed against this captured state.
+ * structural validation. Each caller-owned declared property is read exactly
+ * once by this boundary; unknown properties are ignored without invoking their
+ * getters. Declared own-property insertion order is retained because the
+ * current manifest digest contract serializes nested objects with JSON.stringify.
  */
 function snapshotManifestCandidate(input: Record<string, unknown>): Record<string, unknown> {
-  const schemaVersion = input.schemaVersion;
-  const modelId = input.modelId;
-  const modelRevision = input.modelRevision;
-  const architecture = input.architecture;
-  const parameterCount = input.parameterCount;
-  const quantization = input.quantization;
-  const totalLayers = input.totalLayers;
-  const tokenizer = input.tokenizer;
-  const checkpointFormat = input.checkpointFormat;
-  const manifestDigest = input.manifestDigest;
-  const signature = input.signature;
-  const source = input.source;
-  const rawRuntimeRequirements = input.runtimeRequirements;
-  const rawSegments = input.segments;
-
-  return Object.freeze({
-    schemaVersion,
-    modelId,
-    modelRevision,
-    architecture,
-    parameterCount,
-    quantization,
-    totalLayers,
-    tokenizer,
-    segments: snapshotUnknownArray(rawSegments, snapshotSegmentCandidate),
-    checkpointFormat,
-    runtimeRequirements: snapshotRuntimeRequirementsCandidate(rawRuntimeRequirements),
-    manifestDigest,
-    signature,
-    source,
+  return snapshotDeclaredRecord(input, MANIFEST_CANDIDATE_FIELDS, (key, value) => {
+    if (key === 'segments') {
+      return snapshotUnknownArray(value, snapshotSegmentCandidate);
+    }
+    if (key === 'runtimeRequirements') {
+      return snapshotRuntimeRequirementsCandidate(value);
+    }
+    return value;
   });
 }
 
 function snapshotRuntimeRequirementsCandidate(input: unknown): unknown {
   if (!isRecord(input)) return input;
-
-  const minimumVramMB = input.minimumVramMB;
-  const rawSupportedQuantization = input.supportedQuantization;
-  const minimumRuntimeVersion = input.minimumRuntimeVersion;
-  const minimumChromeVersion = input.minimumChromeVersion;
-
-  return Object.freeze({
-    minimumVramMB,
-    supportedQuantization: snapshotUnknownArray(rawSupportedQuantization),
-    minimumRuntimeVersion,
-    minimumChromeVersion,
-  });
+  return snapshotDeclaredRecord(input, RUNTIME_REQUIREMENT_CANDIDATE_FIELDS, (key, value) =>
+    key === 'supportedQuantization' ? snapshotUnknownArray(value) : value,
+  );
 }
 
 function snapshotSegmentCandidate(input: unknown): unknown {
   if (!isRecord(input)) return input;
-
-  const index = input.index;
-  const layerStart = input.layerStart;
-  const layerEnd = input.layerEnd;
-  const byteSize = input.byteSize;
-  const sha256 = input.sha256;
-  const contentType = input.contentType;
-  const encoding = input.encoding;
-  const artifactLocator = input.artifactLocator;
-  const rawComponents = input.components;
-  const estimatedMemoryMB = input.estimatedMemoryMB;
-  const memoryBasis = input.memoryBasis;
-  const measurementConditions = input.measurementConditions;
-  const rawCompatibleRuntimes = input.compatibleRuntimes;
-  const minimumRuntimeVersion = input.minimumRuntimeVersion;
-
-  return Object.freeze({
-    index,
-    layerStart,
-    layerEnd,
-    byteSize,
-    sha256,
-    contentType,
-    encoding,
-    artifactLocator,
-    components: snapshotUnknownArray(rawComponents, snapshotArtifactComponentCandidate),
-    estimatedMemoryMB,
-    memoryBasis,
-    measurementConditions,
-    compatibleRuntimes: snapshotUnknownArray(rawCompatibleRuntimes),
-    minimumRuntimeVersion,
+  return snapshotDeclaredRecord(input, SEGMENT_CANDIDATE_FIELDS, (key, value) => {
+    if (key === 'components') {
+      return snapshotUnknownArray(value, snapshotArtifactComponentCandidate);
+    }
+    if (key === 'compatibleRuntimes') {
+      return snapshotUnknownArray(value);
+    }
+    return value;
   });
 }
 
 function snapshotArtifactComponentCandidate(input: unknown): unknown {
   if (!isRecord(input)) return input;
+  return snapshotDeclaredRecord(input, ARTIFACT_COMPONENT_CANDIDATE_FIELDS);
+}
 
-  const role = input.role;
-  const path = input.path;
-  const byteSize = input.byteSize;
-  const sha256 = input.sha256;
-  const contentType = input.contentType;
-  const artifactLocator = input.artifactLocator;
-
-  return Object.freeze({ role, path, byteSize, sha256, contentType, artifactLocator });
+function snapshotDeclaredRecord(
+  input: Record<string, unknown>,
+  declaredFields: ReadonlySet<string>,
+  map: (key: string, value: unknown) => unknown = (_key, value) => value,
+): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {};
+  for (const key of Object.keys(input)) {
+    if (!declaredFields.has(key)) continue;
+    snapshot[key] = map(key, input[key]);
+  }
+  return Object.freeze(snapshot);
 }
 
 function snapshotUnknownArray(
