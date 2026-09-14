@@ -153,15 +153,25 @@ export class AdaptiveChunkDispatcher {
 
   constructor(options: AdaptiveChunkDispatcherOptions) {
     assertAdaptiveChunkDispatcherOptionsContainer(options);
-    if (!Array.isArray(options.segments)) {
+    const segmentInput = options.segments as unknown;
+    if (!Array.isArray(segmentInput)) {
       throw new Error('AdaptiveChunkDispatcher segments must be an array');
     }
-    if (options.segments.length === 0) {
+    const segmentCount = segmentInput.length;
+    if (segmentCount === 0) {
       throw new Error('AdaptiveChunkDispatcher requires at least one segment');
     }
 
+    // Detach the top-level membership before any segment field is observed.
+    // Runtime-originated accessors or proxies can otherwise replace a later
+    // slot while an earlier segment is being validated.
+    const segmentEntries: unknown[] = new Array(segmentCount);
+    for (let index = 0; index < segmentCount; index++) {
+      segmentEntries[index] = segmentInput[index];
+    }
+
     const segments = Object.freeze(
-      (options.segments as readonly unknown[]).map((segment, arrayIndex) =>
+      segmentEntries.map((segment, arrayIndex) =>
         Object.freeze(validateAdaptiveSegmentConfig(segment, arrayIndex)),
       ),
     );
