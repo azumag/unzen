@@ -6,6 +6,32 @@ const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const typedArrayTag = Object.getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
 const typedArrayByteLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength').get;
 
+function diagnosticValue(value) {
+  if (value === null) return 'null';
+  switch (typeof value) {
+    case 'string':
+      return value;
+    case 'number':
+      if (Number.isNaN(value)) return 'NaN';
+      if (value === Number.POSITIVE_INFINITY) return 'Infinity';
+      if (value === Number.NEGATIVE_INFINITY) return '-Infinity';
+      return `${value}`;
+    case 'boolean':
+      return value ? 'true' : 'false';
+    case 'bigint':
+      return `${value}n`;
+    case 'undefined':
+      return 'undefined';
+    case 'symbol':
+      return value.description === undefined ? 'Symbol' : `Symbol(${value.description})`;
+    case 'function':
+      return '[function]';
+    case 'object':
+    default:
+      return '[object]';
+  }
+}
+
 function cancelReadable(readable, reason) {
   try {
     // A tee branch's cancel promise waits for its sibling. Request cleanup,
@@ -52,10 +78,10 @@ export async function readResponseBytesBounded(
   } = {},
 ) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
-    throw new Error(`maxBytes must be a non-negative safe integer: ${maxBytes}`);
+    throw new Error(`maxBytes must be a non-negative safe integer: ${diagnosticValue(maxBytes)}`);
   }
   if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0)) {
-    throw new Error(`expectedBytes must be a non-negative safe integer: ${expectedBytes}`);
+    throw new Error(`expectedBytes must be a non-negative safe integer: ${diagnosticValue(expectedBytes)}`);
   }
   const effectiveMax = expectedBytes === undefined ? maxBytes : Math.min(maxBytes, expectedBytes);
   try {
