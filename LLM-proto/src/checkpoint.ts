@@ -12,6 +12,13 @@
 
 import type { Checkpoint, InferenceRequestId } from './types.js';
 
+interface ValidatedCheckpointCapture {
+  readonly requestId: InferenceRequestId;
+  readonly segmentIndex: number;
+  readonly hiddenStates: Uint8Array;
+  readonly metadata: Checkpoint['metadata'];
+}
+
 export class CheckpointStore {
   /** Exact request identity -> segment index -> checkpoint. */
   private readonly store = new Map<InferenceRequestId, Map<number, Checkpoint>>();
@@ -33,11 +40,13 @@ export class CheckpointStore {
   }
 
   /**
-   * Validate an untrusted checkpoint envelope without mutating the store.
-   * Pipeline result boundaries use the same authority as save() so malformed
-   * worker payloads are rejected before a worker becomes reusable.
+   * Capture and validate every consumed checkpoint field exactly once.
+   *
+   * This is intentionally separate from persistence: public validation callers
+   * do not pay for a hidden-state byte copy, while save() can bind validation,
+   * map identity, and the persisted snapshot to this same captured envelope.
    */
-  static assertValidCheckpoint(checkpoint: unknown): asserts checkpoint is Checkpoint {
+  private static captureValidatedCheckpoint(checkpoint: unknown): ValidatedCheckpointCapture {
     if (
       typeof checkpoint !== 'object' ||
       checkpoint === null ||
@@ -46,40 +55,87 @@ export class CheckpointStore {
       throw new Error('checkpoint must be a non-null object');
     }
 
-    const candidate = checkpoint as Checkpoint;
-    CheckpointStore.assertValidRequestId(candidate.requestId);
-    CheckpointStore.assertValidSegmentIndex(candidate.segmentIndex);
+    const candidate = checkpoint as Record<string, unknown>;
 
-    if (!(candidate.hiddenStates instanceof Uint8Array) || candidate.hiddenStates.byteLength === 0) {
+    const requestId = candidate.requestId;
+    CheckpointStore.assertValidRequestId(requestId);
+
+    const segmentIndex = candidate.segmentIndex;
+    CheckpointStore.assertValidSegmentIndex(segmentIndex);
+
+    const hiddenStates = candidate.hiddenStates;
+    if (!(hiddenStates instanceof Uint8Array) || hiddenStates.byteLength === 0) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
 
-    const metadata = candidate.metadata;
-    if (metadata === null || typeof metadata !== 'object') {
+    const metadataValue = candidate.metadata;
+    if (metadataValue === null || typeof metadataValue !== 'object') {
       throw new Error('checkpoint metadata must be an object');
     }
-    if (
-      !Array.isArray(metadata.shape) ||
-      metadata.shape.length === 0 ||
-      !metadata.shape.every((dimension) => Number.isSafeInteger(dimension) && dimension > 0)
-    ) {
+    const metadata = metadataValue as Record<string, unknown>;
+
+    const shapeValue = metadata.shape;
+    if (!Array.isArray(shapeValue)) {
       throw new Error('checkpoint metadata.shape must contain positive safe integers');
     }
-    if (typeof metadata.dtype !== 'string' || metadata.dtype.trim().length === 0) {
+    const shapeLength = shapeValue.length;
+    if (shapeLength === 0) {
+      throw new Error('checkpoint metadata.shape must contain positive safe integers');
+    }
+    const shapeMembers: unknown[] = new Array(shapeLength);
+    for (let index = 0; index < shapeLength; index += 1) {
+      shapeMembers[index] = shapeValue[index];
+    }
+    const shape: number[] = new Array(shapeLength);
+    for (let index = 0; index < shapeLength; index += 1) {
+      const dimension = shapeMembers[index];
+      if (typeof dimension !== 'number' || !Number.isSafeInteger(dimension) || dimension <= 0) {
+        throw new Error('checkpoint metadata.shape must contain positive safe integers');
+      }
+      shape[index] = dimension;
+    }
+
+    const dtype = metadata.dtype;
+    if (typeof dtype !== 'string' || dtype.trim().length === 0) {
       throw new Error('checkpoint metadata.dtype must be a non-empty string');
     }
-    if (!Number.isSafeInteger(metadata.sequenceLength) || metadata.sequenceLength < 0) {
+
+    const sequenceLength = metadata.sequenceLength;
+    if (typeof sequenceLength !== 'number' || !Number.isSafeInteger(sequenceLength) || sequenceLength < 0) {
       throw new Error(
         'checkpoint metadata.sequenceLength must be a non-negative safe integer',
       );
     }
-    if (!Number.isSafeInteger(metadata.timestamp) || metadata.timestamp < 0) {
+
+    const timestamp = metadata.timestamp;
+    if (typeof timestamp !== 'number' || !Number.isSafeInteger(timestamp) || timestamp < 0) {
       throw new Error('checkpoint metadata.timestamp must be a non-negative safe integer');
     }
+
+    return {
+      requestId,
+      segmentIndex,
+      hiddenStates,
+      metadata: {
+        shape,
+        dtype,
+        sequenceLength,
+        timestamp,
+      },
+    };
   }
 
   /**
-   * Take an ownership-isolated snapshot of a validated checkpoint.
+   * Validate an untrusted checkpoint envelope without mutating the store.
+   * Pipeline result boundaries use the same authority as save() so malformed
+   * worker payloads are rejected before a worker becomes reusable.
+   */
+  static assertValidCheckpoint(checkpoint: unknown): asserts checkpoint is Checkpoint {
+    CheckpointStore.captureValidatedCheckpoint(checkpoint);
+  }
+
+  /**
+   * Take an ownership-isolated snapshot of a store-owned checkpoint.
    *
    * `readonly` is only a TypeScript contract; Uint8Array and the shape array remain
    * mutable at runtime. Copy both mutable payloads whenever state crosses the store
@@ -101,14 +157,25 @@ export class CheckpointStore {
 
   /** Save a checkpoint produced by a completed segment. */
   save(checkpoint: Checkpoint): void {
-    CheckpointStore.assertValidCheckpoint(checkpoint);
+    const captured = CheckpointStore.captureValidatedCheckpoint(checkpoint);
+    const ownedCheckpoint: Checkpoint = {
+      requestId: captured.requestId,
+      segmentIndex: captured.segmentIndex,
+      hiddenStates: captured.hiddenStates.slice(),
+      metadata: {
+        shape: [...captured.metadata.shape],
+        dtype: captured.metadata.dtype,
+        sequenceLength: captured.metadata.sequenceLength,
+        timestamp: captured.metadata.timestamp,
+      },
+    };
 
-    let checkpoints = this.store.get(checkpoint.requestId);
+    let checkpoints = this.store.get(captured.requestId);
     if (!checkpoints) {
       checkpoints = new Map<number, Checkpoint>();
-      this.store.set(checkpoint.requestId, checkpoints);
+      this.store.set(captured.requestId, checkpoints);
     }
-    checkpoints.set(checkpoint.segmentIndex, CheckpointStore.snapshot(checkpoint));
+    checkpoints.set(captured.segmentIndex, ownedCheckpoint);
   }
 
   /** Retrieve a specific checkpoint by request and segment index. */
