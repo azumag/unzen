@@ -203,4 +203,78 @@ describe('LeaseManager direct runtime identity boundaries', () => {
     expect(manager.isActive(requestId)).toBe(false);
     expect(repository.leaseDeletes).toBe(1);
   });
+
+  it('matches against one owned snapshot of every caller-owned result identity field', () => {
+    const repository = new CountingLeaseRepository();
+    const manager = new LeaseManager(repository);
+    const { lease } = activateLease(manager);
+    const reads: Record<string, number> = {};
+    const source: Record<string, unknown> = {};
+    const values: Record<string, unknown> = {
+      requestId: lease.requestId,
+      attemptId: lease.attemptId,
+      leaseId: lease.leaseId,
+      workerId: lease.workerId,
+      workerGeneration: lease.workerGeneration,
+      segmentIndex: lease.segmentIndex,
+    };
+
+    for (const [field, value] of Object.entries(values)) {
+      Object.defineProperty(source, field, {
+        enumerable: true,
+        get() {
+          reads[field] = (reads[field] ?? 0) + 1;
+          if (reads[field] === 1) return value;
+          return field === 'segmentIndex' ? 999 : `drift-${field}`;
+        },
+      });
+    }
+
+    expect(manager.match(source as never, 2_000)).toEqual({ ok: true });
+    expect(reads).toEqual({
+      requestId: 1,
+      attemptId: 1,
+      leaseId: 1,
+      workerId: 1,
+      workerGeneration: 1,
+      segmentIndex: 1,
+    });
+  });
+
+  it('reclaims exactly the captured leaseId instead of re-reading a mutable accessor', () => {
+    const repository = new CountingLeaseRepository();
+    const manager = new LeaseManager(repository);
+    const { lease: target } = activateLease(manager);
+
+    const other = manager.issue({
+      requestId: generateRequestId(),
+      attemptId: generateAttemptId(),
+      leaseId: generateLeaseId(),
+      workerId: workerId('worker-2'),
+      workerGeneration: generateWorkerGeneration(),
+      segmentIndex: 0,
+      modelManifestDigest: MANIFEST_DIGEST,
+      issuedAt: 1_000,
+      expiresAt: 10_000,
+    });
+    manager.setActive(other);
+
+    let leaseIdReads = 0;
+    const identity = {
+      requestId: target.requestId,
+      attemptId: target.attemptId,
+      get leaseId() {
+        leaseIdReads += 1;
+        return leaseIdReads <= 2 ? target.leaseId : other.leaseId;
+      },
+      workerId: target.workerId,
+      workerGeneration: target.workerGeneration,
+      segmentIndex: target.segmentIndex,
+    };
+
+    expect(manager.reclaim(identity as never, 2_000)).toEqual({ ok: true });
+    expect(leaseIdReads).toBe(1);
+    expect(repository.getActiveLease(target.requestId)).toBeUndefined();
+    expect(repository.getActiveLease(other.requestId)).toEqual(other);
+  });
 });
