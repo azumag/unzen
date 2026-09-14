@@ -84,19 +84,30 @@ function isNonNegativeFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function readOwnEnumerableOption<T extends object, K extends keyof T>(
+  source: T | undefined,
+  key: K,
+): T[K] | undefined {
+  if (source === undefined) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (descriptor === undefined || descriptor.enumerable !== true) return undefined;
+  return source[key];
+}
+
 function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
   if (options !== undefined && !isRecord(options)) {
     throw new TypeError('SpanPipeline options must be a non-null, non-array object');
   }
 
-  // Do not spread or enumerate caller-owned objects. Capture the numeric control
-  // fields once, validate those owned primitives, and only then read the optional
-  // residency dependency so malformed timing input still fails before dependency
-  // side effects.
+  // Do not spread or enumerate caller-owned objects. Capture only declared
+  // own-enumerable fields, preserving the old spread semantics for inherited or
+  // non-enumerable properties. Numeric controls are validated before the optional
+  // residency dependency is read so malformed timing input still fails before
+  // dependency side effects.
   const source = options as Partial<SpanPipelineOptions> | undefined;
-  const capturedMaxRetries = source?.maxRetries;
-  const capturedPerSegmentTimeoutMs = source?.perSegmentTimeoutMs;
-  const capturedRetryDelayMs = source?.retryDelayMs;
+  const capturedMaxRetries = readOwnEnumerableOption(source, 'maxRetries');
+  const capturedPerSegmentTimeoutMs = readOwnEnumerableOption(source, 'perSegmentTimeoutMs');
+  const capturedRetryDelayMs = readOwnEnumerableOption(source, 'retryDelayMs');
 
   const maxRetries = capturedMaxRetries === undefined
     ? DEFAULT_OPTIONS.maxRetries
@@ -118,7 +129,7 @@ function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
     throw new TypeError('SpanPipeline retryDelayMs must be a non-negative finite number');
   }
 
-  const artifactResidencyLedger = source?.artifactResidencyLedger;
+  const artifactResidencyLedger = readOwnEnumerableOption(source, 'artifactResidencyLedger');
   return artifactResidencyLedger === undefined
     ? {
         maxRetries,
