@@ -71,19 +71,30 @@ function isNonNegativeFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
+function readOwnEnumerableOption<T extends object, K extends keyof T>(
+  source: T | undefined,
+  key: K,
+): T[K] | undefined {
+  if (source === undefined) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (descriptor === undefined || descriptor.enumerable !== true) return undefined;
+  return source[key];
+}
+
 function resolvePipelineOptions(options: unknown): PipelineOptions {
   if (options !== undefined && !isRecord(options)) {
     throw new TypeError('Pipeline options must be a non-null, non-array object');
   }
 
   // Runtime callers can supply accessor/Proxy-backed objects despite the static
-  // Partial<PipelineOptions> type. Read only declared fields, exactly once, so
-  // validation and retained state are bound to the same caller-observed values
-  // without enumerating unrelated properties.
+  // Partial<PipelineOptions> type. Read only declared own-enumerable fields,
+  // exactly once, so validation and retained state are bound to the same value
+  // without enumerating unrelated properties or changing spread-era inheritance
+  // semantics.
   const source = options as Partial<PipelineOptions> | undefined;
-  const capturedMaxRetries = source?.maxRetries;
-  const capturedSegmentTimeoutMs = source?.segmentTimeoutMs;
-  const capturedRetryDelayMs = source?.retryDelayMs;
+  const capturedMaxRetries = readOwnEnumerableOption(source, 'maxRetries');
+  const capturedSegmentTimeoutMs = readOwnEnumerableOption(source, 'segmentTimeoutMs');
+  const capturedRetryDelayMs = readOwnEnumerableOption(source, 'retryDelayMs');
 
   const maxRetries = capturedMaxRetries === undefined
     ? DEFAULT_OPTIONS.maxRetries
