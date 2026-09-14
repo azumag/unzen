@@ -1,7 +1,7 @@
 /**
  * WorkerPool: manages browser workers with tier-based priority selection.
  *
- * Workers are categorized into 3 tiers by availability (PLAN.md 4.5.4):
+ * Workers are categorized into 3 tiers (PLAN.md 4.5.4):
  *   Tier 1: 24h devices (signage, kiosks) - highest priority
  *   Tier 2: Long-running (OBS, extensions, Electron)
  *   Tier 3: Normal web visitors - burst capacity
