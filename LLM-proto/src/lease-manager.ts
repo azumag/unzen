@@ -104,9 +104,10 @@ export class LeaseManager {
    * result must never reclaim a newer retry/reconnect lease for the same request.
    */
   reclaim(identity: ResultIdentity, now: number): IdentityMatch {
-    const match = this.match(identity, now);
+    const ownedIdentity = this.captureValidResultIdentity(identity, now);
+    const match = this.matchOwned(ownedIdentity, now);
     if (!match.ok) return match;
-    this.store.deleteLease(identity.leaseId);
+    this.store.deleteLease(ownedIdentity.leaseId);
     return { ok: true };
   }
 
@@ -125,7 +126,11 @@ export class LeaseManager {
    * Requires an EXACT match on every identity field plus a live lease.
    */
   match(identity: ResultIdentity, now: number): IdentityMatch {
-    this.assertValidResultIdentity(identity, now);
+    const ownedIdentity = this.captureValidResultIdentity(identity, now);
+    return this.matchOwned(ownedIdentity, now);
+  }
+
+  private matchOwned(identity: ResultIdentity, now: number): IdentityMatch {
     const lease = this.store.getActiveLease(identity.requestId);
     if (!lease) return { ok: false, reason: 'no-active-lease' };
     if (now > lease.expiresAt) return { ok: false, reason: 'lease-expired' };
@@ -167,8 +172,12 @@ export class LeaseManager {
     }
   }
 
-  /** Validate result/failure identity before lease lookup or expiry comparison. */
-  private assertValidResultIdentity(identity: unknown, now: unknown): void {
+  /**
+   * Validate and detach result/failure identity before lease lookup or expiry
+   * comparison. Every caller-owned field is read once so accessors or Proxies
+   * cannot change repository keys between validation, matching, and reclaim.
+   */
+  private captureValidResultIdentity(identity: unknown, now: unknown): ResultIdentity {
     if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
       throw new UnzenError(
         'lease result identity must be a non-null object',
@@ -177,24 +186,49 @@ export class LeaseManager {
     }
 
     const candidate = identity as Record<string, unknown>;
-    const stringFields = [
-      'requestId',
-      'attemptId',
-      'leaseId',
-      'workerId',
-      'workerGeneration',
-    ] as const;
-    for (const field of stringFields) {
-      const value = candidate[field];
-      if (typeof value !== 'string' || value.trim().length === 0) {
-        throw new UnzenError(
-          `lease result identity ${field} must be a non-empty string`,
-          ErrorCode.ProtocolViolation,
-        );
-      }
+
+    const requestId = candidate.requestId;
+    if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+      throw new UnzenError(
+        'lease result identity requestId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
     }
 
-    if (!Number.isSafeInteger(candidate.segmentIndex) || (candidate.segmentIndex as number) < 0) {
+    const attemptId = candidate.attemptId;
+    if (typeof attemptId !== 'string' || attemptId.trim().length === 0) {
+      throw new UnzenError(
+        'lease result identity attemptId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+
+    const leaseId = candidate.leaseId;
+    if (typeof leaseId !== 'string' || leaseId.trim().length === 0) {
+      throw new UnzenError(
+        'lease result identity leaseId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+
+    const workerId = candidate.workerId;
+    if (typeof workerId !== 'string' || workerId.trim().length === 0) {
+      throw new UnzenError(
+        'lease result identity workerId must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+
+    const workerGeneration = candidate.workerGeneration;
+    if (typeof workerGeneration !== 'string' || workerGeneration.trim().length === 0) {
+      throw new UnzenError(
+        'lease result identity workerGeneration must be a non-empty string',
+        ErrorCode.ProtocolViolation,
+      );
+    }
+
+    const segmentIndex = candidate.segmentIndex;
+    if (!Number.isSafeInteger(segmentIndex) || (segmentIndex as number) < 0) {
       throw new UnzenError(
         'lease result identity segmentIndex must be a non-negative safe integer',
         ErrorCode.ProtocolViolation,
@@ -207,5 +241,14 @@ export class LeaseManager {
         ErrorCode.ProtocolViolation,
       );
     }
+
+    return {
+      requestId: requestId as InferenceRequestId,
+      attemptId: attemptId as AttemptId,
+      leaseId: leaseId as LeaseId,
+      workerId: workerId as WorkerId,
+      workerGeneration: workerGeneration as WorkerGeneration,
+      segmentIndex: segmentIndex as number,
+    };
   }
 }
