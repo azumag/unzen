@@ -94,6 +94,32 @@ describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
     },
   );
 
+  it('captures tier once and stores the same validated tier', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments: makeSegments(1),
+    });
+    let tierReads = 0;
+    const registration = Object.defineProperty({
+      id: 'single-read-tier-worker',
+      telemetry: baseTelemetry,
+    }, 'tier', {
+      configurable: true,
+      get() {
+        tierReads += 1;
+        return tierReads === 1 ? WorkerTier.TIER_2 : 99;
+      },
+    });
+
+    expect(() => dispatcher.registerWorker(
+      registration as unknown as AdaptiveWorkerRegistration,
+    )).not.toThrow();
+    expect(tierReads).toBe(1);
+
+    const report = dispatcher.run('after-single-read-tier-registration');
+    expect(report.assignments).toHaveLength(1);
+    expect(report.assignments[0].tier).toBe(WorkerTier.TIER_2);
+  });
+
   it('rejects an invalid tier before replacing worker or manifest-backed residency state', () => {
     const { artifact, segment } = manifestBackedFixture();
     const ledger = new ArtifactResidencyLedger([artifact]);

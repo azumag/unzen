@@ -242,13 +242,14 @@ export class AdaptiveChunkDispatcher {
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     assertAdaptiveWorkerRegistrationContainer(registration);
     const id = workerId(registration.id);
-    assertWorkerTier(registration.tier);
+    const tier = registration.tier;
+    assertWorkerTier(tier);
     const telemetry = snapshotWorkerTelemetry(registration.telemetry);
     this.validateTelemetry(telemetry);
     const cacheHits = this.validateAndSynchronizeCacheResidency(id, telemetry);
     this.workers.set(id, {
       id,
-      tier: registration.tier,
+      tier,
       telemetry,
       lastAssignmentOrder: 0,
       residentSegments: new Set(cacheHits),
