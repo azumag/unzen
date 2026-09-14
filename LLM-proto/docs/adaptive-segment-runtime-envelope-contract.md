@@ -12,6 +12,7 @@ The dispatcher binds construction to one caller-observed segment container and o
 - array length and every top-level segment reference are captured by fixed numeric position before any segment field is read
 - caller-overridden iteration is not used to capture segment membership
 - every captured segment must be a non-null, non-array object
+- each captured segment field (`index`, `layerStart`, `layerEnd`, `modelWeightHash`, `estimatedVramMB`) is read exactly once into a local primitive before validation
 - `index` must be a non-negative safe integer and equal its array position
 - `layerStart` must be a non-negative safe integer
 - `layerEnd` must be a safe integer greater than or equal to `layerStart`
@@ -19,7 +20,7 @@ The dispatcher binds construction to one caller-observed segment container and o
 - `modelWeightHash` must be a non-empty string
 - `estimatedVramMB` must be a positive finite number
 
-After membership capture, validation proceeds in array order and the dispatcher stores frozen plain-object segment snapshots. A getter on an earlier segment therefore cannot replace a later caller-owned array slot and cause a different segment object to enter the same constructor operation. Later caller mutation likewise cannot change routing geometry, cache-hit range validation, or manifest-backed compatibility decisions.
+After membership capture, validation proceeds in array order. The same captured primitive values drive validation, error reporting, and construction of the frozen plain-object segment snapshots. A getter on an earlier segment therefore cannot replace a later caller-owned array slot, and a valid-first / altered-second getter on an individual field cannot make the accepted value differ from the value retained by the dispatcher. Later caller mutation likewise cannot change routing geometry, cache-hit range validation, or manifest-backed compatibility decisions.
 
 ## Compatibility
 
