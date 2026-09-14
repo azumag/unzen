@@ -18,6 +18,8 @@ Provided dependencies must be concrete prototype instances:
 - `transport` must be an `AllowlistedPrototypeTransport`;
 - `segment0`, `segment1Primary`, and `segment1Standby` must be `SimulatedPrototypeWorker` instances.
 
+Each dependency field is captured from the caller-owned options object exactly once. Validation and the retained runner state both use that captured value, and the validator returns a new owned dependency envelope instead of returning the caller's original object. Accessor- or Proxy-backed inputs therefore cannot pass validation with one dependency and substitute a different value when the constructor initializes the runner. Unrelated enumerable properties are not traversed.
+
 The runner also validates fixed topology before accepting the dependencies:
 
 - `segment0.segmentIndex === 0`;
