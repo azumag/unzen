@@ -19,10 +19,10 @@ const executor: DurableSegmentExecutor = {
   },
 };
 
-async function fixture(usePublicBoundary: boolean) {
+async function fixture(usePublicBoundary: boolean, maxCheckpointBytes = 2) {
   const repo = new InMemoryRepository();
   const manifest = createFixtureModelManifest({ totalSegments: 2 });
-  const options = { allowFixtureManifest: true, maxCheckpointBytes: 2 } as const;
+  const options = { allowFixtureManifest: true, maxCheckpointBytes } as const;
   const coord = usePublicBoundary
     ? new DurableCoordinator(executor, manifest, options, repo)
     : new DurableCoordinatorCore(executor, manifest, options, repo);
@@ -74,6 +74,23 @@ async function fixture(usePublicBoundary: boolean) {
   return { coord, repo, requestId, result, createdAt };
 }
 
+function trackCheckpointWork() {
+  const NativeUint8Array = globalThis.Uint8Array;
+  let typedArrayCopies = 0;
+  const TrackedUint8Array = new Proxy(NativeUint8Array, {
+    construct(target, args, newTarget) {
+      if (args[0] instanceof NativeUint8Array) typedArrayCopies += 1;
+      return Reflect.construct(target, args, newTarget);
+    },
+  });
+  vi.stubGlobal('Uint8Array', TrackedUint8Array);
+  const digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest');
+  return {
+    copies: () => typedArrayCopies,
+    digestSpy,
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -85,24 +102,34 @@ describe.each([
 ] as const)('%s checkpoint pre-copy budget', (_name, usePublicBoundary) => {
   it('rejects an oversized payload before any Uint8Array ownership copy or digest', async () => {
     const f = await fixture(usePublicBoundary);
-    const NativeUint8Array = globalThis.Uint8Array;
-    let typedArrayCopies = 0;
-    const TrackedUint8Array = new Proxy(NativeUint8Array, {
-      construct(target, args, newTarget) {
-        if (args[0] instanceof NativeUint8Array) typedArrayCopies += 1;
-        return Reflect.construct(target, args, newTarget);
-      },
-    });
-    vi.stubGlobal('Uint8Array', TrackedUint8Array);
-    const digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest');
+    const work = trackCheckpointWork();
 
     await expect(f.coord.acceptResult(f.result, f.createdAt)).resolves.toEqual({
       kind: 'checkpoint-rejected',
       message: 'checkpoint payload 3B exceeds the 2B limit',
     });
 
-    expect(typedArrayCopies).toBe(0);
-    expect(digestSpy).not.toHaveBeenCalled();
+    expect(work.copies()).toBe(0);
+    expect(work.digestSpy).not.toHaveBeenCalled();
     expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
   });
+});
+
+describe('direct durable core checkpoint budget configuration', () => {
+  it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid pre-copy ceiling %p before any ownership copy, digest, or persistence',
+    async (maxCheckpointBytes) => {
+      const f = await fixture(false, maxCheckpointBytes);
+      const work = trackCheckpointWork();
+
+      await expect(f.coord.acceptResult(f.result, f.createdAt)).resolves.toEqual({
+        kind: 'checkpoint-rejected',
+        message: 'checkpoint payload byte limit must be a non-negative safe integer',
+      });
+
+      expect(work.copies()).toBe(0);
+      expect(work.digestSpy).not.toHaveBeenCalled();
+      expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+    },
+  );
 });
