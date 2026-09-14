@@ -45,6 +45,86 @@ describe('SpanRouter segment ownership', () => {
     ]);
   });
 
+  it('captures each consumed field once before handing the owned snapshot to residency checks', () => {
+    const fields = [
+      'index',
+      'layerStart',
+      'layerEnd',
+      'modelWeightHash',
+      'estimatedVramMB',
+    ] as const;
+    const stable: SegmentConfig = {
+      index: 0,
+      layerStart: 0,
+      layerEnd: 3,
+      modelWeightHash: '1'.repeat(64),
+      estimatedVramMB: 100,
+    };
+    const altered: SegmentConfig = {
+      index: 99,
+      layerStart: 40,
+      layerEnd: 400,
+      modelWeightHash: 'changed',
+      estimatedVramMB: 10_000,
+    };
+    const reads = new Map<(typeof fields)[number], number>();
+    const runtimeSegment: Record<string, unknown> = {};
+
+    for (const field of fields) {
+      Object.defineProperty(runtimeSegment, field, {
+        enumerable: true,
+        get() {
+          const count = (reads.get(field) ?? 0) + 1;
+          reads.set(field, count);
+          return count === 1 ? stable[field] : altered[field];
+        },
+      });
+    }
+
+    let compatibleSegments: readonly SegmentConfig[] | undefined;
+    const ledger = {
+      assertCompatibleSegments(segments: readonly SegmentConfig[]) {
+        compatibleSegments = segments;
+      },
+    } as unknown as ArtifactResidencyLedger;
+
+    new SpanRouter(
+      [runtimeSegment] as unknown as readonly SegmentConfig[],
+      new WorkerPool(),
+      ledger,
+    );
+
+    expect(compatibleSegments?.[0]).toEqual(stable);
+    for (const field of fields) {
+      expect(reads.get(field)).toBe(1);
+    }
+  });
+
+  it('preserves fail-fast field ordering when an early captured field is invalid', () => {
+    let indexReads = 0;
+    let layerStartReads = 0;
+    const runtimeSegment = {
+      get index() {
+        indexReads += 1;
+        return -1;
+      },
+      get layerStart() {
+        layerStartReads += 1;
+        return 0;
+      },
+      layerEnd: 3,
+      modelWeightHash: '1'.repeat(64),
+      estimatedVramMB: 100,
+    };
+
+    expect(() => new SpanRouter(
+      [runtimeSegment] as unknown as readonly SegmentConfig[],
+      new WorkerPool(),
+    )).toThrow(/SpanRouter segment index must be a non-negative safe integer/);
+    expect(indexReads).toBe(1);
+    expect(layerStartReads).toBe(0);
+  });
+
   it('rejects non-array segment input before routing', () => {
     expect(() => new SpanRouter(
       { 0: makeMutableSegments()[0], length: 1 } as unknown as readonly SegmentConfig[],
