@@ -8,6 +8,7 @@
  */
 
 import {
+  snapshotAttemptRecord,
   snapshotLease,
   snapshotRecoveryOwnership,
   type AttemptPatch,
@@ -199,12 +200,12 @@ export class DurableObjectRepository implements DurableRepository {
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void {
     const key = attemptsKey(requestId);
     const attempts = this.storage.get<AttemptRecord[]>(key) ?? [];
-    attempts.push(attempt);
+    attempts.push(snapshotAttemptRecord(attempt));
     this.storage.put(key, attempts);
   }
 
   listAttempts(requestId: InferenceRequestId): readonly AttemptRecord[] {
-    return this.storage.get<AttemptRecord[]>(attemptsKey(requestId)) ?? [];
+    return (this.storage.get<AttemptRecord[]>(attemptsKey(requestId)) ?? []).map(snapshotAttemptRecord);
   }
 
   updateAttempt(requestId: InferenceRequestId, attemptId: AttemptId, patch: AttemptPatch): void {
