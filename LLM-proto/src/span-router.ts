@@ -54,12 +54,21 @@ export class SpanRouter {
       throw new Error('SpanRouter segments must be an array');
     }
 
+    // Fix caller-owned array membership before validating any segment fields.
+    // A getter on segment 0 may have side effects on the caller's array; those
+    // effects must not replace segment 1 after construction has already begun.
+    // Read by fixed position rather than a caller-overridable iterator.
+    const segmentCount = segments.length;
+    const capturedSegments: unknown[] = [];
+    for (let position = 0; position < segmentCount; position++) {
+      capturedSegments.push((segments as readonly unknown[])[position]);
+    }
+
     // Segment configs may cross a runtime/deserialization boundary even though
-    // callers see a TypeScript interface. Validate every field before creating
-    // the router-owned snapshot or delegating to manifest-backed residency
-    // checks, which otherwise assume string/numeric operations are safe.
+    // callers see a TypeScript interface. Validate every field only after the
+    // membership snapshot above has been detached from the caller-owned array.
     const segmentSnapshot = Object.freeze(
-      (segments as readonly unknown[]).map((segment, arrayIndex) =>
+      capturedSegments.map((segment, arrayIndex) =>
         Object.freeze(validateSegmentConfig(segment, arrayIndex)),
       ),
     );
