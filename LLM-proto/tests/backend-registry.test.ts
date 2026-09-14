@@ -181,6 +181,63 @@ describe('BackendRegistry (capability-based candidate selection)', () => {
     expect(capabilityMatchesRequest(nonStreaming, request({ requiresStreaming: false }))).toBe(true);
   });
 
+  it('captures routing request fields exactly once before validation and matching', () => {
+    const capability = capabilityFor('server-fallback', {
+      streaming: false,
+      contextWindowTokens: 512,
+    });
+
+    let protocolReads = 0;
+    const changingProtocol = request();
+    Object.defineProperty(changingProtocol, 'protocolVersion', {
+      configurable: true,
+      get() {
+        protocolReads += 1;
+        return protocolReads === 1 ? INFERENCE_PROTOCOL_VERSION : '0.9.0';
+      },
+    });
+    expect(capabilityMatchesRequest(capability, changingProtocol)).toBe(true);
+    expect(protocolReads).toBe(1);
+
+    let maxTokenReads = 0;
+    const changingMaxTokens = request();
+    Object.defineProperty(changingMaxTokens, 'maxTokens', {
+      configurable: true,
+      get() {
+        maxTokenReads += 1;
+        return maxTokenReads === 1 ? 256 : 4096;
+      },
+    });
+    expect(capabilityMatchesRequest(capability, changingMaxTokens)).toBe(true);
+    expect(maxTokenReads).toBe(1);
+
+    let streamingReads = 0;
+    const changingStreaming = request();
+    Object.defineProperty(changingStreaming, 'requiresStreaming', {
+      configurable: true,
+      get() {
+        streamingReads += 1;
+        return streamingReads === 1 ? false : true;
+      },
+    });
+    expect(capabilityMatchesRequest(capability, changingStreaming)).toBe(true);
+    expect(streamingReads).toBe(1);
+  });
+
+  it('fails closed when a routing request accessor throws', () => {
+    const capability = capabilityFor('server-fallback');
+    const throwingRequest = request();
+    Object.defineProperty(throwingRequest, 'maxTokens', {
+      configurable: true,
+      get() {
+        throw new Error('untrusted getter');
+      },
+    });
+
+    expect(() => capabilityMatchesRequest(capability, throwingRequest)).not.toThrow();
+    expect(capabilityMatchesRequest(capability, throwingRequest)).toBe(false);
+  });
+
   it('fails closed malformed runtime request routing envelopes without throwing', () => {
     const capability = capabilityFor('server-fallback');
     const malformed: readonly unknown[] = [
