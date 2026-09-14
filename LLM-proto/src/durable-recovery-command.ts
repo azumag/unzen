@@ -46,6 +46,24 @@ export type DurableRecoveryCommandResult =
     }
   | { readonly kind: 'state-changed'; readonly stage?: RequestRecord['stage'] };
 
+function snapshotRecoveryCommandOptions(
+  options: DurableRecoveryCommandOptions,
+): DurableRecoveryCommandOptions {
+  const ownerId = options.ownerId;
+  const now = options.now;
+  const ownershipTtlMs = options.ownershipTtlMs;
+  const maxRetries = options.maxRetries;
+  const manifestDigest = options.manifestDigest;
+
+  return Object.freeze({
+    ownerId,
+    now,
+    ownershipTtlMs,
+    maxRetries,
+    manifestDigest,
+  });
+}
+
 function sameLease(left: Lease, right: Lease): boolean {
   return left.leaseId === right.leaseId
     && left.requestId === right.requestId
@@ -141,13 +159,18 @@ export function beginDurableRecovery(
     return { kind: 'terminal', stage: initial.stage };
   }
 
+  // Runtime callers can still supply getter/Proxy-backed objects despite the
+  // readonly TypeScript surface. Own every consumed option before the first
+  // recovery mutation so one attempt uses one owner/time/planner coordinate.
+  const ownedOptions = snapshotRecoveryCommandOptions(options);
+
   const ownership: RecoveryOwnership = {
     requestId,
-    ownerId: options.ownerId,
-    claimedAt: options.now,
-    expiresAt: options.now + options.ownershipTtlMs,
+    ownerId: ownedOptions.ownerId,
+    claimedAt: ownedOptions.now,
+    expiresAt: ownedOptions.now + ownedOptions.ownershipTtlMs,
   };
-  const claim = repo.claimRecoveryOwnership(ownership, options.now);
+  const claim = repo.claimRecoveryOwnership(ownership, ownedOptions.now);
   if (claim === 'owned-by-peer') {
     return {
       kind: 'owned-by-peer',
@@ -159,7 +182,7 @@ export function beginDurableRecovery(
   // gap between the initial scan and the command mutation.
   const request = repo.getRequest(requestId);
   if (!request) {
-    release(repo, requestId, options.ownerId);
+    release(repo, requestId, ownedOptions.ownerId);
     return { kind: 'missing' };
   }
   const plan = planDurableRequestRecovery(
@@ -170,19 +193,19 @@ export function beginDurableRecovery(
       cancellationPresent: repo.getCancellation(requestId) !== undefined,
     },
     {
-      now: options.now,
-      maxRetries: options.maxRetries,
-      manifestDigest: options.manifestDigest,
+      now: ownedOptions.now,
+      maxRetries: ownedOptions.maxRetries,
+      manifestDigest: ownedOptions.manifestDigest,
     },
   );
 
   if (plan.kind === 'terminal') {
-    release(repo, requestId, options.ownerId);
+    release(repo, requestId, ownedOptions.ownerId);
     return { kind: 'terminal', stage: plan.stage };
   }
 
   if (plan.kind === 'wait-active-owner') {
-    release(repo, requestId, options.ownerId);
+    release(repo, requestId, ownedOptions.ownerId);
     return {
       kind: 'wait-active-owner',
       lease: plan.lease,
@@ -192,11 +215,11 @@ export function beginDurableRecovery(
 
   if (plan.kind === 'cancel') {
     if (!reclaimExactLease(repo, plan.reclaimLease)) {
-      release(repo, requestId, options.ownerId);
+      release(repo, requestId, ownedOptions.ownerId);
       return { kind: 'state-changed', stage: repo.getRequest(requestId)?.stage };
     }
-    const ok = terminalize(repo, requestId, 'cancelled', options.now);
-    release(repo, requestId, options.ownerId);
+    const ok = terminalize(repo, requestId, 'cancelled', ownedOptions.now);
+    release(repo, requestId, ownedOptions.ownerId);
     return ok
       ? { kind: 'terminal', stage: 'cancelled' }
       : { kind: 'state-changed', stage: repo.getRequest(requestId)?.stage };
@@ -204,25 +227,25 @@ export function beginDurableRecovery(
 
   if (plan.kind === 'fail') {
     if (!reclaimExactLease(repo, plan.reclaimLease)) {
-      release(repo, requestId, options.ownerId);
+      release(repo, requestId, ownedOptions.ownerId);
       return { kind: 'state-changed', stage: repo.getRequest(requestId)?.stage };
     }
-    const ok = terminalize(repo, requestId, 'failed', options.now, {
+    const ok = terminalize(repo, requestId, 'failed', ownedOptions.now, {
       code: plan.code,
       message: plan.message,
     });
-    release(repo, requestId, options.ownerId);
+    release(repo, requestId, ownedOptions.ownerId);
     return ok
       ? { kind: 'terminal', stage: 'failed' }
       : { kind: 'state-changed', stage: repo.getRequest(requestId)?.stage };
   }
 
   if (!reclaimExactLease(repo, plan.reclaimLease)) {
-    release(repo, requestId, options.ownerId);
+    release(repo, requestId, ownedOptions.ownerId);
     return { kind: 'state-changed', stage: repo.getRequest(requestId)?.stage };
   }
   if (plan.normalizeToQueued && !normalizeResumeStage(repo, requestId, plan)) {
-    release(repo, requestId, options.ownerId);
+    release(repo, requestId, ownedOptions.ownerId);
     return { kind: 'state-changed', stage: repo.getRequest(requestId)?.stage };
   }
 
