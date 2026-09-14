@@ -75,13 +75,20 @@ export class CheckpointStore {
     const metadata = metadataValue as Record<string, unknown>;
 
     const shapeValue = metadata.shape;
-    if (!Array.isArray(shapeValue) || shapeValue.length === 0) {
+    if (!Array.isArray(shapeValue)) {
       throw new Error('checkpoint metadata.shape must contain positive safe integers');
     }
     const shapeLength = shapeValue.length;
+    if (shapeLength === 0) {
+      throw new Error('checkpoint metadata.shape must contain positive safe integers');
+    }
+    const shapeMembers: unknown[] = new Array(shapeLength);
+    for (let index = 0; index < shapeLength; index += 1) {
+      shapeMembers[index] = shapeValue[index];
+    }
     const shape: number[] = new Array(shapeLength);
     for (let index = 0; index < shapeLength; index += 1) {
-      const dimension = shapeValue[index];
+      const dimension = shapeMembers[index];
       if (typeof dimension !== 'number' || !Number.isSafeInteger(dimension) || dimension <= 0) {
         throw new Error('checkpoint metadata.shape must contain positive safe integers');
       }
