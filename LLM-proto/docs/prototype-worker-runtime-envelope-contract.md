@@ -12,6 +12,8 @@ The top-level options value must be a non-null, non-array object. Field validati
 - `vramMB` must be a positive finite runtime number.
 - `failFirstRun`, when supplied, must be boolean. `undefined` preserves the existing default of `false`.
 
+`failFirstRun` is captured from the caller-owned options object exactly once. Validation and the retained one-shot failure flag both use that same captured value, so an accessor or Proxy cannot return a valid value during validation and a different value when worker state is initialized. An explicit or defaulted value also cannot trigger duplicate getter side effects.
+
 Rejected input fails before `cachedSegments`, retry behavior, CDN locator selection, or report metadata can depend on malformed values.
 
 ## Preserved behavior

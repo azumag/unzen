@@ -82,6 +82,46 @@ describe('SimulatedPrototypeWorker runtime options', () => {
     },
   );
 
+  it('reads explicit failFirstRun exactly once', () => {
+    let reads = 0;
+    const options = {
+      id: 'single-read-fail-first-worker',
+      segmentIndex: 0,
+      webgpuAdapter: 'adapter-a',
+      vramMB: 4096,
+    } as PrototypeWorkerOptions;
+    Object.defineProperty(options, 'failFirstRun', {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return reads === 1 ? false : 'altered';
+      },
+    });
+
+    expect(() => new SimulatedPrototypeWorker(options)).not.toThrow();
+    expect(reads).toBe(1);
+  });
+
+  it('reads undefined/defaulted failFirstRun exactly once', () => {
+    let reads = 0;
+    const options = {
+      id: 'defaulted-fail-first-worker',
+      segmentIndex: 0,
+      webgpuAdapter: 'adapter-a',
+      vramMB: 4096,
+    } as PrototypeWorkerOptions;
+    Object.defineProperty(options, 'failFirstRun', {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return undefined;
+      },
+    });
+
+    expect(() => new SimulatedPrototypeWorker(options)).not.toThrow();
+    expect(reads).toBe(1);
+  });
+
   it('preserves valid metadata and undefined failFirstRun defaults', () => {
     const worker = new SimulatedPrototypeWorker({
       id: 'worker-a',
@@ -172,6 +212,69 @@ describe('TwoWorkerPrototypeRunner', () => {
     expect(report.requestId).toBe('proto-1');
     expect(report.segments.map((segment) => segment.cacheHit)).toEqual([false, false]);
   });
+
+  it.each([
+    ['coordinatorUrl', 'https://coordinator.unzen.local'],
+    ['cdnUrl', 'https://cdn.unzen.local'],
+  ] as const)(
+    'reads explicit run option %s exactly once',
+    async (field, acceptedValue) => {
+      const runner = new TwoWorkerPrototypeRunner({
+        segment1Primary: new SimulatedPrototypeWorker({
+          id: `single-read-${field}-primary`,
+          segmentIndex: 1,
+          webgpuAdapter: 'mock-webgpu-b',
+          vramMB: 4096,
+          failFirstRun: false,
+        }),
+      });
+      let reads = 0;
+      const options = { prompt: `single-read ${field}` } as TwoWorkerPrototypeOptions;
+      Object.defineProperty(options, field, {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return reads === 1 ? acceptedValue : '/altered-relative-url';
+        },
+      });
+
+      await expect(runner.run(options)).resolves.toMatchObject({
+        requestId: 'proto-1',
+        matchesReference: true,
+      });
+      expect(reads).toBe(1);
+    },
+  );
+
+  it.each(['coordinatorUrl', 'cdnUrl'] as const)(
+    'reads undefined/defaulted run option %s exactly once',
+    async (field) => {
+      const runner = new TwoWorkerPrototypeRunner({
+        segment1Primary: new SimulatedPrototypeWorker({
+          id: `defaulted-${field}-primary`,
+          segmentIndex: 1,
+          webgpuAdapter: 'mock-webgpu-b',
+          vramMB: 4096,
+          failFirstRun: false,
+        }),
+      });
+      let reads = 0;
+      const options = { prompt: `defaulted ${field}` } as TwoWorkerPrototypeOptions;
+      Object.defineProperty(options, field, {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return undefined;
+        },
+      });
+
+      await expect(runner.run(options)).resolves.toMatchObject({
+        requestId: 'proto-1',
+        matchesReference: true,
+      });
+      expect(reads).toBe(1);
+    },
+  );
 
   it('preserves existing empty and whitespace-only prompt normalization semantics', async () => {
     const runner = new TwoWorkerPrototypeRunner({

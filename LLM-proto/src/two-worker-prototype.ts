@@ -187,7 +187,8 @@ export class SimulatedPrototypeWorker {
       options.vramMB,
       'prototype worker vramMB',
     );
-    if (options.failFirstRun !== undefined && typeof options.failFirstRun !== 'boolean') {
+    const failFirstRun = options.failFirstRun;
+    if (failFirstRun !== undefined && typeof failFirstRun !== 'boolean') {
       throw new Error('prototype worker failFirstRun must be a boolean when provided');
     }
 
@@ -195,7 +196,7 @@ export class SimulatedPrototypeWorker {
     this.segmentIndex = segmentIndex;
     Object.defineProperty(this, 'id', { writable: false, configurable: false });
     Object.defineProperty(this, 'segmentIndex', { writable: false, configurable: false });
-    this.shouldFailFirstRun = options.failFirstRun ?? false;
+    this.shouldFailFirstRun = failFirstRun ?? false;
     this.metadata = Object.freeze({
       webgpuAdapter,
       tier: WorkerTier.TIER_2,
@@ -303,12 +304,14 @@ export class TwoWorkerPrototypeRunner {
   async run(options: TwoWorkerPrototypeOptions): Promise<PrototypeRunReport> {
     assertTwoWorkerPrototypeOptionsContainer(options);
     const prompt = validatePrototypePrompt(options.prompt);
-    const coordinatorUrl = options.coordinatorUrl === undefined
+    const coordinatorUrlInput = options.coordinatorUrl;
+    const coordinatorUrl = coordinatorUrlInput === undefined
       ? DEFAULT_COORDINATOR_URL
-      : validatePrototypeNetworkUrl(options.coordinatorUrl, 'prototype coordinatorUrl');
-    const cdnUrl = options.cdnUrl === undefined
+      : validatePrototypeNetworkUrl(coordinatorUrlInput, 'prototype coordinatorUrl');
+    const cdnUrlInput = options.cdnUrl;
+    const cdnUrl = cdnUrlInput === undefined
       ? DEFAULT_CDN_URL
-      : validatePrototypeNetworkUrl(options.cdnUrl, 'prototype cdnUrl');
+      : validatePrototypeNetworkUrl(cdnUrlInput, 'prototype cdnUrl');
 
     this.transport.assertConnectable(coordinatorUrl);
     this.transport.assertConnectable(cdnUrl);
