@@ -196,6 +196,37 @@ describe('browser runtime artifact budget', () => {
       absoluteMaxBytes: 1,
     });
   });
+
+  it('detaches report membership before reading bytes and reads each bytes field once', () => {
+    const plan = planSegmentArtifactBudget(segment(10, 4), 'p0');
+    const reads = [0, 0];
+    const originalSecond = {
+      get bytes() {
+        reads[1] += 1;
+        return reads[1] === 1 ? 4 : 400;
+      },
+    };
+    const reports: Array<{ bytes: number }> = [
+      {
+        get bytes() {
+          reads[0] += 1;
+          reports[1] = { bytes: 400 };
+          return reads[0] === 1 ? 6 : 600;
+        },
+      },
+      originalSecond,
+    ];
+
+    const result = verifyActualSegmentArtifactBudget(plan, reports);
+
+    expect(result).toMatchObject({
+      actualBytes: 10,
+      actualMatchesDeclared: true,
+      verdict: 'accepted',
+    });
+    expect(reads).toEqual([1, 1]);
+    expect(reports[1]).toEqual({ bytes: 400 });
+  });
 });
 
 describe('bounded browser artifact stream reads', () => {
