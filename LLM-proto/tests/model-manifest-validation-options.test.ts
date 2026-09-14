@@ -49,6 +49,48 @@ describe('model manifest validation options runtime boundary', () => {
     );
   });
 
+  it('validates supported schema versions from the same single-read array snapshot it accepts', () => {
+    const versions: unknown[] = ['1.0.0'];
+    let reads = 0;
+    Object.defineProperty(versions, 0, {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        reads++;
+        return reads === 1 ? '1.0.0' : Symbol('altered-schema');
+      },
+    });
+
+    const result = validateModelManifestShape(createFixtureModelManifest(), {
+      supportedSchemaVersions: versions as string[],
+    });
+
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
+  it('validates allowed sources from the same single-read array snapshot it accepts', () => {
+    const sources: unknown[] = ['fixture'];
+    let reads = 0;
+    Object.defineProperty(sources, 0, {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        reads++;
+        return reads === 1 ? 'fixture' : 'production';
+      },
+    });
+
+    const result = validateModelManifestShape(createFixtureModelManifest(), {
+      allowedSources: sources as ('production' | 'fixture')[],
+    });
+
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
   it('uses the signature verifier captured at async validation entry', async () => {
     const fixture = createFixtureModelManifest();
     const signed = {

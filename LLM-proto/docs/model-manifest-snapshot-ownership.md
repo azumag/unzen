@@ -6,6 +6,8 @@ Before structural validation starts, the validator now captures every declared r
 
 The accepted snapshot freezes the root manifest, `segments`, every segment object, each segment's `compatibleRuntimes`, optional component arrays and component objects, `runtimeRequirements`, and `supportedQuantization`. This prevents a caller that still holds the parsed JSON object from changing model revision, geometry, artifact identity, runtime compatibility, or quantization policy after validation.
 
+Validation policy arrays follow the same ownership rule. When `supportedSchemaVersions` or `allowedSources` is supplied, the validator first copies the caller-owned array into an owned array, then validates and freezes that exact copy. Array accessors or Proxy-backed entries therefore cannot return one value while policy is checked and a different value after acceptance. Explicit empty policy arrays remain explicit, so they continue to reject every schema/source rather than silently restoring defaults. The `verifySignature` callback is still captured once at async validation entry.
+
 `validateModelManifest()` performs component-bundle verification, manifest digest verification, and optional signature verification against the same stable snapshot. Mutating the original input after asynchronous verification begins therefore cannot race the digest/signature checks, and accessor/Proxy drift cannot make the asynchronously verified manifest differ from the state that passed the synchronous shape gate.
 
 This is runtime ownership and integrity hardening only. It is not new evidence for real Llama-3.2-1B q4 materialization, physical WebGPU working-set size, real multi-browser relay/latency, or worker-loss behavior tracked by #167.

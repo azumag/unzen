@@ -394,7 +394,7 @@ function snapshotValidationOptions(
   const rawSupported = input.supportedSchemaVersions;
   let supportedSchemaVersions: readonly string[] | undefined;
   if (rawSupported !== undefined) {
-    if (!Array.isArray(rawSupported) || !rawSupported.every((value) => typeof value === 'string')) {
+    if (!Array.isArray(rawSupported)) {
       issue(
         issues,
         'invalid-validation-options',
@@ -402,17 +402,24 @@ function snapshotValidationOptions(
         'supportedSchemaVersions must be an array of strings when provided',
       );
     } else {
-      supportedSchemaVersions = Object.freeze([...(rawSupported as string[])]);
+      const capturedSupported = Object.freeze(Array.from(rawSupported));
+      if (!capturedSupported.every((value) => typeof value === 'string')) {
+        issue(
+          issues,
+          'invalid-validation-options',
+          '$options.supportedSchemaVersions',
+          'supportedSchemaVersions must be an array of strings when provided',
+        );
+      } else {
+        supportedSchemaVersions = capturedSupported as readonly string[];
+      }
     }
   }
 
   const rawAllowed = input.allowedSources;
   let allowedSources: readonly ModelManifestSource[] | undefined;
   if (rawAllowed !== undefined) {
-    if (
-      !Array.isArray(rawAllowed) ||
-      !rawAllowed.every((value) => value === 'production' || value === 'fixture')
-    ) {
+    if (!Array.isArray(rawAllowed)) {
       issue(
         issues,
         'invalid-validation-options',
@@ -420,7 +427,17 @@ function snapshotValidationOptions(
         "allowedSources must contain only 'production' or 'fixture' when provided",
       );
     } else {
-      allowedSources = Object.freeze([...(rawAllowed as ModelManifestSource[])]);
+      const capturedAllowed = Object.freeze(Array.from(rawAllowed));
+      if (!capturedAllowed.every((value) => value === 'production' || value === 'fixture')) {
+        issue(
+          issues,
+          'invalid-validation-options',
+          '$options.allowedSources',
+          "allowedSources must contain only 'production' or 'fixture' when provided",
+        );
+      } else {
+        allowedSources = capturedAllowed as readonly ModelManifestSource[];
+      }
     }
   }
 
