@@ -83,6 +83,75 @@ describe('TwoWorkerPrototypeRunner constructor dependency envelope', () => {
     ]);
   });
 
+  it('captures injected dependency accessors once before retaining runner state', async () => {
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const segment0 = worker('owned-seg0', 0);
+    const segment1Primary = worker('owned-seg1-primary', 1);
+    const segment1Standby = worker('owned-seg1-standby', 1);
+    const reads = {
+      transport: 0,
+      segment0: 0,
+      segment1Primary: 0,
+      segment1Standby: 0,
+    };
+    const options = Object.defineProperties({}, {
+      transport: {
+        enumerable: true,
+        get() {
+          reads.transport++;
+          return reads.transport === 1 ? transport : {};
+        },
+      },
+      segment0: {
+        enumerable: true,
+        get() {
+          reads.segment0++;
+          return reads.segment0 === 1 ? segment0 : {};
+        },
+      },
+      segment1Primary: {
+        enumerable: true,
+        get() {
+          reads.segment1Primary++;
+          return reads.segment1Primary === 1 ? segment1Primary : {};
+        },
+      },
+      segment1Standby: {
+        enumerable: true,
+        get() {
+          reads.segment1Standby++;
+          return reads.segment1Standby === 1 ? segment1Standby : {};
+        },
+      },
+    });
+
+    const runner = new TwoWorkerPrototypeRunner(options as never);
+
+    expect(reads).toEqual({
+      transport: 1,
+      segment0: 1,
+      segment1Primary: 1,
+      segment1Standby: 1,
+    });
+
+    const report = await runner.run({ prompt: 'owned dependency envelope' });
+    expect(report.matchesReference).toBe(true);
+    expect(report.segments.map((segment) => segment.workerId)).toEqual([
+      'owned-seg0',
+      'owned-seg1-primary',
+    ]);
+    expect(transport.connectionCount).toBeGreaterThan(0);
+    expect(reads).toEqual({
+      transport: 1,
+      segment0: 1,
+      segment1Primary: 1,
+      segment1Standby: 1,
+    });
+  });
+
   it('keeps valid custom dependency injection behavior', async () => {
     const transport = new AllowlistedPrototypeTransport([
       'https://coordinator.unzen.local',
