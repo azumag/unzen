@@ -13,9 +13,12 @@ import type {
  * after the validator has accepted them. This helper copies and freezes every
  * declared mutable container that participates in manifest identity.
  *
- * Optional properties that were omitted by the caller remain omitted in the
- * owned snapshot. This preserves the established runtime object-shape contract
- * while still detaching every declared mutable container.
+ * The validator passes an already-owned plain candidate into this helper. Keep
+ * that candidate's property insertion order while replacing mutable containers:
+ * the current manifest digest contract serializes nested segment/runtime objects
+ * with JSON.stringify(), so reordering otherwise-valid JSON fields would change
+ * the digest. Optional properties omitted by the caller therefore also remain
+ * omitted in the owned snapshot.
  */
 export function snapshotValidatedModelManifest(
   manifest: SegmentedModelManifest,
@@ -29,20 +32,9 @@ export function snapshotValidatedModelManifest(
   });
 
   return Object.freeze({
-    schemaVersion: manifest.schemaVersion,
-    modelId: manifest.modelId,
-    modelRevision: manifest.modelRevision,
-    architecture: manifest.architecture,
-    parameterCount: manifest.parameterCount,
-    quantization: manifest.quantization,
-    totalLayers: manifest.totalLayers,
-    tokenizer: manifest.tokenizer,
+    ...manifest,
     segments,
-    checkpointFormat: manifest.checkpointFormat,
     runtimeRequirements,
-    manifestDigest: manifest.manifestDigest,
-    ...(manifest.signature === undefined ? {} : { signature: manifest.signature }),
-    source: manifest.source,
   });
 }
 
@@ -53,24 +45,12 @@ function snapshotSegmentArtifact(artifact: SegmentArtifact): SegmentArtifact {
       ? undefined
       : Object.freeze(artifact.components.map(snapshotArtifactComponent));
 
-  return Object.freeze({
-    index: artifact.index,
-    layerStart: artifact.layerStart,
-    layerEnd: artifact.layerEnd,
-    byteSize: artifact.byteSize,
-    sha256: artifact.sha256,
-    contentType: artifact.contentType,
-    ...(artifact.encoding === undefined ? {} : { encoding: artifact.encoding }),
-    artifactLocator: artifact.artifactLocator,
-    ...(components === undefined ? {} : { components }),
-    estimatedMemoryMB: artifact.estimatedMemoryMB,
-    memoryBasis: artifact.memoryBasis,
-    ...(artifact.measurementConditions === undefined
-      ? {}
-      : { measurementConditions: artifact.measurementConditions }),
+  const snapshot: SegmentArtifact = {
+    ...artifact,
     compatibleRuntimes,
-    minimumRuntimeVersion: artifact.minimumRuntimeVersion,
-  });
+    ...(components === undefined ? {} : { components }),
+  };
+  return Object.freeze(snapshot);
 }
 
 function snapshotArtifactComponent(
