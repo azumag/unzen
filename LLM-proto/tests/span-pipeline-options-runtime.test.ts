@@ -24,14 +24,125 @@ function construct(options?: Partial<SpanPipelineOptions>): SpanPipeline {
   );
 }
 
+function readOptions(pipeline: SpanPipeline): SpanPipelineOptions {
+  return (pipeline as unknown as { readonly options: SpanPipelineOptions }).options;
+}
+
 describe('SpanPipeline runtime option envelope', () => {
   it('accepts defaults and preserves explicit zero retry/timeout/delay semantics', () => {
-    expect(() => construct()).not.toThrow();
-    expect(() => construct({
+    expect(readOptions(construct())).toEqual({
+      maxRetries: 2,
+      perSegmentTimeoutMs: 10_000,
+      retryDelayMs: 1_000,
+    });
+    expect(readOptions(construct({
       maxRetries: 0,
       perSegmentTimeoutMs: 0,
       retryDelayMs: 0,
-    })).not.toThrow();
+    }))).toEqual({
+      maxRetries: 0,
+      perSegmentTimeoutMs: 0,
+      retryDelayMs: 0,
+    });
+    expect(readOptions(construct({
+      maxRetries: 5,
+      perSegmentTimeoutMs: 12_345,
+      retryDelayMs: 67,
+    }))).toEqual({
+      maxRetries: 5,
+      perSegmentTimeoutMs: 12_345,
+      retryDelayMs: 67,
+    });
+  });
+
+  it('reads declared fields once without enumerating unrelated caller properties', () => {
+    const assertCompatibleSegments = vi.fn();
+    const ledger = { assertCompatibleSegments } as unknown as ArtifactResidencyLedger;
+    const reads = {
+      maxRetries: 0,
+      perSegmentTimeoutMs: 0,
+      retryDelayMs: 0,
+      artifactResidencyLedger: 0,
+    };
+    const target = Object.defineProperties({}, {
+      maxRetries: {
+        enumerable: true,
+        get: () => {
+          reads.maxRetries += 1;
+          return reads.maxRetries === 1 ? 5 : -1;
+        },
+      },
+      perSegmentTimeoutMs: {
+        enumerable: true,
+        get: () => {
+          reads.perSegmentTimeoutMs += 1;
+          return reads.perSegmentTimeoutMs === 1 ? 12_345 : Number.NaN;
+        },
+      },
+      retryDelayMs: {
+        enumerable: true,
+        get: () => {
+          reads.retryDelayMs += 1;
+          return reads.retryDelayMs === 1 ? 67 : Number.NEGATIVE_INFINITY;
+        },
+      },
+      artifactResidencyLedger: {
+        enumerable: true,
+        get: () => {
+          reads.artifactResidencyLedger += 1;
+          if (reads.artifactResidencyLedger === 1) return ledger;
+          throw new Error('residency ledger must not be read twice');
+        },
+      },
+      unrelated: {
+        enumerable: true,
+        get: () => {
+          throw new Error('unrelated getter must not run');
+        },
+      },
+    });
+    const options = new Proxy(target, {
+      ownKeys: () => {
+        throw new Error('caller options must not be enumerated');
+      },
+    }) as Partial<SpanPipelineOptions>;
+
+    const resolved = readOptions(construct(options));
+    expect(resolved).toEqual({
+      maxRetries: 5,
+      perSegmentTimeoutMs: 12_345,
+      retryDelayMs: 67,
+      artifactResidencyLedger: ledger,
+    });
+    expect(resolved.artifactResidencyLedger).toBe(ledger);
+    expect(reads).toEqual({
+      maxRetries: 1,
+      perSegmentTimeoutMs: 1,
+      retryDelayMs: 1,
+      artifactResidencyLedger: 1,
+    });
+    expect(assertCompatibleSegments).toHaveBeenCalledOnce();
+    expect(assertCompatibleSegments).toHaveBeenCalledWith([]);
+  });
+
+  it('does not read artifact residency dependency when numeric validation fails', () => {
+    let ledgerReads = 0;
+    const options = Object.defineProperties({}, {
+      maxRetries: {
+        enumerable: true,
+        value: -1,
+      },
+      artifactResidencyLedger: {
+        enumerable: true,
+        get: () => {
+          ledgerReads += 1;
+          throw new Error('ledger getter must not run for an invalid numeric envelope');
+        },
+      },
+    }) as Partial<SpanPipelineOptions>;
+
+    expect(() => construct(options)).toThrow(/maxRetries must be a non-negative safe integer/i);
+    expect(ledgerReads).toBe(0);
   });
 
   it('rejects malformed top-level option containers', () => {
