@@ -112,6 +112,29 @@ describe('Pipeline runtime option envelope', () => {
     });
   });
 
+  it('preserves spread-era defaults for inherited and non-enumerable declared fields', () => {
+    let inheritedReads = 0;
+    const prototype = Object.defineProperty({}, 'maxRetries', {
+      enumerable: true,
+      get: () => {
+        inheritedReads += 1;
+        return 9;
+      },
+    });
+    const options = Object.create(prototype) as Partial<PipelineOptions>;
+    Object.defineProperty(options, 'segmentTimeoutMs', {
+      enumerable: false,
+      value: 12_345,
+    });
+
+    expect(readOptions(construct(options))).toEqual({
+      maxRetries: 2,
+      segmentTimeoutMs: 30_000,
+      retryDelayMs: 1_000,
+    });
+    expect(inheritedReads).toBe(0);
+  });
+
   it('rejects malformed top-level option containers before executor work', () => {
     const malformed: readonly unknown[] = [null, [], 'options', 1, Symbol('options')];
 
