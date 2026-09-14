@@ -97,6 +97,68 @@ describe('checkpoint serialization and transfer measurement gate', () => {
     expect([...restored.hiddenStates.slice(0, 8)]).toEqual([...checkpoint.hiddenStates.slice(0, 8)]);
   });
 
+  it('serializes one validated outbound checkpoint snapshot without re-reading caller fields', () => {
+    const firstHiddenStates = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const secondHiddenStates = new Uint8Array([9, 9, 9, 9, 9, 9]);
+    const metadata = {
+      shape: [1, 2, 3] as const,
+      dtype: 'int8' as const,
+      sequenceLength: 2,
+      timestamp: 0,
+    };
+    const reads = {
+      hiddenStates: 0,
+      requestId: 0,
+      segmentIndex: 0,
+      metadata: 0,
+    };
+    const checkpoint = Object.defineProperties({}, {
+      hiddenStates: {
+        enumerable: true,
+        get() {
+          reads.hiddenStates += 1;
+          return reads.hiddenStates === 1 ? firstHiddenStates : secondHiddenStates;
+        },
+      },
+      requestId: {
+        enumerable: true,
+        get() {
+          reads.requestId += 1;
+          return reads.requestId === 1 ? 'request-owned-snapshot' : '';
+        },
+      },
+      segmentIndex: {
+        enumerable: true,
+        get() {
+          reads.segmentIndex += 1;
+          return reads.segmentIndex === 1 ? 2 : -1;
+        },
+      },
+      metadata: {
+        enumerable: true,
+        get() {
+          reads.metadata += 1;
+          return reads.metadata === 1 ? metadata : null;
+        },
+      },
+    }) as Checkpoint;
+
+    const serialized = serializeCheckpointPayload(checkpoint);
+    const restored = deserializeCheckpointPayload(serialized.bytes);
+
+    expect(reads).toEqual({
+      hiddenStates: 1,
+      requestId: 1,
+      segmentIndex: 1,
+      metadata: 1,
+    });
+    expect(serialized.payloadBytes).toBe(firstHiddenStates.byteLength);
+    expect(restored.requestId).toBe('request-owned-snapshot');
+    expect(restored.segmentIndex).toBe(2);
+    expect(restored.metadata).toEqual(metadata);
+    expect([...restored.hiddenStates]).toEqual([...firstHiddenStates]);
+  });
+
   it('rejects malformed top-level measurement manifests before field access', () => {
     const malformedManifests: unknown[] = [
       null,

@@ -186,18 +186,18 @@ export function serializeCheckpointPayload(checkpoint: Checkpoint): SerializedCh
   );
   const frameBytes = checkedAddSafeInteger(
     headerAndPrefixBytes,
-    checkpoint.hiddenStates.byteLength,
+    validated.hiddenStates.byteLength,
     'serialized checkpoint frame byte length',
   );
   const bytes = new Uint8Array(frameBytes);
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(0, header.byteLength, true);
   bytes.set(header, 4);
-  bytes.set(checkpoint.hiddenStates, 4 + header.byteLength);
+  bytes.set(validated.hiddenStates, 4 + header.byteLength);
 
   return {
     bytes,
     headerBytes: header.byteLength,
-    payloadBytes: checkpoint.hiddenStates.byteLength,
+    payloadBytes: validated.hiddenStates.byteLength,
   };
 }
 
@@ -413,18 +413,33 @@ function validateSerializedCheckpointFrame(value: unknown): Uint8Array {
   return value;
 }
 
-function validateCheckpointForSerialization(checkpoint: Checkpoint): ReturnType<typeof validateSerializedCheckpointHeader> {
+function validateCheckpointForSerialization(checkpoint: Checkpoint): {
+  readonly requestId: string;
+  readonly segmentIndex: number;
+  readonly metadata: {
+    readonly shape: readonly [number, number, number];
+    readonly dtype: CheckpointMeasurementDtype;
+    readonly sequenceLength: number;
+    readonly timestamp: number;
+  };
+  readonly hiddenStates: Uint8Array;
+} {
   if (!isRecord(checkpoint)) {
     throw new Error('checkpoint must be an object');
   }
-  if (!(checkpoint.hiddenStates instanceof Uint8Array)) {
+
+  const hiddenStates = checkpoint.hiddenStates;
+  if (!(hiddenStates instanceof Uint8Array)) {
     throw new Error('checkpoint hiddenStates must be a Uint8Array');
   }
 
+  const requestId = checkpoint.requestId;
+  const segmentIndex = checkpoint.segmentIndex;
+  const metadata = checkpoint.metadata;
   const header = validateSerializedCheckpointHeader({
-    requestId: checkpoint.requestId,
-    segmentIndex: checkpoint.segmentIndex,
-    metadata: checkpoint.metadata,
+    requestId,
+    segmentIndex,
+    metadata,
   });
   const expectedPayloadBytes = computeCheckpointPayloadBytesFromSnapshot({
     batchSize: header.metadata.shape[0],
@@ -432,13 +447,16 @@ function validateCheckpointForSerialization(checkpoint: Checkpoint): ReturnType<
     hiddenSize: header.metadata.shape[2],
     dtype: header.metadata.dtype,
   });
-  if (checkpoint.hiddenStates.byteLength !== expectedPayloadBytes) {
+  if (hiddenStates.byteLength !== expectedPayloadBytes) {
     throw new Error(
-      `checkpoint payload length mismatch: expected ${expectedPayloadBytes}, got ${checkpoint.hiddenStates.byteLength}`,
+      `checkpoint payload length mismatch: expected ${expectedPayloadBytes}, got ${hiddenStates.byteLength}`,
     );
   }
 
-  return header;
+  return {
+    ...header,
+    hiddenStates,
+  };
 }
 
 function validateSerializedCheckpointHeader(value: unknown): {
