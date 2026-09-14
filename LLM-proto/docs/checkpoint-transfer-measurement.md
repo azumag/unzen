@@ -86,12 +86,17 @@ Checkpoint envelope validation is symmetric at the relay boundary. Before
 serialization, the outbound checkpoint must have a non-empty request ID, a
 non-negative safe segment index, `Uint8Array` hidden states, valid tensor
 metadata, and a hidden-state byte length that exactly matches the declared
-shape/dtype. The serializer writes only the validated canonical header fields
-and checks frame-length arithmetic before allocation. The deserializer first
-requires the top-level received frame itself to be a `Uint8Array`, before any
-`byteLength`, buffer, slice, or decode access; it then applies the same metadata
-rules to the received header and independently verifies the actual payload byte
-length.
+shape/dtype. The serializer captures caller-owned `hiddenStates`, `requestId`,
+`segmentIndex`, and `metadata` once in fail-fast order, validates that snapshot,
+and uses only the validated hidden-state reference for frame sizing, payload
+copy, and `payloadBytes` reporting. A getter/Proxy therefore cannot pass one
+hidden-state buffer or identity through validation and substitute another for
+the serialized frame. The serializer writes only the validated canonical header
+fields and checks frame-length arithmetic before allocation. The deserializer
+first requires the top-level received frame itself to be a `Uint8Array`, before
+any `byteLength`, buffer, slice, or decode access; it then applies the same
+metadata rules to the received header and independently verifies the actual
+payload byte length.
 
 Serialized checkpoint requirements:
 
