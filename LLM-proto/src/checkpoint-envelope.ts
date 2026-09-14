@@ -68,7 +68,7 @@ export interface CreateCheckpointEnvelopeInput {
   readonly previousCheckpointDigest?: string;
 }
 
-async function digestOwnedBytes(data: Uint8Array): Promise<string> {
+async function digestOwnedBytes(data: Uint8Array<ArrayBuffer>): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
