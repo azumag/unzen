@@ -1,0 +1,40 @@
+# DurableCoordinator constructor option envelope
+
+`DurableCoordinator` treats constructor options as an untrusted runtime boundary. The public `src/durable-coordinator.ts` entry point resolves caller-supplied options before the durable implementation can merge, retain, or act on them.
+
+## Ownership rules
+
+Only declared **own enumerable** option fields participate. This preserves the previous object-spread membership behavior for inherited and non-enumerable declared-name properties without enumerating the caller object. Unknown enumerable properties are ignored and their getters are never executed; resolving declared fields does not invoke `Proxy` `ownKeys`.
+
+Each participating declared field is read exactly once. Validation and the values passed to the durable implementation therefore use the same captured runtime values even when the caller supplied accessors or a Proxy.
+
+## Validation
+
+The option container, when supplied, must be a non-null, non-array object.
+
+The following controls must be finite, non-negative numbers when supplied:
+
+- `heartbeatIntervalMs`
+- `heartbeatTimeoutMs`
+- `segmentTimeoutMs`
+- `retryDelayMs`
+- `leaseTtlMs`
+- `checkpointTtlMs`
+- `checkpointCleanupIntervalMs`
+- `cancelAckDeadlineMs`
+- `maxCheckpointBytes`
+- `recoveryOwnershipTtlMs`
+- `recoveryOwnershipRenewIntervalMs`
+- `recoveryPollIntervalMs`
+
+`maxRetries` must be a non-negative safe integer. Explicit zero remains valid for existing tests/contracts.
+
+`allowFixtureManifest` must be a JavaScript boolean when supplied. Only explicit `true` may relax the production-only model-manifest source gate for tests. Truthy non-boolean values such as the string `"false"` fail before manifest validation and cannot opt into fixture manifests.
+
+## Ordering
+
+Constructor option resolution and validation completes before the core coordinator constructor can initialize repository-backed worker/lease state, timers, recovery state, or apply the fixture-manifest gate. Invalid options therefore fail closed without repository/registry side effects.
+
+## Evidence boundary
+
+This hardening is a runtime trust-boundary improvement only. It does not provide new physical WebGPU, real multi-browser relay, real Llama q4 artifact, production deployment, credential, billing, or operator-authorization evidence for #167 or #158.
