@@ -37,9 +37,20 @@ integer `disconnectedDuringSegment`. Timing and delay fields must be finite and
 non-negative; retention/failure-rate thresholds must be finite values in
 `[0, 1]`; retention windows are likewise finite and non-negative.
 
-Malformed runtime input fails before a report is computed. This validation does
-not add a new content policy or change existing valid measurement semantics: the
-default manifest and current pass/fail thresholds remain unchanged.
+Validation is also an ownership boundary. Each declared top-level field is read
+once and the same captured value is used for validation and measurement. Session
+array membership is captured by index before any session fields are read, then
+each consumed session field is snapshotted once. Retention-window values and the
+adaptive-telemetry baseline fields are likewise captured once. All percentile,
+retention, retry/resume, tier, telemetry, and failure calculations run only on
+that owned snapshot, so accessor/Proxy-backed input cannot pass validation with
+one value and influence the report with a later re-read or swap a later session
+slot while an earlier session is being inspected.
+
+Malformed runtime input fails before a report is computed. This validation and
+snapshotting do not add a new content policy or change existing valid measurement
+semantics: the default manifest and current pass/fail thresholds remain
+unchanged.
 
 ## Report Fields
 
