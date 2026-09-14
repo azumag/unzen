@@ -43,14 +43,23 @@ export class ArtifactResidencyLedger {
     if (!Array.isArray(artifacts)) {
       throw new Error('ArtifactResidencyLedger artifacts must be an array');
     }
-    if (artifacts.length === 0) {
+    const artifactCount = artifacts.length;
+    if (artifactCount === 0) {
       throw new Error('ArtifactResidencyLedger requires at least one segment artifact');
+    }
+
+    // Fix caller-owned top-level membership before any artifact field accessor
+    // runs. An early artifact getter must not be able to replace/remove a later
+    // array slot during the same validation pass.
+    const capturedArtifacts: unknown[] = [];
+    for (let position = 0; position < artifactCount; position++) {
+      capturedArtifacts.push((artifacts as readonly unknown[])[position]);
     }
 
     // Validate before sorting. Runtime callers can cross the TypeScript boundary
     // with asserted or deserialized data; a malformed index must never reach a
     // numeric comparator (or any trim/spread operation) before it is checked.
-    const validated = (artifacts as readonly unknown[]).map((artifact, arrayIndex) =>
+    const validated = capturedArtifacts.map((artifact, arrayIndex) =>
       cloneAndValidateArtifact(artifact, arrayIndex),
     );
     const sorted = [...validated].sort((left, right) => left.index - right.index);
@@ -110,12 +119,21 @@ export class ArtifactResidencyLedger {
       throw new Error('segment configs must be an array');
     }
 
+    // Fix caller-owned top-level membership before any segment field accessor
+    // runs. This mirrors the constructor boundary and prevents an early getter
+    // from swapping a later config before it is validated.
+    const segmentConfigCount = segments.length;
+    const capturedSegments: unknown[] = [];
+    for (let position = 0; position < segmentConfigCount; position++) {
+      capturedSegments.push((segments as readonly unknown[])[position]);
+    }
+
     // This method is a public trust boundary too: callers can bypass the
     // SpanRouter/AdaptiveChunkDispatcher validators with asserted or decoded
     // runtime values. Validate and snapshot every field before .toLowerCase(),
     // numeric comparisons, or artifact compatibility logic can observe it.
     const validatedSegments = Object.freeze(
-      (segments as readonly unknown[]).map((segment, arrayIndex) =>
+      capturedSegments.map((segment, arrayIndex) =>
         cloneAndValidateSegmentConfig(segment, arrayIndex),
       ),
     );
