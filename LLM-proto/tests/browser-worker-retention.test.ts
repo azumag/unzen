@@ -77,6 +77,89 @@ describe('browser worker retention measurement gate', () => {
     });
   });
 
+  it('reads consumed manifest, session, and baseline fields once before analysis', () => {
+    const base = createDefaultBrowserRetentionManifest();
+    const sessions = [...base.sessions];
+    const first = { ...sessions[0] };
+    const baseline = { ...base.adaptiveTelemetryBaseline };
+    const manifest = {
+      ...base,
+      sessions,
+      adaptiveTelemetryBaseline: baseline,
+    } as BrowserRetentionMeasurementManifest;
+
+    let segmentDurationReads = 0;
+    Object.defineProperty(manifest, 'segmentDurationMs', {
+      enumerable: true,
+      get() {
+        segmentDurationReads += 1;
+        return segmentDurationReads === 1 ? base.segmentDurationMs : -1;
+      },
+    });
+
+    let sessionDurationReads = 0;
+    Object.defineProperty(first, 'sessionDurationMs', {
+      enumerable: true,
+      get() {
+        sessionDurationReads += 1;
+        return sessionDurationReads === 1 ? base.sessions[0].sessionDurationMs : -1;
+      },
+    });
+    sessions[0] = first;
+
+    let baselineUptimeReads = 0;
+    Object.defineProperty(baseline, 'uptimeMs', {
+      enumerable: true,
+      get() {
+        baselineUptimeReads += 1;
+        return baselineUptimeReads === 1 ? base.adaptiveTelemetryBaseline.uptimeMs : -1;
+      },
+    });
+
+    const report = measureBrowserWorkerRetention(manifest);
+
+    expect(report.status).toBe('pass');
+    expect(report.durationDistribution.maxMs).toBe(43_200_000);
+    expect(report.adaptiveTelemetryComparison.baselineUptimeMs).toBe(7_200_000);
+    expect(segmentDurationReads).toBe(1);
+    expect(sessionDurationReads).toBe(1);
+    expect(baselineUptimeReads).toBe(1);
+  });
+
+  it('captures session membership before an early session getter can replace later slots', () => {
+    const base = createDefaultBrowserRetentionManifest();
+    const sessions = [...base.sessions];
+    const originalSecond = sessions[1];
+    const first = { ...sessions[0] };
+
+    Object.defineProperty(first, 'workerId', {
+      enumerable: true,
+      get() {
+        sessions[1] = {
+          ...originalSecond,
+          sessionDurationMs: -1,
+        };
+        return base.sessions[0].workerId;
+      },
+    });
+    sessions[0] = first;
+
+    const report = measureBrowserWorkerRetention({
+      ...base,
+      sessions,
+    });
+
+    expect(sessions[1].sessionDurationMs).toBe(-1);
+    expect(report.status).toBe('pass');
+    expect(report.sessionCount).toBe(10);
+    expect(report.durationDistribution).toEqual({
+      minMs: 90_000,
+      p50Ms: 720_000,
+      p95Ms: 43_200_000,
+      maxMs: 43_200_000,
+    });
+  });
+
   it('rejects malformed top-level manifests before measurement field access', () => {
     for (const malformed of [null, undefined, 'manifest', 1, true, [], Symbol('manifest')]) {
       expect(() => measureBrowserWorkerRetention(
