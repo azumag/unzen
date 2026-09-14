@@ -272,7 +272,12 @@ function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkp
   if (!(payloadValue instanceof Uint8Array)) {
     return { payload: payloadValue } as unknown as CheckpointEnvelope;
   }
-  const payload = new Uint8Array(payloadValue);
+
+  // Do not copy executor-owned checkpoint bytes here. The core owns the
+  // configured byte ceiling, so it must reject an oversized payload before any
+  // ownership allocation. This reference remains synchronous only: the core
+  // snapshots it before crossing the async digest boundary.
+  const payload = payloadValue;
 
   // The legacy core spread retained only own-enumerable metadata fields. Read
   // only those declared names, once each, without enumerating unknown caller
