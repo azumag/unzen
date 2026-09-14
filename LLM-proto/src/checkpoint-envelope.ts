@@ -108,16 +108,40 @@ export async function createCheckpointEnvelope(
  * Recompute and compare the payload digest. `payloadLength` must equal the
  * actual byte length, so a lying length field is also caught. This helper is a
  * runtime boundary too: malformed objects return false instead of throwing or
- * allocating/hash-processing attacker-controlled non-byte payloads.
+ * allocating/hash-processing attacker-controlled non-byte payloads. Caller
+ * fields are captured once and eligible bytes are copied before the async
+ * digest yield so later accessor values cannot change what is authenticated.
  */
 export async function verifyCheckpointDigest(
   envelope: CheckpointEnvelope,
 ): Promise<boolean> {
-  if (!(envelope?.payload instanceof Uint8Array)) return false;
-  if (!Number.isSafeInteger(envelope.payloadLength) || envelope.payloadLength < 0) return false;
-  if (!SHA256_HEX_PATTERN.test(envelope.payloadDigest)) return false;
-  if (envelope.payload.byteLength !== envelope.payloadLength) return false;
-  return (await sha256Hex(envelope.payload)) === envelope.payloadDigest;
+  if (typeof envelope !== 'object' || envelope === null) return false;
+
+  const runtime = envelope as unknown as Record<string, unknown>;
+  let payload: Uint8Array;
+  let payloadLength: number;
+  let payloadDigest: string;
+  try {
+    const capturedPayload = runtime.payload;
+    if (!(capturedPayload instanceof Uint8Array)) return false;
+    payload = capturedPayload;
+
+    const capturedPayloadLength = runtime.payloadLength;
+    if (!Number.isSafeInteger(capturedPayloadLength) || (capturedPayloadLength as number) < 0) return false;
+    payloadLength = capturedPayloadLength as number;
+
+    const capturedPayloadDigest = runtime.payloadDigest;
+    if (typeof capturedPayloadDigest !== 'string' || !SHA256_HEX_PATTERN.test(capturedPayloadDigest)) return false;
+    payloadDigest = capturedPayloadDigest;
+  } catch {
+    return false;
+  }
+
+  if (payload.byteLength !== payloadLength) return false;
+
+  const ownedPayload = new Uint8Array(payloadLength);
+  ownedPayload.set(payload);
+  return (await digestOwnedBytes(ownedPayload)) === payloadDigest;
 }
 
 function isCheckpointTimingExpired(createdAt: number, ttlMs: number, now: number): boolean {
