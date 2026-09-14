@@ -164,8 +164,31 @@ export class ArtifactResidencyLedger {
     worker: WorkerId,
     segmentIndexes: readonly number[],
   ): WorkerArtifactResidencySnapshot {
+    if (!Array.isArray(segmentIndexes)) {
+      throw new Error('worker segmentIndexes must be an array');
+    }
+
+    // Heartbeat/cache inventory is a runtime boundary. Fix membership before
+    // reading any element so a caller-owned array cannot shrink while it is
+    // being validated, and avoid a caller-overridden Symbol.iterator entirely.
+    const segmentIndexCount = segmentIndexes.length;
+    const capturedIndexes: unknown[] = [];
+    for (let position = 0; position < segmentIndexCount; position++) {
+      capturedIndexes.push((segmentIndexes as readonly unknown[])[position]);
+    }
+
     const next = new Set<number>();
-    for (const segmentIndex of segmentIndexes) {
+    for (let position = 0; position < capturedIndexes.length; position++) {
+      const segmentIndex = capturedIndexes[position];
+      if (
+        typeof segmentIndex !== 'number' ||
+        !Number.isSafeInteger(segmentIndex) ||
+        segmentIndex < 0
+      ) {
+        throw new Error(
+          `worker segment index at position ${position} must be a non-negative safe integer`,
+        );
+      }
       this.getArtifact(segmentIndex);
       next.add(segmentIndex);
     }
