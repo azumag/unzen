@@ -120,7 +120,10 @@ export function validateModelManifestShape(
     return result('invalid', issues);
   }
 
-  const manifest = input as Record<string, unknown>;
+  // Capture the complete declared manifest state before validating any field.
+  // Accessor/Proxy-backed callers can otherwise return one value while a field
+  // is checked and a different value when the accepted snapshot is created.
+  const manifest = snapshotManifestCandidate(input);
   const supported = stableOptions.supportedSchemaVersions ?? [MODEL_MANIFEST_SCHEMA_VERSION];
   if (typeof manifest.schemaVersion !== 'string' || manifest.schemaVersion.trim().length === 0) {
     issue(issues, 'invalid-manifest', '$.schemaVersion', 'schemaVersion must be a non-empty string');
@@ -165,7 +168,7 @@ export function validateModelManifestShape(
   return result(
     'valid',
     issues,
-    snapshotValidatedModelManifest(input as unknown as SegmentedModelManifest),
+    snapshotValidatedModelManifest(manifest as unknown as SegmentedModelManifest),
   );
 }
 
@@ -260,6 +263,119 @@ export function assertValidModelManifest(
     throw new Error(`model manifest validation failed: ${detail}`);
   }
   return validation.manifest;
+}
+
+/**
+ * Copy every declared manifest field/container into plain owned objects before
+ * structural validation. Each caller-owned property is read exactly once by
+ * this boundary; all subsequent validation and async digest/signature work is
+ * performed against this captured state.
+ */
+function snapshotManifestCandidate(input: Record<string, unknown>): Record<string, unknown> {
+  const schemaVersion = input.schemaVersion;
+  const modelId = input.modelId;
+  const modelRevision = input.modelRevision;
+  const architecture = input.architecture;
+  const parameterCount = input.parameterCount;
+  const quantization = input.quantization;
+  const totalLayers = input.totalLayers;
+  const tokenizer = input.tokenizer;
+  const checkpointFormat = input.checkpointFormat;
+  const manifestDigest = input.manifestDigest;
+  const signature = input.signature;
+  const source = input.source;
+  const rawRuntimeRequirements = input.runtimeRequirements;
+  const rawSegments = input.segments;
+
+  return Object.freeze({
+    schemaVersion,
+    modelId,
+    modelRevision,
+    architecture,
+    parameterCount,
+    quantization,
+    totalLayers,
+    tokenizer,
+    segments: snapshotUnknownArray(rawSegments, snapshotSegmentCandidate),
+    checkpointFormat,
+    runtimeRequirements: snapshotRuntimeRequirementsCandidate(rawRuntimeRequirements),
+    manifestDigest,
+    signature,
+    source,
+  });
+}
+
+function snapshotRuntimeRequirementsCandidate(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+
+  const minimumVramMB = input.minimumVramMB;
+  const rawSupportedQuantization = input.supportedQuantization;
+  const minimumRuntimeVersion = input.minimumRuntimeVersion;
+  const minimumChromeVersion = input.minimumChromeVersion;
+
+  return Object.freeze({
+    minimumVramMB,
+    supportedQuantization: snapshotUnknownArray(rawSupportedQuantization),
+    minimumRuntimeVersion,
+    minimumChromeVersion,
+  });
+}
+
+function snapshotSegmentCandidate(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+
+  const index = input.index;
+  const layerStart = input.layerStart;
+  const layerEnd = input.layerEnd;
+  const byteSize = input.byteSize;
+  const sha256 = input.sha256;
+  const contentType = input.contentType;
+  const encoding = input.encoding;
+  const artifactLocator = input.artifactLocator;
+  const rawComponents = input.components;
+  const estimatedMemoryMB = input.estimatedMemoryMB;
+  const memoryBasis = input.memoryBasis;
+  const measurementConditions = input.measurementConditions;
+  const rawCompatibleRuntimes = input.compatibleRuntimes;
+  const minimumRuntimeVersion = input.minimumRuntimeVersion;
+
+  return Object.freeze({
+    index,
+    layerStart,
+    layerEnd,
+    byteSize,
+    sha256,
+    contentType,
+    encoding,
+    artifactLocator,
+    components: snapshotUnknownArray(rawComponents, snapshotArtifactComponentCandidate),
+    estimatedMemoryMB,
+    memoryBasis,
+    measurementConditions,
+    compatibleRuntimes: snapshotUnknownArray(rawCompatibleRuntimes),
+    minimumRuntimeVersion,
+  });
+}
+
+function snapshotArtifactComponentCandidate(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+
+  const role = input.role;
+  const path = input.path;
+  const byteSize = input.byteSize;
+  const sha256 = input.sha256;
+  const contentType = input.contentType;
+  const artifactLocator = input.artifactLocator;
+
+  return Object.freeze({ role, path, byteSize, sha256, contentType, artifactLocator });
+}
+
+function snapshotUnknownArray(
+  input: unknown,
+  map: (value: unknown) => unknown = (value) => value,
+): unknown {
+  if (!Array.isArray(input)) return input;
+  return Object.freeze(Array.from(input, map));
 }
 
 function snapshotValidationOptions(
