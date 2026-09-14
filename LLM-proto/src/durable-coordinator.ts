@@ -151,6 +151,36 @@ function snapshotDurableWorkerRegistration(
   };
 }
 
+interface OwnedDurableSubmissionOptions {
+  readonly idempotencyKey?: string;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
+function snapshotDurableSubmissionOptions(
+  options: unknown,
+): OwnedDurableSubmissionOptions {
+  if (!isRecord(options)) {
+    throw new UnzenError(
+      'submission options must be a non-null, non-array object',
+      ErrorCode.ProtocolViolation,
+    );
+  }
+
+  // submit() historically uses normal property lookup. Detach only the
+  // top-level envelope; the AbortSignal object itself intentionally remains
+  // live so future aborts still propagate after submission.
+  const idempotencyKeyValue = options.idempotencyKey;
+  const signalValue = options.signal;
+  const timeoutMsValue = options.timeoutMs;
+
+  return {
+    idempotencyKey: idempotencyKeyValue as string | undefined,
+    signal: signalValue as AbortSignal | undefined,
+    timeoutMs: timeoutMsValue as number | undefined,
+  };
+}
+
 export class DurableCoordinator extends DurableCoordinatorCore {
   constructor(
     executor: DurableSegmentExecutor,
@@ -160,6 +190,14 @@ export class DurableCoordinator extends DurableCoordinatorCore {
   ) {
     const ownedOptions = resolveDurableCoordinatorOptions(options);
     super(executor, manifest, ownedOptions, repository);
+  }
+
+  submit(
+    prompt: string,
+    options: { readonly idempotencyKey?: string; readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
+  ) {
+    const ownedOptions = snapshotDurableSubmissionOptions(options);
+    return super.submit(prompt, ownedOptions);
   }
 
   registerWorker(
