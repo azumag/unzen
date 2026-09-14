@@ -12,7 +12,7 @@ import type {
   DurableSegmentExecutor,
 } from './durable-coordinator-core.js';
 import type { DurableRepository } from './durable-repository.js';
-import type { ExecutionFailure, ResultIdentity } from './durable-types.js';
+import type { ExecutionFailure, ExecutionResult, ResultIdentity } from './durable-types.js';
 import { ErrorCode, UnzenError, classifyErrorCode } from './errors.js';
 import type { SegmentedModelManifest } from './model-manifest.js';
 import { WorkerTier, type WorkerId } from './types.js';
@@ -182,12 +182,12 @@ function snapshotDurableSubmissionOptions(
   };
 }
 
-interface FailureIdentitySnapshot {
+interface ResultIdentitySnapshot {
   readonly identity: unknown;
   readonly valid: boolean;
 }
 
-function snapshotFailureIdentity(identity: unknown): FailureIdentitySnapshot {
+function snapshotResultIdentity(identity: unknown): ResultIdentitySnapshot {
   if (!isRecord(identity)) return { identity, valid: false };
 
   const owned: Record<string, unknown> = {};
@@ -212,12 +212,65 @@ function snapshotFailureIdentity(identity: unknown): FailureIdentitySnapshot {
   return { identity: owned as unknown as ResultIdentity, valid: true };
 }
 
+function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
+  // Let the existing core validator retain its exact malformed-top-level error.
+  if (!isRecord(result)) return result as ExecutionResult;
+
+  const identityValue = result.identity;
+  const identitySnapshot = snapshotResultIdentity(identityValue);
+  if (!identitySnapshot.valid) {
+    return {
+      identity: identitySnapshot.identity as ResultIdentity,
+      processingTimeMs: undefined as unknown as number,
+    };
+  }
+
+  const processingTimeMsValue = result.processingTimeMs;
+  if (
+    typeof processingTimeMsValue !== 'number'
+    || !Number.isFinite(processingTimeMsValue)
+    || processingTimeMsValue < 0
+  ) {
+    return {
+      identity: identitySnapshot.identity as ResultIdentity,
+      processingTimeMs: processingTimeMsValue as number,
+    };
+  }
+
+  // Preserve the core's branch ordering. Final output and checkpoint are not
+  // touched until the core actually reaches their existing final/intermediate
+  // paths, but once reached their top-level caller-owned reference is memoized.
+  let outputRead = false;
+  let outputValue: unknown;
+  let checkpointRead = false;
+  let checkpointValue: unknown;
+
+  return {
+    identity: identitySnapshot.identity as ResultIdentity,
+    processingTimeMs: processingTimeMsValue,
+    get output() {
+      if (!outputRead) {
+        outputValue = result.output;
+        outputRead = true;
+      }
+      return outputValue as ExecutionResult['output'];
+    },
+    get checkpoint() {
+      if (!checkpointRead) {
+        checkpointValue = result.checkpoint;
+        checkpointRead = true;
+      }
+      return checkpointValue as ExecutionResult['checkpoint'];
+    },
+  };
+}
+
 function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
   // Let the existing core validator retain its exact malformed-top-level error.
   if (!isRecord(failure)) return failure as ExecutionFailure;
 
   const identityValue = failure.identity;
-  const identitySnapshot = snapshotFailureIdentity(identityValue);
+  const identitySnapshot = snapshotResultIdentity(identityValue);
   if (!identitySnapshot.valid) {
     return {
       identity: identitySnapshot.identity as ResultIdentity,
@@ -268,6 +321,10 @@ export class DurableCoordinator extends DurableCoordinatorCore {
   ) {
     const ownedRegistration = snapshotDurableWorkerRegistration(registration);
     return super.registerWorker(ownedRegistration, connectionId);
+  }
+
+  acceptResult(result: ExecutionResult, now?: number) {
+    return super.acceptResult(snapshotDurableExecutionResult(result), now);
   }
 
   handleWorkerFailure(failure: ExecutionFailure): void {
