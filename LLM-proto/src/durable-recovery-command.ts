@@ -46,14 +46,41 @@ export type DurableRecoveryCommandResult =
     }
   | { readonly kind: 'state-changed'; readonly stage?: RequestRecord['stage'] };
 
+function assertNonEmptyString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new TypeError(`durable recovery ${field} must be a non-empty string`);
+  }
+}
+
+function assertNonNegativeFiniteNumber(value: unknown, field: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`durable recovery ${field} must be a non-negative finite number`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: unknown, field: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`durable recovery ${field} must be a non-negative safe integer`);
+  }
+}
+
 function snapshotRecoveryCommandOptions(
   options: DurableRecoveryCommandOptions,
 ): DurableRecoveryCommandOptions {
   const ownerId = options.ownerId;
+  assertNonEmptyString(ownerId, 'ownerId');
+
   const now = options.now;
+  assertNonNegativeFiniteNumber(now, 'now');
+
   const ownershipTtlMs = options.ownershipTtlMs;
+  assertNonNegativeFiniteNumber(ownershipTtlMs, 'ownershipTtlMs');
+
   const maxRetries = options.maxRetries;
+  assertNonNegativeSafeInteger(maxRetries, 'maxRetries');
+
   const manifestDigest = options.manifestDigest;
+  assertNonEmptyString(manifestDigest, 'manifestDigest');
 
   return Object.freeze({
     ownerId,
@@ -159,9 +186,10 @@ export function beginDurableRecovery(
     return { kind: 'terminal', stage: initial.stage };
   }
 
-  // Runtime callers can still supply getter/Proxy-backed objects despite the
-  // readonly TypeScript surface. Own every consumed option before the first
-  // recovery mutation so one attempt uses one owner/time/planner coordinate.
+  // Runtime callers can still supply getter/Proxy-backed or type-asserted
+  // objects despite the readonly TypeScript surface. Own and validate every
+  // consumed option before the first recovery mutation so malformed values
+  // cannot be persisted and one attempt uses one owner/time/planner coordinate.
   const ownedOptions = snapshotRecoveryCommandOptions(options);
 
   const ownership: RecoveryOwnership = {
