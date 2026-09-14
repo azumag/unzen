@@ -7,13 +7,14 @@
  * pass `this.ctx.storage.kv` directly.
  */
 
-import type {
-  AttemptPatch,
-  CheckpointStoreResult,
-  CompletionCommit,
-  DurableRepository,
-  RecoveryOwnership,
-  RecoveryOwnershipClaim,
+import {
+  snapshotRecoveryOwnership,
+  type AttemptPatch,
+  type CheckpointStoreResult,
+  type CompletionCommit,
+  type DurableRepository,
+  type RecoveryOwnership,
+  type RecoveryOwnershipClaim,
 } from './durable-repository.js';
 import type { AttemptId, IdempotencyKey, LeaseId } from './ids.js';
 import type { InferenceRequestId, InferenceResult, WorkerId } from './types.js';
@@ -326,20 +327,22 @@ export class DurableObjectRepository implements DurableRepository {
 
   // recovery ownership
   getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined {
-    return this.storage.get<RecoveryOwnership>(recoveryKey(requestId));
+    const ownership = this.storage.get<RecoveryOwnership>(recoveryKey(requestId));
+    return ownership === undefined ? undefined : snapshotRecoveryOwnership(ownership);
   }
 
   claimRecoveryOwnership(
     ownership: RecoveryOwnership,
     now: number,
   ): RecoveryOwnershipClaim {
-    const key = recoveryKey(ownership.requestId);
+    const owned = snapshotRecoveryOwnership(ownership);
+    const key = recoveryKey(owned.requestId);
     const existing = this.storage.get<RecoveryOwnership>(key);
-    if (existing && existing.ownerId !== ownership.ownerId && now < existing.expiresAt) {
+    if (existing && existing.ownerId !== owned.ownerId && now < existing.expiresAt) {
       return 'owned-by-peer';
     }
-    this.storage.put(key, ownership);
-    return existing?.ownerId === ownership.ownerId ? 'renewed' : 'claimed';
+    this.storage.put(key, owned);
+    return existing?.ownerId === owned.ownerId ? 'renewed' : 'claimed';
   }
 
   releaseRecoveryOwnership(requestId: InferenceRequestId, ownerId: string): boolean {

@@ -61,6 +61,21 @@ export interface RecoveryOwnership {
   readonly expiresAt: number;
 }
 
+/**
+ * Capture a recovery ownership record without enumerating the caller object.
+ *
+ * Runtime callers can bypass TypeScript readonly fields with accessors or
+ * Proxies, so repository adapters own one plain record before comparing or
+ * persisting it and return detached records on reads.
+ */
+export function snapshotRecoveryOwnership(ownership: RecoveryOwnership): RecoveryOwnership {
+  const requestId = ownership.requestId;
+  const ownerId = ownership.ownerId;
+  const claimedAt = ownership.claimedAt;
+  const expiresAt = ownership.expiresAt;
+  return { requestId, ownerId, claimedAt, expiresAt };
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -350,19 +365,21 @@ export class InMemoryRepository implements DurableRepository {
   // --- recovery ownership ---
 
   getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined {
-    return this.recoveryOwnerships.get(requestId);
+    const ownership = this.recoveryOwnerships.get(requestId);
+    return ownership === undefined ? undefined : snapshotRecoveryOwnership(ownership);
   }
 
   claimRecoveryOwnership(
     ownership: RecoveryOwnership,
     now: number,
   ): RecoveryOwnershipClaim {
-    const existing = this.recoveryOwnerships.get(ownership.requestId);
-    if (existing && existing.ownerId !== ownership.ownerId && now < existing.expiresAt) {
+    const owned = snapshotRecoveryOwnership(ownership);
+    const existing = this.recoveryOwnerships.get(owned.requestId);
+    if (existing && existing.ownerId !== owned.ownerId && now < existing.expiresAt) {
       return 'owned-by-peer';
     }
-    this.recoveryOwnerships.set(ownership.requestId, ownership);
-    return existing?.ownerId === ownership.ownerId ? 'renewed' : 'claimed';
+    this.recoveryOwnerships.set(owned.requestId, owned);
+    return existing?.ownerId === owned.ownerId ? 'renewed' : 'claimed';
   }
 
   releaseRecoveryOwnership(requestId: InferenceRequestId, ownerId: string): boolean {
