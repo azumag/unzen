@@ -140,6 +140,27 @@ export function snapshotAttemptRecord(attempt: AttemptRecord): AttemptRecord {
   return owned;
 }
 
+/**
+ * Capture cancellation state without retaining or enumerating the caller
+ * object. Optional acknowledgement presence is preserved across detached
+ * repository writes and reads.
+ */
+export function snapshotCancellationRecord(record: CancellationRecord): CancellationRecord {
+  const requestId = record.requestId;
+  const requestedAt = record.requestedAt;
+  const deadlineMs = record.deadlineMs;
+  const owned: CancellationRecord = { requestId, requestedAt, deadlineMs };
+  if (Object.prototype.hasOwnProperty.call(record, 'acknowledgedAt')) {
+    Object.defineProperty(owned, 'acknowledgedAt', {
+      value: record.acknowledgedAt,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return owned;
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -426,11 +447,12 @@ export class InMemoryRepository implements DurableRepository {
   // --- cancellation ---
 
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void {
-    this.cancellations.set(requestId, record);
+    this.cancellations.set(requestId, snapshotCancellationRecord(record));
   }
 
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined {
-    return this.cancellations.get(requestId);
+    const record = this.cancellations.get(requestId);
+    return record === undefined ? undefined : snapshotCancellationRecord(record);
   }
 
   // --- recovery ownership ---
