@@ -66,14 +66,24 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     throw new Error(`unsupported browser artifact budget mode: ${diagnosticValue(mode)}`);
   }
   const validatedSegment = requireRecord(segment, 'segment artifact budget input');
-  const label = segmentLabel(validatedSegment);
-  const declaredBytes = safeBytes(validatedSegment.browserArtifactBytes, `${label} browserArtifactBytes`);
-  const externalData = validatedSegment.externalData ?? [];
+
+  // Capture caller-owned segment fields once before validation or arithmetic.
+  // The shallow snapshot also prevents later reads from observing accessor /
+  // Proxy drift after the planner has started consuming this input.
+  const segmentSnapshot = { ...validatedSegment };
+  const label = segmentLabel(segmentSnapshot);
+  const declaredBytes = safeBytes(segmentSnapshot.browserArtifactBytes, `${label} browserArtifactBytes`);
+  const externalData = segmentSnapshot.externalData ?? [];
   if (!Array.isArray(externalData) || externalData.length === 0) {
     throw new Error(`${label} must declare external data`);
   }
-  const externalDeclaredBytes = externalData.reduce(
-    (sum, entry, index) => sum + safeBytes(entry?.bytes, `${label} externalData[${index}].bytes`),
+
+  // Detach external-data membership before any entry byte getter runs, then
+  // capture each consumed bytes field exactly once and sum owned primitives.
+  const externalDataMembershipSnapshot = [...externalData];
+  const externalDataBytesSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.bytes);
+  const externalDeclaredBytes = externalDataBytesSnapshot.reduce(
+    (sum, bytes, index) => sum + safeBytes(bytes, `${label} externalData[${index}].bytes`),
     0,
   );
   const graphDeclaredBytes = declaredBytes - externalDeclaredBytes;
