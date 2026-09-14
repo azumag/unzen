@@ -32,6 +32,10 @@ export interface DurableRecoveryCommandOptions {
   readonly manifestDigest: string;
 }
 
+interface OwnedDurableRecoveryCommandOptions extends DurableRecoveryCommandOptions {
+  readonly expiresAt: number;
+}
+
 export type DurableRecoveryCommandResult =
   | { readonly kind: 'missing' }
   | { readonly kind: 'owned-by-peer'; readonly ownership: RecoveryOwnership }
@@ -46,14 +50,46 @@ export type DurableRecoveryCommandResult =
     }
   | { readonly kind: 'state-changed'; readonly stage?: RequestRecord['stage'] };
 
+function assertNonEmptyString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new TypeError(`durable recovery ${field} must be a non-empty string`);
+  }
+}
+
+function assertNonNegativeFiniteNumber(value: unknown, field: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`durable recovery ${field} must be a non-negative finite number`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: unknown, field: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`durable recovery ${field} must be a non-negative safe integer`);
+  }
+}
+
 function snapshotRecoveryCommandOptions(
   options: DurableRecoveryCommandOptions,
-): DurableRecoveryCommandOptions {
+): OwnedDurableRecoveryCommandOptions {
   const ownerId = options.ownerId;
+  assertNonEmptyString(ownerId, 'ownerId');
+
   const now = options.now;
+  assertNonNegativeFiniteNumber(now, 'now');
+
   const ownershipTtlMs = options.ownershipTtlMs;
+  assertNonNegativeFiniteNumber(ownershipTtlMs, 'ownershipTtlMs');
+
+  const expiresAt = now + ownershipTtlMs;
+  if (!Number.isFinite(expiresAt)) {
+    throw new TypeError('durable recovery ownership expiry must be finite');
+  }
+
   const maxRetries = options.maxRetries;
+  assertNonNegativeSafeInteger(maxRetries, 'maxRetries');
+
   const manifestDigest = options.manifestDigest;
+  assertNonEmptyString(manifestDigest, 'manifestDigest');
 
   return Object.freeze({
     ownerId,
@@ -61,6 +97,7 @@ function snapshotRecoveryCommandOptions(
     ownershipTtlMs,
     maxRetries,
     manifestDigest,
+    expiresAt,
   });
 }
 
@@ -159,16 +196,17 @@ export function beginDurableRecovery(
     return { kind: 'terminal', stage: initial.stage };
   }
 
-  // Runtime callers can still supply getter/Proxy-backed objects despite the
-  // readonly TypeScript surface. Own every consumed option before the first
-  // recovery mutation so one attempt uses one owner/time/planner coordinate.
+  // Runtime callers can still supply getter/Proxy-backed or type-asserted
+  // objects despite the readonly TypeScript surface. Own and validate every
+  // consumed option before the first recovery mutation so malformed values
+  // cannot be persisted and one attempt uses one owner/time/planner coordinate.
   const ownedOptions = snapshotRecoveryCommandOptions(options);
 
   const ownership: RecoveryOwnership = {
     requestId,
     ownerId: ownedOptions.ownerId,
     claimedAt: ownedOptions.now,
-    expiresAt: ownedOptions.now + ownedOptions.ownershipTtlMs,
+    expiresAt: ownedOptions.expiresAt,
   };
   const claim = repo.claimRecoveryOwnership(ownership, ownedOptions.now);
   if (claim === 'owned-by-peer') {
