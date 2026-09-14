@@ -1,7 +1,7 @@
 /**
  * WorkerPool: manages browser workers with tier-based priority selection.
  *
- * Workers are categorized into 3 tiers (PLAN.md 4.5.4):
+ * Workers are categorized into 3 tiers by availability:
  *   Tier 1: 24h devices (signage, kiosks) - highest priority
  *   Tier 2: Long-running (OBS, extensions, Electron)
  *   Tier 3: Normal web visitors - burst capacity
@@ -11,6 +11,7 @@
  */
 
 import {
+  workerId,
   type WorkerId,
   type WorkerInfo,
   WorkerStatus,
@@ -38,12 +39,13 @@ export class WorkerPool {
 
   /** Remove a worker from the pool. Returns true if the worker existed. */
   unregister(id: WorkerId): boolean {
-    return this.workers.delete(id);
+    return this.workers.delete(workerId(id));
   }
 
   /** Update heartbeat timestamp. Returns false if worker is unknown. */
   heartbeat(id: WorkerId): boolean {
-    const worker = this.workers.get(id);
+    const stableId = workerId(id);
+    const worker = this.workers.get(stableId);
     if (!worker) return false;
     worker.lastHeartbeat = Date.now();
     // Reconnect if previously marked as disconnected
@@ -87,7 +89,8 @@ export class WorkerPool {
   /** Mark a worker as busy processing a specific segment. */
   markBusy(id: WorkerId, segmentIndex: number): void {
     this.assertValidSegmentIndex(segmentIndex);
-    const worker = this.workers.get(id);
+    const stableId = workerId(id);
+    const worker = this.workers.get(stableId);
     if (!worker) return;
     worker.status = WorkerStatus.BUSY;
     worker.currentSegment = segmentIndex;
@@ -95,7 +98,8 @@ export class WorkerPool {
 
   /** Mark a worker as idle (segment completed or reassigned). */
   markIdle(id: WorkerId): void {
-    const worker = this.workers.get(id);
+    const stableId = workerId(id);
+    const worker = this.workers.get(stableId);
     if (!worker) return;
     worker.status = WorkerStatus.IDLE;
     worker.currentSegment = undefined;
@@ -121,7 +125,8 @@ export class WorkerPool {
 
   /** Mark a worker as disconnected (heartbeat timeout). */
   markDisconnected(id: WorkerId): void {
-    const worker = this.workers.get(id);
+    const stableId = workerId(id);
+    const worker = this.workers.get(stableId);
     if (!worker) return;
     worker.status = WorkerStatus.DISCONNECTED;
     worker.currentSegment = undefined;
@@ -129,7 +134,7 @@ export class WorkerPool {
 
   /** Get a worker by ID. */
   get(id: WorkerId): WorkerInfo | undefined {
-    return this.workers.get(id);
+    return this.workers.get(workerId(id));
   }
 
   /** Number of registered workers. */
