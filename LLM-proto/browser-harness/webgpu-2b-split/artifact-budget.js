@@ -67,10 +67,14 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
   }
   const validatedSegment = requireRecord(segment, 'segment artifact budget input');
 
-  // Capture caller-owned segment fields once before validation or arithmetic.
-  // The shallow snapshot also prevents later reads from observing accessor /
-  // Proxy drift after the planner has started consuming this input.
-  const segmentSnapshot = { ...validatedSegment };
+  // Capture only planner-relevant caller-owned fields once. Do not spread the
+  // whole object: unrelated enumerable accessors are outside this contract and
+  // must not be executed as a side effect of budget planning.
+  const segmentSnapshot = {
+    index: validatedSegment.index,
+    browserArtifactBytes: validatedSegment.browserArtifactBytes,
+    externalData: validatedSegment.externalData,
+  };
   const label = segmentLabel(segmentSnapshot);
   const declaredBytes = safeBytes(segmentSnapshot.browserArtifactBytes, `${label} browserArtifactBytes`);
   const externalData = segmentSnapshot.externalData ?? [];
