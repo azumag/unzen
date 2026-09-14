@@ -49,6 +49,40 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
     expect(construct({ segments: [] })).toThrow(/requires at least one segment/);
   });
 
+  it('captures options.segments exactly once before container validation', () => {
+    const segments = makeSegments(2);
+    let reads = 0;
+    const options = Object.defineProperty({}, 'segments', {
+      configurable: true,
+      get() {
+        reads += 1;
+        return reads === 1 ? segments : [];
+      },
+    });
+
+    expect(construct(options)).not.toThrow();
+    expect(reads).toBe(1);
+  });
+
+  it('captures top-level membership before reading any segment fields', () => {
+    const segments = makeSegments(2);
+    const firstSegment = segments[0] as unknown as Record<string, unknown>;
+    let indexReads = 0;
+    Object.defineProperty(firstSegment, 'index', {
+      configurable: true,
+      get() {
+        indexReads += 1;
+        (segments as unknown as unknown[])[1] = {
+          index: 'mutated-after-membership-capture',
+        };
+        return 0;
+      },
+    });
+
+    expect(construct({ segments })).not.toThrow();
+    expect(indexReads).toBeGreaterThan(0);
+  });
+
   it.each([
     [[null], /segment 0 must be an object/],
     [[[]], /segment 0 must be an object/],
