@@ -209,6 +209,30 @@ describe('bounded browser artifact stream reads', () => {
     expect([...bytes]).toEqual([1, 2, 3, 4]);
   });
 
+  it('reports malformed byte limits without invoking user-defined coercion', async () => {
+    let coercions = 0;
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error('bounded reader coercion must not run');
+      },
+      toString() {
+        coercions += 1;
+        throw new Error('bounded reader toString must not run');
+      },
+    };
+    const response = streamedResponse([[1]]);
+
+    await expect(readResponseBytesBounded(response, { maxBytes: hostile }))
+      .rejects.toThrow('maxBytes must be a non-negative safe integer: [object]');
+    await expect(readResponseBytesBounded(response, { maxBytes: 4, expectedBytes: hostile }))
+      .rejects.toThrow('expectedBytes must be a non-negative safe integer: [object]');
+    await expect(readResponseBytesBounded(response, { maxBytes: Symbol('limit') }))
+      .rejects.toThrow('maxBytes must be a non-negative safe integer: Symbol(limit)');
+
+    expect(coercions).toBe(0);
+  });
+
   it('does not trust an understated Content-Length and aborts when the stream crosses the bound', async () => {
     const response = streamedResponse([[1, 2], [3, 4]], { 'content-length': '2' });
     await expect(readResponseBytesBounded(response, {
