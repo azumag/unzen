@@ -67,17 +67,15 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
   }
   const validatedSegment = requireRecord(segment, 'segment artifact budget input');
 
-  // Capture only planner-relevant caller-owned fields once. Do not spread the
-  // whole object: unrelated enumerable accessors are outside this contract and
-  // must not be executed as a side effect of budget planning.
-  const segmentSnapshot = {
-    index: validatedSegment.index,
-    browserArtifactBytes: validatedSegment.browserArtifactBytes,
-    externalData: validatedSegment.externalData,
-  };
-  const label = segmentLabel(segmentSnapshot);
-  const declaredBytes = safeBytes(segmentSnapshot.browserArtifactBytes, `${label} browserArtifactBytes`);
-  const externalData = segmentSnapshot.externalData ?? [];
+  // Capture each planner-relevant caller-owned field at most once, but preserve
+  // fail-fast ordering so malformed earlier fields do not cause later accessors
+  // to run unnecessarily. Unrelated enumerable accessors remain outside the
+  // planner contract and are never touched.
+  const indexSnapshot = validatedSegment.index;
+  const label = segmentLabel({ index: indexSnapshot });
+  const browserArtifactBytesSnapshot = validatedSegment.browserArtifactBytes;
+  const declaredBytes = safeBytes(browserArtifactBytesSnapshot, `${label} browserArtifactBytes`);
+  const externalData = validatedSegment.externalData ?? [];
   if (!Array.isArray(externalData) || externalData.length === 0) {
     throw new Error(`${label} must declare external data`);
   }
