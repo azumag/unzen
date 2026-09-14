@@ -9,6 +9,8 @@
 - `coordinatorUrl` and `cdnUrl` retain their existing defaults when omitted (`undefined`).
 - When supplied, each URL must be a non-empty string, parse as an absolute URL, and have a network origin.
 
+`coordinatorUrl` and `cdnUrl` are each captured from the caller-owned run options exactly once. Default selection, URL validation, allowlist preflight, and the later segment execution path all use those captured strings. Accessor- or Proxy-backed options therefore cannot return a valid URL during the default check and a different URL during validation, and getter side effects are not duplicated for explicit values.
+
 Only after all fields pass preflight does the runner capture the transport history cursor, increment its request counter, or execute segment 0.
 
 ## Failure isolation
@@ -19,4 +21,4 @@ Allowlist authorization remains a separate transport responsibility: a syntactic
 
 ## Evidence boundary
 
-This change makes the contract-tested two-worker report and retry/resume harness deterministic in the presence of malformed runtime input. It does not add real prepared-model, physical WebGPU, multi-browser relay, latency, or worker-loss evidence for #167.
+This change makes the contract-tested two-worker report and retry/resume harness deterministic in the presence of malformed or stateful accessor-backed runtime input. It does not add real prepared-model, physical WebGPU, multi-browser relay, latency, or worker-loss evidence for #167.
