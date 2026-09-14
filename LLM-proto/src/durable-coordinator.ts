@@ -12,7 +12,9 @@ import type {
   DurableSegmentExecutor,
 } from './durable-coordinator-core.js';
 import type { DurableRepository } from './durable-repository.js';
+import { ErrorCode, UnzenError } from './errors.js';
 import type { SegmentedModelManifest } from './model-manifest.js';
+import { WorkerTier, type WorkerId } from './types.js';
 
 export type {
   DurableCoordinatorOptions,
@@ -118,6 +120,37 @@ function resolveDurableCoordinatorOptions(
   };
 }
 
+interface OwnedDurableWorkerRegistration {
+  readonly workerId: WorkerId;
+  readonly tier: WorkerTier;
+  readonly vramMB: number;
+}
+
+function snapshotDurableWorkerRegistration(
+  registration: unknown,
+): OwnedDurableWorkerRegistration {
+  if (!isRecord(registration)) {
+    throw new UnzenError(
+      'worker registration must be a non-null, non-array object',
+      ErrorCode.ProtocolViolation,
+    );
+  }
+
+  // Registration fields historically use normal property lookup rather than
+  // object-spread membership. Preserve that behavior while reading each field
+  // only once, then let the existing core validator remain authoritative for
+  // type/range checks and manifest minimum-VRAM policy.
+  const workerIdValue = registration.workerId;
+  const tierValue = registration.tier;
+  const vramMBValue = registration.vramMB;
+
+  return {
+    workerId: workerIdValue as WorkerId,
+    tier: tierValue as WorkerTier,
+    vramMB: vramMBValue as number,
+  };
+}
+
 export class DurableCoordinator extends DurableCoordinatorCore {
   constructor(
     executor: DurableSegmentExecutor,
@@ -127,5 +160,13 @@ export class DurableCoordinator extends DurableCoordinatorCore {
   ) {
     const ownedOptions = resolveDurableCoordinatorOptions(options);
     super(executor, manifest, ownedOptions, repository);
+  }
+
+  registerWorker(
+    registration: { readonly workerId: WorkerId; readonly tier: WorkerTier; readonly vramMB: number },
+    connectionId: string,
+  ) {
+    const ownedRegistration = snapshotDurableWorkerRegistration(registration);
+    return super.registerWorker(ownedRegistration, connectionId);
   }
 }
