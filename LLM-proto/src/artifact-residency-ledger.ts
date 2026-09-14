@@ -470,11 +470,15 @@ function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentAr
   }
 
   const compatibleRuntimesInput = input.compatibleRuntimes;
-  if (!Array.isArray(compatibleRuntimesInput) || compatibleRuntimesInput.length === 0) {
+  if (!Array.isArray(compatibleRuntimesInput)) {
+    throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
+  }
+  const compatibleRuntimeCount = compatibleRuntimesInput.length;
+  if (compatibleRuntimeCount === 0) {
     throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
   }
   const compatibleRuntimeValues: unknown[] = [];
-  for (let runtimeIndex = 0; runtimeIndex < compatibleRuntimesInput.length; runtimeIndex++) {
+  for (let runtimeIndex = 0; runtimeIndex < compatibleRuntimeCount; runtimeIndex++) {
     compatibleRuntimeValues.push(compatibleRuntimesInput[runtimeIndex]);
   }
   if (!compatibleRuntimeValues.every(
