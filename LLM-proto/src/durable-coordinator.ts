@@ -212,6 +212,41 @@ function snapshotResultIdentity(identity: unknown): ResultIdentitySnapshot {
   return { identity: owned as unknown as ResultIdentity, valid: true };
 }
 
+function snapshotDurableFinalOutput(output: unknown): ExecutionResult['output'] {
+  // Preserve the core validator's existing malformed-container diagnostics.
+  if (!isRecord(output)) return output as ExecutionResult['output'];
+
+  const tokensValue = output.tokens;
+  if (!Array.isArray(tokensValue)) {
+    return {
+      tokens: tokensValue as unknown as readonly number[],
+      text: undefined as unknown as string,
+    };
+  }
+
+  // Avoid caller-controlled iteration. Read each element once and validate the
+  // same captured primitive before deciding whether the legacy validator would
+  // have progressed far enough to touch `text`.
+  const tokenCount = tokensValue.length;
+  const ownedTokens: unknown[] = [];
+  for (let index = 0; index < tokenCount; index += 1) {
+    const token = tokensValue[index];
+    ownedTokens.push(token);
+    if (typeof token !== 'number' || !Number.isSafeInteger(token) || token < 0) {
+      return {
+        tokens: ownedTokens as unknown as readonly number[],
+        text: undefined as unknown as string,
+      };
+    }
+  }
+
+  const textValue = output.text;
+  return {
+    tokens: ownedTokens as unknown as readonly number[],
+    text: textValue as string,
+  };
+}
+
 function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
   // Let the existing core validator retain its exact malformed-top-level error.
   if (!isRecord(result)) return result as ExecutionResult;
@@ -250,7 +285,7 @@ function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
     processingTimeMs: processingTimeMsValue,
     get output() {
       if (!outputRead) {
-        outputValue = result.output;
+        outputValue = snapshotDurableFinalOutput(result.output);
         outputRead = true;
       }
       return outputValue as ExecutionResult['output'];
