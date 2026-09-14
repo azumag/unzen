@@ -104,6 +104,42 @@ export function snapshotLease(lease: Lease): Lease {
   };
 }
 
+/**
+ * Capture an attempt-history record in declared-field order without enumerating
+ * the caller object. Optional fields retain their own-property presence so a
+ * detached read is observably equivalent to the persisted record, including a
+ * hostile runtime value that explicitly owns an `undefined` optional field.
+ */
+export function snapshotAttemptRecord(attempt: AttemptRecord): AttemptRecord {
+  const requestId = attempt.requestId;
+  const attemptId = attempt.attemptId;
+  const leaseId = attempt.leaseId;
+  const workerId = attempt.workerId;
+  const workerGeneration = attempt.workerGeneration;
+  const segmentIndex = attempt.segmentIndex;
+  const startedAt = attempt.startedAt;
+  const owned: AttemptRecord = {
+    requestId,
+    attemptId,
+    leaseId,
+    workerId,
+    workerGeneration,
+    segmentIndex,
+    startedAt,
+  };
+
+  for (const field of ['finishedAt', 'outcome', 'errorCode'] as const) {
+    if (!Object.prototype.hasOwnProperty.call(attempt, field)) continue;
+    Object.defineProperty(owned, field, {
+      value: attempt[field],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return owned;
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -258,12 +294,12 @@ export class InMemoryRepository implements DurableRepository {
 
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void {
     const list = this.attempts.get(requestId) ?? [];
-    list.push(attempt);
+    list.push(snapshotAttemptRecord(attempt));
     this.attempts.set(requestId, list);
   }
 
   listAttempts(requestId: InferenceRequestId): readonly AttemptRecord[] {
-    return this.attempts.get(requestId) ?? [];
+    return (this.attempts.get(requestId) ?? []).map(snapshotAttemptRecord);
   }
 
   updateAttempt(
