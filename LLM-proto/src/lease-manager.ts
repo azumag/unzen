@@ -78,7 +78,18 @@ export class LeaseManager {
   }
 
   setActive(lease: Lease): void {
-    this.store.putLease(lease);
+    const ownedLease: Lease = {
+      leaseId: lease.leaseId,
+      requestId: lease.requestId,
+      attemptId: lease.attemptId,
+      workerId: lease.workerId,
+      workerGeneration: lease.workerGeneration,
+      segmentIndex: lease.segmentIndex,
+      modelManifestDigest: lease.modelManifestDigest,
+      issuedAt: lease.issuedAt,
+      expiresAt: lease.expiresAt,
+    };
+    this.store.putLease(ownedLease);
   }
 
   getActive(requestId: InferenceRequestId): Lease | undefined {
