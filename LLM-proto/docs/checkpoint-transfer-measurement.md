@@ -46,6 +46,19 @@ paths require a non-null, non-array object. Asserted or decoded values such as
 measurement-manifest contract error rather than an incidental JavaScript field
 access failure.
 
+The consumed measurement inputs are snapshotted before allocation or analysis.
+Each caller-owned top-level field is read once in fail-fast order; the tensor
+reference is captured once and its `batchSize`, `sequenceLength`, `hiddenSize`,
+and `dtype` fields are each read once into a plain owned tensor snapshot. The
+same captured tensor geometry drives validation, payload-byte calculation,
+`Uint8Array` allocation, generated metadata, and report shape. Throughput,
+budget, retry, and optional expected-value controls are likewise captured once
+and the owned values alone drive timing, retry simulation, feasibility deltas,
+and report identity. The harness does not enumerate the caller manifest, so a
+Proxy `ownKeys` trap or unrelated enumerable getter is not part of the runtime
+contract. This prevents getter/Proxy values from passing validation and then
+drifting before allocation or report construction.
+
 Manifest requirements:
 
 - the top-level manifest is a non-null, non-array object;
@@ -117,7 +130,7 @@ the evidence producer or prove a real browser/WebGPU/Coordinator transport.
 
 ```bash
 cd LLM-proto
-npm test -- --run tests/checkpoint-transfer-measurement.test.ts
+npm test -- --run tests/checkpoint-transfer-measurement.test.ts tests/checkpoint-transfer-owned-snapshot.test.ts
 ```
 
 The full regression bar remains:
