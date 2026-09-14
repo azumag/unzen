@@ -78,4 +78,21 @@ describe('browser artifact budget planner ownership', () => {
       unrelated: 0,
     });
   });
+
+  it('fails on malformed declared bytes before reading externalData', () => {
+    let externalDataReads = 0;
+    const input = {
+      index: 0,
+      browserArtifactBytes: '10',
+      get externalData() {
+        externalDataReads += 1;
+        throw new Error('externalData accessor must not run after an earlier validation failure');
+      },
+    };
+
+    expect(() => planSegmentArtifactBudget(input, 'p0')).toThrow(
+      /browserArtifactBytes must be a non-negative safe integer/,
+    );
+    expect(externalDataReads).toBe(0);
+  });
 });
