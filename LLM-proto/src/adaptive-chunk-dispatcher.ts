@@ -805,49 +805,58 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
   }
   const segment = value as Record<string, unknown>;
 
+  const index = segment.index;
   if (
-    typeof segment.index !== 'number' ||
-    !Number.isSafeInteger(segment.index) ||
-    segment.index < 0
+    typeof index !== 'number' ||
+    !Number.isSafeInteger(index) ||
+    index < 0
   ) {
     throw new Error(
       'AdaptiveChunkDispatcher segment index must be a non-negative safe integer',
     );
   }
-  if (segment.index !== arrayIndex) {
+  if (index !== arrayIndex) {
     throw new Error(
       `AdaptiveChunkDispatcher requires segment indexes 0..n-1; ` +
-      `expected ${arrayIndex}, found ${segment.index}`,
+      `expected ${arrayIndex}, found ${index}`,
     );
   }
+
+  const layerStart = segment.layerStart;
   if (
-    typeof segment.layerStart !== 'number' ||
-    !Number.isSafeInteger(segment.layerStart) ||
-    segment.layerStart < 0
+    typeof layerStart !== 'number' ||
+    !Number.isSafeInteger(layerStart) ||
+    layerStart < 0
   ) {
     throw new Error(
       `AdaptiveChunkDispatcher segment ${arrayIndex} layerStart must be a non-negative safe integer`,
     );
   }
+
+  const layerEnd = segment.layerEnd;
   if (
-    typeof segment.layerEnd !== 'number' ||
-    !Number.isSafeInteger(segment.layerEnd) ||
-    segment.layerEnd < segment.layerStart
+    typeof layerEnd !== 'number' ||
+    !Number.isSafeInteger(layerEnd) ||
+    layerEnd < layerStart
   ) {
     throw new Error(
       `AdaptiveChunkDispatcher segment ${arrayIndex} layerEnd must be a safe integer ` +
       `greater than or equal to layerStart`,
     );
   }
-  if (typeof segment.modelWeightHash !== 'string' || segment.modelWeightHash.trim().length === 0) {
+
+  const modelWeightHash = segment.modelWeightHash;
+  if (typeof modelWeightHash !== 'string' || modelWeightHash.trim().length === 0) {
     throw new Error(
       `AdaptiveChunkDispatcher segment ${arrayIndex} modelWeightHash must be a non-empty string`,
     );
   }
+
+  const estimatedVramMB = segment.estimatedVramMB;
   if (
-    typeof segment.estimatedVramMB !== 'number' ||
-    !Number.isFinite(segment.estimatedVramMB) ||
-    segment.estimatedVramMB <= 0
+    typeof estimatedVramMB !== 'number' ||
+    !Number.isFinite(estimatedVramMB) ||
+    estimatedVramMB <= 0
   ) {
     throw new Error(
       `segment ${arrayIndex} estimatedVramMB must be a positive finite number`,
@@ -855,11 +864,11 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
   }
 
   return {
-    index: segment.index,
-    layerStart: segment.layerStart,
-    layerEnd: segment.layerEnd,
-    modelWeightHash: segment.modelWeightHash,
-    estimatedVramMB: segment.estimatedVramMB,
+    index,
+    layerStart,
+    layerEnd,
+    modelWeightHash,
+    estimatedVramMB,
   };
 }
 
