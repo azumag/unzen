@@ -71,15 +71,15 @@ export function createDefaultCheckpointMeasurementManifest(
     createDefault30BFeasibilityManifest(),
   ),
 ): CheckpointTransferMeasurementManifest {
-  validateCheckpointFeasibilityReport(feasibilityReport);
+  const owned = snapshotCheckpointFeasibilityReport(feasibilityReport);
 
   return {
     requestId: 'checkpoint-measurement-default',
     segmentIndex: 3,
     tensor: {
-      batchSize: feasibilityReport.checkpointTensorShape[0],
-      sequenceLength: feasibilityReport.checkpointTensorShape[1],
-      hiddenSize: feasibilityReport.checkpointTensorShape[2],
+      batchSize: owned.checkpointTensorShape[0],
+      sequenceLength: owned.checkpointTensorShape[1],
+      hiddenSize: owned.checkpointTensorShape[2],
       dtype: 'float16',
     },
     serializationBytesPerSecond: 512 * 1024 * 1024,
@@ -88,8 +88,8 @@ export function createDefaultCheckpointMeasurementManifest(
     maxTransferMs: 750,
     maxRetries: 2,
     retryBackoffMs: 25,
-    expectedCheckpointBytes: feasibilityReport.checkpointBytes,
-    expectedCheckpointTransferMs: feasibilityReport.checkpointTransferMs,
+    expectedCheckpointBytes: owned.checkpointBytes,
+    expectedCheckpointTransferMs: owned.checkpointTransferMs,
   };
 }
 
@@ -272,7 +272,11 @@ function computeCheckpointPayloadBytesFromSnapshot(tensor: CheckpointTensorSpec)
   );
 }
 
-function validateCheckpointFeasibilityReport(value: unknown): asserts value is WebGpu30BFeasibilityReport {
+function snapshotCheckpointFeasibilityReport(value: unknown): {
+  readonly checkpointTensorShape: readonly [number, number, number];
+  readonly checkpointBytes: number;
+  readonly checkpointTransferMs: number;
+} {
   if (!isRecord(value)) {
     throw new Error('checkpoint feasibility report must be an object');
   }
@@ -281,14 +285,27 @@ function validateCheckpointFeasibilityReport(value: unknown): asserts value is W
   if (!Array.isArray(shape) || shape.length !== 3) {
     throw new Error('checkpoint feasibility report checkpointTensorShape must contain exactly 3 dimensions');
   }
-  assertPositiveSafeInteger(shape[0], 'checkpoint feasibility report checkpointTensorShape[0]');
-  assertPositiveSafeInteger(shape[1], 'checkpoint feasibility report checkpointTensorShape[1]');
-  assertPositiveSafeInteger(shape[2], 'checkpoint feasibility report checkpointTensorShape[2]');
-  assertPositiveSafeInteger(value.checkpointBytes, 'checkpoint feasibility report checkpointBytes');
+  const batchSize = shape[0];
+  assertPositiveSafeInteger(batchSize, 'checkpoint feasibility report checkpointTensorShape[0]');
+  const sequenceLength = shape[1];
+  assertPositiveSafeInteger(sequenceLength, 'checkpoint feasibility report checkpointTensorShape[1]');
+  const hiddenSize = shape[2];
+  assertPositiveSafeInteger(hiddenSize, 'checkpoint feasibility report checkpointTensorShape[2]');
+
+  const checkpointBytes = value.checkpointBytes;
+  assertPositiveSafeInteger(checkpointBytes, 'checkpoint feasibility report checkpointBytes');
+
+  const checkpointTransferMs = value.checkpointTransferMs;
   assertNonNegativeSafeInteger(
-    value.checkpointTransferMs,
+    checkpointTransferMs,
     'checkpoint feasibility report checkpointTransferMs',
   );
+
+  return {
+    checkpointTensorShape: [batchSize, sequenceLength, hiddenSize],
+    checkpointBytes,
+    checkpointTransferMs,
+  };
 }
 
 function snapshotCheckpointTransferMeasurementManifest(
