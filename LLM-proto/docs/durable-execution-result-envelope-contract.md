@@ -18,9 +18,11 @@ The pull execution loop never trusts a rejected result for worker isolation or a
 
 ## Checkpoint boundary
 
-Intermediate results still use `validateCheckpointEnvelope()` as the authoritative checkpoint runtime/integrity gate. Before the asynchronous integrity validation begins, the coordinator performs only the minimal copy-safe shape checks needed to establish an object container and `Uint8Array` payload, then snapshots the full envelope and copies the payload bytes into coordinator-owned memory.
+Intermediate results still use `validateCheckpointEnvelope()` as the authoritative checkpoint runtime/integrity gate. Before the asynchronous integrity validation begins, the public wrapper snapshots the declared checkpoint metadata but deliberately does not clone the payload bytes. The durable core reads the payload reference once, establishes that it is a `Uint8Array`, and compares its actual `byteLength` with the configured `maxCheckpointBytes` ceiling before allocating an ownership copy.
 
-The authoritative validator runs against that ownership-isolated snapshot. This ordering satisfies both sides of the boundary: malformed checkpoint containers or payload values fail intentionally before cloning, while an executor cannot mutate its original payload or envelope fields during asynchronous digest validation and thereby change what is later committed.
+An oversized payload is therefore rejected synchronously as `checkpoint-rejected`, recorded as a suppression, and isolated without allocating a checkpoint payload copy, entering SHA-256 digest work, or persisting any checkpoint. The direct durable-core path performs the same pre-copy byte check, so bypassing the public wrapper does not bypass the configured ceiling.
+
+Only a payload that passes the byte ceiling is copied into coordinator-owned memory. The authoritative validator then rechecks structure, identity, the configured limit, TTL, and digest against that snapshot and performs digest work on validator-owned bytes. This preserves the existing mutation guarantee: once asynchronous integrity work begins, an executor cannot mutate its original payload or envelope fields and thereby change what is later committed. Removing the earlier wrapper copy also avoids one redundant ownership allocation on valid checkpoints.
 
 Only a successfully validated snapshot is considered for durable commit. Existing lease re-check, cancellation re-check, request-stage check, TTL check, slot-conflict handling, and reclaim semantics remain unchanged.
 
