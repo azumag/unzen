@@ -161,6 +161,19 @@ export function snapshotCancellationRecord(record: CancellationRecord): Cancella
   return owned;
 }
 
+/**
+ * Capture streaming progress without retaining or enumerating the caller
+ * object. Persisted and returned cursor records are plain detached snapshots so
+ * retained runtime references cannot advance or rewrite progress implicitly.
+ */
+export function snapshotStreamCursor(cursor: StreamCursor): StreamCursor {
+  const requestId = cursor.requestId;
+  const lastCommittedSegment = cursor.lastCommittedSegment;
+  const totalSegments = cursor.totalSegments;
+  const updatedAt = cursor.updatedAt;
+  return { requestId, lastCommittedSegment, totalSegments, updatedAt };
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -485,11 +498,13 @@ export class InMemoryRepository implements DurableRepository {
   // --- streaming cursor ---
 
   putStreamCursor(cursor: StreamCursor): void {
-    this.streamCursors.set(cursor.requestId, cursor);
+    const owned = snapshotStreamCursor(cursor);
+    this.streamCursors.set(owned.requestId, owned);
   }
 
   getStreamCursor(requestId: InferenceRequestId): StreamCursor | undefined {
-    return this.streamCursors.get(requestId);
+    const cursor = this.streamCursors.get(requestId);
+    return cursor === undefined ? undefined : snapshotStreamCursor(cursor);
   }
 
   // --- worker registration / generation ---

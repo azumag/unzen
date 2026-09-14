@@ -12,6 +12,7 @@ import {
   snapshotCancellationRecord,
   snapshotLease,
   snapshotRecoveryOwnership,
+  snapshotStreamCursor,
   type AttemptPatch,
   type CheckpointStoreResult,
   type CompletionCommit,
@@ -366,11 +367,13 @@ export class DurableObjectRepository implements DurableRepository {
 
   // stream cursor
   putStreamCursor(cursor: StreamCursor): void {
-    this.storage.put(cursorKey(cursor.requestId), cursor);
+    const owned = snapshotStreamCursor(cursor);
+    this.storage.put(cursorKey(owned.requestId), owned);
   }
 
   getStreamCursor(requestId: InferenceRequestId): StreamCursor | undefined {
-    return this.storage.get<StreamCursor>(cursorKey(requestId));
+    const cursor = this.storage.get<StreamCursor>(cursorKey(requestId));
+    return cursor === undefined ? undefined : snapshotStreamCursor(cursor);
   }
 
   // worker registration/generation
