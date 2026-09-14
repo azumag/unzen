@@ -87,6 +87,89 @@ describe('validated model manifest ownership', () => {
     expect(validated.runtimeRequirements.supportedQuantization[0]).toBe(originalQuantization);
   });
 
+  it('reads root identity and segment membership once before structural validation', () => {
+    const fixture = createFixtureModelManifest();
+    let revisionReads = 0;
+    let segmentReads = 0;
+    const input: Record<string, unknown> = { ...fixture };
+
+    Object.defineProperty(input, 'modelRevision', {
+      enumerable: true,
+      get: () => {
+        revisionReads++;
+        return revisionReads === 1 ? fixture.modelRevision : '';
+      },
+    });
+    Object.defineProperty(input, 'segments', {
+      enumerable: true,
+      get: () => {
+        segmentReads++;
+        return segmentReads === 1 ? fixture.segments : [];
+      },
+    });
+
+    const result = validateModelManifestShape(input);
+
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+    expect(result.manifest?.modelRevision).toBe(fixture.modelRevision);
+    expect(result.manifest?.segments).toHaveLength(fixture.segments.length);
+    expect(revisionReads).toBe(1);
+    expect(segmentReads).toBe(1);
+  });
+
+  it('validates segment metadata from the same single-read owned state it returns', () => {
+    const fixture = createFixtureModelManifest();
+    let layerStartReads = 0;
+    const first: Record<string, unknown> = { ...fixture.segments[0] };
+    Object.defineProperty(first, 'layerStart', {
+      enumerable: true,
+      get: () => {
+        layerStartReads++;
+        return layerStartReads === 1 ? fixture.segments[0].layerStart : fixture.totalLayers + 10;
+      },
+    });
+    const input = {
+      ...fixture,
+      segments: [first, ...fixture.segments.slice(1)],
+    };
+
+    const result = validateModelManifestShape(input);
+
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+    expect(result.manifest?.segments[0].layerStart).toBe(fixture.segments[0].layerStart);
+    expect(layerStartReads).toBe(1);
+  });
+
+  it('validates runtime requirements from one captured nested state', () => {
+    const fixture = createFixtureModelManifest();
+    let supportedQuantizationReads = 0;
+    const runtimeRequirements: Record<string, unknown> = {
+      ...fixture.runtimeRequirements,
+    };
+    Object.defineProperty(runtimeRequirements, 'supportedQuantization', {
+      enumerable: true,
+      get: () => {
+        supportedQuantizationReads++;
+        return supportedQuantizationReads === 1
+          ? fixture.runtimeRequirements.supportedQuantization
+          : ['q8'];
+      },
+    });
+    const input = {
+      ...fixture,
+      runtimeRequirements,
+    };
+
+    const result = validateModelManifestShape(input);
+
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+    expect(result.manifest?.runtimeRequirements.supportedQuantization).toEqual(['q4']);
+    expect(supportedQuantizationReads).toBe(1);
+  });
+
   it('keeps async digest verification stable when the caller mutates after validation starts', async () => {
     const fixture = createFixtureModelManifest();
     const input = {
