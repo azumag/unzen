@@ -497,7 +497,6 @@ export class DurableCoordinator {
   }
 
   // --- Request execution (pull model) ---
-
   private async runRequest(requestId: InferenceRequestId, signal: AbortSignal): Promise<void> {
     const record = this.repo.getRequest(requestId);
     if (record && record.startedAt === undefined) record.startedAt = Date.now();
@@ -951,8 +950,15 @@ export class DurableCoordinator {
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-rejected', message };
     }
-    if (checkpointPayload.byteLength > this.options.maxCheckpointBytes) {
-      const message = `checkpoint payload ${checkpointPayload.byteLength}B exceeds the ${this.options.maxCheckpointBytes}B limit`;
+    const maxCheckpointBytes = this.options.maxCheckpointBytes;
+    if (!Number.isSafeInteger(maxCheckpointBytes) || maxCheckpointBytes < 0) {
+      const message = 'checkpoint payload byte limit must be a non-negative safe integer';
+      this.recordSuppression(result.identity, message, now);
+      this.isolateWorker(result.identity);
+      return { kind: 'checkpoint-rejected', message };
+    }
+    if (checkpointPayload.byteLength > maxCheckpointBytes) {
+      const message = `checkpoint payload ${checkpointPayload.byteLength}B exceeds the ${maxCheckpointBytes}B limit`;
       this.recordSuppression(result.identity, message, now);
       this.isolateWorker(result.identity);
       return { kind: 'checkpoint-rejected', message };
@@ -968,7 +974,7 @@ export class DurableCoordinator {
       workerGeneration: result.identity.workerGeneration,
       modelManifestDigest: this.manifest.manifestDigest,
       formatVersion: this.manifest.checkpointFormat,
-      maxPayloadBytes: this.options.maxCheckpointBytes,
+      maxPayloadBytes: maxCheckpointBytes,
       now,
     });
     if (!validation.ok) {
@@ -1077,7 +1083,6 @@ export class DurableCoordinator {
     if (request.stage === 'failed') {
       return { requestId, requestedAt, deadlineMs, acknowledged: true, disposition: 'already-failed' };
     }
-
     const entry = this.inFlight.get(requestId);
     const activeLease = this.repo.getActiveLease(requestId);
     const existing = this.repo.getCancellation(requestId);

@@ -52,7 +52,6 @@ describe('DurableCoordinator constructor option envelope', () => {
     'checkpointTtlMs',
     'checkpointCleanupIntervalMs',
     'cancelAckDeadlineMs',
-    'maxCheckpointBytes',
     'recoveryOwnershipTtlMs',
     'recoveryOwnershipRenewIntervalMs',
     'recoveryPollIntervalMs',
@@ -67,14 +66,20 @@ describe('DurableCoordinator constructor option envelope', () => {
     );
   });
 
-  it('rejects non-finite duration and byte controls', () => {
+  it('rejects non-finite duration controls', () => {
     expect(() => construct({ allowFixtureManifest: true, leaseTtlMs: Number.POSITIVE_INFINITY })).toThrow(
       'DurableCoordinator leaseTtlMs must be a non-negative finite number',
     );
-    expect(() => construct({ allowFixtureManifest: true, maxCheckpointBytes: Number.NaN })).toThrow(
-      'DurableCoordinator maxCheckpointBytes must be a non-negative finite number',
-    );
   });
+
+  it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid maxCheckpointBytes value %p',
+    (maxCheckpointBytes) => {
+      expect(() => construct({ allowFixtureManifest: true, maxCheckpointBytes })).toThrow(
+        'DurableCoordinator maxCheckpointBytes must be a non-negative safe integer',
+      );
+    },
+  );
 
   it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects invalid maxRetries value %p',
@@ -119,6 +124,16 @@ describe('DurableCoordinator constructor option envelope', () => {
         },
       });
     }
+    Object.defineProperty(options, 'maxCheckpointBytes', {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        const field: keyof DurableCoordinatorOptions = 'maxCheckpointBytes';
+        const count = (reads.get(field) ?? 0) + 1;
+        reads.set(field, count);
+        return count === 1 ? 0 : 0.5;
+      },
+    });
     Object.defineProperty(options, 'maxRetries', {
       enumerable: true,
       configurable: true,
@@ -141,7 +156,7 @@ describe('DurableCoordinator constructor option envelope', () => {
     });
 
     expect(() => construct(options as Partial<DurableCoordinatorOptions>)).not.toThrow();
-    for (const field of [...finiteControls, 'maxRetries', 'allowFixtureManifest'] as const) {
+    for (const field of [...finiteControls, 'maxCheckpointBytes', 'maxRetries', 'allowFixtureManifest'] as const) {
       expect(reads.get(field)).toBe(1);
     }
   });

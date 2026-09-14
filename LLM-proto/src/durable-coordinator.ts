@@ -87,7 +87,6 @@ function resolveDurableCoordinatorOptions(
     ['checkpointTtlMs', checkpointTtlMs],
     ['checkpointCleanupIntervalMs', checkpointCleanupIntervalMs],
     ['cancelAckDeadlineMs', cancelAckDeadlineMs],
-    ['maxCheckpointBytes', maxCheckpointBytes],
     ['recoveryOwnershipTtlMs', recoveryOwnershipTtlMs],
     ['recoveryOwnershipRenewIntervalMs', recoveryOwnershipRenewIntervalMs],
     ['recoveryPollIntervalMs', recoveryPollIntervalMs],
@@ -97,6 +96,9 @@ function resolveDurableCoordinatorOptions(
     }
   }
 
+  if (maxCheckpointBytes !== undefined && !isNonNegativeSafeInteger(maxCheckpointBytes)) {
+    throw new TypeError('DurableCoordinator maxCheckpointBytes must be a non-negative safe integer');
+  }
   if (maxRetries !== undefined && !isNonNegativeSafeInteger(maxRetries)) {
     throw new TypeError('DurableCoordinator maxRetries must be a non-negative safe integer');
   }

@@ -12,7 +12,7 @@ Each participating declared field is read exactly once. Validation and the value
 
 The option container, when supplied, must be a non-null, non-array object.
 
-The following controls must be finite, non-negative numbers when supplied:
+The following duration/runtime controls must be finite, non-negative numbers when supplied:
 
 - `heartbeatIntervalMs`
 - `heartbeatTimeoutMs`
@@ -22,18 +22,21 @@ The following controls must be finite, non-negative numbers when supplied:
 - `checkpointTtlMs`
 - `checkpointCleanupIntervalMs`
 - `cancelAckDeadlineMs`
-- `maxCheckpointBytes`
 - `recoveryOwnershipTtlMs`
 - `recoveryOwnershipRenewIntervalMs`
 - `recoveryPollIntervalMs`
 
-`maxRetries` must be a non-negative safe integer. Explicit zero remains valid for existing tests/contracts.
+`maxCheckpointBytes` must be a non-negative safe integer. This matches the authoritative checkpoint-envelope byte-budget validator, so a fractional or unsafe byte ceiling cannot survive construction and reach a payload-allocation path.
+
+`maxRetries` must also be a non-negative safe integer. Explicit zero remains valid for existing tests/contracts.
 
 `allowFixtureManifest` must be a JavaScript boolean when supplied. Only explicit `true` may relax the production-only model-manifest source gate for tests. Truthy non-boolean values such as the string `"false"` fail before manifest validation and cannot opt into fixture manifests.
 
 ## Ordering
 
 Constructor option resolution and validation completes before the core coordinator constructor can initialize repository-backed worker/lease state, timers, recovery state, or apply the fixture-manifest gate. Invalid options therefore fail closed without repository/registry side effects.
+
+The direct durable-core checkpoint path also treats its resolved `maxCheckpointBytes` value as untrusted runtime configuration. It rechecks that ceiling as a non-negative safe integer before copying checkpoint payload bytes, so direct-core test/integration callers cannot bypass the allocation-order guarantee by supplying an invalid runtime value.
 
 ## Evidence boundary
 
