@@ -83,6 +83,60 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
     expect(indexReads).toBeGreaterThan(0);
   });
 
+  it('captures every segment field once and retains the validated values', () => {
+    const segments = makeSegments(1);
+    const runtimeSegment = segments[0] as unknown as Record<string, unknown>;
+    const expected = {
+      index: 0,
+      layerStart: runtimeSegment.layerStart as number,
+      layerEnd: runtimeSegment.layerEnd as number,
+      modelWeightHash: runtimeSegment.modelWeightHash as string,
+      estimatedVramMB: runtimeSegment.estimatedVramMB as number,
+    } satisfies SegmentConfig;
+    const altered: Record<keyof SegmentConfig, unknown> = {
+      index: -1,
+      layerStart: -1,
+      layerEnd: -1,
+      modelWeightHash: '',
+      estimatedVramMB: 0,
+    };
+    const reads: Record<keyof SegmentConfig, number> = {
+      index: 0,
+      layerStart: 0,
+      layerEnd: 0,
+      modelWeightHash: 0,
+      estimatedVramMB: 0,
+    };
+
+    for (const field of Object.keys(expected) as (keyof SegmentConfig)[]) {
+      const accepted = expected[field];
+      Object.defineProperty(runtimeSegment, field, {
+        configurable: true,
+        get() {
+          reads[field] += 1;
+          return reads[field] === 1 ? accepted : altered[field];
+        },
+      });
+    }
+
+    let compatibleSegment: SegmentConfig | undefined;
+    const ledger = {
+      assertCompatibleSegments: (validatedSegments: readonly SegmentConfig[]) => {
+        compatibleSegment = validatedSegments[0];
+      },
+    } as unknown as ArtifactResidencyLedger;
+
+    expect(construct({ segments, artifactResidencyLedger: ledger })).not.toThrow();
+    expect(reads).toEqual({
+      index: 1,
+      layerStart: 1,
+      layerEnd: 1,
+      modelWeightHash: 1,
+      estimatedVramMB: 1,
+    });
+    expect(compatibleSegment).toEqual(expected);
+  });
+
   it.each([
     [[null], /segment 0 must be an object/],
     [[[]], /segment 0 must be an object/],
