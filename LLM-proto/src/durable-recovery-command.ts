@@ -32,6 +32,10 @@ export interface DurableRecoveryCommandOptions {
   readonly manifestDigest: string;
 }
 
+interface OwnedDurableRecoveryCommandOptions extends DurableRecoveryCommandOptions {
+  readonly expiresAt: number;
+}
+
 export type DurableRecoveryCommandResult =
   | { readonly kind: 'missing' }
   | { readonly kind: 'owned-by-peer'; readonly ownership: RecoveryOwnership }
@@ -66,7 +70,7 @@ function assertNonNegativeSafeInteger(value: unknown, field: string): asserts va
 
 function snapshotRecoveryCommandOptions(
   options: DurableRecoveryCommandOptions,
-): DurableRecoveryCommandOptions {
+): OwnedDurableRecoveryCommandOptions {
   const ownerId = options.ownerId;
   assertNonEmptyString(ownerId, 'ownerId');
 
@@ -75,6 +79,11 @@ function snapshotRecoveryCommandOptions(
 
   const ownershipTtlMs = options.ownershipTtlMs;
   assertNonNegativeFiniteNumber(ownershipTtlMs, 'ownershipTtlMs');
+
+  const expiresAt = now + ownershipTtlMs;
+  if (!Number.isFinite(expiresAt)) {
+    throw new TypeError('durable recovery ownership expiry must be finite');
+  }
 
   const maxRetries = options.maxRetries;
   assertNonNegativeSafeInteger(maxRetries, 'maxRetries');
@@ -88,6 +97,7 @@ function snapshotRecoveryCommandOptions(
     ownershipTtlMs,
     maxRetries,
     manifestDigest,
+    expiresAt,
   });
 }
 
@@ -196,7 +206,7 @@ export function beginDurableRecovery(
     requestId,
     ownerId: ownedOptions.ownerId,
     claimedAt: ownedOptions.now,
-    expiresAt: ownedOptions.now + ownedOptions.ownershipTtlMs,
+    expiresAt: ownedOptions.expiresAt,
   };
   const claim = repo.claimRecoveryOwnership(ownership, ownedOptions.now);
   if (claim === 'owned-by-peer') {
