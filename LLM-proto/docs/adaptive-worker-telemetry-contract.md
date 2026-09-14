@@ -47,22 +47,26 @@ This matters because TypeScript `readonly` annotations do not prevent runtime mu
 
 Every registration and heartbeat is copied into a dispatcher-owned frozen telemetry snapshot before validation and cache synchronization. The snapshot includes a copied/frozen `cacheHits` array and, when present, copied/frozen `cacheArtifacts` identity objects and array. Validation, residency synchronization, scoring, load gates, and stored worker state therefore all refer to the same accepted snapshot.
 
+The snapshot boundary reads each telemetry root field used by the dispatcher exactly once. `cacheHits` and optional `cacheArtifacts` are first bound to one captured container reference; their top-level members are then copied by fixed numeric position before any cache-artifact identity field is read. Each identity's `segmentIndex` and `sha256` is captured exactly once and the owned identity is frozen from those captured primitives. Scalar telemetry fields are likewise captured once and the subsequent numeric validators operate only on those captured values.
+
+This ordering matters for accessor- or Proxy-backed runtime input. A getter cannot return one collection during shape validation and a different collection during the copy, an early cache-artifact identity getter cannot replace a later array member before it is selected for validation, and a valid-first / altered-second identity getter cannot make the stored snapshot differ from the value whose runtime type was accepted. Collection membership is detached before scalar getters are evaluated, so a scalar getter that mutates the caller's cache arrays cannot retroactively change the accepted cache inventory.
+
 Callers may retain and mutate their original telemetry object after `registerWorker()` or `updateHeartbeat()` returns, but those later writes cannot change accepted VRAM, busy ratios, failure rate, throughput, jitter, or cache claims without a new validated heartbeat. This closes the runtime gap between TypeScript `readonly` declarations and JavaScript object mutability, including the legacy index-only cache path.
 
 ## Runtime container shape
 
-Snapshotting itself is also a runtime trust boundary. Before the dispatcher spreads or maps any telemetry-owned collection, it requires:
+Snapshotting itself is also a runtime trust boundary. Before the dispatcher accepts telemetry-owned collections, it requires:
 
 - the telemetry value to be a non-null, non-array object;
-- `cacheHits` to be an actual JavaScript array;
-- optional `cacheArtifacts` to be an actual JavaScript array when present;
-- every `cacheArtifacts` entry to be a non-null, non-array object;
+- the once-captured `cacheHits` value to be an actual JavaScript array;
+- optional once-captured `cacheArtifacts` to be an actual JavaScript array when present;
+- every captured `cacheArtifacts` member to be a non-null, non-array object;
 - every cache-artifact `segmentIndex` to be a runtime `number` before normal range validation;
 - every cache-artifact `sha256` to be a runtime `string` before canonical digest validation.
 
 After snapshotting, every `cacheHits` entry must also be a runtime JavaScript `number` before integer or segment-range checks. Non-number asserted or decoded values such as strings, objects, booleans, and `Symbol` values are rejected with an intentional dispatcher validation error without interpolating/coercing the untrusted value. Numeric values then continue through the existing non-negative integer and active segment-range contract.
 
-These checks intentionally happen before defensive copying where container shape itself could otherwise trigger spread/map failures, and before any untrusted cache-hit element is used in range-error formatting. As a result, asserted or decoded values such as `null`, primitive telemetry, iterable strings in `cacheHits`, object-shaped substitutes for arrays, malformed cache-artifact entries, non-string digest values, and non-number cache-hit entries are rejected by explicit validation rather than incidental spread/map/property/interpolation coercion failures. Numeric cache-index range checks, canonical SHA-256 checks, manifest identity checks, and duplicate detection still run afterward against the dispatcher-owned snapshot.
+These checks intentionally happen before defensive copying would otherwise re-read caller-owned fields, and before any untrusted cache-hit element is used in range-error formatting. As a result, asserted or decoded values such as `null`, primitive telemetry, iterable strings in `cacheHits`, object-shaped substitutes for arrays, malformed cache-artifact entries, non-string digest values, and non-number cache-hit entries are rejected by explicit validation rather than incidental spread/map/property/interpolation coercion failures. Numeric cache-index range checks, canonical SHA-256 checks, manifest identity checks, and duplicate detection still run afterward against the dispatcher-owned snapshot.
 
 ## Atomic heartbeat rule
 
@@ -78,4 +82,4 @@ This ordering is important because JavaScript comparisons with `NaN` are false. 
 
 ## Evidence scope
 
-The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes and cache-hit element types, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, and post-acceptance telemetry mutation isolation. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.
+The tests exercise invalid registration metadata, rejected re-registration atomicity, invalid heartbeat atomicity, malformed telemetry container/collection shapes and cache-hit element types, valid telemetry boundaries, invalid dispatcher numeric configuration, post-construction segment mutation isolation, post-acceptance telemetry mutation isolation, single-read collection/identity accessors, cache-artifact membership mutation during identity reads, and caller-cache mutation from scalar telemetry getters. Rejected malformed heartbeats are also checked to preserve the last-known-good routing and cache state. This is a coordinator contract guarantee only; it does not claim that browser-reported telemetry or tier classification is physically accurate or independently measured.

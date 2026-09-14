@@ -56,7 +56,7 @@ export interface ArtifactResidencyAssignmentReport {
   readonly residentArtifactBytesBeforeAssignment: number;
   /** Exact bytes fetched from the artifact origin for this assignment. */
   readonly downloadedArtifactBytes: number;
-  /** Segment bundles that were absent before the assignment. */
+  /** Segment bundles that were absent before this assignment. */
   readonly missingSegmentIndexes: readonly number[];
 }
 
@@ -874,60 +874,75 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
 }
 
 function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
-  assertWorkerTelemetrySnapshotShape(telemetry);
-  const cacheArtifacts = telemetry.cacheArtifacts;
-  return Object.freeze({
-    uptimeMs: telemetry.uptimeMs,
-    vramFreeMB: telemetry.vramFreeMB,
-    gpuBusyRatio: telemetry.gpuBusyRatio,
-    cpuBusyRatio: telemetry.cpuBusyRatio,
-    cacheHits: Object.freeze([...telemetry.cacheHits]),
-    ...(cacheArtifacts === undefined
-      ? {}
-      : {
-        cacheArtifacts: Object.freeze(
-          cacheArtifacts.map((identity) => Object.freeze({ ...identity })),
-        ),
-      }),
-    tokensPerSecond: telemetry.tokensPerSecond,
-    checkpointBytesPerSecond: telemetry.checkpointBytesPerSecond,
-    failureRate: telemetry.failureRate,
-    heartbeatJitterMs: telemetry.heartbeatJitterMs,
-  });
-}
-
-function assertWorkerTelemetrySnapshotShape(
-  telemetry: unknown,
-): asserts telemetry is WorkerTelemetry {
   if (typeof telemetry !== 'object' || telemetry === null || Array.isArray(telemetry)) {
     throw new Error('worker telemetry must be a non-null object');
   }
 
-  const runtimeTelemetry = telemetry as Record<string, unknown>;
-  if (!Array.isArray(runtimeTelemetry.cacheHits)) {
+  const runtimeTelemetry = telemetry as unknown as Record<string, unknown>;
+  const cacheHitsInput = runtimeTelemetry.cacheHits;
+  if (!Array.isArray(cacheHitsInput)) {
     throw new Error('worker telemetry cacheHits must be an array');
   }
-
-  const cacheArtifacts = runtimeTelemetry.cacheArtifacts;
-  if (cacheArtifacts === undefined) {
-    return;
-  }
-  if (!Array.isArray(cacheArtifacts)) {
-    throw new Error('worker telemetry cacheArtifacts must be an array when present');
+  const cacheHitCount = cacheHitsInput.length;
+  const cacheHits: number[] = new Array(cacheHitCount);
+  for (let index = 0; index < cacheHitCount; index++) {
+    cacheHits[index] = cacheHitsInput[index] as number;
   }
 
-  for (const [index, identity] of cacheArtifacts.entries()) {
-    if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
-      throw new Error(`worker telemetry cacheArtifacts[${index}] must be a non-null object`);
+  const cacheArtifactsInput = runtimeTelemetry.cacheArtifacts;
+  let cacheArtifacts: readonly CachedArtifactIdentity[] | undefined;
+  if (cacheArtifactsInput !== undefined) {
+    if (!Array.isArray(cacheArtifactsInput)) {
+      throw new Error('worker telemetry cacheArtifacts must be an array when present');
     }
-    const runtimeIdentity = identity as Record<string, unknown>;
-    if (typeof runtimeIdentity.segmentIndex !== 'number') {
-      throw new Error(`worker telemetry cacheArtifacts[${index}].segmentIndex must be a number`);
+
+    const cacheArtifactCount = cacheArtifactsInput.length;
+    const cacheArtifactEntries: unknown[] = new Array(cacheArtifactCount);
+    for (let index = 0; index < cacheArtifactCount; index++) {
+      cacheArtifactEntries[index] = cacheArtifactsInput[index];
     }
-    if (typeof runtimeIdentity.sha256 !== 'string') {
-      throw new Error(`worker telemetry cacheArtifacts[${index}].sha256 must be a string`);
+
+    const ownedCacheArtifacts: CachedArtifactIdentity[] = new Array(cacheArtifactCount);
+    for (let index = 0; index < cacheArtifactCount; index++) {
+      const identity = cacheArtifactEntries[index];
+      if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
+        throw new Error(`worker telemetry cacheArtifacts[${index}] must be a non-null object`);
+      }
+      const runtimeIdentity = identity as Record<string, unknown>;
+      const segmentIndex = runtimeIdentity.segmentIndex;
+      if (typeof segmentIndex !== 'number') {
+        throw new Error(`worker telemetry cacheArtifacts[${index}].segmentIndex must be a number`);
+      }
+      const sha256 = runtimeIdentity.sha256;
+      if (typeof sha256 !== 'string') {
+        throw new Error(`worker telemetry cacheArtifacts[${index}].sha256 must be a string`);
+      }
+      ownedCacheArtifacts[index] = Object.freeze({ segmentIndex, sha256 });
     }
+    cacheArtifacts = Object.freeze(ownedCacheArtifacts);
   }
+
+  const uptimeMs = runtimeTelemetry.uptimeMs as number;
+  const vramFreeMB = runtimeTelemetry.vramFreeMB as number;
+  const gpuBusyRatio = runtimeTelemetry.gpuBusyRatio as number;
+  const cpuBusyRatio = runtimeTelemetry.cpuBusyRatio as number;
+  const tokensPerSecond = runtimeTelemetry.tokensPerSecond as number;
+  const checkpointBytesPerSecond = runtimeTelemetry.checkpointBytesPerSecond as number;
+  const failureRate = runtimeTelemetry.failureRate as number;
+  const heartbeatJitterMs = runtimeTelemetry.heartbeatJitterMs as number;
+
+  return Object.freeze({
+    uptimeMs,
+    vramFreeMB,
+    gpuBusyRatio,
+    cpuBusyRatio,
+    cacheHits: Object.freeze(cacheHits),
+    ...(cacheArtifacts === undefined ? {} : { cacheArtifacts }),
+    tokensPerSecond,
+    checkpointBytesPerSecond,
+    failureRate,
+    heartbeatJitterMs,
+  });
 }
 
 function assertWorkerTier(tier: WorkerTier): void {
