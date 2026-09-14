@@ -114,13 +114,17 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     throw new Error('artifact reports must be an array');
   }
 
-  const declaredBytes = positiveBytes(validatedPlan.declaredBytes, 'artifact plan declaredBytes');
+  // Own the caller-provided plan before validating it. Accessor/Proxy-backed
+  // plans must not be able to return one value for validation and a different
+  // value when the accepted result is constructed later.
+  const planSnapshot = { ...validatedPlan };
+  const declaredBytes = positiveBytes(planSnapshot.declaredBytes, 'artifact plan declaredBytes');
   const requiredMaxBytes = positiveBytes(
-    validatedPlan.requiredMaxBytes,
+    planSnapshot.requiredMaxBytes,
     'artifact plan requiredMaxBytes',
   );
   const absoluteMaxBytes = positiveBytes(
-    validatedPlan.absoluteMaxBytes,
+    planSnapshot.absoluteMaxBytes,
     'artifact plan absoluteMaxBytes',
   );
   if (requiredMaxBytes > absoluteMaxBytes) {
@@ -142,7 +146,7 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     throw new Error(`segment artifact actual byte size exceeds runtime budget: ${actualBytes}`);
   }
   return {
-    ...validatedPlan,
+    ...planSnapshot,
     actualBytes,
     actualMatchesDeclared: true,
     verdict: 'accepted',
