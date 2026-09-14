@@ -12,7 +12,8 @@ import type {
   DurableSegmentExecutor,
 } from './durable-coordinator-core.js';
 import type { DurableRepository } from './durable-repository.js';
-import { ErrorCode, UnzenError } from './errors.js';
+import type { ExecutionFailure, ResultIdentity } from './durable-types.js';
+import { ErrorCode, UnzenError, classifyErrorCode } from './errors.js';
 import type { SegmentedModelManifest } from './model-manifest.js';
 import { WorkerTier, type WorkerId } from './types.js';
 
@@ -181,6 +182,67 @@ function snapshotDurableSubmissionOptions(
   };
 }
 
+interface FailureIdentitySnapshot {
+  readonly identity: unknown;
+  readonly valid: boolean;
+}
+
+function snapshotFailureIdentity(identity: unknown): FailureIdentitySnapshot {
+  if (!isRecord(identity)) return { identity, valid: false };
+
+  const owned: Record<string, unknown> = {};
+  for (const field of ['requestId', 'attemptId', 'leaseId', 'workerId', 'workerGeneration'] as const) {
+    const value = identity[field];
+    owned[field] = value;
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      return { identity: owned, valid: false };
+    }
+  }
+
+  const segmentIndex = identity.segmentIndex;
+  owned.segmentIndex = segmentIndex;
+  if (
+    typeof segmentIndex !== 'number'
+    || !Number.isSafeInteger(segmentIndex)
+    || segmentIndex < 0
+  ) {
+    return { identity: owned, valid: false };
+  }
+
+  return { identity: owned as unknown as ResultIdentity, valid: true };
+}
+
+function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
+  // Let the existing core validator retain its exact malformed-top-level error.
+  if (!isRecord(failure)) return failure as ExecutionFailure;
+
+  const identityValue = failure.identity;
+  const identitySnapshot = snapshotFailureIdentity(identityValue);
+  if (!identitySnapshot.valid) {
+    return {
+      identity: identitySnapshot.identity as ResultIdentity,
+      code: undefined as unknown as ExecutionFailure['code'],
+      message: undefined as unknown as string,
+    };
+  }
+
+  const codeValue = failure.code;
+  if (typeof codeValue !== 'string' || classifyErrorCode(codeValue) === undefined) {
+    return {
+      identity: identitySnapshot.identity as ResultIdentity,
+      code: codeValue as ExecutionFailure['code'],
+      message: undefined as unknown as string,
+    };
+  }
+
+  const messageValue = failure.message;
+  return {
+    identity: identitySnapshot.identity as ResultIdentity,
+    code: codeValue as ExecutionFailure['code'],
+    message: messageValue as string,
+  };
+}
+
 export class DurableCoordinator extends DurableCoordinatorCore {
   constructor(
     executor: DurableSegmentExecutor,
@@ -206,5 +268,9 @@ export class DurableCoordinator extends DurableCoordinatorCore {
   ) {
     const ownedRegistration = snapshotDurableWorkerRegistration(registration);
     return super.registerWorker(ownedRegistration, connectionId);
+  }
+
+  handleWorkerFailure(failure: ExecutionFailure): void {
+    super.handleWorkerFailure(snapshotDurableExecutionFailure(failure));
   }
 }
