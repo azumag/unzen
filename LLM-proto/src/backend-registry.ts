@@ -28,33 +28,59 @@ export interface CapabilityEntry {
   readonly backend?: InferenceBackend;
 }
 
-function isRoutingRequestEnvelope(value: unknown): value is InferenceRequest {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+type RoutingRequestEnvelope = Pick<
+  InferenceRequest,
+  'protocolVersion' | 'maxTokens' | 'requiresStreaming'
+>;
 
-  const request = value as Record<string, unknown>;
+/**
+ * Capture each caller-owned routing field once, then validate and route only
+ * from that owned state. Accessor/Proxy-backed requests therefore cannot pass
+ * validation with one value and influence routing with a later re-read.
+ */
+function validatedRoutingRequestEnvelope(value: unknown): RoutingRequestEnvelope | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+
+  let protocolVersion: unknown;
+  let maxTokens: unknown;
+  let requiresStreaming: unknown;
+  try {
+    const request = value as Record<string, unknown>;
+    protocolVersion = request.protocolVersion;
+    maxTokens = request.maxTokens;
+    requiresStreaming = request.requiresStreaming;
+  } catch {
+    return undefined;
+  }
+
   if (
-    typeof request.protocolVersion !== 'string' ||
-    !isSupportedProtocolVersion(request.protocolVersion)
+    typeof protocolVersion !== 'string' ||
+    !isSupportedProtocolVersion(protocolVersion)
   ) {
-    return false;
+    return undefined;
   }
   if (
-    request.maxTokens !== undefined &&
+    maxTokens !== undefined &&
     (
-      typeof request.maxTokens !== 'number' ||
-      !Number.isSafeInteger(request.maxTokens) ||
-      request.maxTokens < 0
+      typeof maxTokens !== 'number' ||
+      !Number.isSafeInteger(maxTokens) ||
+      maxTokens < 0
     )
   ) {
-    return false;
+    return undefined;
   }
   if (
-    request.requiresStreaming !== undefined &&
-    typeof request.requiresStreaming !== 'boolean'
+    requiresStreaming !== undefined &&
+    typeof requiresStreaming !== 'boolean'
   ) {
-    return false;
+    return undefined;
   }
-  return true;
+
+  return Object.freeze({
+    protocolVersion,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(requiresStreaming !== undefined ? { requiresStreaming } : {}),
+  });
 }
 
 function validatedRoutingCapability(value: unknown): WorkerCapability | undefined {
@@ -72,14 +98,20 @@ export function capabilityMatchesRequest(
   capability: WorkerCapability,
   request: InferenceRequest,
 ): boolean {
-  if (!isRoutingRequestEnvelope(request)) return false;
+  const validatedRequest = validatedRoutingRequestEnvelope(request);
+  if (validatedRequest === undefined) return false;
   const validatedCapability = validatedRoutingCapability(capability);
   if (validatedCapability === undefined) return false;
   if (!validatedCapability.inputModalities.includes('text')) return false;
-  if (request.requiresStreaming === true && validatedCapability.streaming === false) return false;
   if (
-    request.maxTokens !== undefined &&
-    validatedCapability.contextWindowTokens < request.maxTokens
+    validatedRequest.requiresStreaming === true &&
+    validatedCapability.streaming === false
+  ) {
+    return false;
+  }
+  if (
+    validatedRequest.maxTokens !== undefined &&
+    validatedCapability.contextWindowTokens < validatedRequest.maxTokens
   ) {
     return false;
   }
