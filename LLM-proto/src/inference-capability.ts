@@ -58,6 +58,8 @@ export interface CapabilityValidationIssue {
 export interface CapabilityValidationResult {
   readonly status: CapabilityValidationStatus;
   readonly issues: readonly CapabilityValidationIssue[];
+  /** Owned/frozen capability corresponding exactly to the validated state. */
+  readonly capability?: WorkerCapability;
 }
 
 export interface CapabilityValidationOptions {
@@ -111,9 +113,21 @@ const KNOWN_CAPABILITY_FIELDS = new Set([
   'allowedNetworkDestinations',
 ]);
 
+const CAPABILITY_ARRAY_FIELDS = new Set([
+  'inputModalities',
+  'outputModalities',
+  'supportedLanguages',
+  'executionSurfaces',
+  'allowedNetworkDestinations',
+]);
+
 /**
  * Validate an unknown value as a `WorkerCapability`. Returns issues instead of
  * throwing so the Coordinator can surface a structured rejection reason.
+ *
+ * Every caller-owned field/container is captured before structural checks. A
+ * successful result therefore exposes the frozen capability state that was
+ * actually validated, rather than re-reading the worker-owned object later.
  */
 export function validateWorkerCapability(
   input: unknown,
@@ -125,12 +139,20 @@ export function validateWorkerCapability(
     return { status: 'invalid', issues };
   }
 
-  const capability = input as Record<string, unknown>;
+  const capability = snapshotCapabilityCandidate(input);
+  const unknownFieldPolicy = options.unknownFieldPolicy;
+  const rawSupported = options.supportedSchemaVersions;
+  const supported =
+    rawSupported === undefined
+      ? [CAPABILITY_SCHEMA_VERSION]
+      : Array.isArray(rawSupported)
+        ? Object.freeze(Array.from(rawSupported))
+        : rawSupported;
 
   // Unknown top-level fields are rejected by default; a caller that explicitly
   // tolerates forward-compatible additions opts into 'ignore'. Either way an
   // unknown field is never used for routing decisions.
-  if (options.unknownFieldPolicy !== 'ignore') {
+  if (unknownFieldPolicy !== 'ignore') {
     for (const key of Object.keys(capability)) {
       if (!KNOWN_CAPABILITY_FIELDS.has(key)) {
         issue(issues, 'unknown-field', `$.${key}`, `unknown capability field '${key}'`);
@@ -138,7 +160,6 @@ export function validateWorkerCapability(
     }
   }
 
-  const supported = options.supportedSchemaVersions ?? [CAPABILITY_SCHEMA_VERSION];
   if (typeof capability.schemaVersion !== 'string' || capability.schemaVersion.trim().length === 0) {
     issue(issues, 'invalid-capability', '$.schemaVersion', 'schemaVersion must be a non-empty string');
   } else if (!supported.includes(capability.schemaVersion)) {
@@ -326,25 +347,53 @@ export function validateWorkerCapability(
   if (issues.length > 0) {
     return { status: 'invalid', issues };
   }
-  return { status: 'valid', issues };
+  return {
+    status: 'valid',
+    issues,
+    capability: capability as unknown as WorkerCapability,
+  };
 }
 
 /**
  * Fail-fast helper: throws when a capability is invalid. Used at backend
  * registration so an invalid capability can never enter the routing table.
+ * Returns the owned/frozen capability that passed validation.
  */
 export function assertValidWorkerCapability(
   capability: WorkerCapability,
   options: CapabilityValidationOptions = {},
 ): WorkerCapability {
   const validation = validateWorkerCapability(capability, options);
-  if (validation.status !== 'valid') {
+  if (validation.status !== 'valid' || validation.capability === undefined) {
     const detail = validation.issues
       .map((item) => `${item.path} ${item.code}: ${item.message}`)
       .join('; ');
     throw new Error(`worker capability validation failed: ${detail}`);
   }
-  return capability;
+  return validation.capability;
+}
+
+function snapshotCapabilityCandidate(input: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  const snapshot: Record<string, unknown> = {};
+  for (const key of Object.keys(input)) {
+    const value = input[key];
+    if (CAPABILITY_ARRAY_FIELDS.has(key) && Array.isArray(value)) {
+      snapshot[key] = Object.freeze(Array.from(value));
+    } else if (key === 'health' && isRecord(value)) {
+      snapshot[key] = snapshotHealthCandidate(value);
+    } else {
+      snapshot[key] = value;
+    }
+  }
+  return Object.freeze(snapshot);
+}
+
+function snapshotHealthCandidate(input: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  const snapshot: Record<string, unknown> = {};
+  for (const key of Object.keys(input)) {
+    snapshot[key] = input[key];
+  }
+  return Object.freeze(snapshot);
 }
 
 function validateModalities(

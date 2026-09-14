@@ -57,8 +57,9 @@ function isRoutingRequestEnvelope(value: unknown): value is InferenceRequest {
   return true;
 }
 
-function isRoutingCapabilityEnvelope(value: unknown): value is WorkerCapability {
-  return validateWorkerCapability(value).status === 'valid';
+function validatedRoutingCapability(value: unknown): WorkerCapability | undefined {
+  const validation = validateWorkerCapability(value);
+  return validation.status === 'valid' ? validation.capability : undefined;
 }
 
 /**
@@ -72,14 +73,21 @@ export function capabilityMatchesRequest(
   request: InferenceRequest,
 ): boolean {
   if (!isRoutingRequestEnvelope(request)) return false;
-  if (!isRoutingCapabilityEnvelope(capability)) return false;
-  if (!capability.inputModalities.includes('text')) return false;
-  if (request.requiresStreaming === true && capability.streaming === false) return false;
-  if (request.maxTokens !== undefined && capability.contextWindowTokens < request.maxTokens) {
+  const validatedCapability = validatedRoutingCapability(capability);
+  if (validatedCapability === undefined) return false;
+  if (!validatedCapability.inputModalities.includes('text')) return false;
+  if (request.requiresStreaming === true && validatedCapability.streaming === false) return false;
+  if (
+    request.maxTokens !== undefined &&
+    validatedCapability.contextWindowTokens < request.maxTokens
+  ) {
     return false;
   }
   // A backend that has not finished model preparation is not ready to execute.
-  if (capability.modelDownloadState !== undefined && capability.modelDownloadState !== 'available') {
+  if (
+    validatedCapability.modelDownloadState !== undefined &&
+    validatedCapability.modelDownloadState !== 'available'
+  ) {
     return false;
   }
   return true;
@@ -103,16 +111,15 @@ export class BackendRegistry {
    * Register a backend implementing the `InferenceBackend` contract. The
    * capability is runtime-validated; an invalid capability rejects the whole
    * registration so the routing table never contains an untrusted entry.
-   * The validated capability is copied and frozen before storage so a backend
-   * cannot mutate routing facts after it has crossed the trust boundary.
+   * The validator returns the owned/frozen capability that crossed the trust
+   * boundary, so registration never re-reads backend-owned routing facts.
    */
   async register(backendId: string, backend: InferenceBackend): Promise<void> {
     this.assertBackendIdAvailable(backendId);
     this.pendingBackendIds.add(backendId);
     try {
       const capability = await backend.describeCapabilities();
-      assertValidWorkerCapability(capability);
-      const snapshot = snapshotWorkerCapability(capability);
+      const snapshot = assertValidWorkerCapability(capability);
       this.entries.set(
         backendId,
         Object.freeze({ backendId, capability: snapshot, backend }),
@@ -131,8 +138,7 @@ export class BackendRegistry {
    */
   registerCapability(backendId: string, capability: WorkerCapability): void {
     this.assertBackendIdAvailable(backendId);
-    assertValidWorkerCapability(capability);
-    const snapshot = snapshotWorkerCapability(capability);
+    const snapshot = assertValidWorkerCapability(capability);
     this.entries.set(
       backendId,
       Object.freeze({ backendId, capability: snapshot }),
@@ -188,26 +194,4 @@ export class BackendRegistry {
       throw new Error(`backend already registered: ${backendId}`);
     }
   }
-}
-
-/**
- * Store routing facts by value rather than retaining worker-owned references.
- * `readonly` protects TypeScript callers only; messages/deserialized objects
- * remain mutable at runtime. Every nested mutable routing field therefore gets
- * its own frozen copy before the capability enters the registry.
- */
-function snapshotWorkerCapability(capability: WorkerCapability): WorkerCapability {
-  const health = capability.health === undefined
-    ? undefined
-    : Object.freeze({ ...capability.health });
-
-  return Object.freeze({
-    ...capability,
-    inputModalities: Object.freeze([...capability.inputModalities]),
-    outputModalities: Object.freeze([...capability.outputModalities]),
-    supportedLanguages: Object.freeze([...capability.supportedLanguages]),
-    executionSurfaces: Object.freeze([...capability.executionSurfaces]),
-    allowedNetworkDestinations: Object.freeze([...capability.allowedNetworkDestinations]),
-    ...(health === undefined ? {} : { health }),
-  });
 }
