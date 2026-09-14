@@ -71,6 +71,20 @@ describe('durable recovery command runtime option validation', () => {
     });
   }
 
+  it('rejects a finite now/TTL pair whose ownership expiry overflows', () => {
+    const repo = new InMemoryRepository();
+    const record = seed(repo);
+
+    expect(() => beginDurableRecovery(repo, record.requestId, {
+      ...validOptions(),
+      now: Number.MAX_VALUE,
+      ownershipTtlMs: Number.MAX_VALUE,
+    })).toThrow(/ownership expiry must be finite/);
+
+    expect(repo.getRecoveryOwnership(record.requestId)).toBeUndefined();
+    expect(repo.getRequest(record.requestId)?.stage).toBe('queued');
+  });
+
   it('accepts zero-valued time, ownership TTL, and retry controls', () => {
     const repo = new InMemoryRepository();
     const record = seed(repo);
