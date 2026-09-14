@@ -82,6 +82,69 @@ describe('checkpoint serialization and transfer measurement gate', () => {
     );
   });
 
+  it('builds the default manifest from one owned feasibility-report snapshot', () => {
+    const base = evaluateWebGpu30BFeasibility(createDefault30BFeasibilityManifest());
+    const dimensionReads = [0, 0, 0];
+    const shape = [base.checkpointTensorShape[0], base.checkpointTensorShape[1], base.checkpointTensorShape[2]];
+    for (const index of [0, 1, 2] as const) {
+      const first = shape[index];
+      Object.defineProperty(shape, index, {
+        configurable: true,
+        enumerable: true,
+        get() {
+          dimensionReads[index] += 1;
+          return dimensionReads[index] === 1 ? first : 0;
+        },
+      });
+    }
+
+    const reads = {
+      checkpointTensorShape: 0,
+      checkpointBytes: 0,
+      checkpointTransferMs: 0,
+    };
+    const report = Object.defineProperties({}, {
+      checkpointTensorShape: {
+        enumerable: true,
+        get() {
+          reads.checkpointTensorShape += 1;
+          return reads.checkpointTensorShape === 1 ? shape : [0, 0, 0];
+        },
+      },
+      checkpointBytes: {
+        enumerable: true,
+        get() {
+          reads.checkpointBytes += 1;
+          return reads.checkpointBytes === 1 ? base.checkpointBytes : 0;
+        },
+      },
+      checkpointTransferMs: {
+        enumerable: true,
+        get() {
+          reads.checkpointTransferMs += 1;
+          return reads.checkpointTransferMs === 1 ? base.checkpointTransferMs : -1;
+        },
+      },
+    }) as WebGpu30BFeasibilityReport;
+
+    const manifest = createDefaultCheckpointMeasurementManifest(report);
+
+    expect(reads).toEqual({
+      checkpointTensorShape: 1,
+      checkpointBytes: 1,
+      checkpointTransferMs: 1,
+    });
+    expect(dimensionReads).toEqual([1, 1, 1]);
+    expect(manifest.tensor).toEqual({
+      batchSize: base.checkpointTensorShape[0],
+      sequenceLength: base.checkpointTensorShape[1],
+      hiddenSize: base.checkpointTensorShape[2],
+      dtype: 'float16',
+    });
+    expect(manifest.expectedCheckpointBytes).toBe(base.checkpointBytes);
+    expect(manifest.expectedCheckpointTransferMs).toBe(base.checkpointTransferMs);
+  });
+
   it('round-trips generated hidden-state payloads with metadata intact', () => {
     const manifest = createDefaultCheckpointMeasurementManifest();
     const checkpoint = createCheckpointPayload(manifest);

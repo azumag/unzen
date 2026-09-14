@@ -25,10 +25,15 @@ checkpoint tensor. That produces a `6,815,744` byte hidden-state payload and a
 `407ms` transfer estimate at `16 MiB/s`.
 
 When a caller supplies a feasibility report explicitly to
-`createDefaultCheckpointMeasurementManifest()`, the helper validates the report
-before indexing the tensor shape. The report must be a non-null, non-array
-object; `checkpointTensorShape` must contain exactly three positive safe
-integers; `checkpointBytes` must be a positive safe integer; and
+`createDefaultCheckpointMeasurementManifest()`, the helper first snapshots the
+consumed report values instead of validating and then re-reading caller-owned
+properties. `checkpointTensorShape` is captured once, each of its three
+dimensions is captured once, and `checkpointBytes` / `checkpointTransferMs` are
+captured once in fail-fast order. The returned default manifest is built only
+from those validated owned values, so getter/Proxy-backed reports cannot swap in
+unchecked geometry or comparison values after validation. The report must be a
+non-null, non-array object; `checkpointTensorShape` must contain exactly three
+positive safe integers; `checkpointBytes` must be a positive safe integer; and
 `checkpointTransferMs` must be a non-negative safe integer. Omitting the
 argument keeps the existing default path through the validated feasibility
 evaluator.
