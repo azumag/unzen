@@ -89,22 +89,48 @@ function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
     throw new TypeError('SpanPipeline options must be a non-null, non-array object');
   }
 
-  const merged = {
-    ...DEFAULT_OPTIONS,
-    ...(options ?? {}),
-  } as SpanPipelineOptions;
+  // Do not spread or enumerate caller-owned objects. Capture the numeric control
+  // fields once, validate those owned primitives, and only then read the optional
+  // residency dependency so malformed timing input still fails before dependency
+  // side effects.
+  const source = options as Partial<SpanPipelineOptions> | undefined;
+  const capturedMaxRetries = source?.maxRetries;
+  const capturedPerSegmentTimeoutMs = source?.perSegmentTimeoutMs;
+  const capturedRetryDelayMs = source?.retryDelayMs;
 
-  if (!isNonNegativeSafeInteger(merged.maxRetries)) {
+  const maxRetries = capturedMaxRetries === undefined
+    ? DEFAULT_OPTIONS.maxRetries
+    : capturedMaxRetries;
+  const perSegmentTimeoutMs = capturedPerSegmentTimeoutMs === undefined
+    ? DEFAULT_OPTIONS.perSegmentTimeoutMs
+    : capturedPerSegmentTimeoutMs;
+  const retryDelayMs = capturedRetryDelayMs === undefined
+    ? DEFAULT_OPTIONS.retryDelayMs
+    : capturedRetryDelayMs;
+
+  if (!isNonNegativeSafeInteger(maxRetries)) {
     throw new TypeError('SpanPipeline maxRetries must be a non-negative safe integer');
   }
-  if (!isNonNegativeFiniteNumber(merged.perSegmentTimeoutMs)) {
+  if (!isNonNegativeFiniteNumber(perSegmentTimeoutMs)) {
     throw new TypeError('SpanPipeline perSegmentTimeoutMs must be a non-negative finite number');
   }
-  if (!isNonNegativeFiniteNumber(merged.retryDelayMs)) {
+  if (!isNonNegativeFiniteNumber(retryDelayMs)) {
     throw new TypeError('SpanPipeline retryDelayMs must be a non-negative finite number');
   }
 
-  return merged;
+  const artifactResidencyLedger = source?.artifactResidencyLedger;
+  return artifactResidencyLedger === undefined
+    ? {
+        maxRetries,
+        perSegmentTimeoutMs,
+        retryDelayMs,
+      }
+    : {
+        maxRetries,
+        perSegmentTimeoutMs,
+        retryDelayMs,
+        artifactResidencyLedger,
+      };
 }
 
 export class SpanPipeline {
