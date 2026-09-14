@@ -87,6 +87,30 @@ describe('validated model manifest ownership', () => {
     expect(validated.runtimeRequirements.supportedQuantization[0]).toBe(originalQuantization);
   });
 
+  it('preserves omission of optional manifest and segment properties', () => {
+    const fixture = createFixtureModelManifest();
+    const segments = fixture.segments.map((segment) => {
+      const copy = { ...segment } as Record<string, unknown>;
+      delete copy.encoding;
+      delete copy.components;
+      delete copy.measurementConditions;
+      return copy;
+    });
+    const input = { ...fixture, segments } as Record<string, unknown>;
+    delete input.signature;
+
+    const result = validateModelManifestShape(input);
+
+    expect(result.status).toBe('valid');
+    const validated = result.manifest!;
+    expect(Object.hasOwn(validated, 'signature')).toBe(false);
+    for (const segment of validated.segments) {
+      expect(Object.hasOwn(segment, 'encoding')).toBe(false);
+      expect(Object.hasOwn(segment, 'components')).toBe(false);
+      expect(Object.hasOwn(segment, 'measurementConditions')).toBe(false);
+    }
+  });
+
   it('reads root identity and segment membership once before structural validation', () => {
     const fixture = createFixtureModelManifest();
     let revisionReads = 0;
