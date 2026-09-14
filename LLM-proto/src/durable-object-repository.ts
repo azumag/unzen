@@ -9,6 +9,7 @@
 
 import {
   snapshotAttemptRecord,
+  snapshotCancellationRecord,
   snapshotLease,
   snapshotRecoveryOwnership,
   type AttemptPatch,
@@ -327,11 +328,12 @@ export class DurableObjectRepository implements DurableRepository {
 
   // cancellation
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void {
-    this.storage.put(cancellationKey(requestId), record);
+    this.storage.put(cancellationKey(requestId), snapshotCancellationRecord(record));
   }
 
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined {
-    return this.storage.get<CancellationRecord>(cancellationKey(requestId));
+    const record = this.storage.get<CancellationRecord>(cancellationKey(requestId));
+    return record === undefined ? undefined : snapshotCancellationRecord(record);
   }
 
   // recovery ownership
