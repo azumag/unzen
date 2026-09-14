@@ -24,16 +24,16 @@ export class WorkerPool {
 
   /** Register a new worker. Returns the created WorkerInfo. */
   register(registration: WorkerRegistration): WorkerInfo {
-    this.assertValidRegistration(registration);
+    const validated = this.validateRegistration(registration);
 
     const info: WorkerInfo = {
-      id: registration.workerId,
-      tier: registration.tier,
-      vramMB: registration.vramMB,
+      id: validated.workerId,
+      tier: validated.tier,
+      vramMB: validated.vramMB,
       status: WorkerStatus.IDLE,
       lastHeartbeat: Date.now(),
     };
-    this.workers.set(registration.workerId, info);
+    this.workers.set(validated.workerId, info);
     return info;
   }
 
@@ -159,8 +159,10 @@ export class WorkerPool {
   /**
    * Fail closed at the legacy wire-protocol boundary before a worker can affect
    * routing state. TypeScript types do not protect runtime WebSocket payloads.
+   * Capture each declared field once so validation and committed routing state
+   * are bound to the same caller-observed values.
    */
-  private assertValidRegistration(registration: WorkerRegistration): void {
+  private validateRegistration(registration: WorkerRegistration): WorkerRegistration {
     if (
       typeof registration !== 'object' ||
       registration === null ||
@@ -169,26 +171,33 @@ export class WorkerPool {
       throw new Error('worker registration must be a non-null object');
     }
 
-    if (
-      typeof registration.workerId !== 'string' ||
-      registration.workerId.trim().length === 0
-    ) {
+    const rawWorkerId: unknown = registration.workerId;
+    if (typeof rawWorkerId !== 'string' || rawWorkerId.trim().length === 0) {
       throw new Error('workerId must be a non-empty string');
     }
+    const stableWorkerId = workerId(rawWorkerId);
 
+    const tier: unknown = registration.tier;
     if (
-      registration.tier !== WorkerTier.TIER_1 &&
-      registration.tier !== WorkerTier.TIER_2 &&
-      registration.tier !== WorkerTier.TIER_3
+      tier !== WorkerTier.TIER_1 &&
+      tier !== WorkerTier.TIER_2 &&
+      tier !== WorkerTier.TIER_3
     ) {
-      throw new Error(`worker tier must be 1, 2, or 3; found ${String(registration.tier)}`);
+      throw new Error(`worker tier must be 1, 2, or 3; found ${String(tier)}`);
     }
 
-    if (!Number.isFinite(registration.vramMB) || registration.vramMB <= 0) {
+    const vramMB: unknown = registration.vramMB;
+    if (typeof vramMB !== 'number' || !Number.isFinite(vramMB) || vramMB <= 0) {
       throw new Error(
-        `worker vramMB must be a positive finite number; found ${String(registration.vramMB)}`,
+        `worker vramMB must be a positive finite number; found ${String(vramMB)}`,
       );
     }
+
+    return Object.freeze({
+      workerId: stableWorkerId,
+      tier,
+      vramMB,
+    });
   }
 
   /** Fail closed before JavaScript comparison semantics can turn NaN into a routing match. */
