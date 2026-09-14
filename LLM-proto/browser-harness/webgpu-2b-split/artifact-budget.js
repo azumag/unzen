@@ -134,8 +134,15 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     throw new Error('artifact plan declaredBytes must not exceed runtime limits');
   }
 
-  const actualBytes = reports.reduce((sum, report, index) => {
-    return sum + safeBytes(report?.bytes, `artifact report[${index}].bytes`);
+  // Detach report membership before reading any report fields. In particular,
+  // a bytes accessor on an earlier report must not be able to replace a later
+  // reports[] entry and thereby change what this verification pass consumes.
+  // Then capture each caller-owned bytes field exactly once and perform all
+  // arithmetic from the owned primitive snapshot.
+  const reportMembershipSnapshot = [...reports];
+  const reportBytesSnapshot = reportMembershipSnapshot.map((report) => report?.bytes);
+  const actualBytes = reportBytesSnapshot.reduce((sum, bytes, index) => {
+    return sum + safeBytes(bytes, `artifact report[${index}].bytes`);
   }, 0);
   if (actualBytes !== declaredBytes) {
     throw new Error(
