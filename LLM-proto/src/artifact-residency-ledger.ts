@@ -523,65 +523,94 @@ function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentAr
 function cloneAndValidateComponents(
   artifact: SegmentArtifact,
 ): readonly SegmentArtifactComponent[] | undefined {
-  if (artifact.components === undefined) {
+  const componentsInput = artifact.components;
+  if (componentsInput === undefined) {
     return undefined;
   }
-  if (artifact.components.length === 0) {
+
+  const componentCount = componentsInput.length;
+  if (componentCount === 0) {
     throw new Error(`segment ${artifact.index} component bundle must not be empty`);
+  }
+
+  // Fix the original component positions before invoking any component field
+  // accessor. A getter that truncates the caller-owned array cannot make a
+  // later position disappear silently from validation.
+  const componentInputs: unknown[] = [];
+  for (let componentIndex = 0; componentIndex < componentCount; componentIndex++) {
+    componentInputs.push(componentsInput[componentIndex]);
   }
 
   let componentBytes = 0;
   let graphCount = 0;
   let graphLocator: string | undefined;
   const componentPaths = new Set<string>();
-  const copied = artifact.components.map((component, componentIndex) => {
-    if (!isRecord(component)) {
+  const copied = componentInputs.map((componentInput, componentIndex) => {
+    if (!isRecord(componentInput)) {
       throw new Error(`segment ${artifact.index} component ${componentIndex} must be an object`);
     }
-    if (typeof component.role !== 'string' || !COMPONENT_ROLES.has(component.role)) {
+
+    const role = componentInput.role;
+    if (typeof role !== 'string' || !COMPONENT_ROLES.has(role)) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} role must be graph or external-data`,
       );
     }
-    if (typeof component.path !== 'string' || component.path.trim().length === 0) {
+
+    const path = componentInput.path;
+    if (typeof path !== 'string' || path.trim().length === 0) {
       throw new Error(`segment ${artifact.index} component ${componentIndex} path must be non-empty`);
     }
-    if (componentPaths.has(component.path)) {
-      throw new Error(`segment ${artifact.index} component path ${component.path} must be unique`);
+    if (componentPaths.has(path)) {
+      throw new Error(`segment ${artifact.index} component path ${path} must be unique`);
     }
-    componentPaths.add(component.path);
-    if (!Number.isSafeInteger(component.byteSize) || Number(component.byteSize) <= 0) {
+    componentPaths.add(path);
+
+    const byteSize = componentInput.byteSize;
+    if (typeof byteSize !== 'number' || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} byteSize must be a safe positive integer`,
       );
     }
-    if (typeof component.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(component.sha256)) {
+
+    const sha256 = componentInput.sha256;
+    if (typeof sha256 !== 'string' || !SHA256_HEX_PATTERN.test(sha256)) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} sha256 must be exactly 64 lowercase hexadecimal characters`,
       );
     }
-    if (typeof component.contentType !== 'string' || component.contentType.trim().length === 0) {
+
+    const contentType = componentInput.contentType;
+    if (typeof contentType !== 'string' || contentType.trim().length === 0) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} contentType must be non-empty`,
       );
     }
-    if (
-      typeof component.artifactLocator !== 'string' ||
-      component.artifactLocator.trim().length === 0
-    ) {
+
+    const artifactLocator = componentInput.artifactLocator;
+    if (typeof artifactLocator !== 'string' || artifactLocator.trim().length === 0) {
       throw new Error(
         `segment ${artifact.index} component ${componentIndex} artifactLocator must be non-empty`,
       );
     }
-    if (component.role === 'graph') {
+
+    if (role === 'graph') {
       graphCount++;
-      graphLocator = component.artifactLocator;
+      graphLocator = artifactLocator;
     }
-    componentBytes += Number(component.byteSize);
+    componentBytes += byteSize;
     if (!Number.isSafeInteger(componentBytes)) {
       throw new Error(`segment ${artifact.index} component bytes exceed JavaScript safe integer range`);
     }
-    return Object.freeze({ ...component }) as unknown as SegmentArtifactComponent;
+
+    return Object.freeze({
+      role: role as SegmentArtifactComponent['role'],
+      path,
+      byteSize,
+      sha256,
+      contentType,
+      artifactLocator,
+    });
   });
 
   if (graphCount !== 1) {
