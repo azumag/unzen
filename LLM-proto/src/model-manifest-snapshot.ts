@@ -12,6 +12,13 @@ import type {
  * allow model identity, geometry, runtime policy, or artifact metadata to drift
  * after the validator has accepted them. This helper copies and freezes every
  * declared mutable container that participates in manifest identity.
+ *
+ * The validator passes an already-owned plain candidate into this helper. Keep
+ * that candidate's property insertion order while replacing mutable containers:
+ * the current manifest digest contract serializes nested segment/runtime objects
+ * with JSON.stringify(), so reordering otherwise-valid JSON fields would change
+ * the digest. Optional properties omitted by the caller therefore also remain
+ * omitted in the owned snapshot.
  */
 export function snapshotValidatedModelManifest(
   manifest: SegmentedModelManifest,
@@ -38,11 +45,12 @@ function snapshotSegmentArtifact(artifact: SegmentArtifact): SegmentArtifact {
       ? undefined
       : Object.freeze(artifact.components.map(snapshotArtifactComponent));
 
-  return Object.freeze({
+  const snapshot: SegmentArtifact = {
     ...artifact,
     compatibleRuntimes,
-    components,
-  });
+    ...(components === undefined ? {} : { components }),
+  };
+  return Object.freeze(snapshot);
 }
 
 function snapshotArtifactComponent(
