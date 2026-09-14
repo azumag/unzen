@@ -194,6 +194,38 @@ describe('validated model manifest ownership', () => {
     expect(supportedQuantizationReads).toBe(1);
   });
 
+  it('preserves digest-covered nested JSON property order while taking ownership', async () => {
+    const fixture = createFixtureModelManifest();
+    const segments = fixture.segments.map((segment) => {
+      const { measurementConditions, ...rest } = segment;
+      return {
+        ...rest,
+        measurementConditions,
+      };
+    });
+    const {
+      supportedQuantization,
+      ...runtimeRequirementRest
+    } = fixture.runtimeRequirements;
+    const input = {
+      ...fixture,
+      segments,
+      runtimeRequirements: {
+        ...runtimeRequirementRest,
+        supportedQuantization: [...supportedQuantization],
+      },
+      manifestDigest: '0'.repeat(64),
+    };
+    input.manifestDigest = await computeModelManifestDigest(input);
+
+    const result = await validateModelManifest(input);
+
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+    expect(result.manifest?.manifestDigest).toBe(input.manifestDigest);
+    expect(await computeModelManifestDigest(result.manifest!)).toBe(input.manifestDigest);
+  });
+
   it('keeps async digest verification stable when the caller mutates after validation starts', async () => {
     const fixture = createFixtureModelManifest();
     const input = {
