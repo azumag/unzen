@@ -125,6 +125,42 @@ describe('SpanPipeline runtime option envelope', () => {
     expect(assertCompatibleSegments).toHaveBeenCalledWith([]);
   });
 
+  it('preserves spread-era defaults for inherited and non-enumerable declared fields', () => {
+    let inheritedReads = 0;
+    const inheritedLedger = {
+      assertCompatibleSegments: vi.fn(),
+    } as unknown as ArtifactResidencyLedger;
+    const prototype = Object.defineProperties({}, {
+      maxRetries: {
+        enumerable: true,
+        get: () => {
+          inheritedReads += 1;
+          return 9;
+        },
+      },
+      artifactResidencyLedger: {
+        enumerable: true,
+        get: () => {
+          inheritedReads += 1;
+          return inheritedLedger;
+        },
+      },
+    });
+    const options = Object.create(prototype) as Partial<SpanPipelineOptions>;
+    Object.defineProperty(options, 'perSegmentTimeoutMs', {
+      enumerable: false,
+      value: 12_345,
+    });
+
+    expect(readOptions(construct(options))).toEqual({
+      maxRetries: 2,
+      perSegmentTimeoutMs: 10_000,
+      retryDelayMs: 1_000,
+    });
+    expect(inheritedReads).toBe(0);
+    expect(inheritedLedger.assertCompatibleSegments).not.toHaveBeenCalled();
+  });
+
   it('does not read artifact residency dependency when numeric validation fails', () => {
     let ledgerReads = 0;
     const options = Object.defineProperties({}, {
