@@ -1,6 +1,17 @@
 # Checkpoint envelope runtime boundary
 
-`validateCheckpointEnvelope()` and `verifyCheckpointDigest()` are exported runtime trust boundaries. TypeScript types are not treated as proof that an envelope or expected comparison object is stable, plain, or immutable.
+`createCheckpointEnvelope()`, `validateCheckpointEnvelope()`, and `verifyCheckpointDigest()` are exported runtime trust boundaries. TypeScript types are not treated as proof that an input or envelope is stable, plain, or immutable.
+
+`createCheckpointEnvelope()` owns the checkpoint bytes at creation time:
+
+- caller-owned `payload` is read once;
+- malformed runtime payloads are rejected before SHA-256 work;
+- the captured bytes are copied to a fresh owned `Uint8Array` before the first asynchronous digest yield;
+- SHA-256 is computed directly over that owned byte snapshot;
+- the returned `payloadLength`, `payloadDigest`, and `payload` all describe the same owned bytes;
+- later mutation of the caller's original buffer cannot mutate or invalidate the newly created envelope;
+- caller input objects are not spread or enumerated;
+- non-payload metadata/default reads retain their existing post-digest observation timing.
 
 `validateCheckpointEnvelope()` follows these rules:
 
@@ -22,4 +33,4 @@
 - eligible bytes are copied to a fresh owned `Uint8Array` before the asynchronous SHA-256 digest boundary;
 - digest comparison uses only the captured digest and owned bytes, so later caller mutation or alternate accessor values cannot change what is authenticated.
 
-This hardening is local to checkpoint validation. It does not change checkpoint formats, manifest policy, retry/resume policy, artifact policy, production deployment state, or the evidence requirements tracked by #167 and #158.
+This hardening is local to checkpoint creation/validation. It does not change checkpoint formats, manifest policy, retry/resume policy, artifact policy, production deployment state, or the evidence requirements tracked by #167 and #158.

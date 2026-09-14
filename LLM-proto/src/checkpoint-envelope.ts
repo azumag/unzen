@@ -82,11 +82,23 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
   return digestOwnedBytes(bytes);
 }
 
-/** Build an envelope, computing the payload digest and byte length. */
+/**
+ * Build an envelope whose digest, length, and returned payload all refer to one
+ * owned byte snapshot. Metadata/default reads intentionally remain after the
+ * digest await to preserve their existing observation timing.
+ */
 export async function createCheckpointEnvelope(
   input: CreateCheckpointEnvelopeInput,
 ): Promise<CheckpointEnvelope> {
-  const payloadDigest = await sha256Hex(input.payload);
+  const capturedPayload = input.payload;
+  if (!(capturedPayload instanceof Uint8Array)) {
+    throw new TypeError('checkpoint payload must be a Uint8Array');
+  }
+
+  const ownedPayload = new Uint8Array(capturedPayload.byteLength);
+  ownedPayload.set(capturedPayload);
+  const payloadDigest = await digestOwnedBytes(ownedPayload);
+
   return {
     requestId: input.requestId,
     attemptId: input.attemptId,
@@ -95,12 +107,12 @@ export async function createCheckpointEnvelope(
     workerGeneration: input.workerGeneration,
     modelManifestDigest: input.modelManifestDigest,
     formatVersion: input.formatVersion ?? CHECKPOINT_FORMAT_VERSION,
-    payloadLength: input.payload.byteLength,
+    payloadLength: ownedPayload.byteLength,
     payloadDigest,
     createdAt: input.createdAt ?? Date.now(),
     ttlMs: input.ttlMs,
     previousCheckpointDigest: input.previousCheckpointDigest,
-    payload: input.payload,
+    payload: ownedPayload,
   };
 }
 
