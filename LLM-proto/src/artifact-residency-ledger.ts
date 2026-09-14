@@ -387,84 +387,132 @@ function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentAr
   if (!isRecord(input)) {
     throw new Error(`segment artifact ${arrayIndex} must be an object`);
   }
-  const artifact = input;
 
-  if (!Number.isSafeInteger(artifact.index) || Number(artifact.index) < 0) {
+  // Capture each field only when validation reaches it. This keeps the existing
+  // fail-fast ordering while binding validation and the stored artifact to the
+  // exact same caller-observed values.
+  const index = input.index;
+  if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) {
     throw new Error(`segment artifact ${arrayIndex} index must be a non-negative safe integer`);
   }
-  if (!Number.isSafeInteger(artifact.layerStart) || Number(artifact.layerStart) < 0) {
-    throw new Error(`segment ${artifact.index} layerStart must be a non-negative safe integer`);
-  }
-  if (!Number.isSafeInteger(artifact.layerEnd) || Number(artifact.layerEnd) < Number(artifact.layerStart)) {
-    throw new Error(
-      `segment ${artifact.index} layerEnd must be a safe integer greater than or equal to layerStart`,
-    );
-  }
-  if (!Number.isSafeInteger(artifact.byteSize) || Number(artifact.byteSize) <= 0) {
-    throw new Error(
-      `segment ${artifact.index} byteSize must be a safe positive integer; found ${String(artifact.byteSize)}`,
-    );
-  }
-  if (typeof artifact.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(artifact.sha256)) {
-    throw new Error(
-      `segment ${artifact.index} sha256 must be exactly 64 lowercase hexadecimal characters`,
-    );
-  }
-  if (typeof artifact.contentType !== 'string' || artifact.contentType.trim().length === 0) {
-    throw new Error(`segment ${artifact.index} contentType must be non-empty`);
-  }
-  if (artifact.encoding !== undefined && typeof artifact.encoding !== 'string') {
-    throw new Error(`segment ${artifact.index} encoding must be a string when present`);
-  }
+
+  const layerStart = input.layerStart;
   if (
-    typeof artifact.artifactLocator !== 'string' ||
-    artifact.artifactLocator.trim().length === 0
+    typeof layerStart !== 'number' ||
+    !Number.isSafeInteger(layerStart) ||
+    layerStart < 0
   ) {
-    throw new Error(`segment ${artifact.index} artifactLocator must be non-empty`);
-  }
-  if (artifact.components !== undefined && !Array.isArray(artifact.components)) {
-    throw new Error(`segment ${artifact.index} components must be an array when present`);
-  }
-  if (
-    typeof artifact.estimatedMemoryMB !== 'number' ||
-    !Number.isFinite(artifact.estimatedMemoryMB) ||
-    artifact.estimatedMemoryMB <= 0
-  ) {
-    throw new Error(`segment ${artifact.index} estimatedMemoryMB must be a positive finite number`);
-  }
-  if (typeof artifact.memoryBasis !== 'string' || !MEMORY_BASIS_VALUES.has(artifact.memoryBasis)) {
-    throw new Error(
-      `segment ${artifact.index} memoryBasis must be measured, budgeted, or estimated`,
-    );
-  }
-  if (
-    artifact.measurementConditions !== undefined &&
-    typeof artifact.measurementConditions !== 'string'
-  ) {
-    throw new Error(`segment ${artifact.index} measurementConditions must be a string when present`);
-  }
-  if (
-    !Array.isArray(artifact.compatibleRuntimes) ||
-    artifact.compatibleRuntimes.length === 0 ||
-    !artifact.compatibleRuntimes.every(
-      (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
-    )
-  ) {
-    throw new Error(`segment ${artifact.index} compatibleRuntimes must be a non-empty string array`);
-  }
-  if (
-    typeof artifact.minimumRuntimeVersion !== 'string' ||
-    artifact.minimumRuntimeVersion.trim().length === 0
-  ) {
-    throw new Error(`segment ${artifact.index} minimumRuntimeVersion must be non-empty`);
+    throw new Error(`segment ${index} layerStart must be a non-negative safe integer`);
   }
 
-  const typed = artifact as unknown as SegmentArtifact;
-  const components = cloneAndValidateComponents(typed);
+  const layerEnd = input.layerEnd;
+  if (
+    typeof layerEnd !== 'number' ||
+    !Number.isSafeInteger(layerEnd) ||
+    layerEnd < layerStart
+  ) {
+    throw new Error(
+      `segment ${index} layerEnd must be a safe integer greater than or equal to layerStart`,
+    );
+  }
+
+  const byteSize = input.byteSize;
+  if (typeof byteSize !== 'number' || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
+    throw new Error(`segment ${index} byteSize must be a safe positive integer`);
+  }
+
+  const sha256 = input.sha256;
+  if (typeof sha256 !== 'string' || !SHA256_HEX_PATTERN.test(sha256)) {
+    throw new Error(
+      `segment ${index} sha256 must be exactly 64 lowercase hexadecimal characters`,
+    );
+  }
+
+  const contentType = input.contentType;
+  if (typeof contentType !== 'string' || contentType.trim().length === 0) {
+    throw new Error(`segment ${index} contentType must be non-empty`);
+  }
+
+  const encoding = input.encoding;
+  if (encoding !== undefined && typeof encoding !== 'string') {
+    throw new Error(`segment ${index} encoding must be a string when present`);
+  }
+
+  const artifactLocator = input.artifactLocator;
+  if (typeof artifactLocator !== 'string' || artifactLocator.trim().length === 0) {
+    throw new Error(`segment ${index} artifactLocator must be non-empty`);
+  }
+
+  const componentsInput = input.components;
+  if (componentsInput !== undefined && !Array.isArray(componentsInput)) {
+    throw new Error(`segment ${index} components must be an array when present`);
+  }
+
+  const estimatedMemoryMB = input.estimatedMemoryMB;
+  if (
+    typeof estimatedMemoryMB !== 'number' ||
+    !Number.isFinite(estimatedMemoryMB) ||
+    estimatedMemoryMB <= 0
+  ) {
+    throw new Error(`segment ${index} estimatedMemoryMB must be a positive finite number`);
+  }
+
+  const memoryBasis = input.memoryBasis;
+  if (typeof memoryBasis !== 'string' || !MEMORY_BASIS_VALUES.has(memoryBasis)) {
+    throw new Error(
+      `segment ${index} memoryBasis must be measured, budgeted, or estimated`,
+    );
+  }
+
+  const measurementConditions = input.measurementConditions;
+  if (measurementConditions !== undefined && typeof measurementConditions !== 'string') {
+    throw new Error(`segment ${index} measurementConditions must be a string when present`);
+  }
+
+  const compatibleRuntimesInput = input.compatibleRuntimes;
+  if (!Array.isArray(compatibleRuntimesInput) || compatibleRuntimesInput.length === 0) {
+    throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
+  }
+  const compatibleRuntimeValues: unknown[] = [];
+  for (let runtimeIndex = 0; runtimeIndex < compatibleRuntimesInput.length; runtimeIndex++) {
+    compatibleRuntimeValues.push(compatibleRuntimesInput[runtimeIndex]);
+  }
+  if (!compatibleRuntimeValues.every(
+    (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
+  )) {
+    throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
+  }
+  const compatibleRuntimes = Object.freeze(compatibleRuntimeValues as string[]);
+
+  const minimumRuntimeVersion = input.minimumRuntimeVersion;
+  if (typeof minimumRuntimeVersion !== 'string' || minimumRuntimeVersion.trim().length === 0) {
+    throw new Error(`segment ${index} minimumRuntimeVersion must be non-empty`);
+  }
+
+  const components = cloneAndValidateComponents({
+    index,
+    byteSize,
+    artifactLocator,
+    ...(componentsInput === undefined
+      ? {}
+      : { components: componentsInput as readonly SegmentArtifactComponent[] }),
+  } as SegmentArtifact);
+
   return Object.freeze({
-    ...typed,
-    compatibleRuntimes: Object.freeze([...typed.compatibleRuntimes]),
+    index,
+    layerStart,
+    layerEnd,
+    byteSize,
+    sha256,
+    contentType,
+    ...(encoding === undefined ? {} : { encoding }),
+    artifactLocator,
     ...(components === undefined ? {} : { components }),
+    estimatedMemoryMB,
+    memoryBasis: memoryBasis as SegmentArtifact['memoryBasis'],
+    ...(measurementConditions === undefined ? {} : { measurementConditions }),
+    compatibleRuntimes,
+    minimumRuntimeVersion,
   });
 }
 
