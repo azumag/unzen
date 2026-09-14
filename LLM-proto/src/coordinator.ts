@@ -78,40 +78,85 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function readOwnEnumerableOption<T extends object, K extends keyof T>(
+  source: T | undefined,
+  key: K,
+): T[K] | undefined {
+  if (source === undefined) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (descriptor === undefined || descriptor.enumerable !== true) return undefined;
+  return source[key];
+}
+
 function resolveCoordinatorOptions(options: unknown): CoordinatorOptions {
   if (options !== undefined && !isRecord(options)) {
     throw new TypeError('Coordinator options must be a non-null, non-array object');
   }
 
-  const merged = {
-    ...DEFAULT_OPTIONS,
-    ...(options ?? {}),
-  } as CoordinatorOptions;
+  // Runtime callers may supply decoded/asserted accessor or Proxy objects. Read
+  // only declared own-enumerable fields, exactly once, so unknown properties are
+  // never enumerated and validation is bound to the same owned values retained
+  // by the Coordinator. Own/enumerable filtering preserves the previous spread
+  // semantics for inherited and non-enumerable declared-name properties.
+  const source = options as Partial<CoordinatorOptions> | undefined;
+  const capturedHeartbeatIntervalMs = readOwnEnumerableOption(source, 'heartbeatIntervalMs');
+  const capturedHeartbeatTimeoutMs = readOwnEnumerableOption(source, 'heartbeatTimeoutMs');
+  const capturedMaxRetries = readOwnEnumerableOption(source, 'maxRetries');
+  const capturedSegmentTimeoutMs = readOwnEnumerableOption(source, 'segmentTimeoutMs');
+  const capturedRetryDelayMs = readOwnEnumerableOption(source, 'retryDelayMs');
+  const capturedTotalSegments = readOwnEnumerableOption(source, 'totalSegments');
+  const capturedAllowFixtureManifest = readOwnEnumerableOption(source, 'allowFixtureManifest');
+
+  const heartbeatIntervalMs = capturedHeartbeatIntervalMs === undefined
+    ? DEFAULT_OPTIONS.heartbeatIntervalMs
+    : capturedHeartbeatIntervalMs;
+  const heartbeatTimeoutMs = capturedHeartbeatTimeoutMs === undefined
+    ? DEFAULT_OPTIONS.heartbeatTimeoutMs
+    : capturedHeartbeatTimeoutMs;
+  const maxRetries = capturedMaxRetries === undefined
+    ? DEFAULT_OPTIONS.maxRetries
+    : capturedMaxRetries;
+  const segmentTimeoutMs = capturedSegmentTimeoutMs === undefined
+    ? DEFAULT_OPTIONS.segmentTimeoutMs
+    : capturedSegmentTimeoutMs;
+  const retryDelayMs = capturedRetryDelayMs === undefined
+    ? DEFAULT_OPTIONS.retryDelayMs
+    : capturedRetryDelayMs;
 
   for (const [field, value] of [
-    ['heartbeatIntervalMs', merged.heartbeatIntervalMs],
-    ['heartbeatTimeoutMs', merged.heartbeatTimeoutMs],
-    ['segmentTimeoutMs', merged.segmentTimeoutMs],
-    ['retryDelayMs', merged.retryDelayMs],
+    ['heartbeatIntervalMs', heartbeatIntervalMs],
+    ['heartbeatTimeoutMs', heartbeatTimeoutMs],
+    ['segmentTimeoutMs', segmentTimeoutMs],
+    ['retryDelayMs', retryDelayMs],
   ] as const) {
     if (!isNonNegativeFiniteNumber(value)) {
       throw new TypeError(`Coordinator ${field} must be a non-negative finite number`);
     }
   }
-  if (!isNonNegativeSafeInteger(merged.maxRetries)) {
+  if (!isNonNegativeSafeInteger(maxRetries)) {
     throw new TypeError('Coordinator maxRetries must be a non-negative safe integer');
   }
-  if (merged.totalSegments !== undefined && !isNonNegativeSafeInteger(merged.totalSegments)) {
+  if (capturedTotalSegments !== undefined && !isNonNegativeSafeInteger(capturedTotalSegments)) {
     throw new TypeError('Coordinator totalSegments must be a non-negative safe integer');
   }
   if (
-    merged.allowFixtureManifest !== undefined &&
-    typeof merged.allowFixtureManifest !== 'boolean'
+    capturedAllowFixtureManifest !== undefined &&
+    typeof capturedAllowFixtureManifest !== 'boolean'
   ) {
     throw new TypeError('Coordinator allowFixtureManifest must be a boolean');
   }
 
-  return merged;
+  return {
+    heartbeatIntervalMs,
+    heartbeatTimeoutMs,
+    maxRetries,
+    segmentTimeoutMs,
+    retryDelayMs,
+    ...(capturedTotalSegments === undefined ? {} : { totalSegments: capturedTotalSegments }),
+    ...(capturedAllowFixtureManifest === undefined
+      ? {}
+      : { allowFixtureManifest: capturedAllowFixtureManifest }),
+  };
 }
 
 export class Coordinator {
