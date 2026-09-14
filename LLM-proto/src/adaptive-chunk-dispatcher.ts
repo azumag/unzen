@@ -188,19 +188,22 @@ export class AdaptiveChunkDispatcher {
     }
     this.segments = segments;
 
-    const loadBudgetRatio = options.loadBudgetRatio === undefined
+    const loadBudgetRatioInput = options.loadBudgetRatio;
+    const loadBudgetRatio = loadBudgetRatioInput === undefined
       ? DEFAULT_LOAD_BUDGET_RATIO
-      : options.loadBudgetRatio;
+      : loadBudgetRatioInput;
     if (!Number.isFinite(loadBudgetRatio) || loadBudgetRatio <= 0 || loadBudgetRatio > 1) {
       throw new Error('loadBudgetRatio must be a finite number in (0, 1]');
     }
-    const longLivedWorkerMs = options.longLivedWorkerMs === undefined
+    const longLivedWorkerMsInput = options.longLivedWorkerMs;
+    const longLivedWorkerMs = longLivedWorkerMsInput === undefined
       ? DEFAULT_LONG_LIVED_WORKER_MS
-      : options.longLivedWorkerMs;
+      : longLivedWorkerMsInput;
     assertFiniteNonNegative('longLivedWorkerMs', longLivedWorkerMs);
-    const configuredVramLimitMB = options.configuredVramLimitMB === undefined
+    const configuredVramLimitMBInput = options.configuredVramLimitMB;
+    const configuredVramLimitMB = configuredVramLimitMBInput === undefined
       ? Number.POSITIVE_INFINITY
-      : options.configuredVramLimitMB;
+      : configuredVramLimitMBInput;
     if (
       typeof configuredVramLimitMB !== 'number' ||
       Number.isNaN(configuredVramLimitMB) ||
@@ -209,9 +212,10 @@ export class AdaptiveChunkDispatcher {
     ) {
       throw new Error('configuredVramLimitMB must be non-negative or positive infinity');
     }
-    const checkpointBytes = options.checkpointBytes === undefined
+    const checkpointBytesInput = options.checkpointBytes;
+    const checkpointBytes = checkpointBytesInput === undefined
       ? DEFAULT_CHECKPOINT_BYTES
-      : options.checkpointBytes;
+      : checkpointBytesInput;
     if (!Number.isFinite(checkpointBytes) || checkpointBytes <= 0) {
       throw new Error('checkpointBytes must be a positive finite number');
     }
