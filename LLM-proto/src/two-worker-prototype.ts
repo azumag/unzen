@@ -468,7 +468,8 @@ function validateSegmentExecutionInput(
     'prototype worker coordinatorUrl',
   );
   const cdnUrl = validatePrototypeNetworkUrl(candidate.cdnUrl, 'prototype worker cdnUrl');
-  if (!(candidate.transport instanceof AllowlistedPrototypeTransport)) {
+  const transport = candidate.transport;
+  if (!(transport instanceof AllowlistedPrototypeTransport)) {
     throw new Error('prototype worker transport must be an AllowlistedPrototypeTransport');
   }
 
@@ -491,7 +492,7 @@ function validateSegmentExecutionInput(
     checkpointHiddenStates,
     coordinatorUrl,
     cdnUrl,
-    transport: candidate.transport,
+    transport,
   };
 }
 
@@ -506,20 +507,32 @@ function validateTwoWorkerPrototypeRunnerDependencies(
   }
 
   const dependencies = options as Record<string, unknown>;
-  if (
-    dependencies.transport !== undefined &&
-    !(dependencies.transport instanceof AllowlistedPrototypeTransport)
-  ) {
+  const transport = dependencies.transport;
+  if (transport !== undefined && !(transport instanceof AllowlistedPrototypeTransport)) {
     throw new Error('two-worker prototype runner transport must be an AllowlistedPrototypeTransport');
   }
-  for (const field of ['segment0', 'segment1Primary', 'segment1Standby'] as const) {
-    const worker = dependencies[field];
-    if (worker !== undefined && !(worker instanceof SimulatedPrototypeWorker)) {
-      throw new Error(`two-worker prototype runner ${field} must be a SimulatedPrototypeWorker`);
-    }
+
+  const segment0 = dependencies.segment0;
+  if (segment0 !== undefined && !(segment0 instanceof SimulatedPrototypeWorker)) {
+    throw new Error('two-worker prototype runner segment0 must be a SimulatedPrototypeWorker');
   }
 
-  return options as TwoWorkerPrototypeRunnerDependencies;
+  const segment1Primary = dependencies.segment1Primary;
+  if (segment1Primary !== undefined && !(segment1Primary instanceof SimulatedPrototypeWorker)) {
+    throw new Error('two-worker prototype runner segment1Primary must be a SimulatedPrototypeWorker');
+  }
+
+  const segment1Standby = dependencies.segment1Standby;
+  if (segment1Standby !== undefined && !(segment1Standby instanceof SimulatedPrototypeWorker)) {
+    throw new Error('two-worker prototype runner segment1Standby must be a SimulatedPrototypeWorker');
+  }
+
+  return {
+    transport,
+    segment0,
+    segment1Primary,
+    segment1Standby,
+  };
 }
 
 function assertPrototypeRunnerWorkerRole(

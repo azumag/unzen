@@ -16,6 +16,12 @@ The top-level options value must be a non-null, non-array object. Field validati
 
 Rejected input fails before `cachedSegments`, retry behavior, CDN locator selection, or report metadata can depend on malformed values.
 
+## Execution envelope contract
+
+`execute()` also treats its runtime input as caller-owned. The transport dependency is captured exactly once, validated as an `AllowlistedPrototypeTransport`, and the same captured instance is retained in the validated execution envelope. An accessor or Proxy therefore cannot provide a valid transport for the `instanceof` check and a different value when the worker begins Coordinator/CDN connections.
+
+The existing request ID, prompt, URL, checkpoint, cache, and fail-once ordering remains unchanged. Rejected execution input still fails before transport history or worker cache state changes.
+
 ## Preserved behavior
 
 Valid workers keep the existing fixed `WorkerTier.TIER_2` metadata, segment-specific execution behavior, cache-hit accounting, and one-shot `failFirstRun` retry simulation. No routing, transport allowlist, or model segmentation policy changes are introduced.
