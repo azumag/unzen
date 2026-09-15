@@ -164,21 +164,60 @@ def _prepared_artifact_file(raw: str, output_dir: Path, *, field: str) -> Path:
             f"generated P0 {field} escapes output directory: {candidate} -> {resolved}"
         ) from error
     # Keep the path identity that passed containment validation. Returning the
-    # unresolved candidate would re-follow symlinks during the later stat().
+    # unresolved candidate would re-follow symlinks during later measurement.
     return resolved
+
+
+def _prepared_artifact_size(raw: str, output_dir: Path, *, field: str) -> int:
+    """Measure one contained artifact from the exact regular-file snapshot validated here."""
+
+    resolved = _prepared_artifact_file(raw, output_dir, field=field)
+    try:
+        before = resolved.lstat()
+    except OSError as error:
+        raise RuntimeError(f"generated P0 {field} changed before measurement: {resolved}: {error}") from error
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(f"generated P0 {field} must remain a regular file: {resolved}")
+    expected = _file_stat_signature(before)
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(resolved, flags)
+    except OSError as error:
+        raise RuntimeError(f"generated P0 {field} could not be opened safely: {resolved}: {error}") from error
+
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"generated P0 {field} must remain a regular file: {resolved}")
+        if _file_stat_signature(opened) != expected:
+            raise RuntimeError(
+                f"generated P0 {field} changed between containment check and open: {resolved}"
+            )
+        try:
+            after_path = resolved.lstat()
+        except OSError as error:
+            raise RuntimeError(
+                f"generated P0 {field} changed during measurement: {resolved}: {error}"
+            ) from error
+        if _file_stat_signature(after_path) != _file_stat_signature(opened):
+            raise RuntimeError(f"generated P0 {field} changed during measurement: {resolved}")
+        return opened.st_size
+    finally:
+        os.close(descriptor)
 
 
 def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
     graph_name = segment.get("path")
     if not isinstance(graph_name, str) or not graph_name:
         raise RuntimeError("generated P0 segment path must be a non-empty string")
-    graph_path = _prepared_artifact_file(
+    total = _prepared_artifact_size(
         graph_name,
         output_dir,
         field="segment graph path",
     )
 
-    total = graph_path.stat().st_size
     external_entries = segment.get("externalData", [])
     if not isinstance(external_entries, list):
         raise RuntimeError("generated P0 segment externalData must be a list")
@@ -201,12 +240,11 @@ def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:
                 f"generated P0 externalData[{index}].bytes must be a non-negative integer"
             )
 
-        external_path = _prepared_artifact_file(
+        observed_bytes = _prepared_artifact_size(
             location,
             output_dir,
             field=f"externalData[{index}].location",
         )
-        observed_bytes = external_path.stat().st_size
         if observed_bytes != declared_bytes:
             raise RuntimeError(
                 "generated P0 external-data byte size drifted from manifest: "
