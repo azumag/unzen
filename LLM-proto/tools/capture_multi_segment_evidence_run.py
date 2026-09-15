@@ -44,6 +44,7 @@ from verify_multi_segment_artifact_snapshot import (
     REPORT_SCHEMA_VERSION as SNAPSHOT_REPORT_SCHEMA_VERSION,
     verify_artifact_snapshot,
 )
+from verify_multi_segment_capture_bundle import _json_snapshot as _stable_json_snapshot
 from verify_split_onnx import parse_token_ids
 
 
@@ -118,7 +119,7 @@ def _require_source_graph_snapshot(
     manifest_path: Path,
     initial_sha256: str,
 ) -> str:
-    """Reject source graph drift that occurred while shards were generated.
+    """Reject source drift and return the exact manifest digest used for provenance.
 
     ``prepare_budgeted_multi_split`` loads the source graph near the beginning of
     a potentially long 1B shard generation, while its manifest records the graph
@@ -127,14 +128,16 @@ def _require_source_graph_snapshot(
     old in-memory graph while ``sourceModel.sha256`` names the new file. Bind the
     capture to the exact graph bytes observed before generation and recheck the
     file before any preflight or ONNX Runtime numerical work.
+
+    The generated manifest is parsed and hashed from one descriptor-stable byte
+    snapshot. The caller must bind this digest to the immediately following
+    artifact preflight before numerical work starts.
     """
 
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"cannot read generated split manifest: {manifest_path}") from error
-    if not isinstance(manifest, dict):
-        raise ValueError("generated split manifest must be an object")
+    manifest, manifest_sha256 = _stable_json_snapshot(
+        manifest_path,
+        field="generated split manifest",
+    )
     source_model = manifest.get("sourceModel")
     if not isinstance(source_model, dict):
         raise ValueError("generated split manifest is missing sourceModel")
@@ -150,7 +153,7 @@ def _require_source_graph_snapshot(
             "source model graph drifted during split generation: "
             f"initial={initial_sha256}, current={current_sha256}"
         )
-    return initial_sha256
+    return manifest_sha256
 
 
 def _require_integrity_pass(report: object) -> dict[str, object]:
@@ -367,7 +370,7 @@ def capture_run(
         )
 
         manifest_path = split_dir / "split-manifest.json"
-        _require_source_graph_snapshot(
+        provenance_manifest_sha256 = _require_source_graph_snapshot(
             full_model_path,
             manifest_path,
             source_graph_sha256,
@@ -375,6 +378,13 @@ def capture_run(
         snapshot, integrity = _require_snapshot_pass(
             verify_artifact_snapshot(manifest_path)
         )
+        if integrity["manifestSha256"] != provenance_manifest_sha256:
+            raise RuntimeError(
+                "generated split manifest drifted between source provenance check "
+                "and artifact preflight: "
+                f"provenance={provenance_manifest_sha256}, "
+                f"preflight={integrity['manifestSha256']}"
+            )
 
         evidence = _require_evidence_matches_preflight(
             collect_evidence(
