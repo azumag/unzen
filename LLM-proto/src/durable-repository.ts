@@ -21,11 +21,8 @@
  * the committed result — this is the "committed exactly once" requirement.
  *
  * The interface is deliberately Durable-Object shaped: each method takes
- * explicit keys and mutates one key; a production adapter would put request
- * state, leases, and results on a per-request Durable Object and keep the
- * worker registry on a per-worker object, with compare-and-set delegated to
- * transactional storage. This in-memory implementation is the reference
- * behavior and the test double for the acceptance suite.
+ * explicit keys and mutates one key; a production storage adapter can back
+ * each boundary independently while preserving the same repository contract.
  */
 
 import { ErrorCode, UnzenError } from './errors.js';
@@ -61,13 +58,7 @@ export interface RecoveryOwnership {
   readonly expiresAt: number;
 }
 
-/**
- * Capture a recovery ownership record without enumerating the caller object.
- *
- * Runtime callers can bypass TypeScript readonly fields with accessors or
- * Proxies, so repository adapters own one plain record before comparing or
- * persisting it and return detached records on reads.
- */
+/** Capture one repository-owned recovery ownership snapshot. */
 export function snapshotRecoveryOwnership(ownership: RecoveryOwnership): RecoveryOwnership {
   const requestId = ownership.requestId;
   const ownerId = ownership.ownerId;
@@ -76,11 +67,7 @@ export function snapshotRecoveryOwnership(ownership: RecoveryOwnership): Recover
   return { requestId, ownerId, claimedAt, expiresAt };
 }
 
-/**
- * Capture the complete active-lease identity without enumerating the caller
- * object. Repository adapters persist and return only these plain snapshots so
- * retained caller/read references cannot mutate lease identity or expiry.
- */
+/** Capture one repository-owned active lease snapshot. */
 export function snapshotLease(lease: Lease): Lease {
   const leaseId = lease.leaseId;
   const requestId = lease.requestId;
@@ -104,12 +91,7 @@ export function snapshotLease(lease: Lease): Lease {
   };
 }
 
-/**
- * Capture an attempt-history record in declared-field order without enumerating
- * the caller object. Optional fields retain their own-property presence so a
- * detached read is observably equivalent to the persisted record, including a
- * hostile runtime value that explicitly owns an `undefined` optional field.
- */
+/** Capture an attempt-history record without enumerating the caller object. */
 export function snapshotAttemptRecord(attempt: AttemptRecord): AttemptRecord {
   const requestId = attempt.requestId;
   const attemptId = attempt.attemptId;
@@ -127,7 +109,6 @@ export function snapshotAttemptRecord(attempt: AttemptRecord): AttemptRecord {
     segmentIndex,
     startedAt,
   };
-
   for (const field of ['finishedAt', 'outcome', 'errorCode'] as const) {
     if (!Object.prototype.hasOwnProperty.call(attempt, field)) continue;
     Object.defineProperty(owned, field, {
@@ -140,11 +121,7 @@ export function snapshotAttemptRecord(attempt: AttemptRecord): AttemptRecord {
   return owned;
 }
 
-/**
- * Capture cancellation state without retaining or enumerating the caller
- * object. Optional acknowledgement presence is preserved across detached
- * repository writes and reads.
- */
+/** Capture cancellation state without retaining the caller object. */
 export function snapshotCancellationRecord(record: CancellationRecord): CancellationRecord {
   const requestId = record.requestId;
   const requestedAt = record.requestedAt;
@@ -161,14 +138,7 @@ export function snapshotCancellationRecord(record: CancellationRecord): Cancella
   return owned;
 }
 
-/**
- * Fail closed when a repository route key disagrees with the request identity
- * captured from the record that would be persisted under that route.
- *
- * The comparison is deliberately exact: no trimming, coercion, or diagnostic
- * interpolation of untrusted values occurs before the ProtocolViolation is
- * raised. Callers should persist the same owned record that passed this check.
- */
+/** Fail closed when a route key disagrees with the captured record identity. */
 export function assertRepositoryRequestRouteIdentity(
   routeRequestId: InferenceRequestId,
   recordRequestId: InferenceRequestId,
@@ -185,16 +155,22 @@ export function assertRepositoryRequestRouteIdentity(
 export type MutableRepositoryRecordKind = 'request' | 'worker';
 
 /**
- * Keep durable identity and routing trust inputs immutable even where #103
- * requires mutable operational repository reads. The protected names are fixed
- * schema fields, so diagnostics never interpolate caller-controlled values.
+ * Keep immutable request specification, durable worker identity, and worker
+ * routing trust inputs protected even where #103 requires mutable operational
+ * repository reads.
  */
 export function assertMutableRepositoryIdentityProperty(
   recordKind: MutableRepositoryRecordKind,
   property: PropertyKey,
 ): void {
   const immutable = recordKind === 'request'
-    ? property === 'requestId'
+    ? property === 'requestId' ||
+      property === 'prompt' ||
+      property === 'idempotencyKey' ||
+      property === 'createdAt' ||
+      property === 'totalSegments' ||
+      property === 'manifestDigest' ||
+      property === 'timeoutMs'
     : property === 'workerId' ||
       property === 'generation' ||
       property === 'connectionId' ||
@@ -207,11 +183,7 @@ export function assertMutableRepositoryIdentityProperty(
   );
 }
 
-/**
- * In-memory reads are live for compatibility, but identity fields must not be
- * rewritten through those references. Operational set/delete/defineProperty
- * behavior remains live against the stored target.
- */
+/** Wrap one repository-owned mutable record while fencing protected fields. */
 function mutableRepositoryRecord<T extends object>(
   record: T,
   recordKind: MutableRepositoryRecordKind,
@@ -232,11 +204,7 @@ function mutableRepositoryRecord<T extends object>(
   });
 }
 
-/**
- * Capture streaming progress without retaining or enumerating the caller
- * object. Persisted and returned cursor records are plain detached snapshots so
- * retained runtime references cannot advance or rewrite progress implicitly.
- */
+/** Capture streaming progress without retaining the caller object. */
 export function snapshotStreamCursor(cursor: StreamCursor): StreamCursor {
   const requestId = cursor.requestId;
   const lastCommittedSegment = cursor.lastCommittedSegment;
@@ -245,11 +213,7 @@ export function snapshotStreamCursor(cursor: StreamCursor): StreamCursor {
   return { requestId, lastCommittedSegment, totalSegments, updatedAt };
 }
 
-/**
- * Capture a committed inference result without retaining or enumerating the
- * caller object. Tokens are copied by index so hostile runtime arrays cannot
- * alter the persisted output through iteration hooks or retained references.
- */
+/** Capture a committed inference result and detach its token array. */
 export function snapshotInferenceResult(result: InferenceResult): InferenceResult {
   const requestId = result.requestId;
   const sourceTokens = result.tokens;
@@ -264,11 +228,7 @@ export function snapshotInferenceResult(result: InferenceResult): InferenceResul
   return { requestId, tokens, text, totalTimeMs, segmentsCompleted };
 }
 
-/**
- * Capture a newly created request before it enters repository-owned mutable
- * state. Reads intentionally remain mutable for the #103 compatibility
- * contract; this helper only prevents retained writer references/key drift.
- */
+/** Capture one newly created request before repository ownership changes. */
 export function snapshotRequestRecord(record: RequestRecord): RequestRecord {
   const requestId = record.requestId;
   const prompt = record.prompt;
@@ -288,7 +248,6 @@ export function snapshotRequestRecord(record: RequestRecord): RequestRecord {
     manifestDigest,
     retryCount,
   };
-
   for (const field of [
     'idempotencyKey',
     'startedAt',
@@ -308,11 +267,7 @@ export function snapshotRequestRecord(record: RequestRecord): RequestRecord {
   return owned;
 }
 
-/**
- * Capture one worker record before repository ownership changes. The active
- * record returned by get/list remains intentionally mutable, but a caller that
- * retains the value passed to putWorker() cannot mutate repository state later.
- */
+/** Capture one worker record before repository ownership changes. */
 export function snapshotWorkerRecord(record: WorkerRecord): WorkerRecord {
   const workerId = record.workerId;
   const generation = record.generation;
@@ -332,7 +287,6 @@ export function snapshotWorkerRecord(record: WorkerRecord): WorkerRecord {
     lastHeartbeat,
     registeredAt,
   };
-
   for (const field of ['revokedAt', 'currentSegment'] as const) {
     if (!Object.prototype.hasOwnProperty.call(record, field)) continue;
     Object.defineProperty(owned, field, {
@@ -352,11 +306,7 @@ export interface CheckpointStoreIdentity {
   readonly payloadDigest: string;
 }
 
-/**
- * Capture only the checkpoint fields required to find/classify an occupied
- * slot. This keeps unchanged/conflict paths from touching large payloads or
- * unrelated metadata while preventing getter drift in the key/digest fields.
- */
+/** Capture only checkpoint fields needed to classify a slot. */
 export function captureCheckpointStoreIdentity(
   envelope: CheckpointEnvelope,
 ): CheckpointStoreIdentity {
@@ -366,12 +316,7 @@ export function captureCheckpointStoreIdentity(
   return { requestId, segmentIndex, payloadDigest };
 }
 
-/**
- * Capture one repository-owned checkpoint snapshot. `identity` may be supplied
- * by `putCheckpoint()` so key/digest fields already consumed for slot
- * classification are not re-read. Payload bytes are copied by index and caller
- * objects are never enumerated.
- */
+/** Capture one repository-owned checkpoint snapshot. */
 export function snapshotCheckpointEnvelope(
   envelope: CheckpointEnvelope,
   identity: CheckpointStoreIdentity = captureCheckpointStoreIdentity(envelope),
@@ -388,9 +333,7 @@ export function snapshotCheckpointEnvelope(
   const sourcePayload = envelope.payload;
   const byteLength = sourcePayload.byteLength;
   const payload = new Uint8Array(byteLength);
-  for (let index = 0; index < byteLength; index += 1) {
-    payload[index] = sourcePayload[index]!;
-  }
+  for (let index = 0; index < byteLength; index += 1) payload[index] = sourcePayload[index]!;
   return {
     requestId: identity.requestId,
     attemptId,
@@ -410,7 +353,6 @@ export function snapshotCheckpointEnvelope(
 
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
-/** Patchable fields of an attempt record (append-only otherwise). */
 export interface AttemptPatch {
   readonly finishedAt?: number;
   readonly outcome?: AttemptOutcome;
@@ -418,81 +360,44 @@ export interface AttemptPatch {
 }
 
 export interface DurableRepository {
-  // --- request state ---
   createRequest(record: RequestRecord): void;
   getRequest(requestId: InferenceRequestId): RequestRecord | undefined;
   listRequests(): readonly RequestRecord[];
-  /** Compare-and-set stage transition. False when `expected` does not match. */
-  transitionStage(
-    requestId: InferenceRequestId,
-    expected: RequestStage,
-    next: RequestStage,
-  ): boolean;
+  transitionStage(requestId: InferenceRequestId, expected: RequestStage, next: RequestStage): boolean;
 
-  // --- idempotency ---
   getIdempotencyMapping(key: IdempotencyKey): InferenceRequestId | undefined;
-  /** Atomically bind key→request. False when already bound to another request. */
   putIdempotencyMapping(key: IdempotencyKey, requestId: InferenceRequestId): boolean;
 
-  // --- attempt history ---
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void;
   listAttempts(requestId: InferenceRequestId): readonly AttemptRecord[];
-  updateAttempt(
-    requestId: InferenceRequestId,
-    attemptId: AttemptId,
-    patch: AttemptPatch,
-  ): void;
+  updateAttempt(requestId: InferenceRequestId, attemptId: AttemptId, patch: AttemptPatch): void;
 
-  // --- lease ---
   putLease(lease: Lease): void;
-  /** The single active lease for a request, if any. */
   getActiveLease(requestId: InferenceRequestId): Lease | undefined;
   deleteLease(leaseId: LeaseId): void;
-  /** All currently active leases (for generation-wide lease reclaim). */
   listActiveLeases(): readonly Lease[];
 
-  // --- checkpoint ---
   putCheckpoint(envelope: CheckpointEnvelope): CheckpointStoreResult;
-  getCheckpoint(
-    requestId: InferenceRequestId,
-    segmentIndex: number,
-  ): CheckpointEnvelope | undefined;
+  getCheckpoint(requestId: InferenceRequestId, segmentIndex: number): CheckpointEnvelope | undefined;
   deleteCheckpoint(requestId: InferenceRequestId, segmentIndex: number): void;
   deleteCheckpointsForRequest(requestId: InferenceRequestId): void;
   listCheckpoints(requestId: InferenceRequestId): readonly CheckpointEnvelope[];
-  /** All stored checkpoints across requests (for global memory bounds). */
   allCheckpoints(): readonly CheckpointEnvelope[];
-  /** Remove and return every expired checkpoint (TTL cleanup / memory bound). */
   collectExpiredCheckpoints(now: number): readonly CheckpointEnvelope[];
 
-  // --- completion / result ---
   getResult(requestId: InferenceRequestId): InferenceResult | undefined;
-  /** Exactly-once commit: only when stage matches and no result exists yet. */
-  commitCompletion(
-    requestId: InferenceRequestId,
-    expectedStage: RequestStage,
-    result: InferenceResult,
-  ): CompletionCommit;
+  commitCompletion(requestId: InferenceRequestId, expectedStage: RequestStage, result: InferenceResult): CompletionCommit;
 
-  // --- cancellation ---
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void;
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined;
 
-  // --- recovery ownership ---
   getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined;
-  /**
-   * Acquire/renew one request's recovery command ownership. A live peer claim
-   * is never overwritten; an expired claim may be replaced atomically.
-   */
   claimRecoveryOwnership(ownership: RecoveryOwnership, now: number): RecoveryOwnershipClaim;
-  /** Compare-and-delete release. False when another owner currently holds it. */
   releaseRecoveryOwnership(requestId: InferenceRequestId, ownerId: string): boolean;
 
-  // --- streaming cursor ---
   putStreamCursor(cursor: StreamCursor): void;
   getStreamCursor(requestId: InferenceRequestId): StreamCursor | undefined;
 
-  // --- worker registration / generation ---
   putWorker(record: WorkerRecord): void;
   getWorker(workerId: WorkerId): WorkerRecord | undefined;
   deleteWorker(workerId: WorkerId): void;
@@ -500,8 +405,6 @@ export interface DurableRepository {
 }
 
 export class InMemoryRepository implements DurableRepository {
-  // Each storage boundary is a dedicated map (the "buckets" a production
-  // adapter would distribute across Durable Objects / KV / R2).
   private readonly requestRecords = new Map<InferenceRequestId, RequestRecord>();
   private readonly idempotencyMappings = new Map<IdempotencyKey, InferenceRequestId>();
   private readonly attempts = new Map<InferenceRequestId, AttemptRecord[]>();
@@ -513,14 +416,9 @@ export class InMemoryRepository implements DurableRepository {
   private readonly streamCursors = new Map<InferenceRequestId, StreamCursor>();
   private readonly workers = new Map<WorkerId, WorkerRecord>();
 
-  private static checkpointKey(
-    requestId: InferenceRequestId,
-    segmentIndex: number,
-  ): string {
+  private static checkpointKey(requestId: InferenceRequestId, segmentIndex: number): string {
     return `${requestId}:${segmentIndex}`;
   }
-
-  // --- request state ---
 
   createRequest(record: RequestRecord): void {
     const owned = snapshotRequestRecord(record);
@@ -536,18 +434,12 @@ export class InMemoryRepository implements DurableRepository {
     return [...this.requestRecords.values()].map((record) => mutableRepositoryRecord(record, 'request'));
   }
 
-  transitionStage(
-    requestId: InferenceRequestId,
-    expected: RequestStage,
-    next: RequestStage,
-  ): boolean {
+  transitionStage(requestId: InferenceRequestId, expected: RequestStage, next: RequestStage): boolean {
     const record = this.requestRecords.get(requestId);
     if (!record || record.stage !== expected) return false;
     record.stage = next;
     return true;
   }
-
-  // --- idempotency ---
 
   getIdempotencyMapping(key: IdempotencyKey): InferenceRequestId | undefined {
     return this.idempotencyMappings.get(key);
@@ -559,8 +451,6 @@ export class InMemoryRepository implements DurableRepository {
     this.idempotencyMappings.set(key, requestId);
     return true;
   }
-
-  // --- attempt history ---
 
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void {
     const owned = snapshotAttemptRecord(attempt);
@@ -574,26 +464,18 @@ export class InMemoryRepository implements DurableRepository {
     return (this.attempts.get(requestId) ?? []).map(snapshotAttemptRecord);
   }
 
-  updateAttempt(
-    requestId: InferenceRequestId,
-    attemptId: AttemptId,
-    patch: AttemptPatch,
-  ): void {
+  updateAttempt(requestId: InferenceRequestId, attemptId: AttemptId, patch: AttemptPatch): void {
     const list = this.attempts.get(requestId);
     if (!list) return;
     const attempt = list.find((candidate) => candidate.attemptId === attemptId);
     if (!attempt) return;
-
     const finishedAt = patch.finishedAt;
     const outcome = patch.outcome;
     const errorCode = patch.errorCode;
-
     if (finishedAt !== undefined) attempt.finishedAt = finishedAt;
     if (outcome !== undefined) attempt.outcome = outcome;
     if (errorCode !== undefined) attempt.errorCode = errorCode;
   }
-
-  // --- lease ---
 
   putLease(lease: Lease): void {
     const owned = snapshotLease(lease);
@@ -618,23 +500,16 @@ export class InMemoryRepository implements DurableRepository {
     return [...this.activeLeases.values()].map(snapshotLease);
   }
 
-  // --- checkpoint ---
-
   putCheckpoint(envelope: CheckpointEnvelope): CheckpointStoreResult {
     const identity = captureCheckpointStoreIdentity(envelope);
     const key = InMemoryRepository.checkpointKey(identity.requestId, identity.segmentIndex);
     const existing = this.checkpoints.get(key);
-    if (existing) {
-      return existing.payloadDigest === identity.payloadDigest ? 'unchanged' : 'conflict';
-    }
+    if (existing) return existing.payloadDigest === identity.payloadDigest ? 'unchanged' : 'conflict';
     this.checkpoints.set(key, snapshotCheckpointEnvelope(envelope, identity));
     return 'stored';
   }
 
-  getCheckpoint(
-    requestId: InferenceRequestId,
-    segmentIndex: number,
-  ): CheckpointEnvelope | undefined {
+  getCheckpoint(requestId: InferenceRequestId, segmentIndex: number): CheckpointEnvelope | undefined {
     const envelope = this.checkpoints.get(InMemoryRepository.checkpointKey(requestId, segmentIndex));
     return envelope === undefined ? undefined : snapshotCheckpointEnvelope(envelope);
   }
@@ -670,22 +545,13 @@ export class InMemoryRepository implements DurableRepository {
     return expired;
   }
 
-  // --- completion / result ---
-
   getResult(requestId: InferenceRequestId): InferenceResult | undefined {
     const result = this.results.get(requestId);
     return result === undefined ? undefined : snapshotInferenceResult(result);
   }
 
-  commitCompletion(
-    requestId: InferenceRequestId,
-    expectedStage: RequestStage,
-    result: InferenceResult,
-  ): CompletionCommit {
+  commitCompletion(requestId: InferenceRequestId, expectedStage: RequestStage, result: InferenceResult): CompletionCommit {
     const record = this.requestRecords.get(requestId);
-    // A duplicate completion (result already committed) is recorded but never
-    // overwrites — the issue demands idempotent handling only when the payload
-    // matches, and a result that differs must be surfaced as a violation.
     if (this.results.has(requestId)) return 'duplicate';
     if (!record || record.stage !== expectedStage) return 'conflict';
     const ownedResult = snapshotInferenceResult(result);
@@ -695,8 +561,6 @@ export class InMemoryRepository implements DurableRepository {
     record.completedAt = Date.now();
     return 'committed';
   }
-
-  // --- cancellation ---
 
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void {
     const owned = snapshotCancellationRecord(record);
@@ -709,22 +573,15 @@ export class InMemoryRepository implements DurableRepository {
     return record === undefined ? undefined : snapshotCancellationRecord(record);
   }
 
-  // --- recovery ownership ---
-
   getRecoveryOwnership(requestId: InferenceRequestId): RecoveryOwnership | undefined {
     const ownership = this.recoveryOwnerships.get(requestId);
     return ownership === undefined ? undefined : snapshotRecoveryOwnership(ownership);
   }
 
-  claimRecoveryOwnership(
-    ownership: RecoveryOwnership,
-    now: number,
-  ): RecoveryOwnershipClaim {
+  claimRecoveryOwnership(ownership: RecoveryOwnership, now: number): RecoveryOwnershipClaim {
     const owned = snapshotRecoveryOwnership(ownership);
     const existing = this.recoveryOwnerships.get(owned.requestId);
-    if (existing && existing.ownerId !== owned.ownerId && now < existing.expiresAt) {
-      return 'owned-by-peer';
-    }
+    if (existing && existing.ownerId !== owned.ownerId && now < existing.expiresAt) return 'owned-by-peer';
     this.recoveryOwnerships.set(owned.requestId, owned);
     return existing?.ownerId === owned.ownerId ? 'renewed' : 'claimed';
   }
@@ -736,8 +593,6 @@ export class InMemoryRepository implements DurableRepository {
     return true;
   }
 
-  // --- streaming cursor ---
-
   putStreamCursor(cursor: StreamCursor): void {
     const owned = snapshotStreamCursor(cursor);
     this.streamCursors.set(owned.requestId, owned);
@@ -747,8 +602,6 @@ export class InMemoryRepository implements DurableRepository {
     const cursor = this.streamCursors.get(requestId);
     return cursor === undefined ? undefined : snapshotStreamCursor(cursor);
   }
-
-  // --- worker registration / generation ---
 
   putWorker(record: WorkerRecord): void {
     const owned = snapshotWorkerRecord(record);
