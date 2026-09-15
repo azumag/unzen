@@ -31,6 +31,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import stat
 from typing import Sequence
 
 from collect_multi_segment_evidence import collect_evidence, write_evidence
@@ -57,7 +58,7 @@ def _path_identity(metadata: os.stat_result) -> tuple[int, int]:
     return (metadata.st_dev, metadata.st_ino)
 
 
-def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
     """Hash one source graph while requiring its pathname target to stay stable.
 
     ``verify_multi_segment_artifacts.sha256_file`` already pins the bytes to one
@@ -71,7 +72,7 @@ def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
         before_path = path.stat()
     except FileNotFoundError:
         raise FileNotFoundError(f"source model graph not found: {path}") from None
-    if not path.is_file():
+    if not stat.S_ISREG(before_path.st_mode):
         raise ValueError(f"source model graph must be a regular file: {path}")
 
     digest = _descriptor_sha256_file(path, chunk_size=chunk_size)
