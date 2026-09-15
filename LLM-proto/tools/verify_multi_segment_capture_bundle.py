@@ -32,6 +32,7 @@ from verify_multi_segment_artifact_snapshot import (
     REPORT_SCHEMA_VERSION as SNAPSHOT_REPORT_SCHEMA_VERSION,
     verify_artifact_snapshot,
 )
+from verify_multi_segment_artifacts import sha256_file
 
 
 RUN_KIND = "unzen-budgeted-multi-segment-capture-run"
