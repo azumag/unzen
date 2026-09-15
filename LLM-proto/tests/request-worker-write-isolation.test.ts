@@ -14,6 +14,7 @@ import {
 import { ErrorCode } from '../src/errors.js';
 import { workerId, WorkerTier } from '../src/types.js';
 import { WorkerRegistry } from '../src/worker-registry.js';
+import { planDurableRequestRecovery } from '../src/durable-recovery-plan.js';
 
 class ReferenceKv implements DurableObjectSyncKvStorage {
   private readonly values = new Map<string, unknown>();
@@ -205,34 +206,96 @@ describe('request and worker repository write isolation', () => {
     });
   });
 
-  it.each(repositories())('%s rejects request identity mutations from get/list while preserving operational writes', (_name, repo) => {
+  it.each(repositories())('%s rejects request specification mutations from get/list while preserving operational writes', (_name, repo) => {
     const input = requestRecord();
     const requestId = input.requestId;
     const changedRequestId = generateRequestId();
+    const original = plainRequest(input);
     repo.createRequest(input);
 
     const direct = repo.getRequest(requestId)!;
     const listed = repo.listRequests()[0]!;
     for (const read of [direct, listed]) {
-      expectProtocolViolation(() => Reflect.set(read, 'requestId', changedRequestId));
-      expectProtocolViolation(() => Reflect.deleteProperty(read, 'requestId'));
-      expectProtocolViolation(() => Reflect.defineProperty(read, 'requestId', {
-        value: changedRequestId,
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      }));
-      expect(read.requestId).toBe(requestId);
+      for (const [property, value] of [
+        ['requestId', changedRequestId],
+        ['prompt', 'changed prompt'],
+        ['idempotencyKey', idempotencyKey('changed-request-idempotency')],
+        ['createdAt', 999],
+        ['totalSegments', 99],
+        ['manifestDigest', 'b'.repeat(64)],
+        ['timeoutMs', 1],
+      ] as const) {
+        expectProtocolViolation(() => Reflect.set(read, property, value));
+        expectProtocolViolation(() => Reflect.deleteProperty(read, property));
+        expectProtocolViolation(() => Reflect.defineProperty(read, property, {
+          value,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        }));
+      }
+      expect(plainRequest(read)).toEqual(original);
     }
 
     direct.stage = 'queued';
+    direct.startedAt = 20;
+    listed.completedAt = 30;
+    listed.currentSegment = 2;
     listed.retryCount = 7;
+    direct.lastErrorCode = ErrorCode.RuntimeTransient;
+    direct.lastError = 'operational mutation';
     expect(repo.getRequest(requestId)).toMatchObject({
       requestId,
+      prompt: original.prompt,
+      idempotencyKey: original.idempotencyKey,
+      createdAt: original.createdAt,
+      totalSegments: original.totalSegments,
+      manifestDigest: original.manifestDigest,
+      timeoutMs: original.timeoutMs,
       stage: 'queued',
+      startedAt: 20,
+      completedAt: 30,
+      currentSegment: 2,
       retryCount: 7,
+      lastError: 'operational mutation',
     });
     expect(repo.getRequest(changedRequestId)).toBeUndefined();
+  });
+
+  it.each(repositories())('%s retained request read cannot alter recovery manifest/deadline trust inputs', (_name, repo) => {
+    const input: RequestRecord = {
+      ...requestRecord(),
+      stage: 'queued',
+      createdAt: 100,
+      currentSegment: 0,
+      retryCount: 0,
+      manifestDigest: 'c'.repeat(64),
+      timeoutMs: 10_000,
+    };
+    repo.createRequest(input);
+
+    const retained = repo.getRequest(input.requestId)!;
+    expectProtocolViolation(() => Reflect.set(retained, 'manifestDigest', 'd'.repeat(64)));
+    expectProtocolViolation(() => Reflect.set(retained, 'createdAt', 0));
+    expectProtocolViolation(() => Reflect.set(retained, 'timeoutMs', 1));
+
+    const plan = planDurableRequestRecovery(
+      {
+        request: repo.getRequest(input.requestId)!,
+        checkpoints: [],
+      },
+      {
+        now: 200,
+        maxRetries: 2,
+        manifestDigest: input.manifestDigest,
+      },
+    );
+    expect(plan).toMatchObject({
+      kind: 'resume',
+      segmentIndex: 0,
+      normalizeToQueued: false,
+      deadlineAt: 10_100,
+    });
   });
 
   it.each(repositories())('%s captures worker fields once and keys storage from the owned snapshot', (_name, repo) => {
