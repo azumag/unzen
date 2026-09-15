@@ -134,7 +134,7 @@ describe('WorkerPool guarded live views', () => {
     expect(pool.getAvailableWorker(1024)).toBe(view);
   });
 
-  it('rejects deletion or hostile descriptors for required operational state', () => {
+  it('rejects deletion, hostile descriptors, and object locking for operational state', () => {
     const view = pool.register({
       workerId: workerId('w1'),
       tier: WorkerTier.TIER_2,
@@ -162,6 +162,8 @@ describe('WorkerPool guarded live views', () => {
         value: -1,
       }),
     ).toThrow(/non-negative safe integer/);
+    expect(() => Object.preventExtensions(view)).toThrow(/live view must remain extensible/);
+    expect(Object.isExtensible(view)).toBe(true);
 
     expect(view.status).toBe(WorkerStatus.IDLE);
     expect(view.lastHeartbeat).toBe(initialHeartbeat);
