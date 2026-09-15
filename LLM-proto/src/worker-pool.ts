@@ -49,6 +49,7 @@ export class WorkerPool {
     const worker = this.workers.get(stableId);
     if (!worker) return false;
     worker.lastHeartbeat = Date.now();
+    // Reconnect if previously marked as disconnected
     if (worker.status === WorkerStatus.DISCONNECTED) {
       worker.status = WorkerStatus.IDLE;
     }
@@ -74,9 +75,11 @@ export class WorkerPool {
         continue;
       }
 
+      // Prefer lower tier (more stable)
       if (worker.tier < best.tier) {
         best = worker;
       } else if (worker.tier === best.tier && worker.vramMB > best.vramMB) {
+        // Same tier: prefer more VRAM
         best = worker;
       }
     }
@@ -184,6 +187,9 @@ export class WorkerPool {
         WorkerPool.assertMutableViewProperty(property);
         WorkerPool.assertValidOperationalViewDescriptor(property, descriptor);
         return Reflect.defineProperty(target, property, descriptor);
+      },
+      preventExtensions(): boolean {
+        throw new Error('WorkerPool live view must remain extensible');
       },
     });
     this.workerViews.set(worker, view);
