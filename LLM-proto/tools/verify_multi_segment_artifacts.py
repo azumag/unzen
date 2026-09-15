@@ -40,6 +40,33 @@ def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int
     )
 
 
+def _read_stable_manifest(path: Path) -> bytes:
+    """Read manifest bytes from one regular-file descriptor and detect mutation."""
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"split manifest not found: {path}") from None
+    except IsADirectoryError:
+        raise ValueError(f"split manifest must be a regular file: {path}") from None
+
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"split manifest must be a regular file: {path}")
+            payload = handle.read()
+            after = os.fstat(handle.fileno())
+            if _stat_fingerprint(after) != _stat_fingerprint(before):
+                raise RuntimeError(f"split manifest changed while being read: {path}")
+            return payload
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _measure_file(path: Path, *, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
     """Measure one stable opened file identity and fail closed on mutation."""
 
@@ -154,9 +181,7 @@ def _tier(byte_size: int, budget: dict[str, object]) -> str:
 def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     """Return a measured integrity report or fail closed on any mismatch."""
 
-    if not manifest_path.is_file():
-        raise FileNotFoundError(f"split manifest not found: {manifest_path}")
-    manifest_bytes = manifest_path.read_bytes()
+    manifest_bytes = _read_stable_manifest(manifest_path)
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("split manifest must contain a JSON object")

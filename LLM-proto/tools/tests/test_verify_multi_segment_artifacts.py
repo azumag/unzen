@@ -6,12 +6,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import verify_multi_segment_artifacts as verifier  # noqa: E402
 from verify_multi_segment_artifacts import verify_artifact_integrity  # noqa: E402
 
 
@@ -90,13 +92,14 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
     def test_valid_artifacts_report_measured_bytes_and_digests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = self._fixture(Path(tmp))
+            manifest_bytes = manifest_path.read_bytes()
 
             report = verify_artifact_integrity(manifest_path)
 
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["segmentCount"], 2)
             self.assertEqual(report["effectiveRequiredMaxBytes"], 512)
-            self.assertEqual(len(report["manifestSha256"]), 64)
+            self.assertEqual(report["manifestSha256"], self._sha(manifest_bytes))
             for segment in report["segments"]:
                 self.assertEqual(
                     segment["artifactBytes"],
@@ -104,6 +107,33 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
                 )
                 self.assertEqual(segment["tier"], "preferred")
                 self.assertEqual(len(segment["graphSha256"]), 64)
+
+    def test_rejects_manifest_descriptor_drift_before_segment_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            original_fingerprint = verifier._stat_fingerprint
+            calls = 0
+
+            def drifting_fingerprint(metadata):
+                nonlocal calls
+                calls += 1
+                fingerprint = original_fingerprint(metadata)
+                if calls == 2:
+                    return (*fingerprint[:-1], fingerprint[-1] + 1)
+                return fingerprint
+
+            with patch.object(
+                verifier,
+                "_stat_fingerprint",
+                side_effect=drifting_fingerprint,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "split manifest changed while being read",
+                ):
+                    verify_artifact_integrity(manifest_path)
+
+            self.assertEqual(calls, 2)
 
     def test_rejects_graph_modified_after_manifest_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
