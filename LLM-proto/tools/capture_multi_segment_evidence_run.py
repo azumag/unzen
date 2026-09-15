@@ -31,11 +31,12 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import stat
 from typing import Sequence
 
 from collect_multi_segment_evidence import collect_evidence, write_evidence
 from multi_segment_onnx import PREFERRED_MAX_BYTES, prepare_budgeted_multi_split
-from split_llama_1b_onnx import sha256_file
+from verify_multi_segment_artifacts import sha256_file as _descriptor_sha256_file
 from verify_multi_segment_artifact_snapshot import (
     PATH_RESOLUTION_COMPONENT_ANCHORED,
     PATH_RESOLUTION_FINAL_ONLY,
@@ -49,6 +50,42 @@ from verify_split_onnx import parse_token_ids
 RUN_KIND = "unzen-budgeted-multi-segment-capture-run"
 RUN_SCHEMA_VERSION = "1.0.0"
 DEFAULT_TARGET_BYTES = 200 * 1024 * 1024
+
+
+def _path_identity(metadata: os.stat_result) -> tuple[int, int]:
+    """Return the filesystem object identity relevant to capture source binding."""
+
+    return (metadata.st_dev, metadata.st_ino)
+
+
+def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
+    """Hash one source graph while requiring its pathname target to stay stable.
+
+    ``verify_multi_segment_artifacts.sha256_file`` already pins the bytes to one
+    opened regular-file descriptor and detects in-place mutation. Capture adds a
+    stricter pathname contract around that helper: the path must resolve to the
+    same filesystem object before and immediately after hashing. This keeps a
+    same-content rename/replacement from silently rebinding the capture source.
+    """
+
+    try:
+        before_path = path.stat()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"source model graph not found: {path}") from None
+    if not stat.S_ISREG(before_path.st_mode):
+        raise ValueError(f"source model graph must be a regular file: {path}")
+
+    digest = _descriptor_sha256_file(path, chunk_size=chunk_size)
+
+    try:
+        after_path = path.stat()
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"source model graph path changed while hashing: {path}"
+        ) from None
+    if _path_identity(after_path) != _path_identity(before_path):
+        raise RuntimeError(f"source model graph path changed while hashing: {path}")
+    return digest
 
 
 def ensure_destination_available(path: Path) -> Path:
