@@ -215,10 +215,11 @@ def _write_f32(path: Path, array: np.ndarray) -> dict[str, object]:
 
 
 def _graph_info(path: Path) -> dict[str, object]:
+    graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(path)
     return {
         "file": path.name,
-        "bytes": path.stat().st_size,
-        "sha256": preferred_webgpu._sha256_file(path),
+        "bytes": graph_bytes,
+        "sha256": graph_sha256,
     }
 
 
