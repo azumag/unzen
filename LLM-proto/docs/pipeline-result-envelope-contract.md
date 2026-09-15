@@ -34,7 +34,11 @@ For both pipeline paths, that durable snapshot is committed while the assigned w
 
 ## Final output boundary
 
-A final segment/span must produce an output object. Before `tokens` or `text` are returned to the caller, the output must be a non-null, non-array object, `tokens` must be an array of non-negative safe integers, and `text` must be a string. Non-final results continue to reject any output before it can be accepted.
+A final segment/span must produce an output object. Before `tokens` or `text` are accepted, the output must be a non-null, non-array object, `tokens` must be an array of non-negative safe integers, and `text` must be a string. Non-final results continue to reject any output before it can be accepted.
+
+The final output is also an ownership boundary. Each pipeline captures the worker-owned `output`, `tokens`, and `text` once, then copies token membership and elements by numeric index into a coordinator-owned array without invoking a worker-provided iterator. The returned `InferenceResult` uses only that validated snapshot. A changed-on-second-read accessor, a hostile `Symbol.iterator`, or mutation of the executor's source token array after validation therefore cannot substitute or alter the result that callers observe.
+
+The snapshot is completed before `markIdle()` and, for `SpanPipeline`, before artifact-residency commit. A malformed or throwing final output remains inside the assigned worker's failure boundary.
 
 ## Failure behavior
 
