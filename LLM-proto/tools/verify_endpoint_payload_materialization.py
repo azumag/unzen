@@ -29,6 +29,7 @@ BASE_REPORT_SCHEMA_VERSION = "1.0.0"
 EXPECTED_MATERIALIZATION_KIND = "unzen-endpoint-source-payload-materialization"
 EXPECTED_MATERIALIZATION_SCHEMA_VERSION = "1.1.0"
 DEFAULT_COPY_BUFFER_BYTES = 8 * 1024 * 1024
+DEFAULT_INPUT_REPORT_MAX_BYTES = 16 * 1024 * 1024
 EXPECTED_PROBE_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
 EXPECTED_PROBE_SCHEMA_VERSION = "1.2.0"
 EXPECTED_SOURCE_GRAPH_SHA256 = (
@@ -88,18 +89,6 @@ def _normalized_sha256(value: object, *, field: str) -> str:
     return digest
 
 
-def _load_json_with_sha256(path: Path) -> tuple[dict[str, object], str]:
-    raw = path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
-    try:
-        value = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"invalid UTF-8 JSON report: {path}") from error
-    if not isinstance(value, dict):
-        raise RuntimeError(f"report root must be an object: {path}")
-    return value, digest
-
-
 def _file_stat_signature(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:
     return (
         stat_result.st_dev,
@@ -108,6 +97,86 @@ def _file_stat_signature(stat_result: os.stat_result) -> tuple[int, int, int, in
         stat_result.st_mtime_ns,
         stat_result.st_ctime_ns,
     )
+
+
+def _load_json_with_sha256(
+    path: Path,
+    *,
+    max_bytes: int = DEFAULT_INPUT_REPORT_MAX_BYTES,
+) -> tuple[dict[str, object], str]:
+    """Read and hash one JSON report from a stable regular-file snapshot."""
+
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    path = path.expanduser().absolute()
+    try:
+        before = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"report is not readable: {path}: {error}") from error
+    if stat.S_ISLNK(before.st_mode):
+        raise RuntimeError(f"report must not be a symlink: {path}")
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(f"report must be a regular file: {path}")
+    if before.st_size > max_bytes:
+        raise RuntimeError(f"report exceeds {max_bytes} bytes: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise RuntimeError(f"report could not be opened safely: {path}: {error}") from error
+
+    opened: os.stat_result
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"report must remain a regular file: {path}")
+        if _file_stat_signature(opened) != _file_stat_signature(before):
+            raise RuntimeError(f"report changed between path check and open: {path}")
+        if opened.st_size > max_bytes:
+            raise RuntimeError(f"report exceeds {max_bytes} bytes: {path}")
+
+        while True:
+            remaining = max_bytes + 1 - observed
+            block = os.read(fd, min(1024 * 1024, remaining))
+            if not block:
+                break
+            chunks.append(block)
+            observed += len(block)
+            if observed > max_bytes:
+                raise RuntimeError(f"report grew beyond the input limit: {path}")
+
+        after_fd = os.fstat(fd)
+        if (
+            _file_stat_signature(after_fd) != _file_stat_signature(opened)
+            or observed != after_fd.st_size
+        ):
+            raise RuntimeError(f"report changed while being read: {path}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"report path disappeared after read: {path}: {error}") from error
+    if (
+        stat.S_ISLNK(after_path.st_mode)
+        or _file_stat_signature(after_path) != _file_stat_signature(opened)
+    ):
+        raise RuntimeError(f"report path changed while being read: {path}")
+
+    raw = b"".join(chunks)
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"invalid UTF-8 JSON report: {path}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"report root must be an object: {path}")
+    return value, digest
 
 
 def _require_stable_file_signature(
