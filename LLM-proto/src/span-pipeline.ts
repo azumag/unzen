@@ -71,6 +71,12 @@ export interface SpanPipelineOptions {
   readonly artifactResidencyLedger?: ArtifactResidencyLedger;
 }
 
+interface SpanRunEnvelope {
+  readonly requestId: InferenceRequestId;
+  readonly totalSegments: number;
+  readonly initialCurrentSegment: number;
+}
+
 const DEFAULT_OPTIONS: SpanPipelineOptions = {
   maxRetries: 2,
   perSegmentTimeoutMs: 10_000,
@@ -149,6 +155,50 @@ function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
       };
 }
 
+function captureSpanRunEnvelope(
+  request: InferenceRequest,
+  expectedTotalSegments: number,
+): SpanRunEnvelope {
+  if (!isRecord(request)) {
+    throw new TypeError('SpanPipeline request must be a non-null, non-array object');
+  }
+
+  // Capture caller-owned identity/geometry once before any worker or checkpoint
+  // side effect. Accessor-backed or Proxy inputs cannot redirect a later span by
+  // returning a different value on a second read.
+  const requestId = request.id;
+  const totalSegments = request.totalSegments;
+  const initialCurrentSegment = request.currentSegment;
+
+  if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+    throw new TypeError('SpanPipeline request id must be a non-empty string');
+  }
+  if (!isNonNegativeSafeInteger(totalSegments)) {
+    throw new SpanPipelineError(
+      'SpanPipeline request totalSegments must be a non-negative safe integer',
+      requestId as InferenceRequestId,
+    );
+  }
+  if (!isNonNegativeSafeInteger(initialCurrentSegment)) {
+    throw new SpanPipelineError(
+      'SpanPipeline request currentSegment must be a non-negative safe integer',
+      requestId as InferenceRequestId,
+    );
+  }
+  if (totalSegments !== expectedTotalSegments) {
+    throw new SpanPipelineError(
+      `SpanPipeline request totalSegments ${totalSegments} does not match pipeline segment count ${expectedTotalSegments}`,
+      requestId as InferenceRequestId,
+    );
+  }
+
+  return Object.freeze({
+    requestId: requestId as InferenceRequestId,
+    totalSegments,
+    initialCurrentSegment,
+  });
+}
+
 export class SpanPipeline {
   private readonly segments: readonly SegmentConfig[];
   private readonly options: SpanPipelineOptions;
@@ -174,33 +224,42 @@ export class SpanPipeline {
    * final success or terminal failure.
    */
   async run(request: InferenceRequest): Promise<InferenceResult> {
-    if (this.segments.length === 0) {
+    const run = captureSpanRunEnvelope(request, this.segments.length);
+
+    if (run.totalSegments === 0) {
       request.status = InferenceStatus.COMPLETED;
-      return { requestId: request.id, tokens: [], text: '', totalTimeMs: 0, segmentsCompleted: 0 };
+      return {
+        requestId: run.requestId,
+        tokens: [],
+        text: '',
+        totalTimeMs: 0,
+        segmentsCompleted: 0,
+      };
     }
 
     const startTime = Date.now();
     request.status = InferenceStatus.IN_PROGRESS;
 
     try {
-      return await this.executeWithRoute(request, startTime);
+      return await this.executeWithRoute(request, run, startTime);
     } catch (error) {
       request.status = InferenceStatus.FAILED;
-      this.checkpointStore.deleteAll(request.id);
+      this.checkpointStore.deleteAll(run.requestId);
       throw error;
     }
   }
 
   private async executeWithRoute(
     request: InferenceRequest,
+    run: SpanRunEnvelope,
     startTime: number,
   ): Promise<InferenceResult> {
     // A final segment produces output, not a resumable checkpoint. Bounding the
     // lookup at N-2 prevents malformed/stale final checkpoints from skipping
     // the output-producing span.
     let resumeCheckpoint = this.checkpointStore.latest(
-      request.id,
-      this.segments.length - 2,
+      run.requestId,
+      run.totalSegments - 2,
     );
     let resumeSegment = resumeCheckpoint === undefined
       ? 0
@@ -224,13 +283,14 @@ export class SpanPipeline {
         }
         throw new SpanPipelineError(
           `No viable route for unfinished suffix starting at segment ${resumeSegment}`,
-          request.id,
+          run.requestId,
         );
       }
 
       try {
         return await this.executeRoute(
           request,
+          run,
           route,
           startTime,
           resumeCheckpoint,
@@ -243,8 +303,8 @@ export class SpanPipeline {
         // A route may have completed one or more spans before a later worker
         // failed. Keep the newest validated boundary and retry only after it.
         const latest = this.checkpointStore.latest(
-          request.id,
-          this.segments.length - 2,
+          run.requestId,
+          run.totalSegments - 2,
         );
         if (
           latest !== undefined &&
@@ -257,27 +317,28 @@ export class SpanPipeline {
       }
     }
 
-    throw new SpanPipelineError('Route execution exhausted all retries', request.id);
+    throw new SpanPipelineError('Route execution exhausted all retries', run.requestId);
   }
 
   /** Execute one suffix route, relaying checkpoints only at span boundaries. */
   private async executeRoute(
     request: InferenceRequest,
+    run: SpanRunEnvelope,
     route: Route,
     startTime: number,
     initialCheckpoint: Checkpoint | undefined,
   ): Promise<InferenceResult> {
     for (let i = 0; i < route.length; i++) {
       const span = route[i];
-      const isFinalSpan = span.endSegment === this.segments.length - 1;
+      const isFinalSpan = span.endSegment === run.totalSegments - 1;
       const spanSegments = this.segments.slice(span.startSegment, span.endSegment + 1);
       const checkpoint = i === 0
         ? initialCheckpoint
-        : this.checkpointStore.get(request.id, route[i - 1].endSegment);
+        : this.checkpointStore.get(run.requestId, route[i - 1].endSegment);
 
-      this.assertInputCheckpoint(request, span, checkpoint);
+      this.assertInputCheckpoint(run.requestId, span, checkpoint);
       const assignment: SpanAssignment = {
-        requestId: request.id,
+        requestId: run.requestId,
         segments: spanSegments,
         checkpoint,
       };
@@ -295,7 +356,7 @@ export class SpanPipeline {
           assignment,
           timeoutMs,
         );
-        this.assertSpanResult(request, span, result, isFinalSpan);
+        this.assertSpanResult(run.requestId, span, result, isFinalSpan);
 
         // Commit the validated checkpoint snapshot before the worker becomes
         // reusable or its artifact residency is trusted. A save-time failure
@@ -317,14 +378,14 @@ export class SpanPipeline {
         }
 
         request.status = InferenceStatus.COMPLETED;
-        request.currentSegment = this.segments.length;
-        this.checkpointStore.deleteAll(request.id);
+        request.currentSegment = run.totalSegments;
+        this.checkpointStore.deleteAll(run.requestId);
         return {
-          requestId: request.id,
+          requestId: run.requestId,
           tokens: result.output!.tokens,
           text: result.output!.text,
           totalTimeMs: Date.now() - startTime,
-          segmentsCompleted: this.segments.length,
+          segmentsCompleted: run.totalSegments,
         };
       } catch (error) {
         // A disconnected or contract-violating browser can no longer prove that
@@ -335,11 +396,11 @@ export class SpanPipeline {
       }
     }
 
-    throw new SpanPipelineError('Route ended without producing output', request.id);
+    throw new SpanPipelineError('Route ended without producing output', run.requestId);
   }
 
   private assertInputCheckpoint(
-    request: InferenceRequest,
+    requestId: InferenceRequestId,
     span: Span,
     checkpoint: Checkpoint | undefined,
   ): void {
@@ -347,7 +408,7 @@ export class SpanPipeline {
       if (checkpoint !== undefined) {
         throw new SpanPipelineError(
           'segment 0 must not receive a checkpoint',
-          request.id,
+          requestId,
         );
       }
       return;
@@ -356,26 +417,26 @@ export class SpanPipeline {
     if (checkpoint === undefined) {
       throw new SpanPipelineError(
         `missing checkpoint before segment ${span.startSegment}`,
-        request.id,
+        requestId,
       );
     }
-    if (checkpoint.requestId !== request.id) {
+    if (checkpoint.requestId !== requestId) {
       throw new SpanPipelineError(
-        `checkpoint request ${checkpoint.requestId} does not match ${request.id}`,
-        request.id,
+        `checkpoint request ${checkpoint.requestId} does not match ${requestId}`,
+        requestId,
       );
     }
     if (checkpoint.segmentIndex !== span.startSegment - 1) {
       throw new SpanPipelineError(
         `checkpoint segment ${checkpoint.segmentIndex} does not precede ` +
         `span start ${span.startSegment}`,
-        request.id,
+        requestId,
       );
     }
   }
 
   private assertSpanResult(
-    request: InferenceRequest,
+    requestId: InferenceRequestId,
     span: Span,
     result: unknown,
     isFinalSpan: boolean,
@@ -383,50 +444,50 @@ export class SpanPipeline {
     if (!isRecord(result)) {
       throw new SpanPipelineError(
         'span result must be a non-null, non-array object',
-        request.id,
+        requestId,
       );
     }
     if (typeof result.requestId !== 'string') {
       throw new SpanPipelineError(
         'span result requestId must be a string',
-        request.id,
+        requestId,
       );
     }
-    if (result.requestId !== request.id) {
+    if (result.requestId !== requestId) {
       throw new SpanPipelineError(
-        `span result request ${result.requestId} does not match ${request.id}`,
-        request.id,
+        `span result request ${result.requestId} does not match ${requestId}`,
+        requestId,
       );
     }
     if (typeof result.workerId !== 'string') {
       throw new SpanPipelineError(
         'span result workerId must be a string',
-        request.id,
+        requestId,
       );
     }
     if (result.workerId !== span.workerId) {
       throw new SpanPipelineError(
         `span result worker ${result.workerId} does not match assigned worker ${span.workerId}`,
-        request.id,
+        requestId,
       );
     }
     if (!isNonNegativeSafeInteger(result.startSegment)) {
       throw new SpanPipelineError(
         'span result startSegment must be a non-negative safe integer',
-        request.id,
+        requestId,
       );
     }
     if (!isNonNegativeSafeInteger(result.endSegment)) {
       throw new SpanPipelineError(
         'span result endSegment must be a non-negative safe integer',
-        request.id,
+        requestId,
       );
     }
     if (result.startSegment !== span.startSegment || result.endSegment !== span.endSegment) {
       throw new SpanPipelineError(
         `span result range ${result.startSegment}..${result.endSegment} does not match ` +
         `assignment ${span.startSegment}..${span.endSegment}`,
-        request.id,
+        requestId,
       );
     }
     if (
@@ -436,7 +497,7 @@ export class SpanPipeline {
     ) {
       throw new SpanPipelineError(
         `span processingTimeMs must be a non-negative finite number`,
-        request.id,
+        requestId,
       );
     }
 
@@ -444,37 +505,37 @@ export class SpanPipeline {
       if (result.checkpoint !== undefined) {
         throw new SpanPipelineError(
           `final span ${span.startSegment}..${span.endSegment} must not produce a checkpoint`,
-          request.id,
+          requestId,
         );
       }
       if (result.output === undefined) {
         throw new SpanPipelineError(
           'Final span did not produce output',
-          request.id,
+          requestId,
         );
       }
       if (!isRecord(result.output)) {
         throw new SpanPipelineError(
           'final span output must be a non-null, non-array object',
-          request.id,
+          requestId,
         );
       }
       if (!Array.isArray(result.output.tokens)) {
         throw new SpanPipelineError(
           'final span output tokens must be an array',
-          request.id,
+          requestId,
         );
       }
       if (!result.output.tokens.every(isNonNegativeSafeInteger)) {
         throw new SpanPipelineError(
           'final span output tokens must contain non-negative safe integers',
-          request.id,
+          requestId,
         );
       }
       if (typeof result.output.text !== 'string') {
         throw new SpanPipelineError(
           'final span output text must be a string',
-          request.id,
+          requestId,
         );
       }
       return;
@@ -483,44 +544,44 @@ export class SpanPipeline {
     if (result.output !== undefined) {
       throw new SpanPipelineError(
         `non-final span ${span.startSegment}..${span.endSegment} must not produce output`,
-        request.id,
+        requestId,
       );
     }
     if (result.checkpoint === undefined) {
       throw new SpanPipelineError(
         `non-final span ${span.startSegment}..${span.endSegment} did not produce a checkpoint`,
-        request.id,
+        requestId,
       );
     }
     if (!isRecord(result.checkpoint)) {
       throw new SpanPipelineError(
         'span result checkpoint must be a non-null, non-array object',
-        request.id,
+        requestId,
       );
     }
     if (typeof result.checkpoint.requestId !== 'string') {
       throw new SpanPipelineError(
         'checkpoint requestId must be a string',
-        request.id,
+        requestId,
       );
     }
-    if (result.checkpoint.requestId !== request.id) {
+    if (result.checkpoint.requestId !== requestId) {
       throw new SpanPipelineError(
-        `checkpoint request ${result.checkpoint.requestId} does not match ${request.id}`,
-        request.id,
+        `checkpoint request ${result.checkpoint.requestId} does not match ${requestId}`,
+        requestId,
       );
     }
     if (!isNonNegativeSafeInteger(result.checkpoint.segmentIndex)) {
       throw new SpanPipelineError(
         'checkpoint segmentIndex must be a non-negative safe integer',
-        request.id,
+        requestId,
       );
     }
     if (result.checkpoint.segmentIndex !== span.endSegment) {
       throw new SpanPipelineError(
         `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
         `span end ${span.endSegment}`,
-        request.id,
+        requestId,
       );
     }
     try {
@@ -529,7 +590,7 @@ export class SpanPipeline {
       const detail = error instanceof Error ? error.message : 'unknown checkpoint validation error';
       throw new SpanPipelineError(
         `invalid checkpoint from span ${span.startSegment}..${span.endSegment}: ${detail}`,
-        request.id,
+        requestId,
       );
     }
   }
