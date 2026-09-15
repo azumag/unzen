@@ -200,10 +200,10 @@ export function createCancelResultMessage(
   return {
     type: 'cancel-result',
     requestId,
-    protocolVersion: WORKER_PROTOCOL_VERSION,
-    generationId,
     success,
     error,
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    generationId,
   };
 }
 
@@ -211,7 +211,15 @@ export function createCancelResultMessage(
 // Runtime Validation
 // ============================================================
 
-/** Validate an unknown main-thread request before worker state is touched. */
+/**
+ * Validate an unknown main-thread request before worker state is touched.
+ *
+ * Like `validateWorkerResponse()`, successful validation returns a plain
+ * snapshot instead of the caller-owned object. Every declared scalar field is
+ * read exactly once so accessors/Proxies cannot pass validation and then drift
+ * before dispatch. Execute `args` intentionally keeps the captured array
+ * reference here; `snapshotQuickJsCall()` owns the later deep-copy boundary.
+ */
 export function validateWorkerRequest(
   data: unknown,
 ): { ok: true; msg: WorkerMessage } | { ok: false; reason: string } {
@@ -220,50 +228,76 @@ export function validateWorkerRequest(
       return { ok: false, reason: 'request is not an object' };
     }
     const m = data as Record<string, unknown>;
-    if (m.protocolVersion !== WORKER_PROTOCOL_VERSION) {
+    const protocolVersion = m.protocolVersion;
+    const generationId = m.generationId;
+    const type = m.type;
+
+    if (protocolVersion !== WORKER_PROTOCOL_VERSION) {
       return {
         ok: false,
-        reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`,
+        reason: `protocol version mismatch (got ${String(protocolVersion)}, expected ${WORKER_PROTOCOL_VERSION})`,
       };
     }
     if (
-      typeof m.generationId !== 'number'
-      || !Number.isSafeInteger(m.generationId)
-      || m.generationId < 1
+      typeof generationId !== 'number'
+      || !Number.isSafeInteger(generationId)
+      || generationId < 1
     ) {
-      return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
+      return { ok: false, reason: `malformed generationId: ${String(generationId)}` };
     }
 
-    if (m.type === 'init') {
-      return { ok: true, msg: m as unknown as InitMessage };
+    if (type === 'init') {
+      return {
+        ok: true,
+        msg: { type, protocolVersion, generationId },
+      };
     }
-    if (m.type === 'execute') {
-      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+    if (type === 'execute') {
+      const requestId = m.requestId;
+      const code = m.code;
+      const args = m.args;
+      const timeout = m.timeout;
+      if (typeof requestId !== 'string' || requestId.length === 0) {
         return { ok: false, reason: 'execute request missing requestId' };
       }
-      if (typeof m.code !== 'string' || !Array.isArray(m.args)) {
+      if (typeof code !== 'string' || !Array.isArray(args)) {
         return { ok: false, reason: 'execute request missing code/args' };
       }
       if (
-        m.timeout !== undefined
+        timeout !== undefined
         && (
-          typeof m.timeout !== 'number'
-          || !Number.isInteger(m.timeout)
-          || m.timeout < 1
-          || m.timeout > MAX_WORKER_TIMEOUT_MS
+          typeof timeout !== 'number'
+          || !Number.isInteger(timeout)
+          || timeout < 1
+          || timeout > MAX_WORKER_TIMEOUT_MS
         )
       ) {
         return { ok: false, reason: 'execute request has invalid timeout' };
       }
-      return { ok: true, msg: m as unknown as ExecuteMessage };
+      return {
+        ok: true,
+        msg: {
+          type,
+          requestId,
+          protocolVersion,
+          generationId,
+          code,
+          args,
+          ...(timeout !== undefined && { timeout }),
+        },
+      };
     }
-    if (m.type === 'cancel') {
-      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+    if (type === 'cancel') {
+      const requestId = m.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) {
         return { ok: false, reason: 'cancel request missing requestId' };
       }
-      return { ok: true, msg: m as unknown as CancelMessage };
+      return {
+        ok: true,
+        msg: { type, requestId, protocolVersion, generationId },
+      };
     }
-    return { ok: false, reason: `unknown message type: ${String(m.type)}` };
+    return { ok: false, reason: `unknown message type: ${String(type)}` };
   } catch {
     return { ok: false, reason: 'request could not be read' };
   }
