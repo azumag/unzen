@@ -56,6 +56,86 @@ class WebGpuPreparationGraphTest(unittest.TestCase):
             )
 
 
+class WebGpuPreparationGraphSnapshotTest(unittest.TestCase):
+    def test_measure_regular_file_binds_size_and_digest_to_same_snapshot(self) -> None:
+        payload = b"generated-graph"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.onnx"
+            path.write_bytes(payload)
+            measured_bytes, digest = probe._measure_regular_file(path)
+            self.assertEqual(measured_bytes, len(payload))
+            self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+            self.assertEqual(probe._sha256_file(path), digest)
+            self.assertEqual(
+                probe._sha256_file(path, byte_limit=4),
+                hashlib.sha256(payload[:4]).hexdigest(),
+            )
+
+    def test_measure_regular_file_rejects_replacement_between_check_and_open(self) -> None:
+        original = b"original-graph"
+        replacement = b"replacement-graph"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.onnx"
+            replacement_path = Path(directory) / "replacement.onnx"
+            path.write_bytes(original)
+            replacement_path.write_bytes(replacement)
+            real_open = os.open
+            replaced = False
+
+            def replacing_open(target: object, flags: int, *args: object, **kwargs: object) -> int:
+                nonlocal replaced
+                if not replaced and Path(target) == path:
+                    replacement_path.replace(path)
+                    replaced = True
+                return real_open(target, flags, *args, **kwargs)
+
+            with mock.patch.object(probe.os, "open", side_effect=replacing_open):
+                with self.assertRaisesRegex(RuntimeError, "changed between path check and open"):
+                    probe._measure_regular_file(path)
+            self.assertTrue(replaced)
+
+    def test_measure_regular_file_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "target.onnx"
+            path = Path(directory) / "graph.onnx"
+            target.write_bytes(b"graph")
+            path.symlink_to(target)
+            with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+                probe._measure_regular_file(path)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "platform lacks FIFO support")
+    def test_measure_regular_file_rejects_fifo_without_opening_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.pipe"
+            os.mkfifo(path)
+            with mock.patch.object(probe.os, "open", wraps=os.open) as open_mock:
+                with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+                    probe._measure_regular_file(path)
+            open_mock.assert_not_called()
+
+    def test_measure_regular_file_rejects_in_place_mutation(self) -> None:
+        payload = b"stable-before-read"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.onnx"
+            path.write_bytes(payload)
+            real_read = os.read
+            mutated = False
+
+            def mutating_read(fd: int, size: int) -> bytes:
+                nonlocal mutated
+                block = real_read(fd, size)
+                if block and not mutated:
+                    with path.open("ab") as stream:
+                        stream.write(b"mutation")
+                    mutated = True
+                return block
+
+            with mock.patch.object(probe.os, "read", side_effect=mutating_read):
+                with self.assertRaisesRegex(RuntimeError, "grew while being hashed"):
+                    probe._measure_regular_file(path)
+            self.assertTrue(mutated)
+
+
 class WebGpuPreparationSourcePinTest(unittest.TestCase):
     def test_source_fd_remains_bound_and_detects_path_replacement(self) -> None:
         payload = b"abcdefgh"

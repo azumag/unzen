@@ -40,21 +40,69 @@ FLOAT32_BYTES = 4
 ORT_WEB_VERSION = "1.22.0"
 
 
-def _sha256_file(path: Path, *, byte_limit: int | None = None) -> str:
+def _identity(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (snapshot.st_dev, snapshot.st_ino, snapshot.st_size, snapshot.st_mtime_ns, snapshot.st_ctime_ns)
+
+
+def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple[int, str]:
+    """Measure one stable non-symlink regular-file descriptor snapshot."""
+
+    if byte_limit is not None and byte_limit < 0:
+        raise ValueError("byte_limit must be non-negative")
+    path = path.expanduser().absolute()
+    try:
+        before = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"file is not readable: {path}: {error}") from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(f"file must be a regular non-symlink file: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise RuntimeError(f"file could not be opened safely: {path}: {error}") from error
+
     digest = hashlib.sha256()
-    remaining = byte_limit
-    with path.open("rb") as handle:
-        while remaining is None or remaining > 0:
-            size = 8 * 1024 * 1024 if remaining is None else min(8 * 1024 * 1024, remaining)
-            chunk = handle.read(size)
-            if not chunk:
-                if remaining not in (None, 0):
-                    raise RuntimeError(f"unexpected EOF while hashing {path}")
-                break
-            digest.update(chunk)
-            if remaining is not None:
-                remaining -= len(chunk)
-    return digest.hexdigest()
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"file must remain a regular file: {path}")
+        if _identity(opened) != _identity(before):
+            raise RuntimeError(f"file changed between path check and open: {path}")
+        target_bytes = opened.st_size if byte_limit is None else byte_limit
+        while observed < target_bytes:
+            block = os.read(fd, min(8 * 1024 * 1024, target_bytes - observed))
+            if not block:
+                raise RuntimeError(f"unexpected EOF while hashing {path}")
+            digest.update(block)
+            observed += len(block)
+        if byte_limit is None:
+            extra = os.read(fd, 1)
+            if extra:
+                raise RuntimeError(f"file grew while being hashed: {path}")
+        after_fd = os.fstat(fd)
+        if _identity(after_fd) != _identity(opened):
+            raise RuntimeError(f"file changed while being hashed: {path}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"file path disappeared after hashing: {path}: {error}") from error
+    if stat.S_ISLNK(after_path.st_mode) or _identity(after_path) != _identity(opened):
+        raise RuntimeError(f"file path changed while being hashed: {path}")
+    return observed, digest.hexdigest()
+
+
+def _sha256_file(path: Path, *, byte_limit: int | None = None) -> str:
+    """Compatibility wrapper returning the descriptor-pinned SHA-256 digest."""
+
+    _, digest = _measure_regular_file(path, byte_limit=byte_limit)
+    return digest
 
 
 def _external_weight_tensor(*, rows: int, hidden_size: int, offset: int, length: int) -> TensorProto:
@@ -95,10 +143,6 @@ def build_probe_model(*, mode: str, rows: int, hidden_size: int, offset: int, le
         ir_version=10,
         producer_name="unzen-diagnostic",
     )
-
-
-def _identity(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
-    return (snapshot.st_dev, snapshot.st_ino, snapshot.st_size, snapshot.st_mtime_ns, snapshot.st_ctime_ns)
 
 
 def _open_pinned_source(path: Path) -> tuple[int, tuple[int, int, int, int, int], str]:
@@ -235,10 +279,11 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
                 graph_path = output_dir / file_name
                 onnx.save(build_probe_model(mode=mode, rows=rows, hidden_size=hidden_size, offset=offset, length=length), graph_path)
                 onnx.checker.check_model(str(graph_path), full_check=True)
+                graph_bytes, graph_sha256 = _measure_regular_file(graph_path)
                 graphs[mode] = {
                     "file": file_name,
-                    "bytes": graph_path.stat().st_size,
-                    "sha256": _sha256_file(graph_path),
+                    "bytes": graph_bytes,
+                    "sha256": graph_sha256,
                 }
             manifest_tiles.append(
                 {
