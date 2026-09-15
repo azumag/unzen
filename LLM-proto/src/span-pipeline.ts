@@ -36,6 +36,10 @@ import {
   type Route,
   type Span,
 } from './span-router.js';
+import {
+  snapshotFinalOutput,
+  type FinalOutputSnapshot,
+} from './final-output-snapshot.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
 import { SegmentTimeoutError } from './errors.js';
 
@@ -75,6 +79,11 @@ interface SpanRunEnvelope {
   readonly requestId: InferenceRequestId;
   readonly totalSegments: number;
   readonly initialCurrentSegment: number;
+}
+
+interface ValidatedSpanResult {
+  readonly checkpoint?: Checkpoint;
+  readonly output?: FinalOutputSnapshot;
 }
 
 const DEFAULT_OPTIONS: SpanPipelineOptions = {
@@ -356,13 +365,13 @@ export class SpanPipeline {
           assignment,
           timeoutMs,
         );
-        this.assertSpanResult(run.requestId, span, result, isFinalSpan);
+        const validated = this.validateSpanResult(run.requestId, span, result, isFinalSpan);
 
         // Commit the validated checkpoint snapshot before the worker becomes
         // reusable or its artifact residency is trusted. A save-time failure
         // therefore stays inside the disconnect/clear failure boundary.
-        if (!isFinalSpan) {
-          this.checkpointStore.save(result.checkpoint!);
+        if (validated.checkpoint !== undefined) {
+          this.checkpointStore.save(validated.checkpoint);
         }
 
         this.workerPool.markIdle(span.workerId);
@@ -377,13 +386,16 @@ export class SpanPipeline {
           continue;
         }
 
+        if (validated.output === undefined) {
+          throw new SpanPipelineError('Final span did not produce output', run.requestId);
+        }
         request.status = InferenceStatus.COMPLETED;
         request.currentSegment = run.totalSegments;
         this.checkpointStore.deleteAll(run.requestId);
         return {
           requestId: run.requestId,
-          tokens: result.output!.tokens,
-          text: result.output!.text,
+          tokens: validated.output.tokens,
+          text: validated.output.text,
           totalTimeMs: Date.now() - startTime,
           segmentsCompleted: run.totalSegments,
         };
@@ -435,12 +447,12 @@ export class SpanPipeline {
     }
   }
 
-  private assertSpanResult(
+  private validateSpanResult(
     requestId: InferenceRequestId,
     span: Span,
     result: unknown,
     isFinalSpan: boolean,
-  ): asserts result is SpanResult {
+  ): ValidatedSpanResult {
     if (!isRecord(result)) {
       throw new SpanPipelineError(
         'span result must be a non-null, non-array object',
@@ -496,96 +508,79 @@ export class SpanPipeline {
       result.processingTimeMs < 0
     ) {
       throw new SpanPipelineError(
-        `span processingTimeMs must be a non-negative finite number`,
+        'span processingTimeMs must be a non-negative finite number',
         requestId,
       );
     }
 
+    const checkpoint = result.checkpoint as Checkpoint | undefined;
+    const output = result.output;
     if (isFinalSpan) {
-      if (result.checkpoint !== undefined) {
+      if (checkpoint !== undefined) {
         throw new SpanPipelineError(
           `final span ${span.startSegment}..${span.endSegment} must not produce a checkpoint`,
           requestId,
         );
       }
-      if (result.output === undefined) {
+      if (output === undefined) {
         throw new SpanPipelineError(
           'Final span did not produce output',
           requestId,
         );
       }
-      if (!isRecord(result.output)) {
-        throw new SpanPipelineError(
-          'final span output must be a non-null, non-array object',
-          requestId,
-        );
-      }
-      if (!Array.isArray(result.output.tokens)) {
-        throw new SpanPipelineError(
-          'final span output tokens must be an array',
-          requestId,
-        );
-      }
-      if (!result.output.tokens.every(isNonNegativeSafeInteger)) {
-        throw new SpanPipelineError(
-          'final span output tokens must contain non-negative safe integers',
-          requestId,
-        );
-      }
-      if (typeof result.output.text !== 'string') {
-        throw new SpanPipelineError(
-          'final span output text must be a string',
-          requestId,
-        );
-      }
-      return;
+      return {
+        output: snapshotFinalOutput(
+          output,
+          (message) => new SpanPipelineError(message, requestId),
+        ),
+      };
     }
 
-    if (result.output !== undefined) {
+    if (output !== undefined) {
       throw new SpanPipelineError(
         `non-final span ${span.startSegment}..${span.endSegment} must not produce output`,
         requestId,
       );
     }
-    if (result.checkpoint === undefined) {
+    if (checkpoint === undefined) {
       throw new SpanPipelineError(
         `non-final span ${span.startSegment}..${span.endSegment} did not produce a checkpoint`,
         requestId,
       );
     }
-    if (!isRecord(result.checkpoint)) {
+    if (!isRecord(checkpoint)) {
       throw new SpanPipelineError(
         'span result checkpoint must be a non-null, non-array object',
         requestId,
       );
     }
-    if (typeof result.checkpoint.requestId !== 'string') {
+    if (typeof checkpoint.requestId !== 'string') {
       throw new SpanPipelineError(
         'checkpoint requestId must be a string',
         requestId,
       );
     }
-    if (result.checkpoint.requestId !== requestId) {
+    if (checkpoint.requestId !== requestId) {
       throw new SpanPipelineError(
-        `checkpoint request ${result.checkpoint.requestId} does not match ${requestId}`,
+        `checkpoint request ${checkpoint.requestId} does not match ${requestId}`,
         requestId,
       );
     }
-    if (!isNonNegativeSafeInteger(result.checkpoint.segmentIndex)) {
+    if (!isNonNegativeSafeInteger(checkpoint.segmentIndex)) {
       throw new SpanPipelineError(
         'checkpoint segmentIndex must be a non-negative safe integer',
         requestId,
       );
     }
-    if (result.checkpoint.segmentIndex !== span.endSegment) {
+    if (checkpoint.segmentIndex !== span.endSegment) {
       throw new SpanPipelineError(
-        `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
+        `checkpoint segment ${checkpoint.segmentIndex} does not match ` +
         `span end ${span.endSegment}`,
         requestId,
       );
     }
     try {
-      CheckpointStore.assertValidCheckpoint(result.checkpoint);
+      CheckpointStore.assertValidCheckpoint(checkpoint);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'unknown checkpoint validation error';
       throw new SpanPipelineError(
@@ -593,6 +588,7 @@ export class SpanPipeline {
         requestId,
       );
     }
+    return { checkpoint };
   }
 
   private executeSpanWithTimeout(
