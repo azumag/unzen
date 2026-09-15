@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import struct
 import sys
 import tempfile
@@ -93,6 +94,75 @@ class RepackSourceIdentityPinningTest(unittest.TestCase):
             self.assertIsNotNone(result)
             self.assertEqual(destination.read_bytes(), original_bytes)
             self.assertNotEqual(destination.read_bytes(), replacement_bytes)
+
+    def test_fifo_source_is_rejected_before_destination_creation(self) -> None:
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO creation is unavailable on this platform")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+
+            source = source_dir / "weights.bin"
+            os.mkfifo(source)
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path, source.name)
+            destination = output_dir / "segment0.onnx_data"
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "source external-data must be a regular file",
+            ):
+                repack_module.repack_segment_external_data(
+                    model_path,
+                    source_dir,
+                    destination.name,
+                )
+
+            self.assertFalse(destination.exists())
+
+    def test_source_mutation_during_copy_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            output_dir = root / "output"
+            source_dir.mkdir()
+            output_dir.mkdir()
+
+            source = source_dir / "weights.bin"
+            source.write_bytes(struct.pack("<f", 3.5))
+            model_path = output_dir / "segment0.onnx"
+            self._write_external_model(model_path, source.name)
+            destination = output_dir / "segment0.onnx_data"
+            real_copy_range = repack_module._copy_range
+            mutated = False
+
+            def copy_then_mutate(source_handle, destination_handle, offset: int, length: int) -> None:
+                nonlocal mutated
+                real_copy_range(source_handle, destination_handle, offset, length)
+                if not mutated:
+                    with source.open("ab") as stream:
+                        stream.write(b"mutation")
+                    mutated = True
+
+            with patch.object(
+                repack_module,
+                "_copy_range",
+                side_effect=copy_then_mutate,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "source external-data changed during repack",
+                ):
+                    repack_module.repack_segment_external_data(
+                        model_path,
+                        source_dir,
+                        destination.name,
+                    )
+
+            self.assertTrue(mutated)
 
 
 if __name__ == "__main__":
