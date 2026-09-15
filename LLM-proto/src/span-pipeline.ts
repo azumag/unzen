@@ -40,6 +40,7 @@ import {
   snapshotFinalOutput,
   type FinalOutputSnapshot,
 } from './final-output-snapshot.js';
+import { snapshotSpanResultRoot } from './worker-result-root-snapshot.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
 import { SegmentTimeoutError } from './errors.js';
 
@@ -459,62 +460,60 @@ export class SpanPipeline {
         requestId,
       );
     }
-    if (typeof result.requestId !== 'string') {
+
+    const root = snapshotSpanResultRoot(result);
+    if (typeof root.requestId !== 'string') {
       throw new SpanPipelineError(
         'span result requestId must be a string',
         requestId,
       );
     }
-    if (result.requestId !== requestId) {
+    if (root.requestId !== requestId) {
       throw new SpanPipelineError(
-        `span result request ${result.requestId} does not match ${requestId}`,
+        `span result request ${root.requestId} does not match ${requestId}`,
         requestId,
       );
     }
-    if (typeof result.workerId !== 'string') {
+    if (typeof root.workerId !== 'string') {
       throw new SpanPipelineError(
         'span result workerId must be a string',
         requestId,
       );
     }
-    if (result.workerId !== span.workerId) {
+    if (root.workerId !== span.workerId) {
       throw new SpanPipelineError(
-        `span result worker ${result.workerId} does not match assigned worker ${span.workerId}`,
+        `span result worker ${root.workerId} does not match assigned worker ${span.workerId}`,
         requestId,
       );
     }
-    if (!isNonNegativeSafeInteger(result.startSegment)) {
+    if (!isNonNegativeSafeInteger(root.startSegment)) {
       throw new SpanPipelineError(
         'span result startSegment must be a non-negative safe integer',
         requestId,
       );
     }
-    if (!isNonNegativeSafeInteger(result.endSegment)) {
+    if (!isNonNegativeSafeInteger(root.endSegment)) {
       throw new SpanPipelineError(
         'span result endSegment must be a non-negative safe integer',
         requestId,
       );
     }
-    if (result.startSegment !== span.startSegment || result.endSegment !== span.endSegment) {
+    if (root.startSegment !== span.startSegment || root.endSegment !== span.endSegment) {
       throw new SpanPipelineError(
-        `span result range ${result.startSegment}..${result.endSegment} does not match ` +
+        `span result range ${root.startSegment}..${root.endSegment} does not match ` +
         `assignment ${span.startSegment}..${span.endSegment}`,
         requestId,
       );
     }
-    if (
-      typeof result.processingTimeMs !== 'number' ||
-      !Number.isFinite(result.processingTimeMs) ||
-      result.processingTimeMs < 0
-    ) {
+    if (!isNonNegativeFiniteNumber(root.processingTimeMs)) {
       throw new SpanPipelineError(
         'span processingTimeMs must be a non-negative finite number',
         requestId,
       );
     }
 
-    const checkpoint = result.checkpoint as Checkpoint | undefined;
-    const output = result.output;
+    const checkpoint = root.checkpoint as Checkpoint | undefined;
+    const output = root.output;
     if (isFinalSpan) {
       if (checkpoint !== undefined) {
         throw new SpanPipelineError(
