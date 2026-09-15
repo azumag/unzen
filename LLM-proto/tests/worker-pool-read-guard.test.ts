@@ -105,6 +105,78 @@ describe('WorkerPool guarded live views', () => {
     expect(pool.getAvailableWorker(1024)).toBe(view);
   });
 
+  it('rejects malformed operational assignments before stored routing state changes', () => {
+    const view = pool.register({
+      workerId: workerId('w1'),
+      tier: WorkerTier.TIER_2,
+      vramMB: 4096,
+    });
+    const initialHeartbeat = view.lastHeartbeat;
+
+    expect(() => Reflect.set(view, 'status', 'idle-ish')).toThrow(/valid WorkerStatus/);
+    expect(() => Reflect.set(view, 'status', Symbol('idle'))).toThrow(/valid WorkerStatus/);
+    expect(() => Reflect.set(view, 'lastHeartbeat', Number.NaN)).toThrow(/non-negative finite number/);
+    expect(() => Reflect.set(view, 'lastHeartbeat', Number.POSITIVE_INFINITY)).toThrow(
+      /non-negative finite number/,
+    );
+    expect(() => Reflect.set(view, 'lastHeartbeat', -1)).toThrow(/non-negative finite number/);
+    expect(() => Reflect.set(view, 'lastHeartbeat', '1234')).toThrow(/non-negative finite number/);
+    expect(() => Reflect.set(view, 'currentSegment', -1)).toThrow(/non-negative safe integer/);
+    expect(() => Reflect.set(view, 'currentSegment', 1.5)).toThrow(/non-negative safe integer/);
+    expect(() => Reflect.set(view, 'currentSegment', Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      /non-negative safe integer/,
+    );
+    expect(() => Reflect.set(view, 'currentSegment', '1')).toThrow(/non-negative safe integer/);
+
+    expect(view.status).toBe(WorkerStatus.IDLE);
+    expect(view.lastHeartbeat).toBe(initialHeartbeat);
+    expect(view.currentSegment).toBeUndefined();
+    expect(pool.getAvailableWorker(1024)).toBe(view);
+  });
+
+  it('rejects deletion, hostile descriptors, and object locking for operational state', () => {
+    const view = pool.register({
+      workerId: workerId('w1'),
+      tier: WorkerTier.TIER_2,
+      vramMB: 4096,
+    });
+    const initialHeartbeat = view.lastHeartbeat;
+
+    expect(() => Reflect.deleteProperty(view, 'status')).toThrow(/required field status cannot be deleted/);
+    expect(() => Reflect.deleteProperty(view, 'lastHeartbeat')).toThrow(
+      /required field lastHeartbeat cannot be deleted/,
+    );
+    expect(() =>
+      Reflect.defineProperty(view, 'status', {
+        get: () => WorkerStatus.IDLE,
+      }),
+    ).toThrow(/cannot be an accessor/);
+    expect(() =>
+      Reflect.defineProperty(view, 'lastHeartbeat', {
+        value: initialHeartbeat,
+        writable: false,
+      }),
+    ).toThrow(/must remain mutable/);
+    expect(() =>
+      Reflect.defineProperty(view, 'currentSegment', {
+        value: -1,
+      }),
+    ).toThrow(/non-negative safe integer/);
+    expect(() => Object.preventExtensions(view)).toThrow(/live view must remain extensible/);
+    expect(Object.isExtensible(view)).toBe(true);
+
+    expect(view.status).toBe(WorkerStatus.IDLE);
+    expect(view.lastHeartbeat).toBe(initialHeartbeat);
+    expect(view.currentSegment).toBeUndefined();
+
+    pool.markBusy(workerId('w1'), 3);
+    expect(view.status).toBe(WorkerStatus.BUSY);
+    expect(view.currentSegment).toBe(3);
+    pool.markIdle(workerId('w1'));
+    expect(view.status).toBe(WorkerStatus.IDLE);
+    expect(view.currentSegment).toBeUndefined();
+  });
+
   it('keeps a retained pre-reregistration view bound to the replaced record only', () => {
     const oldView = pool.register({
       workerId: workerId('w1'),
