@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import hashlib
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+TOOLS = Path(__file__).resolve().parents[1]
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
+
+import prepare_browser_p0 as p0_module  # noqa: E402
+
+
+class BrowserP0SourceSnapshotTest(unittest.TestCase):
+    def test_hashes_stable_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "model.onnx"
+            payload = b"stable-source-graph" * 1024
+            source.write_bytes(payload)
+
+            self.assertEqual(
+                p0_module.sha256_file(source),
+                hashlib.sha256(payload).hexdigest(),
+            )
+
+    def test_accepts_stable_symlink_to_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "model-real.onnx"
+            link = root / "model.onnx"
+            payload = b"symlink-source-graph"
+            target.write_bytes(payload)
+            try:
+                link.symlink_to(target.name)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are unavailable")
+
+            self.assertEqual(
+                p0_module.sha256_file(link),
+                hashlib.sha256(payload).hexdigest(),
+            )
+
+    def test_rejects_path_replacement_between_check_and_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            replacement = root / "replacement.onnx"
+            source.write_bytes(b"original")
+            replacement.write_bytes(b"replacement")
+            resolved = source.resolve()
+            real_open = p0_module.os.open
+            swapped = False
+
+            def swap_then_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+                nonlocal swapped
+                candidate = Path(os.fspath(path))
+                if not swapped and candidate == resolved:
+                    source.unlink()
+                    replacement.replace(source)
+                    swapped = True
+                return real_open(path, flags, *args, **kwargs)
+
+            with mock.patch.object(p0_module.os, "open", side_effect=swap_then_open):
+                with self.assertRaisesRegex(RuntimeError, "changed between path check and open"):
+                    p0_module.sha256_file(source)
+            self.assertTrue(swapped)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO support is unavailable")
+    def test_rejects_fifo_without_opening_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fifo = Path(tmp) / "model.onnx"
+            os.mkfifo(fifo)
+
+            with self.assertRaisesRegex(RuntimeError, "must be a regular file"):
+                p0_module.sha256_file(fifo)
+
+    def test_rejects_in_place_mutation_while_hashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "model.onnx"
+            source.write_bytes(b"a" * (2 * 1024 * 1024))
+            real_read = p0_module.os.read
+            mutated = False
+
+            def read_then_mutate(fd: int, count: int) -> bytes:
+                nonlocal mutated
+                block = real_read(fd, count)
+                if block and not mutated:
+                    with source.open("r+b") as stream:
+                        stream.seek(0)
+                        stream.write(b"z")
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    mutated = True
+                return block
+
+            with mock.patch.object(p0_module.os, "read", side_effect=read_then_mutate):
+                with self.assertRaisesRegex(RuntimeError, "changed while hashing"):
+                    p0_module.sha256_file(source)
+            self.assertTrue(mutated)
+
+
+if __name__ == "__main__":
+    unittest.main()
