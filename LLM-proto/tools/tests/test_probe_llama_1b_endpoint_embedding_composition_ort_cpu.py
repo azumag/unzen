@@ -1,7 +1,10 @@
 from __future__ import annotations
+import os
 import sys
+import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 TOOLS=Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path: sys.path.insert(0,str(TOOLS))
@@ -25,5 +28,47 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
         self.assertEqual(probe.REPORT_KIND,"unzen-pinned-llama-1b-endpoint-embedding-composition-ort-cpu-probe")
         self.assertEqual(probe.REPORT_SCHEMA_VERSION,"1.0.0")
         self.assertEqual(probe.PINNED_ORT_VERSION,"1.22.0")
+
+    def test_source_graph_snapshot_returns_regular_file_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"model.onnx"
+            payload=b"stable-source-graph"
+            path.write_bytes(payload)
+
+            resolved,observed=probe._read_source_graph_snapshot(path)
+
+            self.assertEqual(resolved,path.resolve())
+            self.assertEqual(observed,payload)
+
+    def test_source_graph_snapshot_rejects_replacement_between_stat_and_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            path=root/"model.onnx"
+            path.write_bytes(b"original-source-graph")
+            resolved=path.resolve()
+            real_open=os.open
+            replaced=False
+
+            def replacing_open(raw_path,flags,*args,**kwargs):
+                nonlocal replaced
+                if Path(raw_path)==resolved and not replaced:
+                    replaced=True
+                    path.replace(root/"original.onnx")
+                    path.write_bytes(b"replacement-source-graph")
+                return real_open(raw_path,flags,*args,**kwargs)
+
+            with mock.patch.object(probe.os,"open",side_effect=replacing_open):
+                with self.assertRaisesRegex(RuntimeError,"changed while opening"):
+                    probe._read_source_graph_snapshot(path)
+            self.assertTrue(replaced)
+
+    @unittest.skipUnless(hasattr(os,"mkfifo"),"FIFO test requires os.mkfifo")
+    def test_source_graph_snapshot_rejects_non_regular_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"model.onnx"
+            os.mkfifo(path)
+
+            with self.assertRaisesRegex(RuntimeError,"must be a regular file"):
+                probe._read_source_graph_snapshot(path)
 
 if __name__=='__main__': unittest.main()
