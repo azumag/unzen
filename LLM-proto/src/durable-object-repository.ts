@@ -8,6 +8,7 @@
  */
 
 import {
+  assertMutableRepositoryIdentityProperty,
   assertRepositoryRequestRouteIdentity,
   captureCheckpointStoreIdentity,
   snapshotAttemptRecord,
@@ -23,6 +24,7 @@ import {
   type CheckpointStoreResult,
   type CompletionCommit,
   type DurableRepository,
+  type MutableRepositoryRecordKind,
   type RecoveryOwnership,
   type RecoveryOwnershipClaim,
 } from './durable-repository.js';
@@ -105,20 +107,25 @@ export class DurableObjectRepository implements DurableRepository {
    * property write re-reads the latest stored value and merges only that
    * property before persisting it.
    *
-   * `canPersist` adds an identity fence for keyspaces whose durable key may be
-   * reused by a different logical record. Worker keys are reused across
-   * generations, so stale worker proxies must never update or resurrect a
-   * replacement generation.
+   * Durable identity fields are guarded before the returned proxy target or
+   * storage can change. `canPersist` separately fences keyspaces whose durable
+   * key may be reused by a different logical record: worker keys are reused
+   * across generations, so stale worker proxies must never update or resurrect
+   * a replacement generation.
    */
   private mutableRecord<T extends object>(
     key: string,
     value: T | undefined,
     canPersist?: (latest: T | undefined) => boolean,
+    identityKind?: MutableRepositoryRecordKind,
   ): T | undefined {
     if (value === undefined) return undefined;
     const storage = this.storage;
     return new Proxy(value, {
       set(target, property, next): boolean {
+        if (identityKind !== undefined) {
+          assertMutableRepositoryIdentityProperty(identityKind, property);
+        }
         const ok = Reflect.set(target, property, next);
         if (!ok) return false;
         const latest = storage.get<T>(key);
@@ -129,6 +136,9 @@ export class DurableObjectRepository implements DurableRepository {
         return true;
       },
       deleteProperty(target, property): boolean {
+        if (identityKind !== undefined) {
+          assertMutableRepositoryIdentityProperty(identityKind, property);
+        }
         const ok = Reflect.deleteProperty(target, property);
         if (!ok) return false;
         const latest = storage.get<T>(key);
@@ -137,6 +147,14 @@ export class DurableObjectRepository implements DurableRepository {
         Reflect.deleteProperty(persisted, property);
         storage.put(key, persisted);
         return true;
+      },
+      defineProperty(target, property, descriptor): boolean {
+        if (identityKind !== undefined) {
+          assertMutableRepositoryIdentityProperty(identityKind, property);
+        }
+        // Preserve the pre-existing local-only behavior for explicit property
+        // descriptors; normal assignment/deletion remain write-through above.
+        return Reflect.defineProperty(target, property, descriptor);
       },
     });
   }
@@ -151,6 +169,7 @@ export class DurableObjectRepository implements DurableRepository {
       key,
       value,
       (latest) => latest !== undefined && latest.generation === expectedGeneration,
+      'worker',
     );
   }
 
@@ -158,9 +177,12 @@ export class DurableObjectRepository implements DurableRepository {
     return [...this.storage.list<T>({ prefix })].map(([, value]) => value);
   }
 
-  private listMutable<T extends object>(prefix: string): T[] {
+  private listMutable<T extends object>(
+    prefix: string,
+    identityKind?: MutableRepositoryRecordKind,
+  ): T[] {
     return [...this.storage.list<T>({ prefix })].map(([key, value]) =>
-      this.mutableRecord(key, value)!,
+      this.mutableRecord(key, value, undefined, identityKind)!,
     );
   }
 
@@ -172,11 +194,11 @@ export class DurableObjectRepository implements DurableRepository {
 
   getRequest(requestId: InferenceRequestId): RequestRecord | undefined {
     const key = requestKey(requestId);
-    return this.mutableRecord(key, this.storage.get<RequestRecord>(key));
+    return this.mutableRecord(key, this.storage.get<RequestRecord>(key), undefined, 'request');
   }
 
   listRequests(): readonly RequestRecord[] {
-    return this.listMutable<RequestRecord>(P.request);
+    return this.listMutable<RequestRecord>(P.request, 'request');
   }
 
   transitionStage(

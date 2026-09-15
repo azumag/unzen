@@ -181,6 +181,53 @@ export function assertRepositoryRequestRouteIdentity(
   );
 }
 
+/** Mutable record families whose operational fields remain write-through. */
+export type MutableRepositoryRecordKind = 'request' | 'worker';
+
+/**
+ * Keep durable identity immutable even where #103 requires mutable operational
+ * repository reads. The protected names are fixed schema fields, so diagnostics
+ * never interpolate caller-controlled values.
+ */
+export function assertMutableRepositoryIdentityProperty(
+  recordKind: MutableRepositoryRecordKind,
+  property: PropertyKey,
+): void {
+  const immutable = recordKind === 'request'
+    ? property === 'requestId'
+    : property === 'workerId' || property === 'generation';
+  if (!immutable) return;
+  throw new UnzenError(
+    `repository ${recordKind} identity field ${String(property)} is immutable`,
+    ErrorCode.ProtocolViolation,
+  );
+}
+
+/**
+ * In-memory reads are live for compatibility, but identity fields must not be
+ * rewritten through those references. Operational set/delete/defineProperty
+ * behavior remains live against the stored target.
+ */
+function mutableRepositoryRecord<T extends object>(
+  record: T,
+  recordKind: MutableRepositoryRecordKind,
+): T {
+  return new Proxy(record, {
+    set(target, property, value): boolean {
+      assertMutableRepositoryIdentityProperty(recordKind, property);
+      return Reflect.set(target, property, value);
+    },
+    deleteProperty(target, property): boolean {
+      assertMutableRepositoryIdentityProperty(recordKind, property);
+      return Reflect.deleteProperty(target, property);
+    },
+    defineProperty(target, property, descriptor): boolean {
+      assertMutableRepositoryIdentityProperty(recordKind, property);
+      return Reflect.defineProperty(target, property, descriptor);
+    },
+  });
+}
+
 /**
  * Capture streaming progress without retaining or enumerating the caller
  * object. Persisted and returned cursor records are plain detached snapshots so
@@ -477,11 +524,12 @@ export class InMemoryRepository implements DurableRepository {
   }
 
   getRequest(requestId: InferenceRequestId): RequestRecord | undefined {
-    return this.requestRecords.get(requestId);
+    const record = this.requestRecords.get(requestId);
+    return record === undefined ? undefined : mutableRepositoryRecord(record, 'request');
   }
 
   listRequests(): readonly RequestRecord[] {
-    return [...this.requestRecords.values()];
+    return [...this.requestRecords.values()].map((record) => mutableRepositoryRecord(record, 'request'));
   }
 
   transitionStage(
@@ -704,7 +752,8 @@ export class InMemoryRepository implements DurableRepository {
   }
 
   getWorker(workerId: WorkerId): WorkerRecord | undefined {
-    return this.workers.get(workerId);
+    const record = this.workers.get(workerId);
+    return record === undefined ? undefined : mutableRepositoryRecord(record, 'worker');
   }
 
   deleteWorker(workerId: WorkerId): void {
@@ -712,6 +761,6 @@ export class InMemoryRepository implements DurableRepository {
   }
 
   listWorkers(): readonly WorkerRecord[] {
-    return [...this.workers.values()];
+    return [...this.workers.values()].map((record) => mutableRepositoryRecord(record, 'worker'));
   }
 }
