@@ -42,6 +42,47 @@ interface RankedWorker {
   readonly missingArtifactBytes: number;
 }
 
+/**
+ * Capture, validate, and freeze segment geometry for span-based coordinator paths.
+ *
+ * Membership is fixed by indexed reads before any segment fields are evaluated so
+ * side-effectful getters cannot replace later entries halfway through validation.
+ * The returned records are detached from caller-owned objects and safe to retain
+ * across routing retries and asynchronous span execution.
+ */
+export function snapshotSpanSegments(
+  segments: unknown,
+  owner = 'SpanRouter',
+): readonly SegmentConfig[] {
+  if (!Array.isArray(segments)) {
+    throw new Error(`${owner} segments must be an array`);
+  }
+
+  const segmentCount = segments.length;
+  const capturedSegments: unknown[] = [];
+  for (let position = 0; position < segmentCount; position++) {
+    capturedSegments.push((segments as readonly unknown[])[position]);
+  }
+
+  const segmentSnapshot = Object.freeze(
+    capturedSegments.map((segment, arrayIndex) =>
+      Object.freeze(validateSegmentConfig(segment, arrayIndex, owner)),
+    ),
+  );
+  for (let index = 1; index < segmentSnapshot.length; index++) {
+    const previous = segmentSnapshot[index - 1];
+    const current = segmentSnapshot[index];
+    if (current.layerStart !== previous.layerEnd + 1) {
+      throw new Error(
+        `${owner} segment layer ranges must be contiguous: segment ${index - 1} ends at ` +
+        `${previous.layerEnd}, segment ${index} starts at ${current.layerStart}`,
+      );
+    }
+  }
+
+  return segmentSnapshot;
+}
+
 export class SpanRouter {
   private readonly segments: readonly SegmentConfig[];
 
@@ -50,41 +91,8 @@ export class SpanRouter {
     private readonly workerPool: WorkerPool,
     private readonly artifactResidencyLedger?: ArtifactResidencyLedger,
   ) {
-    if (!Array.isArray(segments)) {
-      throw new Error('SpanRouter segments must be an array');
-    }
-
-    // Fix caller-owned array membership before validating any segment fields.
-    // A getter on segment 0 may have side effects on the caller's array; those
-    // effects must not replace segment 1 after construction has already begun.
-    // Read by fixed position rather than a caller-overridable iterator.
-    const segmentCount = segments.length;
-    const capturedSegments: unknown[] = [];
-    for (let position = 0; position < segmentCount; position++) {
-      capturedSegments.push((segments as readonly unknown[])[position]);
-    }
-
-    // Segment configs may cross a runtime/deserialization boundary even though
-    // callers see a TypeScript interface. Validate every field only after the
-    // membership snapshot above has been detached from the caller-owned array.
-    const segmentSnapshot = Object.freeze(
-      capturedSegments.map((segment, arrayIndex) =>
-        Object.freeze(validateSegmentConfig(segment, arrayIndex)),
-      ),
-    );
-    for (let index = 1; index < segmentSnapshot.length; index++) {
-      const previous = segmentSnapshot[index - 1];
-      const current = segmentSnapshot[index];
-      if (current.layerStart !== previous.layerEnd + 1) {
-        throw new Error(
-          `SpanRouter segment layer ranges must be contiguous: segment ${index - 1} ends at ` +
-          `${previous.layerEnd}, segment ${index} starts at ${current.layerStart}`,
-        );
-      }
-    }
-
-    this.segments = segmentSnapshot;
-    this.artifactResidencyLedger?.assertCompatibleSegments(segmentSnapshot);
+    this.segments = snapshotSpanSegments(segments);
+    this.artifactResidencyLedger?.assertCompatibleSegments(this.segments);
   }
 
   /**
@@ -252,9 +260,13 @@ export class SpanRouter {
   }
 }
 
-function validateSegmentConfig(value: unknown, arrayIndex: number): SegmentConfig {
+function validateSegmentConfig(
+  value: unknown,
+  arrayIndex: number,
+  owner: string,
+): SegmentConfig {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`SpanRouter segment ${arrayIndex} must be an object`);
+    throw new Error(`${owner} segment ${arrayIndex} must be an object`);
   }
   const segment = value as Record<string, unknown>;
 
@@ -264,11 +276,11 @@ function validateSegmentConfig(value: unknown, arrayIndex: number): SegmentConfi
     !Number.isSafeInteger(index) ||
     index < 0
   ) {
-    throw new Error('SpanRouter segment index must be a non-negative safe integer');
+    throw new Error(`${owner} segment index must be a non-negative safe integer`);
   }
   if (index !== arrayIndex) {
     throw new Error(
-      `SpanRouter requires segment indexes 0..n-1; ` +
+      `${owner} requires segment indexes 0..n-1; ` +
       `expected ${arrayIndex}, found ${index}`,
     );
   }
@@ -279,7 +291,7 @@ function validateSegmentConfig(value: unknown, arrayIndex: number): SegmentConfi
     !Number.isSafeInteger(layerStart) ||
     layerStart < 0
   ) {
-    throw new Error(`SpanRouter segment ${arrayIndex} layerStart must be a non-negative safe integer`);
+    throw new Error(`${owner} segment ${arrayIndex} layerStart must be a non-negative safe integer`);
   }
 
   const layerEnd = segment.layerEnd;
@@ -289,13 +301,13 @@ function validateSegmentConfig(value: unknown, arrayIndex: number): SegmentConfi
     layerEnd < layerStart
   ) {
     throw new Error(
-      `SpanRouter segment ${arrayIndex} layerEnd must be a safe integer greater than or equal to layerStart`,
+      `${owner} segment ${arrayIndex} layerEnd must be a safe integer greater than or equal to layerStart`,
     );
   }
 
   const modelWeightHash = segment.modelWeightHash;
   if (typeof modelWeightHash !== 'string' || modelWeightHash.trim().length === 0) {
-    throw new Error(`SpanRouter segment ${arrayIndex} modelWeightHash must be a non-empty string`);
+    throw new Error(`${owner} segment ${arrayIndex} modelWeightHash must be a non-empty string`);
   }
 
   const estimatedVramMB = segment.estimatedVramMB;
