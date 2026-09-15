@@ -53,6 +53,55 @@ describe('validateWorkerRequest snapshot boundary', () => {
     }
   });
 
+  it('captures init and cancel fields exactly once', () => {
+    const initReads = new Map<string, number>();
+    const initOnce = <T>(name: string, value: T): T => {
+      const count = (initReads.get(name) ?? 0) + 1;
+      initReads.set(name, count);
+      if (count > 1) throw new Error(`${name} read more than once`);
+      return value;
+    };
+    const init = {
+      get protocolVersion() { return initOnce('protocolVersion', WORKER_PROTOCOL_VERSION); },
+      get generationId() { return initOnce('generationId', 1); },
+      get type() { return initOnce('type', 'init' as const); },
+    };
+
+    const cancelReads = new Map<string, number>();
+    const cancelOnce = <T>(name: string, value: T): T => {
+      const count = (cancelReads.get(name) ?? 0) + 1;
+      cancelReads.set(name, count);
+      if (count > 1) throw new Error(`${name} read more than once`);
+      return value;
+    };
+    const cancel = {
+      get protocolVersion() { return cancelOnce('protocolVersion', WORKER_PROTOCOL_VERSION); },
+      get generationId() { return cancelOnce('generationId', 2); },
+      get type() { return cancelOnce('type', 'cancel' as const); },
+      get requestId() { return cancelOnce('requestId', 'req-cancel'); },
+    };
+
+    expect(validateWorkerRequest(init)).toEqual({
+      ok: true,
+      msg: {
+        type: 'init',
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: 1,
+      },
+    });
+    expect(validateWorkerRequest(cancel)).toEqual({
+      ok: true,
+      msg: {
+        type: 'cancel',
+        requestId: 'req-cancel',
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        generationId: 2,
+      },
+    });
+    expect([...initReads.values()]).toEqual(new Array(3).fill(1));
+    expect([...cancelReads.values()]).toEqual(new Array(4).fill(1));
+  });
+
   it('keeps captured execute scalars and args reference stable after source mutation', () => {
     const originalArgs = [1, 2];
     const replacementArgs = [9, 9];
