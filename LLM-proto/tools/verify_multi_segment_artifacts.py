@@ -40,12 +40,17 @@ def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int
     )
 
 
+def _readonly_nonblocking_flags() -> int:
+    """Return portable read-only flags that avoid blocking on POSIX special files."""
+
+    return os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+
+
 def _read_stable_manifest(path: Path) -> bytes:
     """Read manifest bytes from one regular-file descriptor and detect mutation."""
 
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        fd = os.open(path, flags)
+        fd = os.open(path, _readonly_nonblocking_flags())
     except FileNotFoundError:
         raise FileNotFoundError(f"split manifest not found: {path}") from None
     except IsADirectoryError:
@@ -67,20 +72,39 @@ def _read_stable_manifest(path: Path) -> bytes:
             os.close(fd)
 
 
-def _measure_file(path: Path, *, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
-    """Measure one stable opened file identity and fail closed on mutation."""
+def _measure_file(
+    path: Path,
+    *,
+    chunk_size: int = 1024 * 1024,
+    missing_message: str | None = None,
+) -> tuple[int, str]:
+    """Measure one nonblocking regular-file descriptor and fail closed on mutation."""
+
+    try:
+        fd = os.open(path, _readonly_nonblocking_flags())
+    except FileNotFoundError:
+        if missing_message is not None:
+            raise FileNotFoundError(missing_message) from None
+        raise
+    except IsADirectoryError:
+        raise ValueError(f"artifact must be a regular file: {path}") from None
 
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        before = os.fstat(handle.fileno())
-        if not stat.S_ISREG(before.st_mode):
-            raise ValueError(f"artifact must be a regular file: {path}")
-        while chunk := handle.read(chunk_size):
-            digest.update(chunk)
-        after = os.fstat(handle.fileno())
-        if _stat_fingerprint(after) != _stat_fingerprint(before):
-            raise RuntimeError(f"artifact changed while being measured: {path}")
-        return before.st_size, digest.hexdigest()
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"artifact must be a regular file: {path}")
+            while chunk := handle.read(chunk_size):
+                digest.update(chunk)
+            after = os.fstat(handle.fileno())
+            if _stat_fingerprint(after) != _stat_fingerprint(before):
+                raise RuntimeError(f"artifact changed while being measured: {path}")
+            return before.st_size, digest.hexdigest()
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -239,12 +263,13 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         graph_path = _safe_relative_path(
             root, graph_location, field=f"segments[{index}].path"
         )
-        if not graph_path.is_file():
-            raise FileNotFoundError(f"segment graph not found: {graph_path}")
         expected_graph_sha = _canonical_sha256(
             raw_segment.get("sha256"), field=f"segments[{index}].sha256"
         )
-        graph_bytes, observed_graph_sha = _measure_file(graph_path)
+        graph_bytes, observed_graph_sha = _measure_file(
+            graph_path,
+            missing_message=f"segment graph not found: {graph_path}",
+        )
         if observed_graph_sha != expected_graph_sha:
             raise ValueError(
                 f"segment {index} graph SHA-256 mismatch: "
@@ -272,11 +297,12 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             if identity in seen_external_locations:
                 raise ValueError(f"segment {index} contains duplicate external data location: {location}")
             seen_external_locations.add(identity)
-            if not external_path.is_file():
-                raise FileNotFoundError(f"segment external data not found: {external_path}")
 
             expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
-            observed_bytes, observed_sha = _measure_file(external_path)
+            observed_bytes, observed_sha = _measure_file(
+                external_path,
+                missing_message=f"segment external data not found: {external_path}",
+            )
             if observed_bytes != expected_bytes:
                 raise ValueError(
                     f"segment {index} external-data size mismatch for {location}: "

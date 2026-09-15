@@ -27,18 +27,18 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
             target.write_bytes(original_payload)
             replacement.write_bytes(replacement_payload)
 
-            original_open = Path.open
+            original_os_open = os.open
             replaced = False
 
-            def replace_after_open(path: Path, *args: object, **kwargs: object):
+            def replace_after_open(path, flags, *args, **kwargs):
                 nonlocal replaced
-                handle = original_open(path, *args, **kwargs)
-                if path == target and not replaced:
+                fd = original_os_open(path, flags, *args, **kwargs)
+                if Path(path) == target and not replaced:
                     os.replace(replacement, target)
                     replaced = True
-                return handle
+                return fd
 
-            with patch.object(Path, "open", replace_after_open):
+            with patch("verify_multi_segment_artifacts.os.open", replace_after_open):
                 measured_bytes, measured_sha = _measure_file(target, chunk_size=4)
 
             self.assertTrue(replaced)
@@ -51,7 +51,7 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
             root = Path(tmp)
             target = root / "segment.onnx_data"
             target.write_bytes(b"abcdefgh")
-            original_open = Path.open
+            original_fdopen = os.fdopen
 
             class MutatingReader:
                 def __init__(self, handle):
@@ -71,18 +71,15 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
                 def read(self, size: int = -1) -> bytes:
                     payload = self.handle.read(size)
                     if payload and not self.mutated:
-                        with original_open(target, "ab") as writer:
+                        with target.open("ab") as writer:
                             writer.write(b"!")
                         self.mutated = True
                     return payload
 
-            def mutating_open(path: Path, *args: object, **kwargs: object):
-                handle = original_open(path, *args, **kwargs)
-                if path == target and args and args[0] == "rb":
-                    return MutatingReader(handle)
-                return handle
+            def mutating_fdopen(fd: int, *args: object, **kwargs: object):
+                return MutatingReader(original_fdopen(fd, *args, **kwargs))
 
-            with patch.object(Path, "open", mutating_open):
+            with patch("verify_multi_segment_artifacts.os.fdopen", mutating_fdopen):
                 with self.assertRaisesRegex(RuntimeError, "changed while being measured"):
                     _measure_file(target, chunk_size=4)
 

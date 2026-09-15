@@ -119,18 +119,18 @@ class VerifyMultiSegmentOnnxRuntimeContractTest(unittest.TestCase):
                     "externalData": [],
                 }
             }
-            original_open = Path.open
+            original_os_open = os.open
             replaced = False
 
-            def replace_after_open(path: Path, *args: object, **kwargs: object):
+            def replace_after_open(path, flags, *args, **kwargs):
                 nonlocal replaced
-                handle = original_open(path, *args, **kwargs)
-                if path == source and not replaced:
+                fd = original_os_open(path, flags, *args, **kwargs)
+                if Path(path) == source and not replaced:
                     os.replace(replacement, source)
                     replaced = True
-                return handle
+                return fd
 
-            with patch.object(Path, "open", replace_after_open):
+            with patch("verify_multi_segment_artifacts.os.open", replace_after_open):
                 report = verify_source_model_identity(source, manifest)
 
             self.assertTrue(replaced)
@@ -150,7 +150,7 @@ class VerifyMultiSegmentOnnxRuntimeContractTest(unittest.TestCase):
                     "externalData": [],
                 }
             }
-            original_open = Path.open
+            original_fdopen = os.fdopen
 
             class MutatingReader:
                 def __init__(self, handle):
@@ -170,18 +170,15 @@ class VerifyMultiSegmentOnnxRuntimeContractTest(unittest.TestCase):
                 def read(self, size: int = -1) -> bytes:
                     payload = self.handle.read(size)
                     if payload and not self.mutated:
-                        with original_open(source, "ab") as writer:
+                        with source.open("ab") as writer:
                             writer.write(b"!")
                         self.mutated = True
                     return payload
 
-            def mutating_open(path: Path, *args: object, **kwargs: object):
-                handle = original_open(path, *args, **kwargs)
-                if path == source and args and args[0] == "rb":
-                    return MutatingReader(handle)
-                return handle
+            def mutating_fdopen(fd: int, *args: object, **kwargs: object):
+                return MutatingReader(original_fdopen(fd, *args, **kwargs))
 
-            with patch.object(Path, "open", mutating_open):
+            with patch("verify_multi_segment_artifacts.os.fdopen", mutating_fdopen):
                 with self.assertRaisesRegex(RuntimeError, "changed while being measured"):
                     verify_source_model_identity(source, manifest)
 
