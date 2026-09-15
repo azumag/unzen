@@ -54,6 +54,11 @@ export interface MoonbitWorkerState {
   maxCachedModules?: number;
 }
 
+/**
+ * Best-effort rejection response for malformed/unhandled MoonBit messages.
+ * Correlation fields are captured before local addressability checks so a
+ * getter/Proxy cannot drift between validation and response construction.
+ */
 function postRejectedMessage(
   data: unknown,
   error: string,
@@ -62,31 +67,33 @@ function postRejectedMessage(
   try {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
     const msg = data as Record<string, unknown>;
-    if (typeof msg.generationId !== 'number') return;
-    if (msg.type === 'init') {
-      postMessage(createMoonbitInitResultMessage(false, msg.generationId, error));
-    } else if (
-      msg.type === 'execute'
-      && typeof msg.requestId === 'string'
-      && msg.requestId.length > 0
-    ) {
+    const generationId = msg.generationId;
+    const type = msg.type;
+    if (typeof generationId !== 'number') return;
+
+    if (type === 'init') {
+      postMessage(createMoonbitInitResultMessage(false, generationId, error));
+      return;
+    }
+    if (type !== 'execute' && type !== 'cancel') return;
+
+    const requestId = msg.requestId;
+    if (typeof requestId !== 'string' || requestId.length === 0) return;
+
+    if (type === 'execute') {
       postMessage(createMoonbitExecuteResultMessage(
-        msg.requestId,
+        requestId,
         false,
-        msg.generationId,
+        generationId,
         undefined,
         error,
         'runtime_error',
       ));
-    } else if (
-      msg.type === 'cancel'
-      && typeof msg.requestId === 'string'
-      && msg.requestId.length > 0
-    ) {
+    } else {
       postMessage(createMoonbitCancelResultMessage(
-        msg.requestId,
+        requestId,
         false,
-        msg.generationId,
+        generationId,
         error,
       ));
     }
