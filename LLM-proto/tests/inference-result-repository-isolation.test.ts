@@ -146,6 +146,41 @@ describe('inference result repository isolation', () => {
     expect(repo.getResult(requestId)).toEqual(values);
   });
 
+  it.each(repositories())('%s rejects a commit-eligible request/result identity mismatch without mutation', (_name, repo) => {
+    const requestId = generateRequestId();
+    const otherRequestId = generateRequestId();
+    repo.createRequest(request(requestId));
+
+    expect(() => repo.commitCompletion(requestId, 'running', plainResult(otherRequestId)))
+      .toThrow('repository result requestId does not match route requestId');
+    expect(repo.getResult(requestId)).toBeUndefined();
+    expect(repo.getResult(otherRequestId)).toBeUndefined();
+    expect(repo.getRequest(requestId)?.stage).toBe('running');
+    expect(repo.getRequest(requestId)?.completedAt).toBeUndefined();
+  });
+
+  it.each(repositories())('%s binds the completion identity check to the single captured requestId', (_name, repo) => {
+    const requestId = generateRequestId();
+    const changedRequestId = generateRequestId();
+    repo.createRequest(request(requestId));
+
+    const result = plainResult(requestId) as InferenceResult & { requestId: InferenceRequestId };
+    let requestIdReads = 0;
+    Object.defineProperty(result, 'requestId', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        requestIdReads += 1;
+        return requestIdReads === 1 ? requestId : changedRequestId;
+      },
+    });
+
+    expect(repo.commitCompletion(requestId, 'running', result)).toBe('committed');
+    expect(requestIdReads).toBe(1);
+    expect(repo.getResult(requestId)?.requestId).toBe(requestId);
+    expect(repo.getResult(changedRequestId)).toBeUndefined();
+  });
+
   it.each(repositories())('%s detaches retained commit inputs and read results including tokens', (_name, repo) => {
     const requestId = generateRequestId();
     repo.createRequest(request(requestId));

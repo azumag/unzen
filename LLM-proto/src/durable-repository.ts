@@ -172,7 +172,7 @@ export function snapshotCancellationRecord(record: CancellationRecord): Cancella
 export function assertRepositoryRequestRouteIdentity(
   routeRequestId: InferenceRequestId,
   recordRequestId: InferenceRequestId,
-  recordKind: 'attempt' | 'cancellation',
+  recordKind: 'attempt' | 'cancellation' | 'result',
 ): void {
   if (routeRequestId === recordRequestId) return;
   throw new UnzenError(
@@ -636,7 +636,9 @@ export class InMemoryRepository implements DurableRepository {
     // matches, and a result that differs must be surfaced as a violation.
     if (this.results.has(requestId)) return 'duplicate';
     if (!record || record.stage !== expectedStage) return 'conflict';
-    this.results.set(requestId, snapshotInferenceResult(result));
+    const ownedResult = snapshotInferenceResult(result);
+    assertRepositoryRequestRouteIdentity(requestId, ownedResult.requestId, 'result');
+    this.results.set(requestId, ownedResult);
     record.stage = 'completed';
     record.completedAt = Date.now();
     return 'committed';
