@@ -57,8 +57,15 @@ describe('SpanPipeline segment ownership', () => {
       { retryDelayMs: 0 },
     );
 
-    segments[0].estimatedVramMB = 999_999;
-    segments[0].modelWeightHash = 'sha256:mutated';
+    // TypeScript readonly is not a runtime ownership boundary. Mutate the
+    // original plain object deliberately to verify the pipeline retained its
+    // detached snapshot rather than this caller-owned record.
+    const mutableFirst = segments[0] as unknown as {
+      estimatedVramMB: number;
+      modelWeightHash: string;
+    };
+    mutableFirst.estimatedVramMB = 999_999;
+    mutableFirst.modelWeightHash = 'sha256:mutated';
     segments.push(makeSegments(3)[2]);
 
     const result = await pipeline.run(makeRequest(2, 0, 'snapshot-before-run'));
