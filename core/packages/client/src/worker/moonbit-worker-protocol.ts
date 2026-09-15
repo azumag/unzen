@@ -257,7 +257,15 @@ function getArrayBufferByteLength(value: unknown): number | undefined {
   }
 }
 
-/** Validate an unknown main-thread request before worker state is touched. */
+/**
+ * Validate an unknown main-thread request before worker state is touched.
+ *
+ * Successful validation returns a plain request snapshot. Each declared
+ * request field is captured once so getter/Proxy-backed input cannot pass
+ * validation with one value and drift before worker dispatch. The captured
+ * ArrayBuffer, args array, and ABI object keep their references here; their
+ * downstream ownership/transfer semantics remain unchanged.
+ */
 export function validateMoonbitWorkerRequest(
   data: unknown,
 ): { ok: true; msg: MoonbitWorkerMessage } | { ok: false; reason: string } {
@@ -266,39 +274,60 @@ export function validateMoonbitWorkerRequest(
       return { ok: false, reason: 'request is not an object' };
     }
     const m = data as Record<string, unknown>;
-    if (m.protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
+    const protocolVersion = m.protocolVersion;
+    const generationId = m.generationId;
+    const type = m.type;
+    if (protocolVersion !== MOONBIT_WORKER_PROTOCOL_VERSION) {
       return {
         ok: false,
-        reason: `protocol version mismatch (got ${String(m.protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`,
+        reason: `protocol version mismatch (got ${String(protocolVersion)}, expected ${MOONBIT_WORKER_PROTOCOL_VERSION})`,
       };
     }
     if (
-      typeof m.generationId !== 'number'
-      || !Number.isSafeInteger(m.generationId)
-      || m.generationId < 1
+      typeof generationId !== 'number'
+      || !Number.isSafeInteger(generationId)
+      || generationId < 1
     ) {
-      return { ok: false, reason: `malformed generationId: ${String(m.generationId)}` };
+      return { ok: false, reason: `malformed generationId: ${String(generationId)}` };
     }
 
-    if (m.type === 'init') {
-      if (m.importedStringConstants !== null && typeof m.importedStringConstants !== 'string') {
+    if (type === 'init') {
+      const importedStringConstants = m.importedStringConstants;
+      const maxCachedModules = m.maxCachedModules;
+      if (importedStringConstants !== null && typeof importedStringConstants !== 'string') {
         return { ok: false, reason: 'Invalid importedStringConstants setting' };
       }
-      if (typeof m.maxCachedModules !== 'number') {
+      if (typeof maxCachedModules !== 'number') {
         return { ok: false, reason: 'Invalid maxCachedModules setting' };
       }
       try {
-        normalizeMoonBitCacheLimit(m.maxCachedModules);
+        normalizeMoonBitCacheLimit(maxCachedModules);
       } catch {
         return { ok: false, reason: 'Invalid maxCachedModules setting' };
       }
-      return { ok: true, msg: m as unknown as MoonbitInitMessage };
+      return {
+        ok: true,
+        msg: {
+          type,
+          protocolVersion,
+          generationId,
+          importedStringConstants,
+          maxCachedModules,
+        },
+      };
     }
-    if (m.type === 'execute') {
-      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+    if (type === 'execute') {
+      const requestId = m.requestId;
+      const wasm = m.wasm;
+      const cacheKey = m.cacheKey;
+      const cacheable = m.cacheable;
+      const exportName = m.exportName;
+      const args = m.args;
+      const moonbitAbi = m.moonbitAbi;
+      if (typeof requestId !== 'string' || requestId.length === 0) {
         return { ok: false, reason: 'execute request missing requestId' };
       }
-      const wasmByteLength = getArrayBufferByteLength(m.wasm);
+      const wasmByteLength = getArrayBufferByteLength(wasm);
       if (wasmByteLength === undefined) {
         return { ok: false, reason: 'execute request wasm must be an ArrayBuffer' };
       }
@@ -309,26 +338,44 @@ export function validateMoonbitWorkerRequest(
         };
       }
       if (
-        typeof m.cacheKey !== 'string'
-        || m.cacheKey.length === 0
-        || typeof m.cacheable !== 'boolean'
-        || typeof m.exportName !== 'string'
-        || !Array.isArray(m.args)
+        typeof cacheKey !== 'string'
+        || cacheKey.length === 0
+        || typeof cacheable !== 'boolean'
+        || typeof exportName !== 'string'
+        || !Array.isArray(args)
       ) {
         return { ok: false, reason: 'execute request has invalid cache/export/args metadata' };
       }
-      if (m.moonbitAbi !== undefined && normalizeMoonBitAbi(m.moonbitAbi) === undefined) {
+      if (moonbitAbi !== undefined && normalizeMoonBitAbi(moonbitAbi) === undefined) {
         return { ok: false, reason: 'Invalid MoonBit ABI metadata' };
       }
-      return { ok: true, msg: m as unknown as MoonbitExecuteMessage };
+      return {
+        ok: true,
+        msg: {
+          type,
+          requestId,
+          protocolVersion,
+          generationId,
+          cacheKey,
+          wasm: wasm as ArrayBuffer,
+          cacheable,
+          exportName,
+          args,
+          ...(moonbitAbi !== undefined && { moonbitAbi: moonbitAbi as MoonBitAbi }),
+        },
+      };
     }
-    if (m.type === 'cancel') {
-      if (typeof m.requestId !== 'string' || m.requestId.length === 0) {
+    if (type === 'cancel') {
+      const requestId = m.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) {
         return { ok: false, reason: 'cancel request missing requestId' };
       }
-      return { ok: true, msg: m as unknown as MoonbitCancelMessage };
+      return {
+        ok: true,
+        msg: { type, requestId, protocolVersion, generationId },
+      };
     }
-    return { ok: false, reason: `unknown message type: ${String(m.type)}` };
+    return { ok: false, reason: `unknown message type: ${String(type)}` };
   } catch {
     return { ok: false, reason: 'request could not be read' };
   }
