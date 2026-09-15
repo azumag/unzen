@@ -193,6 +193,69 @@ export function snapshotInferenceResult(result: InferenceResult): InferenceResul
   return { requestId, tokens, text, totalTimeMs, segmentsCompleted };
 }
 
+/** Store-key fields captured before a checkpoint slot is classified. */
+export interface CheckpointStoreIdentity {
+  readonly requestId: InferenceRequestId;
+  readonly segmentIndex: number;
+  readonly payloadDigest: string;
+}
+
+/**
+ * Capture only the checkpoint fields required to find/classify an occupied
+ * slot. This keeps unchanged/conflict paths from touching large payloads or
+ * unrelated metadata while preventing getter drift in the key/digest fields.
+ */
+export function captureCheckpointStoreIdentity(
+  envelope: CheckpointEnvelope,
+): CheckpointStoreIdentity {
+  const requestId = envelope.requestId;
+  const segmentIndex = envelope.segmentIndex;
+  const payloadDigest = envelope.payloadDigest;
+  return { requestId, segmentIndex, payloadDigest };
+}
+
+/**
+ * Capture one repository-owned checkpoint snapshot. `identity` may be supplied
+ * by `putCheckpoint()` so key/digest fields already consumed for slot
+ * classification are not re-read. Payload bytes are copied by index and caller
+ * objects are never enumerated.
+ */
+export function snapshotCheckpointEnvelope(
+  envelope: CheckpointEnvelope,
+  identity: CheckpointStoreIdentity = captureCheckpointStoreIdentity(envelope),
+): CheckpointEnvelope {
+  const attemptId = envelope.attemptId;
+  const workerId = envelope.workerId;
+  const workerGeneration = envelope.workerGeneration;
+  const modelManifestDigest = envelope.modelManifestDigest;
+  const formatVersion = envelope.formatVersion;
+  const payloadLength = envelope.payloadLength;
+  const createdAt = envelope.createdAt;
+  const ttlMs = envelope.ttlMs;
+  const previousCheckpointDigest = envelope.previousCheckpointDigest;
+  const sourcePayload = envelope.payload;
+  const byteLength = sourcePayload.byteLength;
+  const payload = new Uint8Array(byteLength);
+  for (let index = 0; index < byteLength; index += 1) {
+    payload[index] = sourcePayload[index]!;
+  }
+  return {
+    requestId: identity.requestId,
+    attemptId,
+    segmentIndex: identity.segmentIndex,
+    workerId,
+    workerGeneration,
+    modelManifestDigest,
+    formatVersion,
+    payloadLength,
+    payloadDigest: identity.payloadDigest,
+    createdAt,
+    ttlMs,
+    previousCheckpointDigest,
+    payload,
+  };
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -402,16 +465,13 @@ export class InMemoryRepository implements DurableRepository {
   // --- checkpoint ---
 
   putCheckpoint(envelope: CheckpointEnvelope): CheckpointStoreResult {
-    const key = InMemoryRepository.checkpointKey(
-      envelope.requestId,
-      envelope.segmentIndex,
-    );
+    const identity = captureCheckpointStoreIdentity(envelope);
+    const key = InMemoryRepository.checkpointKey(identity.requestId, identity.segmentIndex);
     const existing = this.checkpoints.get(key);
     if (existing) {
-      if (existing.payloadDigest === envelope.payloadDigest) return 'unchanged';
-      return 'conflict';
+      return existing.payloadDigest === identity.payloadDigest ? 'unchanged' : 'conflict';
     }
-    this.checkpoints.set(key, envelope);
+    this.checkpoints.set(key, snapshotCheckpointEnvelope(envelope, identity));
     return 'stored';
   }
 
@@ -419,7 +479,8 @@ export class InMemoryRepository implements DurableRepository {
     requestId: InferenceRequestId,
     segmentIndex: number,
   ): CheckpointEnvelope | undefined {
-    return this.checkpoints.get(InMemoryRepository.checkpointKey(requestId, segmentIndex));
+    const envelope = this.checkpoints.get(InMemoryRepository.checkpointKey(requestId, segmentIndex));
+    return envelope === undefined ? undefined : snapshotCheckpointEnvelope(envelope);
   }
 
   deleteCheckpoint(requestId: InferenceRequestId, segmentIndex: number): void {
@@ -433,20 +494,20 @@ export class InMemoryRepository implements DurableRepository {
   }
 
   listCheckpoints(requestId: InferenceRequestId): readonly CheckpointEnvelope[] {
-    return [...this.checkpoints.values()].filter(
-      (envelope) => envelope.requestId === requestId,
-    );
+    return [...this.checkpoints.values()]
+      .filter((envelope) => envelope.requestId === requestId)
+      .map((envelope) => snapshotCheckpointEnvelope(envelope));
   }
 
   allCheckpoints(): readonly CheckpointEnvelope[] {
-    return [...this.checkpoints.values()];
+    return [...this.checkpoints.values()].map((envelope) => snapshotCheckpointEnvelope(envelope));
   }
 
   collectExpiredCheckpoints(now: number): readonly CheckpointEnvelope[] {
     const expired: CheckpointEnvelope[] = [];
     for (const [key, envelope] of [...this.checkpoints]) {
       if (now >= envelope.createdAt + envelope.ttlMs) {
-        expired.push(envelope);
+        expired.push(snapshotCheckpointEnvelope(envelope));
         this.checkpoints.delete(key);
       }
     }
