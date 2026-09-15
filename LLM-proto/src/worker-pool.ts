@@ -21,8 +21,9 @@ import type { WorkerRegistration } from './protocol.js';
 
 export class WorkerPool {
   private readonly workers = new Map<WorkerId, WorkerInfo>();
+  private readonly workerViews = new WeakMap<WorkerInfo, WorkerInfo>();
 
-  /** Register a new worker. Returns the created WorkerInfo. */
+  /** Register a new worker. Returns a guarded live WorkerInfo view. */
   register(registration: WorkerRegistration): WorkerInfo {
     const validated = this.validateRegistration(registration);
 
@@ -34,7 +35,7 @@ export class WorkerPool {
       lastHeartbeat: Date.now(),
     };
     this.workers.set(validated.workerId, info);
-    return info;
+    return this.viewOf(info);
   }
 
   /** Remove a worker from the pool. Returns true if the worker existed. */
@@ -83,7 +84,7 @@ export class WorkerPool {
       }
     }
 
-    return best;
+    return best ? this.viewOf(best) : null;
   }
 
   /** Mark a worker as busy processing a specific segment. */
@@ -117,7 +118,7 @@ export class WorkerPool {
     for (const worker of this.workers.values()) {
       if (worker.status === WorkerStatus.DISCONNECTED) continue;
       if (now - worker.lastHeartbeat > timeoutMs) {
-        timedOut.push(worker);
+        timedOut.push(this.viewOf(worker));
       }
     }
     return timedOut;
@@ -132,9 +133,10 @@ export class WorkerPool {
     worker.currentSegment = undefined;
   }
 
-  /** Get a worker by ID. */
+  /** Get a guarded live worker view by ID. */
   get(id: WorkerId): WorkerInfo | undefined {
-    return this.workers.get(workerId(id));
+    const worker = this.workers.get(workerId(id));
+    return worker ? this.viewOf(worker) : undefined;
   }
 
   /** Number of registered workers. */
@@ -151,9 +153,47 @@ export class WorkerPool {
     return count;
   }
 
-  /** Iterate over all registered workers. Used by SpanRouter for routing decisions. */
-  allWorkers(): IterableIterator<WorkerInfo> {
-    return this.workers.values();
+  /** Iterate over guarded live worker views. Used by SpanRouter for routing decisions. */
+  *allWorkers(): IterableIterator<WorkerInfo> {
+    for (const worker of this.workers.values()) {
+      yield this.viewOf(worker);
+    }
+  }
+
+  /**
+   * Keep routing identity/capability fields behind a runtime fence while
+   * retaining the legacy live-write contract for operational fields.
+   *
+   * The view is cached per stored record so repeated reads preserve object
+   * identity. Re-registration installs a fresh stored record and therefore a
+   * fresh view; retained views from the old record cannot mutate its replacement.
+   */
+  private viewOf(worker: WorkerInfo): WorkerInfo {
+    const existing = this.workerViews.get(worker);
+    if (existing) return existing;
+
+    const view = new Proxy(worker, {
+      set(target, property, value): boolean {
+        WorkerPool.assertMutableViewProperty(property);
+        return Reflect.set(target, property, value);
+      },
+      deleteProperty(target, property): boolean {
+        WorkerPool.assertMutableViewProperty(property);
+        return Reflect.deleteProperty(target, property);
+      },
+      defineProperty(target, property, descriptor): boolean {
+        WorkerPool.assertMutableViewProperty(property);
+        return Reflect.defineProperty(target, property, descriptor);
+      },
+    });
+    this.workerViews.set(worker, view);
+    return view;
+  }
+
+  /** Fail closed before a public live view can spoof routing identity/capacity. */
+  private static assertMutableViewProperty(property: PropertyKey): void {
+    if (property !== 'id' && property !== 'tier' && property !== 'vramMB') return;
+    throw new Error(`WorkerPool protected field ${String(property)} is immutable`);
   }
 
   /**
