@@ -185,16 +185,23 @@ export function assertRepositoryRequestRouteIdentity(
 export type MutableRepositoryRecordKind = 'request' | 'worker';
 
 /**
- * Keep durable identity and routing trust inputs immutable even where #103
- * requires mutable operational repository reads. The protected names are fixed
- * schema fields, so diagnostics never interpolate caller-controlled values.
+ * Keep durable identity, immutable request specification, and worker routing
+ * trust inputs protected even where #103 requires mutable operational reads.
+ * The protected names are fixed schema fields, so diagnostics never interpolate
+ * caller-controlled values.
  */
 export function assertMutableRepositoryIdentityProperty(
   recordKind: MutableRepositoryRecordKind,
   property: PropertyKey,
 ): void {
   const immutable = recordKind === 'request'
-    ? property === 'requestId'
+    ? property === 'requestId' ||
+      property === 'prompt' ||
+      property === 'idempotencyKey' ||
+      property === 'createdAt' ||
+      property === 'totalSegments' ||
+      property === 'manifestDigest' ||
+      property === 'timeoutMs'
     : property === 'workerId' ||
       property === 'generation' ||
       property === 'connectionId' ||
@@ -208,7 +215,7 @@ export function assertMutableRepositoryIdentityProperty(
 }
 
 /**
- * In-memory reads are live for compatibility, but identity fields must not be
+ * In-memory reads are live for compatibility, but protected fields must not be
  * rewritten through those references. Operational set/delete/defineProperty
  * behavior remains live against the stored target.
  */
