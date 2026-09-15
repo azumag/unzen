@@ -18,12 +18,17 @@ import {
   type InferenceResult,
   type SegmentConfig,
   type InferenceRequestId,
+  type Checkpoint,
   InferenceStatus,
 } from './types.js';
 import type { SegmentAssignment, SegmentResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
 import { snapshotSpanSegments } from './span-router.js';
+import {
+  snapshotFinalOutput,
+  type FinalOutputSnapshot,
+} from './final-output-snapshot.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
 
 /**
@@ -52,6 +57,11 @@ export interface PipelineOptions {
   readonly segmentTimeoutMs: number;
   /** Delay between retry attempts when no worker is available (ms). */
   readonly retryDelayMs: number;
+}
+
+interface ValidatedSegmentResult {
+  readonly checkpoint?: Checkpoint;
+  readonly output?: FinalOutputSnapshot;
 }
 
 const DEFAULT_OPTIONS: PipelineOptions = {
@@ -287,7 +297,7 @@ export class Pipeline {
   private async executeSegmentWithRetry(
     request: InferenceRequest,
     segmentIndex: number,
-  ): Promise<SegmentResult | null> {
+  ): Promise<ValidatedSegmentResult | null> {
     const segment = this.segments[segmentIndex];
     // Snapshot and validate the predecessor boundary once. A retry must execute
     // from the same known-good state even if the shared checkpoint store changes
@@ -341,13 +351,12 @@ export class Pipeline {
 
       try {
         const result = await this.executeWithTimeout(worker.id, assignment);
-        // A resolved promise is not enough to trust browser output. Validate the
-        // echoed execution identity and checkpoint/output boundary before the
-        // worker becomes reusable or any state is committed.
-        this.assertSegmentResult(request, worker.id, segmentIndex, result);
-        if (result.checkpoint !== undefined) {
+        // A resolved promise is not enough to trust browser output. Validate and
+        // detach the accepted boundary before the worker becomes reusable.
+        const validated = this.validateSegmentResult(request, worker.id, segmentIndex, result);
+        if (validated.checkpoint !== undefined) {
           try {
-            this.checkpointStore.save(result.checkpoint);
+            this.checkpointStore.save(validated.checkpoint);
           } catch (error) {
             const detail = error instanceof Error ? error.message : 'unknown checkpoint commit error';
             throw new PipelineError(
@@ -358,7 +367,7 @@ export class Pipeline {
           }
         }
         this.workerPool.markIdle(worker.id);
-        return result;
+        return validated;
       } catch (error) {
         // Worker failed or violated the result contract: mark it DISCONNECTED so
         // the same stale/misrouted browser cannot immediately satisfy the retry.
@@ -375,12 +384,12 @@ export class Pipeline {
     return null;
   }
 
-  private assertSegmentResult(
+  private validateSegmentResult(
     request: InferenceRequest,
     workerId: WorkerId,
     segmentIndex: number,
     result: unknown,
-  ): asserts result is SegmentResult {
+  ): ValidatedSegmentResult {
     if (!isRecord(result)) {
       throw new PipelineError(
         'segment result must be a non-null, non-array object',
@@ -442,108 +451,86 @@ export class Pipeline {
       );
     }
 
+    // Capture the mutually-exclusive boundary fields once. Getter-backed worker
+    // results cannot pass validation with one value and expose another later.
+    const checkpoint = result.checkpoint as Checkpoint | undefined;
+    const output = result.output;
     const isFinalSegment = segmentIndex === request.totalSegments - 1;
     if (isFinalSegment) {
-      // Preserve the legacy missing-output error when a malformed result violates
-      // both final-boundary rules at once; checkpoint-only final results are still
-      // rejected, and output+checkpoint remains an explicit checkpoint violation.
-      if (result.output === undefined) {
+      if (output === undefined) {
         throw new PipelineError(
           'Final segment did not produce output',
           request.id,
           segmentIndex,
         );
       }
-      if (result.checkpoint !== undefined) {
+      if (checkpoint !== undefined) {
         throw new PipelineError(
           `final segment ${segmentIndex} must not produce a checkpoint`,
           request.id,
           segmentIndex,
         );
       }
-      if (!isRecord(result.output)) {
-        throw new PipelineError(
-          'final segment output must be a non-null, non-array object',
-          request.id,
-          segmentIndex,
-        );
-      }
-      if (!Array.isArray(result.output.tokens)) {
-        throw new PipelineError(
-          'final segment output tokens must be an array',
-          request.id,
-          segmentIndex,
-        );
-      }
-      if (!result.output.tokens.every(isNonNegativeSafeInteger)) {
-        throw new PipelineError(
-          'final segment output tokens must contain non-negative safe integers',
-          request.id,
-          segmentIndex,
-        );
-      }
-      if (typeof result.output.text !== 'string') {
-        throw new PipelineError(
-          'final segment output text must be a string',
-          request.id,
-          segmentIndex,
-        );
-      }
-      return;
+      return {
+        output: snapshotFinalOutput(
+          output,
+          (message) => new PipelineError(message, request.id, segmentIndex),
+        ),
+      };
     }
 
-    if (result.output !== undefined) {
+    if (output !== undefined) {
       throw new PipelineError(
         `non-final segment ${segmentIndex} must not produce output`,
         request.id,
         segmentIndex,
       );
     }
-    if (result.checkpoint === undefined) {
+    if (checkpoint === undefined) {
       throw new PipelineError(
         `non-final segment ${segmentIndex} did not produce a checkpoint`,
         request.id,
         segmentIndex,
       );
     }
-    if (!isRecord(result.checkpoint)) {
+    if (!isRecord(checkpoint)) {
       throw new PipelineError(
         'segment result checkpoint must be a non-null, non-array object',
         request.id,
         segmentIndex,
       );
     }
-    if (typeof result.checkpoint.requestId !== 'string') {
+    if (typeof checkpoint.requestId !== 'string') {
       throw new PipelineError(
         'checkpoint requestId must be a string',
         request.id,
         segmentIndex,
       );
     }
-    if (result.checkpoint.requestId !== request.id) {
+    if (checkpoint.requestId !== request.id) {
       throw new PipelineError(
-        `checkpoint request ${result.checkpoint.requestId} does not match ${request.id}`,
+        `checkpoint request ${checkpoint.requestId} does not match ${request.id}`,
         request.id,
         segmentIndex,
       );
     }
-    if (!isNonNegativeSafeInteger(result.checkpoint.segmentIndex)) {
+    if (!isNonNegativeSafeInteger(checkpoint.segmentIndex)) {
       throw new PipelineError(
         'checkpoint segmentIndex must be a non-negative safe integer',
         request.id,
         segmentIndex,
       );
     }
-    if (result.checkpoint.segmentIndex !== segmentIndex) {
+    if (checkpoint.segmentIndex !== segmentIndex) {
       throw new PipelineError(
-        `checkpoint segment ${result.checkpoint.segmentIndex} does not match ` +
+        `checkpoint segment ${checkpoint.segmentIndex} does not match ` +
         `completed segment ${segmentIndex}`,
         request.id,
         segmentIndex,
       );
     }
     try {
-      CheckpointStore.assertValidCheckpoint(result.checkpoint);
+      CheckpointStore.assertValidCheckpoint(checkpoint);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'unknown checkpoint validation error';
       throw new PipelineError(
@@ -552,6 +539,7 @@ export class Pipeline {
         segmentIndex,
       );
     }
+    return { checkpoint };
   }
 
   private executeWithTimeout(

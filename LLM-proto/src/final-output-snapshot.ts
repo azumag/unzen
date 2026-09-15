@@ -1,0 +1,83 @@
+export interface FinalOutputSnapshot {
+  readonly tokens: readonly number[];
+  readonly text: string;
+}
+
+type FinalOutputLabel = 'final segment output' | 'final span output';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function makeFinalOutputError(
+  makeError: (message: string) => Error,
+  suffix: string,
+  label?: FinalOutputLabel,
+): Error {
+  if (label !== undefined) {
+    return makeError(`${label}${suffix}`);
+  }
+
+  // The two existing callers historically expose different diagnostic prefixes.
+  // Keep that compatibility when a caller omits an explicit label. This branch
+  // executes only on invalid worker output; successful snapshots allocate no
+  // diagnostic Error objects.
+  const segmentError = makeError(`final segment output${suffix}`);
+  if (segmentError.name === 'SpanPipelineError') {
+    return makeError(`final span output${suffix}`);
+  }
+  return segmentError;
+}
+
+/**
+ * Validate a worker-owned final output and detach it from executor-controlled
+ * accessors, array mutation, and iteration hooks before the coordinator accepts it.
+ */
+export function snapshotFinalOutput(
+  value: unknown,
+  makeError: (message: string) => Error,
+  label?: FinalOutputLabel,
+): FinalOutputSnapshot {
+  if (!isRecord(value)) {
+    throw makeFinalOutputError(makeError, ' must be a non-null, non-array object', label);
+  }
+
+  // Capture each declared output field exactly once. Runtime callers can provide
+  // getter/Proxy-backed objects even though the protocol type is readonly.
+  const tokens = value.tokens;
+  const text = value.text;
+
+  if (!Array.isArray(tokens)) {
+    throw makeFinalOutputError(makeError, ' tokens must be an array', label);
+  }
+
+  // Copy by numeric index rather than iteration. A worker-controlled array may
+  // override Symbol.iterator; validation and retained output must observe the
+  // same element values exactly once.
+  const length = tokens.length;
+  const ownedTokens = new Array<number>(length);
+  for (let index = 0; index < length; index++) {
+    const token = tokens[index];
+    if (!isNonNegativeSafeInteger(token)) {
+      throw makeFinalOutputError(
+        makeError,
+        ' tokens must contain non-negative safe integers',
+        label,
+      );
+    }
+    ownedTokens[index] = token;
+  }
+
+  if (typeof text !== 'string') {
+    throw makeFinalOutputError(makeError, ' text must be a string', label);
+  }
+
+  return Object.freeze({
+    tokens: Object.freeze(ownedTokens),
+    text,
+  });
+}
