@@ -97,11 +97,12 @@ def _write_graph_variants(
         onnx.save(model, path)
         if verify_external_data:
             onnx.checker.check_model(str(path), full_check=True)
+        graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(path)
         info = {
             "file": path.name,
             "artifactByteOffset": offset,
-            "bytes": path.stat().st_size,
-            "sha256": preferred_webgpu._sha256_file(path),
+            "bytes": graph_bytes,
+            "sha256": graph_sha256,
         }
         if info != expected:
             path.unlink(missing_ok=True)
