@@ -18,6 +18,7 @@ The preflight is stdlib-only and does not create an ONNX Runtime session. It
 fails closed if any of the following changed or no longer agrees with the
 manifest:
 
+- the split manifest while it is being read;
 - segment graph SHA-256;
 - external-data SHA-256 or byte length;
 - graph + external-data `browserArtifactBytes`;
@@ -28,13 +29,21 @@ manifest:
   splitPlan.requiredMaxBytes)`);
 - relative artifact paths.
 
-Each graph and external-data file is opened once for measurement. Its byte size
-and SHA-256 are derived from that same descriptor, and descriptor metadata is
-checked again after hashing. A pathname replacement after open therefore cannot
-mix a digest from one filesystem object with a size from another, while an
-in-place mutation that changes the observed descriptor metadata fails closed.
-This pins the integrity report to the file identity that was actually measured;
-it does not lock the pathname against later replacement by another process.
+The split manifest is opened once as a regular file. The JSON bytes and
+`manifestSha256` are taken from that same descriptor, and descriptor metadata is
+checked again after the read. This prevents path replacement from making the
+verifier parse one manifest while reporting a digest for another path resolution,
+and an in-place manifest mutation that changes the descriptor fingerprint fails
+before any segment artifact is verified.
+
+Each graph and external-data file is likewise opened once for measurement. Its
+byte size and SHA-256 are derived from that same descriptor, and descriptor
+metadata is checked again after hashing. A pathname replacement after open
+therefore cannot mix a digest from one filesystem object with a size from
+another, while an in-place mutation that changes the observed descriptor
+metadata fails closed. These checks pin the integrity report to the filesystem
+objects that were actually read; they do not lock pathnames against later
+replacement by another process after verification finishes.
 
 A successful report records the manifest digest, every measured graph and
 external-data size/digest, the measured maximum segment size, and the effective
