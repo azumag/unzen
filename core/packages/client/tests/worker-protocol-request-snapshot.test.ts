@@ -37,7 +37,9 @@ describe('validateWorkerRequest snapshot boundary', () => {
       args,
       timeout: 50,
     });
-    expect(result.msg).not.toBe(request);
+    // Compare identity before handing either object to a matcher so Vitest does
+    // not inspect the hostile getter-backed source while formatting values.
+    expect(result.msg === request).toBe(false);
     expect(result.msg.args).toBe(args);
     for (const field of [
       'protocolVersion',
@@ -152,8 +154,8 @@ describe('validateWorkerRequest snapshot boundary', () => {
 
     expect(initResult).toEqual({ ok: true, msg: init });
     expect(cancelResult).toEqual({ ok: true, msg: cancel });
-    expect(initResult.ok && initResult.msg).not.toBe(init);
-    expect(cancelResult.ok && cancelResult.msg).not.toBe(cancel);
+    expect(initResult.ok && initResult.msg === init).toBe(false);
+    expect(cancelResult.ok && cancelResult.msg === cancel).toBe(false);
   });
 
   it('rejects unreadable request accessors without throwing', () => {
