@@ -182,13 +182,13 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
         raise RuntimeError(f"pinned source graph file must be {SOURCE_GRAPH_FILE}")
     if source_external_data.name != SOURCE_EXTERNAL_FILE:
         raise RuntimeError(f"pinned source external-data file must be {SOURCE_EXTERNAL_FILE}")
-    if source_model.stat().st_size != SOURCE_GRAPH_BYTES:
-        raise RuntimeError("pinned source graph byte length drifted")
 
     layout = layout_probe.build_report(source_model)
     hidden_size, physical, tiles = _validate_candidate(layout)
     inferred_source, source_weight_offset, source_weight_length = embedding_cpu._source_embedding_contract(
-        source_model, layout
+        source_model,
+        layout,
+        expected_graph_bytes=SOURCE_GRAPH_BYTES,
     )
     if inferred_source != source_external_data:
         raise RuntimeError("explicit source external-data path does not match source graph location")

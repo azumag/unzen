@@ -97,8 +97,24 @@ def _external_map(t: TensorProto) -> dict[str,str]:
     return {e.key:e.value for e in t.external_data}
 
 
-def _source_embedding_contract(source_model: Path, layout: dict[str,object]) -> tuple[Path,int,int]:
+def _source_embedding_contract(
+    source_model: Path,
+    layout: dict[str,object],
+    *,
+    expected_graph_bytes: int | None = None,
+) -> tuple[Path,int,int]:
     source_model,graph_bytes=_read_source_graph_snapshot(source_model)
+    if expected_graph_bytes is not None:
+        if (
+            not isinstance(expected_graph_bytes,int)
+            or isinstance(expected_graph_bytes,bool)
+            or expected_graph_bytes < 0
+        ):
+            raise RuntimeError("expected source graph byte length must be a non-negative integer")
+        if len(graph_bytes) != expected_graph_bytes:
+            raise RuntimeError(
+                f"source graph byte length mismatch: expected {expected_graph_bytes}, got {len(graph_bytes)}"
+            )
     observed=hashlib.sha256(graph_bytes).hexdigest()
     expected=layout.get("sourceGraphSha256")
     if observed != expected:
