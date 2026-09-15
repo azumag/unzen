@@ -92,6 +92,11 @@ interface EvalResult {
   error?: { consume<T>(fn: (handle: unknown) => T): T };
 }
 
+/**
+ * Best-effort rejection response for malformed/unhandled worker messages.
+ * Correlation fields are snapshotted before local addressability checks so a
+ * getter/Proxy cannot pass a check and then drift while the response is built.
+ */
 function postRejectedMessage(
   data: unknown,
   error: string,
@@ -100,26 +105,28 @@ function postRejectedMessage(
   try {
     if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
     const msg = data as Record<string, unknown>;
-    if (typeof msg.generationId !== 'number') return;
-    if (msg.type === 'init') {
-      postMessage(createInitResultMessage(false, msg.generationId, error));
-    } else if (
-      msg.type === 'execute'
-      && typeof msg.requestId === 'string'
-      && msg.requestId.length > 0
-    ) {
+    const generationId = msg.generationId;
+    const type = msg.type;
+    if (typeof generationId !== 'number') return;
+
+    if (type === 'init') {
+      postMessage(createInitResultMessage(false, generationId, error));
+      return;
+    }
+    if (type !== 'execute' && type !== 'cancel') return;
+
+    const requestId = msg.requestId;
+    if (typeof requestId !== 'string' || requestId.length === 0) return;
+
+    if (type === 'execute') {
       postMessage(createExecuteErrorMessage(
-        msg.requestId,
+        requestId,
         'runtime_error',
         error,
-        msg.generationId,
+        generationId,
       ));
-    } else if (
-      msg.type === 'cancel'
-      && typeof msg.requestId === 'string'
-      && msg.requestId.length > 0
-    ) {
-      postMessage(createCancelResultMessage(msg.requestId, false, msg.generationId, error));
+    } else {
+      postMessage(createCancelResultMessage(requestId, false, generationId, error));
     }
   } catch {
     // An unaddressable malformed request cannot receive a correlated response.
