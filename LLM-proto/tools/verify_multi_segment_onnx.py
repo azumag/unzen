@@ -29,6 +29,7 @@ import onnxruntime as ort
 from verify_multi_segment_artifacts import (
     SHA256_RE,
     _measure_file,
+    _read_stable_manifest,
     verify_artifact_integrity,
 )
 from verify_split_onnx import (
@@ -389,7 +390,7 @@ def verify_multi_split(
         raise ValueError("at least one token ID is required")
 
     artifact_integrity = verify_artifact_integrity(manifest_path)
-    manifest_bytes = manifest_path.read_bytes()
+    manifest_bytes = _read_stable_manifest(manifest_path)
     observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     if observed_manifest_sha != artifact_integrity["manifestSha256"]:
         raise RuntimeError(
