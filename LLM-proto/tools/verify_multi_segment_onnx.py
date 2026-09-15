@@ -119,8 +119,6 @@ def verify_source_model_identity(
 ) -> dict[str, object]:
     """Bind the full-model reference to the source identity recorded at split time."""
 
-    if not full_model_path.is_file():
-        raise FileNotFoundError(f"full model not found: {full_model_path}")
     raw_source = manifest.get("sourceModel")
     if not isinstance(raw_source, dict):
         raise ValueError("split manifest sourceModel must be an object")
@@ -129,7 +127,10 @@ def verify_source_model_identity(
         raw_source.get("sha256"),
         field="sourceModel.sha256",
     )
-    graph_bytes, observed_graph_sha = _measure_file(full_model_path)
+    graph_bytes, observed_graph_sha = _measure_file(
+        full_model_path,
+        missing_message=f"full model not found: {full_model_path}",
+    )
     if observed_graph_sha != expected_graph_sha:
         raise ValueError(
             "full-model graph SHA-256 mismatch: "
@@ -158,8 +159,6 @@ def verify_source_model_identity(
             location,
             field=f"{field_prefix}.location",
         )
-        if not external_path.is_file():
-            raise FileNotFoundError(f"source external data not found: {external_path}")
 
         expected_bytes = _non_negative_int(
             raw_entry.get("bytes"),
@@ -172,7 +171,10 @@ def verify_source_model_identity(
             )
         expected_sha = _canonical_sha256(raw_sha, field=f"{field_prefix}.sha256")
 
-        observed_bytes, observed_sha = _measure_file(external_path)
+        observed_bytes, observed_sha = _measure_file(
+            external_path,
+            missing_message=f"source external data not found: {external_path}",
+        )
         if observed_bytes != expected_bytes:
             raise ValueError(
                 f"source external-data size mismatch for {location}: "
