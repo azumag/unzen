@@ -191,13 +191,19 @@ export class WorkerPool {
       preventExtensions(): boolean {
         throw new Error('WorkerPool live view must remain extensible');
       },
+      setPrototypeOf(): boolean {
+        throw new Error('WorkerPool live view prototype is immutable');
+      },
     });
     this.workerViews.set(worker, view);
     return view;
   }
 
-  /** Fail closed before a public live view can spoof routing identity/capacity. */
+  /** Fail closed before a public live view can spoof routing identity/capacity/prototype. */
   private static assertMutableViewProperty(property: PropertyKey): void {
+    if (property === '__proto__') {
+      throw new Error('WorkerPool live view prototype is immutable');
+    }
     if (property !== 'id' && property !== 'tier' && property !== 'vramMB') return;
     throw new Error(`WorkerPool protected field ${String(property)} is immutable`);
   }
