@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -36,7 +37,7 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 FileNotFoundError,
-                rf"full model not found: {source}",
+                re.escape(f"full model not found: {source}"),
             ):
                 verify_source_model_identity(source, manifest)
 
@@ -61,7 +62,7 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 FileNotFoundError,
-                rf"source external data not found: {external}",
+                re.escape(f"source external data not found: {external}"),
             ):
                 verify_source_model_identity(source, manifest)
 
