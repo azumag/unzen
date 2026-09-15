@@ -15,11 +15,93 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 from pathlib import Path
+import stat
 from typing import Sequence
 
 import numpy as np
 import onnxruntime as ort
+
+
+def _manifest_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Filesystem identity/metadata that must remain stable for one manifest read."""
+
+    return (
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _load_manifest_snapshot(path: Path) -> dict[str, object]:
+    """Parse one manifest from a stable non-symlink regular-file descriptor."""
+
+    source = path.expanduser().absolute()
+    try:
+        before_path = os.lstat(source)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"split manifest not found: {source}") from None
+    except OSError as error:
+        raise ValueError(f"split manifest could not be read: {source}: {error}") from error
+    if stat.S_ISLNK(before_path.st_mode) or not stat.S_ISREG(before_path.st_mode):
+        raise ValueError(f"split manifest must be a regular file: {source}")
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(source, flags)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"split manifest not found: {source}") from None
+    except IsADirectoryError:
+        raise ValueError(f"split manifest must be a regular file: {source}") from None
+    except OSError as error:
+        raise ValueError(f"split manifest could not be opened safely: {source}: {error}") from error
+
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"split manifest must be a regular file: {source}")
+        if _manifest_fingerprint(opened) != _manifest_fingerprint(before_path):
+            raise RuntimeError(f"split manifest changed between path check and open: {source}")
+
+        while chunk := os.read(fd, 1024 * 1024):
+            chunks.append(chunk)
+            observed += len(chunk)
+
+        after_fd = os.fstat(fd)
+        if (
+            _manifest_fingerprint(after_fd) != _manifest_fingerprint(opened)
+            or observed != after_fd.st_size
+        ):
+            raise RuntimeError(f"split manifest changed while being read: {source}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(source)
+    except OSError as error:
+        raise RuntimeError(f"split manifest path changed while being read: {source}: {error}") from error
+    if (
+        stat.S_ISLNK(after_path.st_mode)
+        or _manifest_fingerprint(after_path) != _manifest_fingerprint(opened)
+    ):
+        raise RuntimeError(f"split manifest path changed while being read: {source}")
+
+    raw = b"".join(chunks)
+    try:
+        value = json.loads(raw.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"split manifest is not valid UTF-8 JSON: {source}") from error
+    if not isinstance(value, dict):
+        raise ValueError("split manifest must contain a JSON object")
+    return value
 
 
 def _np_dtype(type_name: str) -> np.dtype:
@@ -180,7 +262,7 @@ def verify_split(
     atol: float = 1e-4,
     rtol: float = 1e-4,
 ) -> dict[str, object]:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = _load_manifest_snapshot(manifest_path)
     boundary_names = [item["name"] for item in manifest["boundary"]["tensors"]]
     logits_name = manifest["logitsOutput"]
     providers = [provider]
