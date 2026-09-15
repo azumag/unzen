@@ -47,7 +47,7 @@ class VerifyMultiSegmentCaptureBundleJsonSnapshotTest(unittest.TestCase):
                 return fd
 
             with patch("verify_multi_segment_capture_bundle.os.open", replace_after_open):
-                with self.assertRaisesRegex(RuntimeError, "path changed while being read"):
+                with self.assertRaisesRegex(RuntimeError, "changed between path check and open"):
                     _json_snapshot(target, field="same-machine evidence")
 
             self.assertTrue(replaced)
