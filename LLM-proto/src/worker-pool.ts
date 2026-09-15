@@ -49,7 +49,6 @@ export class WorkerPool {
     const worker = this.workers.get(stableId);
     if (!worker) return false;
     worker.lastHeartbeat = Date.now();
-    // Reconnect if previously marked as disconnected
     if (worker.status === WorkerStatus.DISCONNECTED) {
       worker.status = WorkerStatus.IDLE;
     }
@@ -75,11 +74,9 @@ export class WorkerPool {
         continue;
       }
 
-      // Prefer lower tier (more stable)
       if (worker.tier < best.tier) {
         best = worker;
       } else if (worker.tier === best.tier && worker.vramMB > best.vramMB) {
-        // Same tier: prefer more VRAM
         best = worker;
       }
     }
@@ -220,7 +217,10 @@ export class WorkerPool {
     }
 
     if (property === 'currentSegment') {
-      if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0)) {
+      if (
+        value !== undefined &&
+        (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
+      ) {
         throw new Error('WorkerPool currentSegment must be undefined or a non-negative safe integer');
       }
     }
