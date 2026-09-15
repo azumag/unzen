@@ -17,10 +17,11 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
  */
 export function snapshotFinalOutput(
   value: unknown,
+  label: 'final segment output' | 'final span output',
   makeError: (message: string) => Error,
 ): FinalOutputSnapshot {
   if (!isRecord(value)) {
-    throw makeError('final output must be a non-null, non-array object');
+    throw makeError(`${label} must be a non-null, non-array object`);
   }
 
   // Capture each declared output field exactly once. Runtime callers can provide
@@ -29,7 +30,7 @@ export function snapshotFinalOutput(
   const text = value.text;
 
   if (!Array.isArray(tokens)) {
-    throw makeError('final output tokens must be an array');
+    throw makeError(`${label} tokens must be an array`);
   }
 
   // Copy by numeric index rather than iteration. A worker-controlled array may
@@ -40,13 +41,13 @@ export function snapshotFinalOutput(
   for (let index = 0; index < length; index++) {
     const token = tokens[index];
     if (!isNonNegativeSafeInteger(token)) {
-      throw makeError('final output tokens must contain non-negative safe integers');
+      throw makeError(`${label} tokens must contain non-negative safe integers`);
     }
     ownedTokens[index] = token;
   }
 
   if (typeof text !== 'string') {
-    throw makeError('final output text must be a string');
+    throw makeError(`${label} text must be a string`);
   }
 
   return Object.freeze({
