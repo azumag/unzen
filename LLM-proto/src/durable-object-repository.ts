@@ -10,6 +10,7 @@
 import {
   snapshotAttemptRecord,
   snapshotCancellationRecord,
+  snapshotInferenceResult,
   snapshotLease,
   snapshotRecoveryOwnership,
   snapshotStreamCursor,
@@ -304,7 +305,8 @@ export class DurableObjectRepository implements DurableRepository {
 
   // completion/result
   getResult(requestId: InferenceRequestId): InferenceResult | undefined {
-    return this.storage.get<InferenceResult>(resultKey(requestId));
+    const result = this.storage.get<InferenceResult>(resultKey(requestId));
+    return result === undefined ? undefined : snapshotInferenceResult(result);
   }
 
   commitCompletion(
@@ -319,10 +321,11 @@ export class DurableObjectRepository implements DurableRepository {
     const record = this.storage.get<RequestRecord>(requestStorageKey);
     if (!record || record.stage !== expectedStage) return 'conflict';
 
+    const ownedResult = snapshotInferenceResult(result);
     record.stage = 'completed';
     record.completedAt = Date.now();
     // Both operations are synchronous and have no await boundary inside the DO.
-    this.storage.put(resultStorageKey, result);
+    this.storage.put(resultStorageKey, ownedResult);
     this.storage.put(requestStorageKey, record);
     return 'committed';
   }
