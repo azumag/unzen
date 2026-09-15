@@ -36,7 +36,7 @@ The legacy compatibility contract still permits write-through mutation of operat
 
 `status` and `lastHeartbeat` are required state and cannot be deleted. `currentSegment` is optional and may still be deleted/unset.
 
-Operational properties also remain ordinary mutable data properties. A live-view caller cannot replace them with accessors or explicitly make them non-writable/non-configurable/non-enumerable, because that could bypass validation or prevent internal `WorkerPool` methods from updating routing/liveness state.
+Operational properties also remain ordinary mutable data properties. A live-view caller cannot replace them with accessors or explicitly make them non-writable/non-configurable/non-enumerable, because that could bypass validation or prevent internal `WorkerPool` methods from updating routing/liveness state. The live view also rejects `preventExtensions` (and therefore `Object.seal()` / `Object.freeze()` before they can lock the target), since a non-extensible stored record could prevent `markBusy()` from adding the optional `currentSegment` field.
 
 Internal `WorkerPool` methods continue to mutate the stored record directly. Valid external operational writes through a current guarded view remain visible to subsequent reads and routing decisions.
 
@@ -52,6 +52,7 @@ Although the original issue explicitly called out registration and ordinary read
 - failed identity/capability spoof attempts do not change worker lookup or VRAM/tier selection;
 - malformed operational assignments fail before stored state changes;
 - required operational fields cannot be deleted or converted to hostile/restrictive descriptors;
+- live views cannot be made non-extensible before later internal state updates;
 - valid operational fields remain live and writable, including removal of optional `currentSegment`;
 - repeated reads preserve view identity for the same stored record;
 - a retained view from before re-registration cannot affect the replacement record.
