@@ -122,10 +122,10 @@ describe('validateMoonbitWorkerRequest snapshot boundary', () => {
   it('keeps captured execute fields stable after source mutation', () => {
     const wasm = new Uint8Array([1, 2, 3]).buffer;
     const replacementWasm = new Uint8Array([9]).buffer;
-    const args = [1, 2];
-    const replacementArgs = [9, 9];
-    const moonbitAbi = { params: ['i32'] as const, result: 'i32' as const };
-    const replacementAbi = { params: ['f64'] as const, result: 'f64' as const };
+    const args = [[1, 2]];
+    const replacementArgs = [[9, 9]];
+    const moonbitAbi = { params: ['i32[]'] as const, result: 'i32[]' as const };
+    const replacementAbi = { params: ['f64[]'] as const, result: 'f64[]' as const };
     const request: Record<string, unknown> = {
       type: 'execute',
       requestId: 'req-original',
