@@ -170,6 +170,39 @@ def _file_snapshot(metadata: os.stat_result) -> tuple[int, int, int, int, int, i
     )
 
 
+def _open_repack_source(path: Path) -> tuple[BinaryIO, tuple[int, int, int, int, int, int, int]]:
+    """Open one resolved source without following a last-moment special-file swap."""
+
+    before_path = path.lstat()
+    if not stat.S_ISREG(before_path.st_mode):
+        raise ValueError(f"source external-data must be a regular file: {path}")
+    expected_snapshot = _file_snapshot(before_path)
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"source external-data must be a regular file: {path}")
+        if _file_snapshot(opened) != expected_snapshot:
+            raise RuntimeError(
+                f"source external-data changed between path check and open: {path}"
+            )
+        source = os.fdopen(descriptor, "rb")
+        descriptor = -1
+        return source, expected_snapshot
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _measure_repacked_output(
     path: Path,
     *,
@@ -290,18 +323,20 @@ def repack_segment_external_data(
 
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
+    source_snapshots: dict[str, tuple[int, int, int, int, int, int, int]] = {}
     source_keys: dict[Path, str] = {}
     destination_snapshot: tuple[int, int, int, int, int, int, int] | None = None
     try:
         # Open and size-check every source before the destination exists or is
-        # truncated. Missing/unreadable/truncated inputs therefore fail without
-        # leaving a misleading partial repack artifact behind. Resolve each
-        # lexical source path once and pin later copies to the descriptor opened
-        # for that identity instead of re-following a mutable symlink path.
+        # truncated. Missing/unreadable/truncated/special-file inputs therefore
+        # fail without leaving a misleading partial repack artifact behind.
+        # Resolve each lexical source path once and pin later copies to the
+        # descriptor opened for that identity instead of re-following a mutable
+        # symlink path.
         for _, _, source_path, source_offset, length in prepared:
             source_key = source_keys.get(source_path)
             if source_key is None:
-                resolved_source = source_path.resolve()
+                resolved_source = source_path.resolve(strict=True)
                 if _paths_alias(output_data_path, resolved_source):
                     raise ValueError(
                         "output external-data path aliases source external-data: "
@@ -311,8 +346,9 @@ def repack_segment_external_data(
                 source_keys[source_path] = source_key
             source = open_sources.get(source_key)
             if source is None:
-                source = Path(source_key).open("rb")
+                source, source_snapshot = _open_repack_source(Path(source_key))
                 open_sources[source_key] = source
+                source_snapshots[source_key] = source_snapshot
             file_size = os.fstat(source.fileno()).st_size
             if source_offset + length > file_size:
                 raise ValueError(
@@ -338,6 +374,13 @@ def repack_segment_external_data(
                     offset=destination_offset,
                     length=length,
                 )
+
+            for source_key, source in open_sources.items():
+                if _file_snapshot(os.fstat(source.fileno())) != source_snapshots[source_key]:
+                    raise RuntimeError(
+                        f"source external-data changed during repack: {source_key}"
+                    )
+
             destination.flush()
             destination_snapshot = _file_snapshot(os.fstat(destination.fileno()))
     finally:
