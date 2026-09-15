@@ -16,6 +16,8 @@ import capture_multi_segment_evidence_run as capture_module  # noqa: E402
 
 
 class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
+    FIXTURE_MANIFEST_SHA256 = "9e7a952f2f4d33fb17b153deffca1a99d7df493eb428ad86e535eb11b82d8e70"
+
     @staticmethod
     def _source(root: Path) -> Path:
         source = root / "model_q4.onnx"
@@ -36,11 +38,11 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
         )
         return {"kind": "fixture"}
 
-    @staticmethod
-    def _integrity(*, status: str = "pass") -> dict[str, object]:
+    @classmethod
+    def _integrity(cls, *, status: str = "pass") -> dict[str, object]:
         return {
             "status": status,
-            "manifestSha256": "a" * 64,
+            "manifestSha256": cls.FIXTURE_MANIFEST_SHA256,
             "segmentCount": 1,
             "maximumSegmentArtifactBytes": 7,
             "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
@@ -138,7 +140,10 @@ class CaptureMultiSegmentEvidenceRunTest(unittest.TestCase):
                 (destination / "run-summary.json").read_text(encoding="utf-8")
             )
             self.assertEqual(persisted["sourceModel"]["graphSha256"], source_sha256)
-            self.assertEqual(persisted["artifacts"]["manifestSha256"], "a" * 64)
+            self.assertEqual(
+                persisted["artifacts"]["manifestSha256"],
+                self.FIXTURE_MANIFEST_SHA256,
+            )
             self.assertEqual(persisted["artifacts"]["segmentCount"], 1)
             self.assertEqual(
                 persisted["artifacts"]["snapshotPreflight"]["schemaVersion"],
