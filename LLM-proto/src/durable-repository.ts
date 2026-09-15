@@ -185,9 +185,9 @@ export function assertRepositoryRequestRouteIdentity(
 export type MutableRepositoryRecordKind = 'request' | 'worker';
 
 /**
- * Keep durable identity immutable even where #103 requires mutable operational
- * repository reads. The protected names are fixed schema fields, so diagnostics
- * never interpolate caller-controlled values.
+ * Keep durable identity and routing trust inputs immutable even where #103
+ * requires mutable operational repository reads. The protected names are fixed
+ * schema fields, so diagnostics never interpolate caller-controlled values.
  */
 export function assertMutableRepositoryIdentityProperty(
   recordKind: MutableRepositoryRecordKind,
@@ -195,10 +195,14 @@ export function assertMutableRepositoryIdentityProperty(
 ): void {
   const immutable = recordKind === 'request'
     ? property === 'requestId'
-    : property === 'workerId' || property === 'generation' || property === 'connectionId';
+    : property === 'workerId' ||
+      property === 'generation' ||
+      property === 'connectionId' ||
+      property === 'tier' ||
+      property === 'vramMB';
   if (!immutable) return;
   throw new UnzenError(
-    `repository ${recordKind} identity field ${String(property)} is immutable`,
+    `repository ${recordKind} protected field ${String(property)} is immutable`,
     ErrorCode.ProtocolViolation,
   );
 }
