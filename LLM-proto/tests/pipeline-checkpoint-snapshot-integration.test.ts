@@ -29,33 +29,28 @@ function makeHostileCheckpoint(requestId: string, segmentIndex: number): Hostile
       return shape;
     },
     get sequenceLength() {
-      return bump(reads, 'metadata.sequenceLength') === 1 ? 3 : -1;
+      return bump('metadata.sequenceLength') === 1 ? 3 : -1;
     },
     get timestamp() {
-      return bump(reads, 'metadata.timestamp') === 1 ? 123 : -1;
+      return bump('metadata.timestamp') === 1 ? 123 : -1;
     },
   };
   const checkpoint = {
     get requestId() {
-      return bump(reads, 'checkpoint.requestId') === 1 ? requestId : `${requestId}-changed`;
+      return bump('checkpoint.requestId') === 1 ? requestId : `${requestId}-changed`;
     },
     get segmentIndex() {
-      return bump(reads, 'checkpoint.segmentIndex') === 1 ? segmentIndex : segmentIndex + 100;
+      return bump('checkpoint.segmentIndex') === 1 ? segmentIndex : segmentIndex + 100;
     },
     get hiddenStates() {
-      return bump(reads, 'checkpoint.hiddenStates') === 1 ? payload : new Uint8Array([9]);
+      return bump('checkpoint.hiddenStates') === 1 ? payload : new Uint8Array([9]);
     },
     get metadata() {
-      bump(reads, 'checkpoint.metadata');
+      bump('checkpoint.metadata');
       return metadata;
     },
   };
   return { checkpoint, payload, shape, metadata, reads };
-}
-
-function bump(reads: Record<string, number>, field: string): number {
-  reads[field] = (reads[field] ?? 0) + 1;
-  return reads[field];
 }
 
 function expectSourceReadOnce(source: HostileCheckpointSource): void {
