@@ -17,6 +17,64 @@ export interface SpanResultRootSnapshot {
   readonly output: unknown;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Capture the complete checkpoint envelope consumed after the worker-result root.
+ *
+ * The legacy pipelines validate checkpoint identity and payload in several stages.
+ * Keep those stages on one owned value so accessor-backed checkpoints cannot return
+ * one valid identity during the first comparison and another value during storage.
+ * Mutable payloads are copied without using array iteration.
+ */
+function snapshotCheckpointBoundary(checkpoint: unknown): unknown {
+  if (!isRecord(checkpoint)) return checkpoint;
+
+  const requestId = checkpoint.requestId;
+  const segmentIndex = checkpoint.segmentIndex;
+  const hiddenStates = checkpoint.hiddenStates;
+  const metadataValue = checkpoint.metadata;
+
+  let ownedHiddenStates: unknown = hiddenStates;
+  if (hiddenStates instanceof Uint8Array) {
+    ownedHiddenStates = hiddenStates.slice();
+  }
+
+  let ownedMetadata: unknown = metadataValue;
+  if (isRecord(metadataValue)) {
+    const shapeValue = metadataValue.shape;
+    const dtype = metadataValue.dtype;
+    const sequenceLength = metadataValue.sequenceLength;
+    const timestamp = metadataValue.timestamp;
+
+    let ownedShape: unknown = shapeValue;
+    if (Array.isArray(shapeValue)) {
+      const length = shapeValue.length;
+      const shape: unknown[] = new Array(length);
+      for (let index = 0; index < length; index += 1) {
+        shape[index] = shapeValue[index];
+      }
+      ownedShape = Object.freeze(shape);
+    }
+
+    ownedMetadata = Object.freeze({
+      shape: ownedShape,
+      dtype,
+      sequenceLength,
+      timestamp,
+    });
+  }
+
+  return Object.freeze({
+    requestId,
+    segmentIndex,
+    hiddenStates: ownedHiddenStates,
+    metadata: ownedMetadata,
+  });
+}
+
 /**
  * Capture every root field consumed by the legacy single-segment result validator.
  *
@@ -31,7 +89,7 @@ export function snapshotSegmentResultRoot(
   const segmentIndex = result.segmentIndex;
   const workerId = result.workerId;
   const processingTimeMs = result.processingTimeMs;
-  const checkpoint = result.checkpoint;
+  const checkpoint = snapshotCheckpointBoundary(result.checkpoint);
   const output = result.output;
 
   return Object.freeze({
@@ -53,7 +111,7 @@ export function snapshotSpanResultRoot(
   const startSegment = result.startSegment;
   const endSegment = result.endSegment;
   const processingTimeMs = result.processingTimeMs;
-  const checkpoint = result.checkpoint;
+  const checkpoint = snapshotCheckpointBoundary(result.checkpoint);
   const output = result.output;
 
   return Object.freeze({
