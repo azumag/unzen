@@ -20,8 +20,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import stat
 
 from verify_multi_segment_artifact_snapshot import (
     PATH_RESOLUTION_COMPONENT_ANCHORED,
@@ -30,7 +32,6 @@ from verify_multi_segment_artifact_snapshot import (
     REPORT_SCHEMA_VERSION as SNAPSHOT_REPORT_SCHEMA_VERSION,
     verify_artifact_snapshot,
 )
-from verify_multi_segment_artifacts import sha256_file
 
 
 RUN_KIND = "unzen-budgeted-multi-segment-capture-run"
@@ -95,16 +96,87 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     return resolved
 
 
-def _json_object(path: Path, *, field: str) -> dict[str, object]:
-    if not path.is_file():
-        raise FileNotFoundError(f"{field} not found: {path}")
+def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Return filesystem identity/metadata that must stay stable for a JSON read."""
+
+    return (
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _json_snapshot(path: Path, *, field: str) -> tuple[dict[str, object], str]:
+    """Parse and hash JSON from one stable, nonblocking regular-file descriptor."""
+
+    path = path.expanduser().absolute()
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        before_path = os.lstat(path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"{field} not found: {path}") from None
+    except OSError as error:
+        raise ValueError(f"{field} could not be read: {path}: {error}") from error
+
+    if stat.S_ISLNK(before_path.st_mode) or not stat.S_ISREG(before_path.st_mode):
+        raise ValueError(f"{field} must be a regular file: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"{field} not found: {path}") from None
+    except IsADirectoryError:
+        raise ValueError(f"{field} must be a regular file: {path}") from None
+    except OSError as error:
+        raise ValueError(f"{field} could not be opened safely: {path}: {error}") from error
+
+    digest = hashlib.sha256()
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"{field} must be a regular file: {path}")
+        if _stat_fingerprint(opened) != _stat_fingerprint(before_path):
+            raise RuntimeError(f"{field} changed between path check and open: {path}")
+
+        while chunk := os.read(fd, 1024 * 1024):
+            chunks.append(chunk)
+            digest.update(chunk)
+            observed += len(chunk)
+
+        after_fd = os.fstat(fd)
+        if (
+            _stat_fingerprint(after_fd) != _stat_fingerprint(opened)
+            or observed != after_fd.st_size
+        ):
+            raise RuntimeError(f"{field} changed while being read: {path}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"{field} path changed while being read: {path}: {error}") from error
+    if (
+        stat.S_ISLNK(after_path.st_mode)
+        or _stat_fingerprint(after_path) != _stat_fingerprint(opened)
+    ):
+        raise RuntimeError(f"{field} path changed while being read: {path}")
+
+    raw = b"".join(chunks)
+    try:
+        value = json.loads(raw.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"{field} is not valid UTF-8 JSON: {path}") from error
     if not isinstance(value, dict):
         raise ValueError(f"{field} must contain a JSON object")
-    return value
+    return value, digest.hexdigest()
 
 
 def _canonical_sha256(raw: object, *, field: str) -> str:
@@ -345,7 +417,7 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
         raise NotADirectoryError(f"capture directory not found: {root}")
 
     summary_path = root / "run-summary.json"
-    summary = _json_object(summary_path, field="run summary")
+    summary, summary_sha = _json_snapshot(summary_path, field="run summary")
     if summary.get("schemaVersion") != RUN_SCHEMA_VERSION:
         raise ValueError(
             f"unexpected run-summary schemaVersion: {summary.get('schemaVersion')!r}"
@@ -392,14 +464,16 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
         summary_evidence.get("sha256"),
         field="run-summary.evidence.sha256",
     )
-    observed_evidence_sha = sha256_file(evidence_path)
+    evidence, observed_evidence_sha = _json_snapshot(
+        evidence_path,
+        field="same-machine evidence",
+    )
     if observed_evidence_sha != expected_evidence_sha:
         raise ValueError(
             "same-machine evidence SHA-256 mismatch: "
             f"expected={expected_evidence_sha}, observed={observed_evidence_sha}"
         )
 
-    evidence = _json_object(evidence_path, field="same-machine evidence")
     if evidence.get("schemaVersion") != EVIDENCE_SCHEMA_VERSION:
         raise ValueError(
             f"unexpected evidence schemaVersion: {evidence.get('schemaVersion')!r}"
@@ -486,7 +560,7 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
         "kind": "unzen-budgeted-multi-segment-capture-bundle-verification",
         "status": "pass",
         "captureStatus": status,
-        "runSummarySha256": sha256_file(summary_path),
+        "runSummarySha256": summary_sha,
         "evidenceSha256": observed_evidence_sha,
         "verificationSha256": observed_verification_sha,
         "manifestSha256": integrity["manifestSha256"],
