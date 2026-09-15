@@ -29,7 +29,7 @@ from prepare_browser_p0 import (
     PREFERRED_MAX_BYTES,
     TARGET_BYTES,
 )
-from split_llama_1b_onnx import extract_submodel, sha256_file
+from split_llama_1b_onnx import extract_submodel
 
 REPORT_KIND = "unzen-multi-segment-browser-budget-diagnostic"
 REPORT_SCHEMA_VERSION = "1.0.0"
@@ -123,6 +123,12 @@ def _read_source_graph_snapshot(
         or _file_stat_signature(after_path) != _file_stat_signature(opened)
     ):
         raise RuntimeError(f"source model path changed while being read: {requested}")
+    try:
+        requested_after = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise RuntimeError(f"source model requested path changed while being read: {requested}") from error
+    if requested_after != source:
+        raise RuntimeError(f"source model requested path changed while being read: {requested}")
 
     raw = b"".join(chunks)
     return requested, raw, hashlib.sha256(raw).hexdigest()
