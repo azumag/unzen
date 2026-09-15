@@ -27,6 +27,10 @@ class CaptureSourceGraphHashBoundaryTest(unittest.TestCase):
                 capture_module.sha256_file(source),
                 hashlib.sha256(payload).hexdigest(),
             )
+            self.assertEqual(
+                capture_module.sha256_file(source, 4),
+                hashlib.sha256(payload).hexdigest(),
+            )
 
     def test_same_content_path_replacement_during_hash_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
