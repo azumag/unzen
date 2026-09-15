@@ -29,6 +29,7 @@ import {
   snapshotFinalOutput,
   type FinalOutputSnapshot,
 } from './final-output-snapshot.js';
+import { snapshotSegmentResultRoot } from './worker-result-root-snapshot.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
 
 /**
@@ -397,53 +398,51 @@ export class Pipeline {
         segmentIndex,
       );
     }
-    if (typeof result.requestId !== 'string') {
+
+    const root = snapshotSegmentResultRoot(result);
+    if (typeof root.requestId !== 'string') {
       throw new PipelineError(
         'segment result requestId must be a string',
         request.id,
         segmentIndex,
       );
     }
-    if (result.requestId !== request.id) {
+    if (root.requestId !== request.id) {
       throw new PipelineError(
-        `segment result request ${result.requestId} does not match ${request.id}`,
+        `segment result request ${root.requestId} does not match ${request.id}`,
         request.id,
         segmentIndex,
       );
     }
-    if (!isNonNegativeSafeInteger(result.segmentIndex)) {
+    if (!isNonNegativeSafeInteger(root.segmentIndex)) {
       throw new PipelineError(
         'segment result segmentIndex must be a non-negative safe integer',
         request.id,
         segmentIndex,
       );
     }
-    if (result.segmentIndex !== segmentIndex) {
+    if (root.segmentIndex !== segmentIndex) {
       throw new PipelineError(
-        `segment result index ${result.segmentIndex} does not match assignment ${segmentIndex}`,
+        `segment result index ${root.segmentIndex} does not match assignment ${segmentIndex}`,
         request.id,
         segmentIndex,
       );
     }
-    if (typeof result.workerId !== 'string') {
+    if (typeof root.workerId !== 'string') {
       throw new PipelineError(
         'segment result workerId must be a string',
         request.id,
         segmentIndex,
       );
     }
-    if (result.workerId !== workerId) {
+    if (root.workerId !== workerId) {
       throw new PipelineError(
-        `segment result worker ${result.workerId} does not match assigned worker ${workerId}`,
+        `segment result worker ${root.workerId} does not match assigned worker ${workerId}`,
         request.id,
         segmentIndex,
       );
     }
-    if (
-      typeof result.processingTimeMs !== 'number' ||
-      !Number.isFinite(result.processingTimeMs) ||
-      result.processingTimeMs < 0
-    ) {
+    if (!isNonNegativeFiniteNumber(root.processingTimeMs)) {
       throw new PipelineError(
         'segment processingTimeMs must be a non-negative finite number',
         request.id,
@@ -451,10 +450,8 @@ export class Pipeline {
       );
     }
 
-    // Capture the mutually-exclusive boundary fields once. Getter-backed worker
-    // results cannot pass validation with one value and expose another later.
-    const checkpoint = result.checkpoint as Checkpoint | undefined;
-    const output = result.output;
+    const checkpoint = root.checkpoint as Checkpoint | undefined;
+    const output = root.output;
     const isFinalSegment = segmentIndex === request.totalSegments - 1;
     if (isFinalSegment) {
       if (output === undefined) {
