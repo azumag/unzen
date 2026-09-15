@@ -279,11 +279,13 @@ describe('request and worker repository write isolation', () => {
     });
   });
 
-  it.each(repositories())('%s rejects worker identity mutations from get/list and preserves generation fencing', (_name, repo) => {
+  it.each(repositories())('%s rejects worker identity/routing mutations from get/list and preserves generation fencing', (_name, repo) => {
     const input = workerRecord();
     const originalWorkerId = input.workerId;
     const originalGeneration = input.generation;
     const originalConnectionId = input.connectionId;
+    const originalTier = input.tier;
+    const originalVramMB = input.vramMB;
     const changedWorkerId = workerId('changed-read-worker');
     const changedGeneration = generateWorkerGeneration();
     repo.putWorker(input);
@@ -295,6 +297,8 @@ describe('request and worker repository write isolation', () => {
         ['workerId', changedWorkerId],
         ['generation', changedGeneration],
         ['connectionId', 'changed-read-connection'],
+        ['tier', WorkerTier.TIER_1],
+        ['vramMB', 16_384],
       ] as const) {
         expectProtocolViolation(() => Reflect.set(read, property, value));
         expectProtocolViolation(() => Reflect.deleteProperty(read, property));
@@ -308,6 +312,8 @@ describe('request and worker repository write isolation', () => {
       expect(read.workerId).toBe(originalWorkerId);
       expect(read.generation).toBe(originalGeneration);
       expect(read.connectionId).toBe(originalConnectionId);
+      expect(read.tier).toBe(originalTier);
+      expect(read.vramMB).toBe(originalVramMB);
     }
 
     direct.stage = WorkerStage.Busy;
@@ -316,6 +322,8 @@ describe('request and worker repository write isolation', () => {
       workerId: originalWorkerId,
       generation: originalGeneration,
       connectionId: originalConnectionId,
+      tier: originalTier,
+      vramMB: originalVramMB,
       stage: WorkerStage.Busy,
       lastHeartbeat: 42,
     });
@@ -333,8 +341,54 @@ describe('request and worker repository write isolation', () => {
     expect(repo.getWorker(originalWorkerId)).toMatchObject({
       generation: replacementGeneration,
       connectionId: 'replacement-connection',
+      tier: originalTier,
+      vramMB: originalVramMB,
       stage: WorkerStage.Idle,
     });
+  });
+
+  it.each(repositories())('%s rejects retained capability spoof but accepts validated same-connection refresh', (_name, repo) => {
+    const registry = new WorkerRegistry(repo);
+    const guardedId = workerId('routing-capability-worker');
+    const competitorId = workerId('routing-capability-competitor');
+    const initialRegistration = {
+      workerId: guardedId,
+      tier: WorkerTier.TIER_3,
+      vramMB: 4096,
+    };
+
+    const first = registry.register(initialRegistration, 'routing-connection', 100);
+    expect(first.kind).toBe('created');
+    registry.register({
+      workerId: competitorId,
+      tier: WorkerTier.TIER_2,
+      vramMB: 8192,
+    }, 'competitor-connection', 150);
+
+    expect(registry.getAvailableWorker(8192)?.workerId).toBe(competitorId);
+    const retained = repo.getWorker(guardedId)!;
+    expectProtocolViolation(() => Reflect.set(retained, 'tier', WorkerTier.TIER_1));
+    expectProtocolViolation(() => Reflect.set(retained, 'vramMB', 16_384));
+    expect(retained).toMatchObject({
+      tier: WorkerTier.TIER_3,
+      vramMB: 4096,
+    });
+    expect(registry.getAvailableWorker(8192)?.workerId).toBe(competitorId);
+
+    const refresh = registry.register({
+      workerId: guardedId,
+      tier: WorkerTier.TIER_1,
+      vramMB: 16_384,
+    }, 'routing-connection', 200);
+    expect(refresh.kind).toBe('updated');
+    expect(refresh.generation).toBe(first.generation);
+    expect(repo.getWorker(guardedId)).toMatchObject({
+      generation: first.generation,
+      connectionId: 'routing-connection',
+      tier: WorkerTier.TIER_1,
+      vramMB: 16_384,
+    });
+    expect(registry.getAvailableWorker(8192)?.workerId).toBe(guardedId);
   });
 
   it.each(repositories())('%s cannot spoof reconnect identity through a retained mutable worker read', (_name, repo) => {
