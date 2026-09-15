@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
@@ -38,6 +42,7 @@ class SegmentSpec:
 SpanCost = Callable[[int, int], int]
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+DEFAULT_SOURCE_GRAPH_MAX_BYTES = 64 * 1024 * 1024
 
 
 def _unsafe_windows_component(part: str) -> bool:
@@ -47,6 +52,110 @@ def _unsafe_windows_component(part: str) -> bool:
     return stem in WINDOWS_RESERVED_DEVICE_STEMS or bool(
         WINDOWS_RESERVED_PORT_RE.fullmatch(stem)
     )
+
+
+def _file_stat_signature(stat_result: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
+
+
+def _read_source_graph_snapshot(
+    source_model_path: Path,
+    *,
+    max_bytes: int = DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+) -> tuple[bytes, str]:
+    """Capture one bounded graph snapshot for both ONNX parsing and identity."""
+
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    requested = source_model_path.expanduser().absolute()
+    try:
+        source = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise FileNotFoundError(f"source model not found: {requested}") from error
+
+    try:
+        before = os.lstat(source)
+    except OSError as error:
+        raise FileNotFoundError(f"source model not found: {requested}") from error
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(f"source model must resolve to a regular file: {requested}")
+    if before.st_size > max_bytes:
+        raise RuntimeError(f"source model graph exceeds {max_bytes} bytes: {requested}")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(source, flags)
+    except OSError as error:
+        raise RuntimeError(
+            f"source model could not be opened safely: {requested}: {error}"
+        ) from error
+
+    opened: os.stat_result
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"source model must remain a regular file: {requested}")
+        if _file_stat_signature(opened) != _file_stat_signature(before):
+            raise RuntimeError(
+                f"source model changed between path check and open: {requested}"
+            )
+        if opened.st_size > max_bytes:
+            raise RuntimeError(f"source model graph exceeds {max_bytes} bytes: {requested}")
+
+        while True:
+            remaining = max_bytes + 1 - observed
+            block = os.read(fd, min(1024 * 1024, remaining))
+            if not block:
+                break
+            chunks.append(block)
+            observed += len(block)
+            if observed > max_bytes:
+                raise RuntimeError(
+                    f"source model graph grew beyond the input limit: {requested}"
+                )
+
+        after_fd = os.fstat(fd)
+        if (
+            _file_stat_signature(after_fd) != _file_stat_signature(opened)
+            or observed != after_fd.st_size
+        ):
+            raise RuntimeError(f"source model changed while being read: {requested}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(source)
+    except OSError as error:
+        raise RuntimeError(
+            f"source model path disappeared after read: {requested}"
+        ) from error
+    if (
+        stat.S_ISLNK(after_path.st_mode)
+        or _file_stat_signature(after_path) != _file_stat_signature(opened)
+    ):
+        raise RuntimeError(f"source model path changed while being read: {requested}")
+    try:
+        requested_after = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise RuntimeError(
+            f"source model requested path changed while being read: {requested}"
+        ) from error
+    if requested_after != source:
+        raise RuntimeError(
+            f"source model requested path changed while being read: {requested}"
+        )
+
+    raw = b"".join(chunks)
+    return raw, hashlib.sha256(raw).hexdigest()
 
 
 class BrowserArtifactBudgetError(RuntimeError):
@@ -499,11 +608,12 @@ def prepare_budgeted_multi_split(
         target_bytes=target_bytes,
         preferred_max_bytes=preferred_max_bytes,
     )
-    if not source_model_path.is_file():
-        raise FileNotFoundError(f"source model not found: {source_model_path}")
+    source_graph_bytes, source_graph_sha256 = _read_source_graph_snapshot(
+        source_model_path
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    model = onnx.load_model(str(source_model_path), load_external_data=False)
+    model = onnx.load_model(io.BytesIO(source_graph_bytes), load_external_data=False)
     source_external = _source_external_manifest(
         model,
         source_model_path,
@@ -598,7 +708,7 @@ def prepare_budgeted_multi_split(
         "kind": "unzen-budgeted-multi-segment-onnx",
         "sourceModel": {
             "path": str(source_model_path),
-            "sha256": sha256_file(source_model_path),
+            "sha256": source_graph_sha256,
             "externalData": source_external,
         },
         "hiddenSize": hidden_size,
