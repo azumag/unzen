@@ -193,6 +193,87 @@ export function snapshotInferenceResult(result: InferenceResult): InferenceResul
   return { requestId, tokens, text, totalTimeMs, segmentsCompleted };
 }
 
+/**
+ * Capture a newly created request before it enters repository-owned mutable
+ * state. Reads intentionally remain mutable for the #103 compatibility
+ * contract; this helper only prevents retained writer references/key drift.
+ */
+export function snapshotRequestRecord(record: RequestRecord): RequestRecord {
+  const requestId = record.requestId;
+  const prompt = record.prompt;
+  const stage = record.stage;
+  const createdAt = record.createdAt;
+  const currentSegment = record.currentSegment;
+  const totalSegments = record.totalSegments;
+  const manifestDigest = record.manifestDigest;
+  const retryCount = record.retryCount;
+  const owned: RequestRecord = {
+    requestId,
+    prompt,
+    stage,
+    createdAt,
+    currentSegment,
+    totalSegments,
+    manifestDigest,
+    retryCount,
+  };
+
+  for (const field of [
+    'idempotencyKey',
+    'startedAt',
+    'completedAt',
+    'lastErrorCode',
+    'lastError',
+    'timeoutMs',
+  ] as const) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) continue;
+    Object.defineProperty(owned, field, {
+      value: record[field],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return owned;
+}
+
+/**
+ * Capture one worker record before repository ownership changes. The active
+ * record returned by get/list remains intentionally mutable, but a caller that
+ * retains the value passed to putWorker() cannot mutate repository state later.
+ */
+export function snapshotWorkerRecord(record: WorkerRecord): WorkerRecord {
+  const workerId = record.workerId;
+  const generation = record.generation;
+  const connectionId = record.connectionId;
+  const tier = record.tier;
+  const vramMB = record.vramMB;
+  const stage = record.stage;
+  const lastHeartbeat = record.lastHeartbeat;
+  const registeredAt = record.registeredAt;
+  const owned: WorkerRecord = {
+    workerId,
+    generation,
+    connectionId,
+    tier,
+    vramMB,
+    stage,
+    lastHeartbeat,
+    registeredAt,
+  };
+
+  for (const field of ['revokedAt', 'currentSegment'] as const) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) continue;
+    Object.defineProperty(owned, field, {
+      value: record[field],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return owned;
+}
+
 /** Store-key fields captured before a checkpoint slot is classified. */
 export interface CheckpointStoreIdentity {
   readonly requestId: InferenceRequestId;
@@ -371,7 +452,8 @@ export class InMemoryRepository implements DurableRepository {
   // --- request state ---
 
   createRequest(record: RequestRecord): void {
-    this.requestRecords.set(record.requestId, record);
+    const owned = snapshotRequestRecord(record);
+    this.requestRecords.set(owned.requestId, owned);
   }
 
   getRequest(requestId: InferenceRequestId): RequestRecord | undefined {
@@ -591,7 +673,8 @@ export class InMemoryRepository implements DurableRepository {
   // --- worker registration / generation ---
 
   putWorker(record: WorkerRecord): void {
-    this.workers.set(record.workerId, record);
+    const owned = snapshotWorkerRecord(record);
+    this.workers.set(owned.workerId, owned);
   }
 
   getWorker(workerId: WorkerId): WorkerRecord | undefined {
