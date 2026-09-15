@@ -21,7 +21,7 @@ from typing import Mapping, Sequence
 import numpy as np
 import onnxruntime as ort
 
-from verify_multi_segment_artifacts import verify_artifact_integrity
+from verify_multi_segment_artifacts import _read_stable_manifest, verify_artifact_integrity
 from verify_multi_segment_onnx import (
     _boundary_report,
     validate_multi_segment_manifest,
@@ -302,7 +302,7 @@ def verify_multi_segment_kv_decode(
         raise ValueError("next_token_id must be non-negative")
 
     artifact_integrity = verify_artifact_integrity(manifest_path)
-    manifest_bytes = manifest_path.read_bytes()
+    manifest_bytes = _read_stable_manifest(manifest_path)
     observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     if observed_manifest_sha != artifact_integrity["manifestSha256"]:
         raise RuntimeError("split manifest changed after artifact-integrity preflight")
