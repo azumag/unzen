@@ -73,6 +73,7 @@ export class WorkerRegistry {
     now = Date.now(),
   ): RegisterWorkerOutcome {
     this.assertValidRegistration(registration, connectionId);
+    this.assertValidAbsoluteTime(now, 'registration');
 
     const existing = this.store.getWorker(registration.workerId);
 
@@ -115,6 +116,7 @@ export class WorkerRegistry {
    */
   heartbeat(workerId: WorkerId, generation: WorkerGeneration, now = Date.now()): void {
     this.assertValidHeartbeatIdentity(workerId, generation);
+    this.assertValidAbsoluteTime(now, 'heartbeat');
     const record = this.store.getWorker(workerId);
     if (!record) throw new UnknownWorkerError(workerId);
     if (generation !== record.generation) throw new StaleGenerationError(workerId);
@@ -176,6 +178,7 @@ export class WorkerRegistry {
   /** Workers whose heartbeat is older than `timeoutMs` (excludes revoked). */
   listTimedOut(timeoutMs: number, now = Date.now()): readonly WorkerRecord[] {
     this.assertValidHeartbeatTimeout(timeoutMs);
+    this.assertValidAbsoluteTime(now, 'liveness');
 
     const timedOut: WorkerRecord[] = [];
     for (const worker of this.store.listWorkers()) {
@@ -188,6 +191,7 @@ export class WorkerRegistry {
   /** Revoke a generation: mark revoked, record it, and remove from active set. */
   revokeGeneration(workerId: WorkerId, generation: WorkerGeneration, now = Date.now()): void {
     this.assertValidRevocationIdentity(workerId, generation);
+    this.assertValidAbsoluteTime(now, 'revocation');
     const record = this.store.getWorker(workerId);
     if (record && record.generation === generation) {
       this.revoke(record, now);
@@ -340,6 +344,15 @@ export class WorkerRegistry {
       throw new UnzenError(
         'worker revocation generation must be a non-empty string',
         ErrorCode.ProtocolViolation,
+      );
+    }
+  }
+
+  /** Fail closed before malformed absolute time can enter state or liveness arithmetic. */
+  private assertValidAbsoluteTime(now: number, operation: string): void {
+    if (!Number.isFinite(now) || now < 0) {
+      throw new Error(
+        `${operation} now must be a non-negative finite number; found ${String(now)}`,
       );
     }
   }
