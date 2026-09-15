@@ -174,6 +174,25 @@ export function snapshotStreamCursor(cursor: StreamCursor): StreamCursor {
   return { requestId, lastCommittedSegment, totalSegments, updatedAt };
 }
 
+/**
+ * Capture a committed inference result without retaining or enumerating the
+ * caller object. Tokens are copied by index so hostile runtime arrays cannot
+ * alter the persisted output through iteration hooks or retained references.
+ */
+export function snapshotInferenceResult(result: InferenceResult): InferenceResult {
+  const requestId = result.requestId;
+  const sourceTokens = result.tokens;
+  const tokenCount = sourceTokens.length;
+  const tokens = new Array<number>(tokenCount);
+  for (let index = 0; index < tokenCount; index += 1) {
+    tokens[index] = sourceTokens[index]!;
+  }
+  const text = result.text;
+  const totalTimeMs = result.totalTimeMs;
+  const segmentsCompleted = result.segmentsCompleted;
+  return { requestId, tokens, text, totalTimeMs, segmentsCompleted };
+}
+
 export type RecoveryOwnershipClaim = 'claimed' | 'renewed' | 'owned-by-peer';
 
 /** Patchable fields of an attempt record (append-only otherwise). */
@@ -437,7 +456,8 @@ export class InMemoryRepository implements DurableRepository {
   // --- completion / result ---
 
   getResult(requestId: InferenceRequestId): InferenceResult | undefined {
-    return this.results.get(requestId);
+    const result = this.results.get(requestId);
+    return result === undefined ? undefined : snapshotInferenceResult(result);
   }
 
   commitCompletion(
@@ -451,7 +471,7 @@ export class InMemoryRepository implements DurableRepository {
     // matches, and a result that differs must be surfaced as a violation.
     if (this.results.has(requestId)) return 'duplicate';
     if (!record || record.stage !== expectedStage) return 'conflict';
-    this.results.set(requestId, result);
+    this.results.set(requestId, snapshotInferenceResult(result));
     record.stage = 'completed';
     record.completedAt = Date.now();
     return 'committed';
