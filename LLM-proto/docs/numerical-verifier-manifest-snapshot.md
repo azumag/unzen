@@ -6,6 +6,6 @@ After that preflight, both verifiers still need the manifest JSON to validate th
 
 This closes the remaining gap where the manifest pathname could be replaced with a FIFO, device, directory, or other non-regular object after preflight but before the numerical verifier's second read. Such inputs fail before any `onnxruntime.InferenceSession` is constructed.
 
-The report schemas, numerical tolerances, segment/KV execution semantics, and `decisionStatus=diagnostic-only` behavior are unchanged. This is host-side correctness-gate hardening and is not new physical WebGPU or multi-browser evidence for #167.
+The report schemas, numerical tolerances, and segment/KV execution semantics are unchanged; the cached-decode verifier remains `decisionStatus=diagnostic-only`. This is host-side correctness-gate hardening and is not new physical WebGPU or multi-browser evidence for #167.
 
 Regression coverage is in `tools/tests/test_numerical_verifier_manifest_snapshot.py`.
