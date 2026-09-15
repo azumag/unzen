@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Callable, Iterable
@@ -23,6 +24,7 @@ REPORT_KIND = "unzen-endpoint-source-payload-materialization"
 REPORT_SCHEMA_VERSION = "1.1.0"
 LEGACY_REPORT_SCHEMA_VERSION = "1.0.0"
 DEFAULT_COPY_BUFFER_BYTES = 8 * 1024 * 1024
+DEFAULT_PROBE_REPORT_MAX_BYTES = 16 * 1024 * 1024
 EXPECTED_PROBE_KIND = "unzen-pinned-llama-1b-endpoint-chunk-envelope-probe"
 EXPECTED_PROBE_SCHEMA_VERSION = "1.2.0"
 EXPECTED_SOURCE_GRAPH_SHA256 = (
@@ -183,6 +185,89 @@ def _file_stat_signature(stat_result: os.stat_result) -> tuple[int, int, int, in
         stat_result.st_mtime_ns,
         stat_result.st_ctime_ns,
     )
+
+
+def _read_probe_report_snapshot(
+    path: Path,
+    *,
+    max_bytes: int = DEFAULT_PROBE_REPORT_MAX_BYTES,
+) -> dict[str, object]:
+    """Read one bounded probe report from a stable non-symlink file snapshot."""
+
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    path = path.expanduser().absolute()
+    try:
+        before = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"probe report is not readable: {path}: {error}") from error
+    if stat.S_ISLNK(before.st_mode):
+        raise RuntimeError(f"probe report must not be a symlink: {path}")
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(f"probe report must be a regular file: {path}")
+    if before.st_size > max_bytes:
+        raise RuntimeError(f"probe report exceeds {max_bytes} bytes: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise RuntimeError(f"probe report could not be opened safely: {path}: {error}") from error
+
+    opened: os.stat_result
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"probe report must remain a regular file: {path}")
+        if _file_stat_signature(opened) != _file_stat_signature(before):
+            raise RuntimeError(f"probe report changed between path check and open: {path}")
+        if opened.st_size > max_bytes:
+            raise RuntimeError(f"probe report exceeds {max_bytes} bytes: {path}")
+
+        while True:
+            remaining = max_bytes + 1 - observed
+            block = os.read(fd, min(1024 * 1024, remaining))
+            if not block:
+                break
+            chunks.append(block)
+            observed += len(block)
+            if observed > max_bytes:
+                raise RuntimeError(f"probe report grew beyond the input limit: {path}")
+
+        after_fd = os.fstat(fd)
+        if (
+            _file_stat_signature(after_fd) != _file_stat_signature(opened)
+            or observed != after_fd.st_size
+        ):
+            raise RuntimeError(f"probe report changed while being read: {path}")
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"probe report path disappeared after read: {path}: {error}") from error
+    if (
+        stat.S_ISLNK(after_path.st_mode)
+        or _file_stat_signature(after_path) != _file_stat_signature(opened)
+    ):
+        raise RuntimeError(f"probe report path changed while being read: {path}")
+
+    raw = b"".join(chunks)
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise RuntimeError(f"probe report is not valid UTF-8: {path}") from error
+    try:
+        report = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"probe report is not valid JSON: {path}") from error
+    if not isinstance(report, dict):
+        raise RuntimeError("probe report root must be an object")
+    return report
 
 
 def _require_stable_source_signature(
@@ -1008,9 +1093,7 @@ def main() -> int:
     parser.add_argument("--report-out", type=Path)
     args = parser.parse_args()
 
-    report = json.loads(args.probe_report.read_text(encoding="utf-8"))
-    if not isinstance(report, dict):
-        raise RuntimeError("probe report root must be an object")
+    report = _read_probe_report_snapshot(args.probe_report)
     chunks = chunks_from_probe_report(report, stage_kind=args.stage, tier=args.tier)
     if args.report_out is not None:
         _validate_report_output_path(
