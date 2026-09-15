@@ -584,7 +584,7 @@ describe('DurableCoordinator', () => {
       };
       const late = await buildResult(oldAttemptIdentity, manifest.manifestDigest, { final: true });
       expect((await coord.handleWorkerResult(late)).kind).toBe('identity-mismatch');
-      expect(repo.getResult(submission.requestId)).toBe(committed);
+      expect(repo.getResult(submission.requestId)).toStrictEqual(committed);
       expect(coord.getSuppressions(submission.requestId).length).toBeGreaterThan(0);
     });
   });
