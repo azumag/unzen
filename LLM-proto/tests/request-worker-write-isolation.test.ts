@@ -149,6 +149,16 @@ function plainWorker(record: WorkerRecord) {
   };
 }
 
+function expectProtocolViolation(action: () => unknown): void {
+  let caught: unknown;
+  try {
+    action();
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toMatchObject({ code: ErrorCode.ProtocolViolation });
+}
+
 describe('request and worker repository write isolation', () => {
   it.each(repositories())('%s captures request fields once and keys storage from the owned snapshot', (_name, repo) => {
     const values = requestRecord();
@@ -194,6 +204,36 @@ describe('request and worker repository write isolation', () => {
     });
   });
 
+  it.each(repositories())('%s rejects request identity mutations from get/list while preserving operational writes', (_name, repo) => {
+    const input = requestRecord();
+    const requestId = input.requestId;
+    const changedRequestId = generateRequestId();
+    repo.createRequest(input);
+
+    const direct = repo.getRequest(requestId)!;
+    const listed = repo.listRequests()[0]!;
+    for (const read of [direct, listed]) {
+      expectProtocolViolation(() => Reflect.set(read, 'requestId', changedRequestId));
+      expectProtocolViolation(() => Reflect.deleteProperty(read, 'requestId'));
+      expectProtocolViolation(() => Reflect.defineProperty(read, 'requestId', {
+        value: changedRequestId,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      }));
+      expect(read.requestId).toBe(requestId);
+    }
+
+    direct.stage = 'queued';
+    listed.retryCount = 7;
+    expect(repo.getRequest(requestId)).toMatchObject({
+      requestId,
+      stage: 'queued',
+      retryCount: 7,
+    });
+    expect(repo.getRequest(changedRequestId)).toBeUndefined();
+  });
+
   it.each(repositories())('%s captures worker fields once and keys storage from the owned snapshot', (_name, repo) => {
     const values = workerRecord();
     const { record, reads } = accessorRecord(values);
@@ -235,6 +275,59 @@ describe('request and worker repository write isolation', () => {
       stage: WorkerStage.Busy,
       lastHeartbeat: 42,
       currentSegment: 2,
+    });
+  });
+
+  it.each(repositories())('%s rejects worker identity mutations from get/list and preserves generation fencing', (_name, repo) => {
+    const input = workerRecord();
+    const originalWorkerId = input.workerId;
+    const originalGeneration = input.generation;
+    const changedWorkerId = workerId('changed-read-worker');
+    const changedGeneration = generateWorkerGeneration();
+    repo.putWorker(input);
+
+    const direct = repo.getWorker(originalWorkerId)!;
+    const listed = repo.listWorkers()[0]!;
+    for (const read of [direct, listed]) {
+      for (const [property, value] of [
+        ['workerId', changedWorkerId],
+        ['generation', changedGeneration],
+      ] as const) {
+        expectProtocolViolation(() => Reflect.set(read, property, value));
+        expectProtocolViolation(() => Reflect.deleteProperty(read, property));
+        expectProtocolViolation(() => Reflect.defineProperty(read, property, {
+          value,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        }));
+      }
+      expect(read.workerId).toBe(originalWorkerId);
+      expect(read.generation).toBe(originalGeneration);
+    }
+
+    direct.stage = WorkerStage.Busy;
+    listed.lastHeartbeat = 42;
+    expect(repo.getWorker(originalWorkerId)).toMatchObject({
+      workerId: originalWorkerId,
+      generation: originalGeneration,
+      stage: WorkerStage.Busy,
+      lastHeartbeat: 42,
+    });
+    expect(repo.getWorker(changedWorkerId)).toBeUndefined();
+
+    const stale = repo.getWorker(originalWorkerId)!;
+    const replacementGeneration = generateWorkerGeneration();
+    repo.putWorker({
+      ...repo.getWorker(originalWorkerId)!,
+      generation: replacementGeneration,
+      connectionId: 'replacement-connection',
+      stage: WorkerStage.Idle,
+    });
+    stale.stage = WorkerStage.Disconnected;
+    expect(repo.getWorker(originalWorkerId)).toMatchObject({
+      generation: replacementGeneration,
+      stage: WorkerStage.Idle,
     });
   });
 });
