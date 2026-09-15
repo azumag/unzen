@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 
 from prepare_real_split import _relative_artifact_path, prepare_real_split
 
@@ -44,18 +46,76 @@ TIER_LIMITS = {
 }
 
 
+def _file_stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
 def sha256_file(path: Path) -> str:
+    """Hash one stable regular-file snapshot while preserving symlink inputs."""
+
+    requested = path.expanduser().absolute()
+    resolved = requested.resolve(strict=True)
+    before = resolved.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(f"P0 source graph must be a regular file: {requested}")
+    expected = _file_stat_signature(before)
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(resolved, flags)
+    except OSError as error:
+        raise RuntimeError(f"P0 source graph could not be opened safely: {requested}: {error}") from error
+
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+    observed_bytes = 0
+    opened: os.stat_result
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"P0 source graph must remain a regular file: {requested}")
+        if _file_stat_signature(opened) != expected:
+            raise RuntimeError(f"P0 source graph changed between path check and open: {requested}")
+
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
             digest.update(chunk)
+            observed_bytes += len(chunk)
+
+        after_read = os.fstat(descriptor)
+        if (
+            _file_stat_signature(after_read) != _file_stat_signature(opened)
+            or observed_bytes != after_read.st_size
+        ):
+            raise RuntimeError(f"P0 source graph changed while hashing: {requested}")
+    finally:
+        os.close(descriptor)
+
+    try:
+        current_resolved = requested.resolve(strict=True)
+        after_path = resolved.lstat()
+    except OSError as error:
+        raise RuntimeError(f"P0 source graph path changed while hashing: {requested}: {error}") from error
+    if current_resolved != resolved or _file_stat_signature(after_path) != _file_stat_signature(opened):
+        raise RuntimeError(f"P0 source graph path changed while hashing: {requested}")
     return digest.hexdigest()
 
 
 def verify_pinned_source_graph(source_model_path: Path) -> str:
-    if not source_model_path.is_file():
-        raise FileNotFoundError(f"P0 source graph not found: {source_model_path}")
-    observed = sha256_file(source_model_path)
+    try:
+        observed = sha256_file(source_model_path)
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"P0 source graph not found: {source_model_path}") from error
     if observed != SOURCE_GRAPH_SHA256:
         raise RuntimeError(
             "SmolLM2 P0 source graph does not match the pinned artifact: "
