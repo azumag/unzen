@@ -22,11 +22,11 @@ class RepackOutputSnapshotTest(unittest.TestCase):
             path = Path(tmp) / "segment0.onnx_data"
             payload = b"stable-repacked-payload"
             path.write_bytes(payload)
-            expected_identity = repack_module._file_identity(path.lstat())
+            expected_snapshot = repack_module._file_snapshot(path.lstat())
 
             measured_bytes, measured_sha256 = repack_module._measure_repacked_output(
                 path,
-                expected_identity=expected_identity,
+                expected_snapshot=expected_snapshot,
             )
 
             self.assertEqual(measured_bytes, len(payload))
@@ -37,7 +37,7 @@ class RepackOutputSnapshotTest(unittest.TestCase):
             path = Path(tmp) / "segment0.onnx_data"
             payload = b"same-content-replacement"
             path.write_bytes(payload)
-            expected_identity = repack_module._file_identity(path.lstat())
+            expected_snapshot = repack_module._file_snapshot(path.lstat())
 
             path.unlink()
             path.write_bytes(payload)
@@ -48,7 +48,7 @@ class RepackOutputSnapshotTest(unittest.TestCase):
             ):
                 repack_module._measure_repacked_output(
                     path,
-                    expected_identity=expected_identity,
+                    expected_snapshot=expected_snapshot,
                 )
 
     def test_rejects_non_regular_replacement_before_open(self) -> None:
@@ -57,19 +57,19 @@ class RepackOutputSnapshotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "segment0.onnx_data"
             os.mkfifo(path)
-            expected_identity = repack_module._file_identity(path.lstat())
+            expected_snapshot = repack_module._file_snapshot(path.lstat())
 
             with self.assertRaisesRegex(ValueError, "must remain a regular file"):
                 repack_module._measure_repacked_output(
                     path,
-                    expected_identity=expected_identity,
+                    expected_snapshot=expected_snapshot,
                 )
 
     def test_rejects_in_place_mutation_during_measurement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "segment0.onnx_data"
             path.write_bytes(b"a" * 32)
-            expected_identity = repack_module._file_identity(path.lstat())
+            expected_snapshot = repack_module._file_snapshot(path.lstat())
             real_read = os.read
             mutated = False
 
@@ -86,7 +86,7 @@ class RepackOutputSnapshotTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "changed while measuring"):
                     repack_module._measure_repacked_output(
                         path,
-                        expected_identity=expected_identity,
+                        expected_snapshot=expected_snapshot,
                     )
 
 
