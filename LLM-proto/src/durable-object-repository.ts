@@ -15,7 +15,9 @@ import {
   snapshotInferenceResult,
   snapshotLease,
   snapshotRecoveryOwnership,
+  snapshotRequestRecord,
   snapshotStreamCursor,
+  snapshotWorkerRecord,
   type AttemptPatch,
   type CheckpointStoreResult,
   type CompletionCommit,
@@ -163,7 +165,8 @@ export class DurableObjectRepository implements DurableRepository {
 
   // request state
   createRequest(record: RequestRecord): void {
-    this.storage.put(requestKey(record.requestId), record);
+    const owned = snapshotRequestRecord(record);
+    this.storage.put(requestKey(owned.requestId), owned);
   }
 
   getRequest(requestId: InferenceRequestId): RequestRecord | undefined {
@@ -387,7 +390,8 @@ export class DurableObjectRepository implements DurableRepository {
 
   // worker registration/generation
   putWorker(record: WorkerRecord): void {
-    this.storage.put(workerKey(record.workerId), record);
+    const owned = snapshotWorkerRecord(record);
+    this.storage.put(workerKey(owned.workerId), owned);
   }
 
   getWorker(workerId: WorkerId): WorkerRecord | undefined {
