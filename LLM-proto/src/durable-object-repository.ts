@@ -8,6 +8,7 @@
  */
 
 import {
+  assertRepositoryRequestRouteIdentity,
   captureCheckpointStoreIdentity,
   snapshotAttemptRecord,
   snapshotCancellationRecord,
@@ -206,9 +207,11 @@ export class DurableObjectRepository implements DurableRepository {
 
   // attempt history
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void {
-    const key = attemptsKey(requestId);
+    const owned = snapshotAttemptRecord(attempt);
+    assertRepositoryRequestRouteIdentity(requestId, owned.requestId, 'attempt');
+    const key = attemptsKey(owned.requestId);
     const attempts = this.storage.get<AttemptRecord[]>(key) ?? [];
-    attempts.push(snapshotAttemptRecord(attempt));
+    attempts.push(owned);
     this.storage.put(key, attempts);
   }
 
@@ -341,7 +344,9 @@ export class DurableObjectRepository implements DurableRepository {
 
   // cancellation
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void {
-    this.storage.put(cancellationKey(requestId), snapshotCancellationRecord(record));
+    const owned = snapshotCancellationRecord(record);
+    assertRepositoryRequestRouteIdentity(requestId, owned.requestId, 'cancellation');
+    this.storage.put(cancellationKey(owned.requestId), owned);
   }
 
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined {
