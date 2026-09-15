@@ -192,15 +192,15 @@ def audit_capture(
     *,
     require_component_anchored_source: bool = False,
     require_component_anchored_artifacts: bool = False,
-    bundle_verifier: Callable[[Path], dict[str, object]] = verify_capture_bundle,
-    source_verifier: Callable[[Path, Path], dict[str, object]] = verify_capture_source,
+    bundle_verifier: Callable[[Path], object] = verify_capture_bundle,
+    source_verifier: Callable[[Path, Path], object] = verify_capture_source,
 ) -> dict[str, object]:
     """Verify the published bundle and bind it to its original source model."""
 
     capture = capture_dir.expanduser().absolute()
     full_model = full_model_path.expanduser().absolute()
 
-    first_bundle = bundle_verifier(capture)
+    first_bundle = _require_mapping(bundle_verifier(capture), field="bundle")
     _require_report_contract(
         first_bundle,
         field="bundle",
@@ -245,7 +245,10 @@ def audit_capture(
             field="artifact snapshot verification",
         )
 
-    source = source_verifier(capture, full_model)
+    source = _require_mapping(
+        source_verifier(capture, full_model),
+        field="source",
+    )
     _require_report_contract(
         source,
         field="source",
@@ -336,7 +339,10 @@ def audit_capture(
         field="capture status",
     )
 
-    final_bundle = bundle_verifier(capture)
+    final_bundle = _require_mapping(
+        bundle_verifier(capture),
+        field="post-source bundle",
+    )
     _require_report_contract(
         final_bundle,
         field="post-source bundle",
@@ -436,7 +442,10 @@ def audit_capture(
         field="artifact audit path-resolution mode after source audit",
     )
 
-    postflight_source = source_verifier(capture, full_model)
+    postflight_source = _require_mapping(
+        source_verifier(capture, full_model),
+        field="post-bundle source",
+    )
     _require_report_contract(
         postflight_source,
         field="post-bundle source",
