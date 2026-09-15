@@ -163,14 +163,14 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
     layout = layout_probe.build_report(source_model)
     hidden_size, physical, tiles = _validate_candidate(layout)
     inferred_source, source_weight_offset, source_weight_length = embedding_cpu._source_embedding_contract(
-        source_model, layout
+        source_model,
+        layout,
+        expected_graph_bytes=SOURCE_GRAPH_BYTES,
     )
     if inferred_source != source_external_data:
         raise RuntimeError("explicit source external-data path does not match source graph location")
     if source_weight_offset != 0 or source_weight_length != embedding_cpu.SOURCE_WEIGHT_BYTES:
         raise RuntimeError("pinned embedding source range drifted")
-    if source_model.stat().st_size != SOURCE_GRAPH_BYTES:
-        raise RuntimeError("pinned source graph byte length drifted")
 
     source_identity = layout.get("pinnedSourceExternalDataIdentity")
     if not isinstance(source_identity, dict):
