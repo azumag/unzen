@@ -177,8 +177,9 @@ describe('Pipeline run envelope', () => {
       { retryDelayMs: 0 },
     );
 
-    segments[0].estimatedVramMB = 99_999;
-    segments[0].index = 99;
+    const mutableFirst = segments[0] as unknown as { index: number; estimatedVramMB: number };
+    mutableFirst.estimatedVramMB = 99_999;
+    mutableFirst.index = 99;
     segments.length = 1;
 
     const result = await pipeline.run(makeRequest(2, 0, 'req-basic-segments'));
