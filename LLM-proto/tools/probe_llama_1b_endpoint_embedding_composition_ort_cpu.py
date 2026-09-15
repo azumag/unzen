@@ -47,6 +47,43 @@ def _identity(s: os.stat_result) -> tuple[int,int,int,int,int]:
     return (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
 
 
+def _source_graph_identity(s: os.stat_result) -> tuple[int,int,int,int,int,int,int]:
+    return (s.st_mode,s.st_dev,s.st_ino,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+
+
+def _read_source_graph_snapshot(source_model: Path) -> tuple[Path,bytes]:
+    """Read one stable regular-file snapshot without reopening the source graph."""
+    requested=source_model
+    resolved=requested.resolve(strict=True)
+    expected=resolved.stat()
+    if not stat.S_ISREG(expected.st_mode):
+        raise RuntimeError(f"source graph must be a regular file: {resolved}")
+    flags=os.O_RDONLY | getattr(os,"O_BINARY",0) | getattr(os,"O_NONBLOCK",0) | getattr(os,"O_NOFOLLOW",0)
+    fd=os.open(resolved,flags)
+    try:
+        with os.fdopen(fd,"rb") as handle:
+            fd=-1
+            opened=os.fstat(handle.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise RuntimeError(f"source graph must be a regular file: {resolved}")
+            if _source_graph_identity(opened) != _source_graph_identity(expected):
+                raise RuntimeError("source graph changed while opening")
+            graph_bytes=handle.read()
+            after=os.fstat(handle.fileno())
+            if _source_graph_identity(after) != _source_graph_identity(opened):
+                raise RuntimeError("source graph changed while reading")
+    finally:
+        if fd>=0: os.close(fd)
+    try:
+        current_resolved=requested.resolve(strict=True)
+        current=current_resolved.stat()
+    except (FileNotFoundError,OSError):
+        raise RuntimeError("source graph path changed after reading") from None
+    if current_resolved != resolved or _source_graph_identity(current) != _source_graph_identity(after):
+        raise RuntimeError("source graph path changed after reading")
+    return resolved,graph_bytes
+
+
 def _sha256_fd(fd: int, size: int) -> str:
     h=hashlib.sha256(); off=0
     while off<size:
@@ -61,12 +98,7 @@ def _external_map(t: TensorProto) -> dict[str,str]:
 
 
 def _source_embedding_contract(source_model: Path, layout: dict[str,object]) -> tuple[Path,int,int]:
-    source_model = source_model.resolve()
-    before = source_model.stat()
-    graph_bytes = source_model.read_bytes()
-    after = source_model.stat()
-    if _identity(before) != _identity(after):
-        raise RuntimeError("source graph changed while reading")
+    source_model,graph_bytes=_read_source_graph_snapshot(source_model)
     observed=hashlib.sha256(graph_bytes).hexdigest()
     expected=layout.get("sourceGraphSha256")
     if observed != expected:
