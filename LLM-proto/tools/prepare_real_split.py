@@ -10,6 +10,7 @@ need to download/mount the original full-model external-data blob.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -157,6 +158,74 @@ def _open_repack_destination(output_path: Path) -> BinaryIO:
             os.close(descriptor)
 
 
+def _file_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return (metadata.st_dev, metadata.st_ino)
+
+
+def _file_snapshot(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _measure_repacked_output(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int],
+) -> tuple[int, str]:
+    """Measure one repacked artifact from the inode created by this repack run."""
+
+    before_path = path.lstat()
+    if not stat.S_ISREG(before_path.st_mode):
+        raise ValueError(f"repacked external-data must remain a regular file: {path}")
+    if _file_identity(before_path) != expected_identity:
+        raise RuntimeError(f"repacked external-data pathname changed after repack: {path}")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"repacked external-data must remain a regular file: {path}")
+        if _file_identity(opened) != expected_identity:
+            raise RuntimeError(
+                f"repacked external-data changed between path check and open: {path}"
+            )
+
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, COPY_CHUNK_BYTES)
+            if not chunk:
+                break
+            digest.update(chunk)
+
+        after_read = os.fstat(descriptor)
+        if _file_snapshot(after_read) != _file_snapshot(opened):
+            raise RuntimeError(f"repacked external-data changed while measuring: {path}")
+
+        after_path = path.lstat()
+        if _file_snapshot(after_path) != _file_snapshot(after_read):
+            raise RuntimeError(
+                f"repacked external-data pathname changed during measurement: {path}"
+            )
+        return after_read.st_size, digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
 def repack_segment_external_data(
     model_path: Path,
     source_model_dir: Path,
@@ -226,6 +295,7 @@ def repack_segment_external_data(
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
     source_keys: dict[Path, str] = {}
+    destination_identity: tuple[int, int] | None = None
     try:
         # Open and size-check every source before the destination exists or is
         # truncated. Missing/unreadable/truncated inputs therefore fail without
@@ -272,16 +342,25 @@ def repack_segment_external_data(
                     offset=destination_offset,
                     length=length,
                 )
+            destination.flush()
+            destination_identity = _file_identity(os.fstat(destination.fileno()))
     finally:
         for source in open_sources.values():
             source.close()
 
+    if destination_identity is None:
+        raise RuntimeError("repack destination identity was not captured")
+
     onnx.save_model(model, str(model_path))
     check_model_for_runtime(model_path)
+    output_bytes, output_sha256 = _measure_repacked_output(
+        output_data_path,
+        expected_identity=destination_identity,
+    )
     return {
         "location": output_data_name,
-        "bytes": output_data_path.stat().st_size,
-        "sha256": sha256_file(output_data_path),
+        "bytes": output_bytes,
+        "sha256": output_sha256,
         "uniqueSourceRanges": len(range_offsets),
     }
 
