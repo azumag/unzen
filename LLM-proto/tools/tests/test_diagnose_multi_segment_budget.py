@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
@@ -322,8 +323,6 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
             ), patch.object(
                 diagnostic_module, "_initializer_rows", return_value=initializer_rows
             ), patch.object(
-                diagnostic_module, "sha256_file", return_value="a" * 64
-            ), patch.object(
                 diagnostic_module,
                 "_endpoint_isolation_report",
                 return_value={"available": False, "decisionStatus": "diagnostic-only"},
@@ -339,7 +338,10 @@ class DiagnoseMultiSegmentBudgetTest(unittest.TestCase):
                 report["worstSingleLayerSpans"][0]["topExternalInitializers"],
                 initializer_rows,
             )
-            self.assertEqual(report["sourceModel"]["graphSha256"], "a" * 64)
+            self.assertEqual(
+                report["sourceModel"]["graphSha256"],
+                hashlib.sha256(b"graph").hexdigest(),
+            )
 
 
 if __name__ == "__main__":
