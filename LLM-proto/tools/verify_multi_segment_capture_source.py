@@ -46,14 +46,9 @@ PATH_RESOLUTION_FINAL_ONLY = "final-component-only"
 
 
 def _json_object(path: Path, *, field: str) -> dict[str, object]:
-    if not path.is_file():
-        raise FileNotFoundError(f"{field} not found: {path}")
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"{field} is not valid UTF-8 JSON: {path}") from error
-    if not isinstance(value, dict):
-        raise ValueError(f"{field} must contain a JSON object")
+    """Compatibility projection of the descriptor-stable JSON reader."""
+
+    value, _digest = _stable_json_object(path, field=field)
     return value
 
 
