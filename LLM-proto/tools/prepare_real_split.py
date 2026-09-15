@@ -158,10 +158,6 @@ def _open_repack_destination(output_path: Path) -> BinaryIO:
             os.close(descriptor)
 
 
-def _file_identity(metadata: os.stat_result) -> tuple[int, int]:
-    return (metadata.st_dev, metadata.st_ino)
-
-
 def _file_snapshot(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
     return (
         metadata.st_dev,
@@ -177,14 +173,14 @@ def _file_snapshot(metadata: os.stat_result) -> tuple[int, int, int, int, int, i
 def _measure_repacked_output(
     path: Path,
     *,
-    expected_identity: tuple[int, int],
+    expected_snapshot: tuple[int, int, int, int, int, int, int],
 ) -> tuple[int, str]:
-    """Measure one repacked artifact from the inode created by this repack run."""
+    """Measure one repacked artifact from the exact file snapshot written here."""
 
     before_path = path.lstat()
     if not stat.S_ISREG(before_path.st_mode):
         raise ValueError(f"repacked external-data must remain a regular file: {path}")
-    if _file_identity(before_path) != expected_identity:
+    if _file_snapshot(before_path) != expected_snapshot:
         raise RuntimeError(f"repacked external-data pathname changed after repack: {path}")
 
     flags = os.O_RDONLY
@@ -200,7 +196,7 @@ def _measure_repacked_output(
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
             raise ValueError(f"repacked external-data must remain a regular file: {path}")
-        if _file_identity(opened) != expected_identity:
+        if _file_snapshot(opened) != expected_snapshot:
             raise RuntimeError(
                 f"repacked external-data changed between path check and open: {path}"
             )
@@ -295,7 +291,7 @@ def repack_segment_external_data(
     range_offsets: dict[tuple[str, int, int], int] = {}
     open_sources: dict[str, BinaryIO] = {}
     source_keys: dict[Path, str] = {}
-    destination_identity: tuple[int, int] | None = None
+    destination_snapshot: tuple[int, int, int, int, int, int, int] | None = None
     try:
         # Open and size-check every source before the destination exists or is
         # truncated. Missing/unreadable/truncated inputs therefore fail without
@@ -343,19 +339,19 @@ def repack_segment_external_data(
                     length=length,
                 )
             destination.flush()
-            destination_identity = _file_identity(os.fstat(destination.fileno()))
+            destination_snapshot = _file_snapshot(os.fstat(destination.fileno()))
     finally:
         for source in open_sources.values():
             source.close()
 
-    if destination_identity is None:
-        raise RuntimeError("repack destination identity was not captured")
+    if destination_snapshot is None:
+        raise RuntimeError("repack destination snapshot was not captured")
 
     onnx.save_model(model, str(model_path))
     check_model_for_runtime(model_path)
     output_bytes, output_sha256 = _measure_repacked_output(
         output_data_path,
-        expected_identity=destination_identity,
+        expected_snapshot=destination_snapshot,
     )
     return {
         "location": output_data_name,
