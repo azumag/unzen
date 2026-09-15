@@ -36,6 +36,23 @@ class VerifySplitOnnxManifestSnapshotTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must be a regular file"):
                 verify_module._load_manifest_snapshot(path)
 
+    def test_rejects_manifest_before_creating_onnx_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "split-manifest.json"
+            manifest.mkdir()
+
+            with patch.object(verify_module.ort, "InferenceSession") as session:
+                with self.assertRaisesRegex(ValueError, "must be a regular file"):
+                    verify_module.verify_split(
+                        Path("full.onnx"),
+                        Path("segment0.onnx"),
+                        Path("segment1.onnx"),
+                        manifest,
+                        [1],
+                    )
+
+            session.assert_not_called()
+
     def test_rejects_path_replacement_between_check_and_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
