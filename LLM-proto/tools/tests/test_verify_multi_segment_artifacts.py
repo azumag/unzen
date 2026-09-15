@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -134,6 +135,37 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
                     verify_artifact_integrity(manifest_path)
 
             self.assertEqual(calls, 2)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX FIFO support")
+    def test_rejects_fifo_graph_without_blocking_on_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = self._fixture(root)
+            graph_path = root / "segment0.onnx"
+            graph_path.unlink()
+            os.mkfifo(graph_path)
+
+            with self.assertRaisesRegex(ValueError, "artifact must be a regular file"):
+                verify_artifact_integrity(manifest_path)
+
+    def test_preserves_missing_graph_and_external_data_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = self._fixture(root)
+            (root / "segment0.onnx").unlink()
+
+            with self.subTest(kind="graph"):
+                with self.assertRaisesRegex(FileNotFoundError, "segment graph not found"):
+                    verify_artifact_integrity(manifest_path)
+
+            manifest_path = self._fixture(root)
+            (root / "segment0.onnx_data").unlink()
+            with self.subTest(kind="external data"):
+                with self.assertRaisesRegex(
+                    FileNotFoundError,
+                    "segment external data not found",
+                ):
+                    verify_artifact_integrity(manifest_path)
 
     def test_rejects_graph_modified_after_manifest_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
