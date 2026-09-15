@@ -36,14 +36,18 @@ verifier parse one manifest while reporting a digest for another path resolution
 and an in-place manifest mutation that changes the descriptor fingerprint fails
 before any segment artifact is verified.
 
-Each graph and external-data file is likewise opened once for measurement. Its
-byte size and SHA-256 are derived from that same descriptor, and descriptor
-metadata is checked again after hashing. A pathname replacement after open
-therefore cannot mix a digest from one filesystem object with a size from
-another, while an in-place mutation that changes the observed descriptor
-metadata fails closed. These checks pin the integrity report to the filesystem
-objects that were actually read; they do not lock pathnames against later
-replacement by another process after verification finishes.
+Each graph and external-data path is also opened directly through a read-only,
+nonblocking descriptor. The opened descriptor itself must be a regular file
+before any read occurs, so verification does not depend on an earlier pathname
+`is_file()` check and a path swap to a FIFO or other special file cannot turn the
+preflight into a blocking read. Byte size and SHA-256 are then derived from that
+same descriptor, and descriptor metadata is checked again after hashing. A
+pathname replacement after open therefore cannot mix a digest from one
+filesystem object with a size from another, while an in-place mutation that
+changes the observed descriptor metadata fails closed. These checks pin the
+integrity report to the filesystem objects that were actually read; they do not
+lock pathnames against later replacement by another process after verification
+finishes.
 
 A successful report records the manifest digest, every measured graph and
 external-data size/digest, the measured maximum segment size, and the effective
