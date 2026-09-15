@@ -195,7 +195,7 @@ export function assertMutableRepositoryIdentityProperty(
 ): void {
   const immutable = recordKind === 'request'
     ? property === 'requestId'
-    : property === 'workerId' || property === 'generation';
+    : property === 'workerId' || property === 'generation' || property === 'connectionId';
   if (!immutable) return;
   throw new UnzenError(
     `repository ${recordKind} identity field ${String(property)} is immutable`,
