@@ -162,7 +162,7 @@ export class WorkerPool {
 
   /**
    * Keep routing identity/capability fields behind a runtime fence while
-   * retaining the legacy live-write contract for operational fields.
+   * retaining validated live-write compatibility for operational fields.
    *
    * The view is cached per stored record so repeated reads preserve object
    * identity. Re-registration installs a fresh stored record and therefore a
@@ -175,14 +175,17 @@ export class WorkerPool {
     const view = new Proxy(worker, {
       set(target, property, value): boolean {
         WorkerPool.assertMutableViewProperty(property);
+        WorkerPool.assertValidOperationalViewValue(property, value);
         return Reflect.set(target, property, value);
       },
       deleteProperty(target, property): boolean {
         WorkerPool.assertMutableViewProperty(property);
+        WorkerPool.assertDeletableOperationalViewProperty(property);
         return Reflect.deleteProperty(target, property);
       },
       defineProperty(target, property, descriptor): boolean {
         WorkerPool.assertMutableViewProperty(property);
+        WorkerPool.assertValidOperationalViewDescriptor(property, descriptor);
         return Reflect.defineProperty(target, property, descriptor);
       },
     });
@@ -194,6 +197,65 @@ export class WorkerPool {
   private static assertMutableViewProperty(property: PropertyKey): void {
     if (property !== 'id' && property !== 'tier' && property !== 'vramMB') return;
     throw new Error(`WorkerPool protected field ${String(property)} is immutable`);
+  }
+
+  /** Validate operational live writes before they can corrupt routing/liveness state. */
+  private static assertValidOperationalViewValue(property: PropertyKey, value: unknown): void {
+    if (property === 'status') {
+      if (
+        value !== WorkerStatus.IDLE &&
+        value !== WorkerStatus.BUSY &&
+        value !== WorkerStatus.DISCONNECTED
+      ) {
+        throw new Error('WorkerPool status must be a valid WorkerStatus');
+      }
+      return;
+    }
+
+    if (property === 'lastHeartbeat') {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw new Error('WorkerPool lastHeartbeat must be a non-negative finite number');
+      }
+      return;
+    }
+
+    if (property === 'currentSegment') {
+      if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 0)) {
+        throw new Error('WorkerPool currentSegment must be undefined or a non-negative safe integer');
+      }
+    }
+  }
+
+  /** Required liveness/routing fields cannot disappear through a live view. */
+  private static assertDeletableOperationalViewProperty(property: PropertyKey): void {
+    if (property !== 'status' && property !== 'lastHeartbeat') return;
+    throw new Error(`WorkerPool required field ${String(property)} cannot be deleted`);
+  }
+
+  /**
+   * Prevent descriptor-based validation bypasses or locks on operational state.
+   * Existing ordinary data-property attributes may be retained by omitting them.
+   */
+  private static assertValidOperationalViewDescriptor(
+    property: PropertyKey,
+    descriptor: PropertyDescriptor,
+  ): void {
+    if (property !== 'status' && property !== 'lastHeartbeat' && property !== 'currentSegment') {
+      return;
+    }
+
+    if (descriptor.get !== undefined || descriptor.set !== undefined) {
+      throw new Error(`WorkerPool operational field ${String(property)} cannot be an accessor`);
+    }
+    if (descriptor.writable === false || descriptor.configurable === false) {
+      throw new Error(`WorkerPool operational field ${String(property)} must remain mutable`);
+    }
+    if (descriptor.enumerable === false) {
+      throw new Error(`WorkerPool operational field ${String(property)} must remain enumerable`);
+    }
+    if (Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+      WorkerPool.assertValidOperationalViewValue(property, descriptor.value);
+    }
   }
 
   /**
