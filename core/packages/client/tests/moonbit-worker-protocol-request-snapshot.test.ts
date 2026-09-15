@@ -45,7 +45,7 @@ describe('validateMoonbitWorkerRequest snapshot boundary', () => {
       args,
       moonbitAbi,
     });
-    expect(result.msg === request).toBe(false);
+    expect(Object.is(result.msg, request)).toBe(false);
     expect(result.msg.wasm).toBe(wasm);
     expect(result.msg.args).toBe(args);
     expect(result.msg.moonbitAbi).toBe(moonbitAbi);
