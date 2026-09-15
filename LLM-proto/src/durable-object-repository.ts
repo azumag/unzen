@@ -8,8 +8,10 @@
  */
 
 import {
+  captureCheckpointStoreIdentity,
   snapshotAttemptRecord,
   snapshotCancellationRecord,
+  snapshotCheckpointEnvelope,
   snapshotInferenceResult,
   snapshotLease,
   snapshotRecoveryOwnership,
@@ -261,17 +263,19 @@ export class DurableObjectRepository implements DurableRepository {
 
   // checkpoints
   putCheckpoint(envelope: CheckpointEnvelope): CheckpointStoreResult {
-    const key = checkpointKey(envelope.requestId, envelope.segmentIndex);
+    const identity = captureCheckpointStoreIdentity(envelope);
+    const key = checkpointKey(identity.requestId, identity.segmentIndex);
     const existing = this.storage.get<CheckpointEnvelope>(key);
     if (existing) {
-      return existing.payloadDigest === envelope.payloadDigest ? 'unchanged' : 'conflict';
+      return existing.payloadDigest === identity.payloadDigest ? 'unchanged' : 'conflict';
     }
-    this.storage.put(key, envelope);
+    this.storage.put(key, snapshotCheckpointEnvelope(envelope, identity));
     return 'stored';
   }
 
   getCheckpoint(requestId: InferenceRequestId, segmentIndex: number): CheckpointEnvelope | undefined {
-    return this.storage.get<CheckpointEnvelope>(checkpointKey(requestId, segmentIndex));
+    const envelope = this.storage.get<CheckpointEnvelope>(checkpointKey(requestId, segmentIndex));
+    return envelope === undefined ? undefined : snapshotCheckpointEnvelope(envelope);
   }
 
   deleteCheckpoint(requestId: InferenceRequestId, segmentIndex: number): void {
@@ -285,18 +289,20 @@ export class DurableObjectRepository implements DurableRepository {
   }
 
   listCheckpoints(requestId: InferenceRequestId): readonly CheckpointEnvelope[] {
-    return this.listValues<CheckpointEnvelope>(checkpointPrefix(requestId));
+    return this.listValues<CheckpointEnvelope>(checkpointPrefix(requestId))
+      .map((envelope) => snapshotCheckpointEnvelope(envelope));
   }
 
   allCheckpoints(): readonly CheckpointEnvelope[] {
-    return this.listValues<CheckpointEnvelope>(P.checkpoint);
+    return this.listValues<CheckpointEnvelope>(P.checkpoint)
+      .map((envelope) => snapshotCheckpointEnvelope(envelope));
   }
 
   collectExpiredCheckpoints(now: number): readonly CheckpointEnvelope[] {
     const expired: CheckpointEnvelope[] = [];
     for (const [key, envelope] of this.storage.list<CheckpointEnvelope>({ prefix: P.checkpoint })) {
       if (now >= envelope.createdAt + envelope.ttlMs) {
-        expired.push(envelope);
+        expired.push(snapshotCheckpointEnvelope(envelope));
         this.storage.delete(key);
       }
     }
