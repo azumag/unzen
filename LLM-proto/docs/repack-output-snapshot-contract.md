@@ -2,10 +2,10 @@
 
 `tools/prepare_real_split.py::repack_segment_external_data()` produces one compact external-data file per segment. The manifest entry for that file contains both its byte size and SHA-256 digest, so those fields must describe the same artifact object that the repack operation wrote.
 
-After the destination stream is flushed, the repack path records the destination inode identity from the still-open descriptor. After the segment graph is saved and runtime-checked, reporting reopens the external-data file read-only with nonblocking/no-follow flags where supported and requires:
+After the destination stream is flushed, the repack path records a content-relevant filesystem snapshot from the still-open descriptor: device/inode identity, file type and link count, byte size, and modification/change timestamps. After the segment graph is saved and runtime-checked, reporting reopens the external-data file read-only with nonblocking/no-follow flags where supported and requires:
 
-- the pathname to still identify the inode created/updated by this repack run;
-- the opened descriptor to be a regular file with that identity;
+- the pathname to still match the snapshot captured by this repack run;
+- the opened descriptor to be a regular file with the same snapshot;
 - file metadata relevant to content identity to remain stable while bytes are hashed; and
 - the pathname snapshot after hashing to match the descriptor snapshot.
 
