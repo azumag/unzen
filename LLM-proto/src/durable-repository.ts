@@ -206,7 +206,8 @@ export function assertMutableRepositoryIdentityProperty(
       property === 'generation' ||
       property === 'connectionId' ||
       property === 'tier' ||
-      property === 'vramMB';
+      property === 'vramMB' ||
+      property === 'registeredAt';
   if (!immutable) return;
   throw new UnzenError(
     `repository ${recordKind} protected field ${String(property)} is immutable`,
