@@ -28,7 +28,7 @@
  * behavior and the test double for the acceptance suite.
  */
 
-import type { ErrorCode } from './errors.js';
+import { ErrorCode, UnzenError } from './errors.js';
 import type { AttemptId, IdempotencyKey, LeaseId } from './ids.js';
 import type { RequestStage } from './request-state-machine.js';
 import type { WorkerId, InferenceRequestId, InferenceResult } from './types.js';
@@ -159,6 +159,26 @@ export function snapshotCancellationRecord(record: CancellationRecord): Cancella
     });
   }
   return owned;
+}
+
+/**
+ * Fail closed when a repository route key disagrees with the request identity
+ * captured from the record that would be persisted under that route.
+ *
+ * The comparison is deliberately exact: no trimming, coercion, or diagnostic
+ * interpolation of untrusted values occurs before the ProtocolViolation is
+ * raised. Callers should persist the same owned record that passed this check.
+ */
+export function assertRepositoryRequestRouteIdentity(
+  routeRequestId: InferenceRequestId,
+  recordRequestId: InferenceRequestId,
+  recordKind: 'attempt' | 'cancellation',
+): void {
+  if (routeRequestId === recordRequestId) return;
+  throw new UnzenError(
+    `repository ${recordKind} requestId does not match route requestId`,
+    ErrorCode.ProtocolViolation,
+  );
 }
 
 /**
@@ -491,9 +511,11 @@ export class InMemoryRepository implements DurableRepository {
   // --- attempt history ---
 
   appendAttempt(requestId: InferenceRequestId, attempt: AttemptRecord): void {
-    const list = this.attempts.get(requestId) ?? [];
-    list.push(snapshotAttemptRecord(attempt));
-    this.attempts.set(requestId, list);
+    const owned = snapshotAttemptRecord(attempt);
+    assertRepositoryRequestRouteIdentity(requestId, owned.requestId, 'attempt');
+    const list = this.attempts.get(owned.requestId) ?? [];
+    list.push(owned);
+    this.attempts.set(owned.requestId, list);
   }
 
   listAttempts(requestId: InferenceRequestId): readonly AttemptRecord[] {
@@ -623,7 +645,9 @@ export class InMemoryRepository implements DurableRepository {
   // --- cancellation ---
 
   putCancellation(requestId: InferenceRequestId, record: CancellationRecord): void {
-    this.cancellations.set(requestId, snapshotCancellationRecord(record));
+    const owned = snapshotCancellationRecord(record);
+    assertRepositoryRequestRouteIdentity(requestId, owned.requestId, 'cancellation');
+    this.cancellations.set(owned.requestId, owned);
   }
 
   getCancellation(requestId: InferenceRequestId): CancellationRecord | undefined {
