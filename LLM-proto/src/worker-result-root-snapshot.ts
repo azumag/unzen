@@ -23,7 +23,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function memoize<T>(read: () => T): () => T {
   let captured = false;
-  let value: T;
+  let value!: T;
   return () => {
     if (!captured) {
       value = read();
