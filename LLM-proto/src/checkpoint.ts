@@ -39,13 +39,7 @@ export class CheckpointStore {
     }
   }
 
-  /**
-   * Capture and validate every consumed checkpoint field exactly once.
-   *
-   * This is intentionally separate from persistence: public validation callers
-   * do not pay for a hidden-state byte copy, while save() can bind validation,
-   * map identity, and the persisted snapshot to this same captured envelope.
-   */
+  /** Capture and validate every consumed checkpoint field exactly once. */
   private static captureValidatedCheckpoint(checkpoint: unknown): ValidatedCheckpointCapture {
     if (
       typeof checkpoint !== 'object' ||
@@ -126,10 +120,28 @@ export class CheckpointStore {
   }
 
   /**
-   * Validate an untrusted checkpoint envelope without mutating the store.
-   * Pipeline result boundaries use the same authority as save() so malformed
-   * worker payloads are rejected before a worker becomes reusable.
+   * Validate an untrusted checkpoint and return an ownership-isolated snapshot.
+   *
+   * This is the authority for pipeline result boundaries: assignment identity,
+   * payload validation, and the value later handed to save() can all refer to one
+   * captured envelope instead of rereading caller-controlled accessors.
    */
+  static snapshotValidatedCheckpoint(checkpoint: unknown): Checkpoint {
+    const captured = CheckpointStore.captureValidatedCheckpoint(checkpoint);
+    return {
+      requestId: captured.requestId,
+      segmentIndex: captured.segmentIndex,
+      hiddenStates: captured.hiddenStates.slice(),
+      metadata: {
+        shape: [...captured.metadata.shape],
+        dtype: captured.metadata.dtype,
+        sequenceLength: captured.metadata.sequenceLength,
+        timestamp: captured.metadata.timestamp,
+      },
+    };
+  }
+
+  /** Validate an untrusted checkpoint envelope without mutating the store. */
   static assertValidCheckpoint(checkpoint: unknown): asserts checkpoint is Checkpoint {
     CheckpointStore.captureValidatedCheckpoint(checkpoint);
   }
@@ -157,25 +169,14 @@ export class CheckpointStore {
 
   /** Save a checkpoint produced by a completed segment. */
   save(checkpoint: Checkpoint): void {
-    const captured = CheckpointStore.captureValidatedCheckpoint(checkpoint);
-    const ownedCheckpoint: Checkpoint = {
-      requestId: captured.requestId,
-      segmentIndex: captured.segmentIndex,
-      hiddenStates: captured.hiddenStates.slice(),
-      metadata: {
-        shape: [...captured.metadata.shape],
-        dtype: captured.metadata.dtype,
-        sequenceLength: captured.metadata.sequenceLength,
-        timestamp: captured.metadata.timestamp,
-      },
-    };
+    const ownedCheckpoint = CheckpointStore.snapshotValidatedCheckpoint(checkpoint);
 
-    let checkpoints = this.store.get(captured.requestId);
+    let checkpoints = this.store.get(ownedCheckpoint.requestId);
     if (!checkpoints) {
       checkpoints = new Map<number, Checkpoint>();
-      this.store.set(captured.requestId, checkpoints);
+      this.store.set(ownedCheckpoint.requestId, checkpoints);
     }
-    checkpoints.set(captured.segmentIndex, ownedCheckpoint);
+    checkpoints.set(ownedCheckpoint.segmentIndex, ownedCheckpoint);
   }
 
   /** Retrieve a specific checkpoint by request and segment index. */
