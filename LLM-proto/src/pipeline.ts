@@ -23,6 +23,7 @@ import {
 import type { SegmentAssignment, SegmentResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
+import { snapshotSpanSegments } from './span-router.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
 
 /**
@@ -123,17 +124,89 @@ function resolvePipelineOptions(options: unknown): PipelineOptions {
   };
 }
 
+function capturePipelineRunRequest(
+  request: InferenceRequest,
+  expectedTotalSegments: number,
+): InferenceRequest {
+  if (!isRecord(request)) {
+    throw new TypeError('Pipeline request must be a non-null, non-array object');
+  }
+
+  const requestId = request.id;
+  const totalSegments = request.totalSegments;
+  const initialCurrentSegment = request.currentSegment;
+
+  if (typeof requestId !== 'string' || requestId.trim().length === 0) {
+    throw new TypeError('Pipeline request id must be a non-empty string');
+  }
+  if (!isNonNegativeSafeInteger(totalSegments)) {
+    throw new PipelineError(
+      'Pipeline request totalSegments must be a non-negative safe integer',
+      requestId as InferenceRequestId,
+      -1,
+    );
+  }
+  if (!isNonNegativeSafeInteger(initialCurrentSegment)) {
+    throw new PipelineError(
+      'Pipeline request currentSegment must be a non-negative safe integer',
+      requestId as InferenceRequestId,
+      -1,
+    );
+  }
+  if (initialCurrentSegment > totalSegments) {
+    throw new PipelineError(
+      `Pipeline request currentSegment ${initialCurrentSegment} exceeds totalSegments ${totalSegments}`,
+      requestId as InferenceRequestId,
+      -1,
+    );
+  }
+  if (totalSegments !== expectedTotalSegments) {
+    throw new PipelineError(
+      `Pipeline request totalSegments ${totalSegments} does not match pipeline segment count ${expectedTotalSegments}`,
+      requestId as InferenceRequestId,
+      -1,
+    );
+  }
+
+  let currentSegment = initialCurrentSegment;
+  return {
+    id: requestId as InferenceRequestId,
+    get prompt() {
+      return request.prompt;
+    },
+    get createdAt() {
+      return request.createdAt;
+    },
+    get status() {
+      return request.status;
+    },
+    set status(value: InferenceStatus) {
+      request.status = value;
+    },
+    get currentSegment() {
+      return currentSegment;
+    },
+    set currentSegment(value: number) {
+      currentSegment = value;
+      request.currentSegment = value;
+    },
+    totalSegments,
+  };
+}
+
 export class Pipeline {
+  private readonly segments: readonly SegmentConfig[];
   private readonly options: PipelineOptions;
 
   constructor(
-    private readonly segments: readonly SegmentConfig[],
+    segments: readonly SegmentConfig[],
     private readonly workerPool: WorkerPool,
     private readonly checkpointStore: CheckpointStore,
     private readonly executor: SegmentExecutor,
     options?: Partial<PipelineOptions>,
   ) {
     this.options = resolvePipelineOptions(options);
+    this.segments = snapshotSpanSegments(segments, 'Pipeline');
   }
 
   /**
@@ -142,15 +215,16 @@ export class Pipeline {
    * Cleans up checkpoints on both success and failure.
    */
   async run(request: InferenceRequest): Promise<InferenceResult> {
+    const runRequest = capturePipelineRunRequest(request, this.segments.length);
     const startTime = Date.now();
-    request.status = InferenceStatus.IN_PROGRESS;
+    runRequest.status = InferenceStatus.IN_PROGRESS;
 
     try {
-      return await this.executeAllSegments(request, startTime);
+      return await this.executeAllSegments(runRequest, startTime);
     } catch (error) {
-      request.status = InferenceStatus.FAILED;
+      runRequest.status = InferenceStatus.FAILED;
       // Clean up checkpoints on failure to prevent memory leaks
-      this.checkpointStore.deleteAll(request.id);
+      this.checkpointStore.deleteAll(runRequest.id);
       throw error;
     }
   }
