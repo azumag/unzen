@@ -334,6 +334,7 @@ export class DurableObjectRepository implements DurableRepository {
     if (!record || record.stage !== expectedStage) return 'conflict';
 
     const ownedResult = snapshotInferenceResult(result);
+    assertRepositoryRequestRouteIdentity(requestId, ownedResult.requestId, 'result');
     record.stage = 'completed';
     record.completedAt = Date.now();
     // Both operations are synchronous and have no await boundary inside the DO.
