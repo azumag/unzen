@@ -67,10 +67,14 @@ python tools/verify_multi_segment_onnx.py \
 The numerical verifier deliberately repeats this integrity preflight immediately
 before creating ONNX Runtime sessions and embeds the resulting report in its own
 JSON. It also binds the full-model reference to `sourceModel.sha256` and checks
-source external-data sizes/digests when present. The standalone preflight remains
-useful as a cheap post-generation or transfer-time gate, while the repeated gate
-prevents a numerical report from silently referring to a stale or different
-artifact set.
+source external-data sizes/digests when present. Those source graph and external-
+data checks use the same read-only, nonblocking descriptor-open measurement
+boundary described above: there is no separate pathname `is_file()` observation,
+missing files retain the domain-specific `full model not found` / `source external
+data not found` diagnostics, and a FIFO or other non-regular opened source artifact
+fails closed before any read. The standalone preflight remains useful as a cheap
+post-generation or transfer-time gate, while the repeated gate prevents a
+numerical report from silently referring to a stale or different artifact set.
 
 For issue #167, these checks are automated/host-side integrity evidence only.
 They do not prove WebGPU execution, distinct browser workers, Coordinator relay,
