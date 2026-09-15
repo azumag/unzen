@@ -13,6 +13,7 @@ import {
 } from '../src/ids.js';
 import { ErrorCode } from '../src/errors.js';
 import { workerId, WorkerTier } from '../src/types.js';
+import { WorkerRegistry } from '../src/worker-registry.js';
 
 class ReferenceKv implements DurableObjectSyncKvStorage {
   private readonly values = new Map<string, unknown>();
@@ -282,6 +283,7 @@ describe('request and worker repository write isolation', () => {
     const input = workerRecord();
     const originalWorkerId = input.workerId;
     const originalGeneration = input.generation;
+    const originalConnectionId = input.connectionId;
     const changedWorkerId = workerId('changed-read-worker');
     const changedGeneration = generateWorkerGeneration();
     repo.putWorker(input);
@@ -292,6 +294,7 @@ describe('request and worker repository write isolation', () => {
       for (const [property, value] of [
         ['workerId', changedWorkerId],
         ['generation', changedGeneration],
+        ['connectionId', 'changed-read-connection'],
       ] as const) {
         expectProtocolViolation(() => Reflect.set(read, property, value));
         expectProtocolViolation(() => Reflect.deleteProperty(read, property));
@@ -304,6 +307,7 @@ describe('request and worker repository write isolation', () => {
       }
       expect(read.workerId).toBe(originalWorkerId);
       expect(read.generation).toBe(originalGeneration);
+      expect(read.connectionId).toBe(originalConnectionId);
     }
 
     direct.stage = WorkerStage.Busy;
@@ -311,6 +315,7 @@ describe('request and worker repository write isolation', () => {
     expect(repo.getWorker(originalWorkerId)).toMatchObject({
       workerId: originalWorkerId,
       generation: originalGeneration,
+      connectionId: originalConnectionId,
       stage: WorkerStage.Busy,
       lastHeartbeat: 42,
     });
@@ -327,7 +332,34 @@ describe('request and worker repository write isolation', () => {
     stale.stage = WorkerStage.Disconnected;
     expect(repo.getWorker(originalWorkerId)).toMatchObject({
       generation: replacementGeneration,
+      connectionId: 'replacement-connection',
       stage: WorkerStage.Idle,
     });
+  });
+
+  it.each(repositories())('%s cannot spoof reconnect identity through a retained mutable worker read', (_name, repo) => {
+    const registry = new WorkerRegistry(repo);
+    const id = workerId('connection-identity-worker');
+    const registration = { workerId: id, tier: WorkerTier.TIER_3, vramMB: 8192 };
+
+    const first = registry.register(registration, 'connection-a', 100);
+    expect(first.kind).toBe('created');
+    const retained = repo.getWorker(id)!;
+    expectProtocolViolation(() => Reflect.set(retained, 'connectionId', 'connection-b'));
+    expect(retained.connectionId).toBe('connection-a');
+
+    const reconnect = registry.register(registration, 'connection-b', 200);
+    expect(reconnect.kind).toBe('reconnected');
+    if (reconnect.kind !== 'reconnected') throw new Error('expected reconnect');
+    expect(reconnect.previousGeneration).toBe(first.generation);
+    expect(reconnect.generation).not.toBe(first.generation);
+    expect(repo.getWorker(id)).toMatchObject({
+      connectionId: 'connection-b',
+      generation: reconnect.generation,
+    });
+
+    const refresh = registry.register(registration, 'connection-b', 300);
+    expect(refresh.kind).toBe('updated');
+    expect(refresh.generation).toBe(reconnect.generation);
   });
 });
