@@ -131,7 +131,7 @@ class WebGpuPreparationGraphSnapshotTest(unittest.TestCase):
                 return block
 
             with mock.patch.object(probe.os, "read", side_effect=mutating_read):
-                with self.assertRaisesRegex(RuntimeError, "changed while being hashed"):
+                with self.assertRaisesRegex(RuntimeError, "grew while being hashed"):
                     probe._measure_regular_file(path)
             self.assertTrue(mutated)
 
