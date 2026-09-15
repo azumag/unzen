@@ -29,28 +29,33 @@ function makeHostileCheckpoint(requestId: string, segmentIndex: number): Hostile
       return shape;
     },
     get sequenceLength() {
-      return bump('metadata.sequenceLength') === 1 ? 3 : -1;
+      return bump(reads, 'metadata.sequenceLength') === 1 ? 3 : -1;
     },
     get timestamp() {
-      return bump('metadata.timestamp') === 1 ? 123 : -1;
+      return bump(reads, 'metadata.timestamp') === 1 ? 123 : -1;
     },
   };
   const checkpoint = {
     get requestId() {
-      return bump('checkpoint.requestId') === 1 ? requestId : `${requestId}-changed`;
+      return bump(reads, 'checkpoint.requestId') === 1 ? requestId : `${requestId}-changed`;
     },
     get segmentIndex() {
-      return bump('checkpoint.segmentIndex') === 1 ? segmentIndex : segmentIndex + 100;
+      return bump(reads, 'checkpoint.segmentIndex') === 1 ? segmentIndex : segmentIndex + 100;
     },
     get hiddenStates() {
-      return bump('checkpoint.hiddenStates') === 1 ? payload : new Uint8Array([9]);
+      return bump(reads, 'checkpoint.hiddenStates') === 1 ? payload : new Uint8Array([9]);
     },
     get metadata() {
-      bump('checkpoint.metadata');
+      bump(reads, 'checkpoint.metadata');
       return metadata;
     },
   };
   return { checkpoint, payload, shape, metadata, reads };
+}
+
+function bump(reads: Record<string, number>, field: string): number {
+  reads[field] = (reads[field] ?? 0) + 1;
+  return reads[field];
 }
 
 function expectSourceReadOnce(source: HostileCheckpointSource): void {
@@ -136,11 +141,16 @@ describe('legacy pipeline checkpoint snapshot integration', () => {
     const requestId = 'req-span-checkpoint-snapshot';
     const source = makeHostileCheckpoint(requestId, 0);
     const workerPool = new WorkerPool();
-    workerPool.register({
-      workerId: workerId('span-checkpoint-worker'),
-      tier: WorkerTier.TIER_3,
-      vramMB: 2100,
-    });
+    // SpanRouter plans the entire suffix at once and does not reuse a worker in
+    // one route. Each worker can host exactly one 2100 MB segment, so two workers
+    // make the intended two-span route deterministic.
+    for (const id of ['span-checkpoint-worker-a', 'span-checkpoint-worker-b']) {
+      workerPool.register({
+        workerId: workerId(id),
+        tier: WorkerTier.TIER_3,
+        vramMB: 2100,
+      });
+    }
     const checkpointStore = new CheckpointStore();
     const executor: SpanExecutor = {
       execute: async (_workerId, assignment) => {
