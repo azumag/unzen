@@ -17,8 +17,8 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
  */
 export function snapshotFinalOutput(
   value: unknown,
-  label: 'final segment output' | 'final span output',
   makeError: (message: string) => Error,
+  label: 'final segment output' | 'final span output' = 'final segment output',
 ): FinalOutputSnapshot {
   if (!isRecord(value)) {
     throw makeError(`${label} must be a non-null, non-array object`);
