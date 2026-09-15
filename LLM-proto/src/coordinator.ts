@@ -22,7 +22,6 @@ import {
 } from './types.js';
 import type {
   WorkerRegistration,
-  WorkerMessage,
   CoordinatorMessage,
 } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
@@ -33,6 +32,7 @@ import {
   segmentConfigsFromManifest,
 } from './model-manifest.js';
 import { assertValidModelManifest } from './model-manifest-validator.js';
+import { snapshotWorkerMessage } from './worker-message-boundary.js';
 
 export interface CoordinatorOptions {
   /** Heartbeat check interval in ms (default: 5000). */
@@ -272,21 +272,24 @@ export class Coordinator {
     }
   }
 
-  /** Handle an incoming message from a worker (dispatch by type). */
-  handleWorkerMessage(message: WorkerMessage): CoordinatorMessage | null {
-    switch (message.type) {
+  /** Handle an incoming runtime-untrusted message from a worker. */
+  handleWorkerMessage(message: unknown): CoordinatorMessage | null {
+    const snapshot = snapshotWorkerMessage(message);
+
+    switch (snapshot.type) {
       case 'worker:register':
-        this.registerWorker(message.payload);
+        this.registerWorker(snapshot.payload);
         return null;
       case 'worker:heartbeat':
-        this.workerHeartbeat(message.payload.workerId);
+        this.workerHeartbeat(snapshot.payload.workerId);
         return {
           type: 'heartbeat:ack',
           payload: { timestamp: Date.now() },
         };
       case 'segment:result':
       case 'segment:failed':
-        // These are handled via the SegmentExecutor's Promise resolution
+        // These are handled via the SegmentExecutor's Promise resolution.
+        // Validation above still prevents transport discriminator/payload drift.
         return null;
     }
   }
