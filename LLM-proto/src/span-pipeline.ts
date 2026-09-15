@@ -30,7 +30,12 @@ import {
 import type { SpanAssignment, SpanResult } from './protocol.js';
 import { WorkerPool } from './worker-pool.js';
 import { CheckpointStore } from './checkpoint.js';
-import { SpanRouter, type Route, type Span } from './span-router.js';
+import {
+  SpanRouter,
+  snapshotSpanSegments,
+  type Route,
+  type Span,
+} from './span-router.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
 import { SegmentTimeoutError } from './errors.js';
 
@@ -145,17 +150,19 @@ function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
 }
 
 export class SpanPipeline {
+  private readonly segments: readonly SegmentConfig[];
   private readonly options: SpanPipelineOptions;
 
   constructor(
-    private readonly segments: readonly SegmentConfig[],
+    segments: readonly SegmentConfig[],
     private readonly workerPool: WorkerPool,
     private readonly checkpointStore: CheckpointStore,
     private readonly executor: SpanExecutor,
     options?: Partial<SpanPipelineOptions>,
   ) {
     this.options = resolveSpanPipelineOptions(options);
-    this.options.artifactResidencyLedger?.assertCompatibleSegments(segments);
+    this.segments = snapshotSpanSegments(segments, 'SpanPipeline');
+    this.options.artifactResidencyLedger?.assertCompatibleSegments(this.segments);
   }
 
   /**
