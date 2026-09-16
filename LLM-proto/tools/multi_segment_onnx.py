@@ -736,6 +736,37 @@ def _preflight_generated_artifact_collisions(
         )
 
 
+def _preflight_generated_artifact_destinations(
+    generated_artifacts: tuple[Path, ...],
+) -> None:
+    """Reject unsafe pre-existing output nodes before any generated write."""
+
+    for generated in generated_artifacts:
+        try:
+            destination = os.lstat(generated)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise RuntimeError(
+                f"generated artifact destination could not be inspected safely: "
+                f"{generated}: {error}"
+            ) from error
+
+        if stat.S_ISLNK(destination.st_mode):
+            raise ValueError(
+                f"generated artifact destination must not be a symlink: {generated}"
+            )
+        if not stat.S_ISREG(destination.st_mode):
+            raise ValueError(
+                f"generated artifact destination must be a regular file: {generated}"
+            )
+        if destination.st_nlink != 1:
+            raise ValueError(
+                "generated artifact destination must have exactly one hard link: "
+                f"{generated} (links={destination.st_nlink})"
+            )
+
+
 def prepare_budgeted_multi_split(
     source_model_path: Path,
     output_dir: Path,
@@ -775,17 +806,20 @@ def prepare_budgeted_multi_split(
         raise AssertionError("planner/generator segment count mismatch")
 
     # Fail before opening any output file if a generated name would overwrite
-    # the source graph or one of its external-data files. Resolved-path checks
-    # catch lexical/symlink aliases; samefile() additionally catches hard links.
+    # the source graph or one of its external-data files, or if an existing
+    # destination is unsafe to truncate. Resolved-path checks catch lexical /
+    # symlink source aliases; samefile() additionally catches hard links.
     source_artifacts = {source_model_path.resolve(strict=True)}
     source_artifacts.update(
         (source_model_path.parent / str(entry["location"])).resolve(strict=True)
         for entry in source_external
     )
+    generated_artifacts = _generated_artifact_paths(output_dir, len(specs))
     _preflight_generated_artifact_collisions(
         source_artifacts,
-        _generated_artifact_paths(output_dir, len(specs)),
+        generated_artifacts,
     )
+    _preflight_generated_artifact_destinations(generated_artifacts)
 
     segments: list[dict[str, object]] = []
     for index, (spec, estimated) in enumerate(zip(specs, estimated_costs)):
