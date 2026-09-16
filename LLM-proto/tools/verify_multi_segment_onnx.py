@@ -26,6 +26,7 @@ from typing import Sequence
 import numpy as np
 import onnxruntime as ort
 
+from direct_verifier_runtime import preflight_direct_verifier_parameters
 from verify_multi_segment_artifacts import (
     SHA256_RE,
     _measure_file,
@@ -386,8 +387,22 @@ def verify_multi_split(
     atol: float = 1e-4,
     rtol: float = 1e-4,
 ) -> dict[str, object]:
-    if not token_ids:
-        raise ValueError("at least one token ID is required")
+    (
+        token_ids,
+        provider,
+        kv_heads,
+        head_size,
+        atol,
+        rtol,
+    ) = preflight_direct_verifier_parameters(
+        token_ids,
+        token_field="inputTokenIds",
+        provider=provider,
+        kv_heads=kv_heads,
+        head_size=head_size,
+        atol=atol,
+        rtol=rtol,
+    )
 
     artifact_integrity = verify_artifact_integrity(manifest_path)
     manifest_bytes = _read_stable_manifest(manifest_path)
