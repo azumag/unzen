@@ -6,7 +6,7 @@ The real browser split harness treats checkpoint polling delays as runtime data.
 
 `waitForCheckpointBounded()` requires `timeoutMs` to be a positive JavaScript safe integer before the first checkpoint fetch or sleep. This prevents fractional, non-finite, coerced, or unsafe timeout values from being accepted as a deadline and only failing later when a residual wait reaches the timer helper.
 
-The absolute timeout budget is intentionally **not** capped to the host timer ceiling. A valid safe-integer timeout may exceed `2_147_483_647` milliseconds because the wait is represented as an absolute deadline and is advanced through bounded polling intervals rather than one host timer.
+The absolute timeout budget is intentionally **not** capped to the host timer ceiling. A valid safe-integer timeout may exceed `2_147_483_647` milliseconds because the wait is advanced through bounded polling intervals rather than one host timer. Elapsed time is measured relative to the captured start time instead of computing `Date.now() + timeoutMs`; this avoids losing millisecond identity when a long but valid timeout plus an epoch timestamp would cross `Number.MAX_SAFE_INTEGER`.
 
 ## Timer-backed delay contract
 
