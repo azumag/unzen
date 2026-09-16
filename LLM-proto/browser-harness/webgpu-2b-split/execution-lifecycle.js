@@ -150,7 +150,18 @@ export async function waitForCheckpointBounded({
   // samples are validated independently so malformed caller-owned clocks never
   // feed NaN/fractional/unsafe values into residual timer arithmetic.
   const startedAt = readClockSample(now, 'checkpoint clock');
-  const elapsedSinceStart = () => readClockSample(now, 'checkpoint clock') - startedAt;
+  let lastClockSample = startedAt;
+  const elapsedSinceStart = () => {
+    const sample = readClockSample(now, 'checkpoint clock');
+    if (sample < lastClockSample) {
+      throw new Error(
+        'checkpoint clock must be monotonic non-decreasing: '
+        + `previous=${lastClockSample}, sample=${sample}`,
+      );
+    }
+    lastClockSample = sample;
+    return sample - startedAt;
+  };
   for (;;) {
     throwIfAborted(signal);
     const response = await stableFetchCheckpoint(signal);

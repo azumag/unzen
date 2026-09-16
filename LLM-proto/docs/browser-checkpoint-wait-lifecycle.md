@@ -12,9 +12,11 @@ The absolute timeout budget is intentionally **not** capped to the host timer ce
 
 The injected `now()` function is a runtime trust boundary, not a typed-only convenience. Every clock sample used by `waitForCheckpointBounded()` must be a non-negative JavaScript safe integer. The initial sample is validated before the first checkpoint fetch or sleep, so malformed values cannot start a polling lifecycle. Later samples are validated before residual timeout values are passed to the sleep/timer helper, preventing `NaN`, infinities, fractional values, runtime strings, or unsafe integers from being reinterpreted as timer delays.
 
+Accepted samples must also be monotonic non-decreasing within one wait. A later sample that is smaller than the previous accepted sample is rejected before it can enlarge the remaining timeout budget or allow another checkpoint fetch. Equal timestamps remain valid. The wait does not synthesize, clamp, or repair a regressing caller-owned clock; it fails closed instead.
+
 If the caller-owned clock throws, that original exception remains the root error. The wait does not wrap it as a timer validation or timeout failure. This keeps clock failures distinguishable from `CheckpointWaitTimeoutError` and host-timer domain violations.
 
-This contract validates sample identity but does not attempt to synthesize a monotonic clock. Production callers should continue to supply a stable millisecond clock; the default remains `Date.now()`.
+The default clock remains `Date.now()`. Callers may inject another millisecond clock, but every accepted sample must satisfy the same safe-integer and non-decreasing contract.
 
 ## Timer-backed delay contract
 
