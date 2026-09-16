@@ -18,6 +18,8 @@ The optional abort signal is also checked at the runner boundary before reposito
 
 A structural signal can still be caller-controlled after entry validation. The resume subscription therefore lives inside the same `try/finally` scope that releases recovery ownership, and subscription failure performs best-effort listener removal before propagating a stable `TypeError`. Even a Proxy/getter that changes its listener surface after validation cannot strand a recovery claim.
 
+The runner's default bounded wait applies the same rule to peer-owner, live-lease, and short state-change waits. Signal state is live-read as a boolean, listener removal is best-effort after the timer is cleared, and subscription or post-subscription state-read failures reject the wait deterministically. The existing check → subscribe → re-check cancellation ordering remains in place, but a hostile structural signal cannot stop the wait promise from settling by throwing during cleanup.
+
 This complements the command-level option ownership boundary: the command owns the values for one recovery decision, while the runner owns the values for the entire asynchronous recovery lifecycle.
 
 This is coordinator recovery trust-boundary hardening only. It is not new real-model, WebGPU, multi-browser relay, worker-loss resume, or production deployment evidence for #167/#158.

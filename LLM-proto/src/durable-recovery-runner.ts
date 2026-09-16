@@ -113,15 +113,33 @@ function abortError(): DOMException {
   return new DOMException('AbortError', 'AbortError');
 }
 
+function readRecoverySignalAborted(signal?: AbortSignal): boolean {
+  if (!signal) return false;
+  let aborted: unknown;
+  try {
+    aborted = signal.aborted;
+  } catch {
+    throw new TypeError('Durable recovery signal state could not be read');
+  }
+  if (typeof aborted !== 'boolean') {
+    throw new TypeError('Durable recovery signal aborted state must remain boolean');
+  }
+  return aborted;
+}
+
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.reject(abortError());
+  if (readRecoverySignalAborted(signal)) return Promise.reject(abortError());
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = () => {
       if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
+      try {
+        signal?.removeEventListener('abort', onAbort);
+      } catch {
+        // Caller-owned cleanup cannot be allowed to prevent wait settlement.
+      }
     };
     const finish = (action: () => void) => {
       if (settled) return;
@@ -132,12 +150,15 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     const onAbort = () => finish(() => reject(abortError()));
 
     timer = setTimeout(() => finish(resolve), Math.max(0, ms));
-    signal?.addEventListener('abort', onAbort, { once: true });
-
-    // Close the check-then-listen race: if the signal flipped after the
-    // initial aborted check but before listener registration became active,
-    // the event may already have been dispatched and would otherwise be lost.
-    if (signal?.aborted) onAbort();
+    try {
+      signal?.addEventListener('abort', onAbort, { once: true });
+      // Close the check-then-listen race: if the signal flipped after the
+      // initial aborted check but before listener registration became active,
+      // the event may already have been dispatched and would otherwise be lost.
+      if (readRecoverySignalAborted(signal)) onAbort();
+    } catch {
+      finish(() => reject(new TypeError('Durable recovery wait signal could not be subscribed')));
+    }
   });
 }
 
@@ -169,7 +190,7 @@ function forwardAbort(source: AbortSignal | undefined, target: AbortController):
   };
 
   try {
-    if (source.aborted) {
+    if (readRecoverySignalAborted(source)) {
       onAbort();
       return () => {};
     }
@@ -180,7 +201,7 @@ function forwardAbort(source: AbortSignal | undefined, target: AbortController):
     // As with the wait helper, an abort can win between the first state check
     // and listener registration. Re-check after subscribing so the target
     // cannot remain live after caller cancellation.
-    if (source.aborted) onAbort();
+    if (readRecoverySignalAborted(source)) onAbort();
     return cleanup;
   } catch {
     cleanup();
@@ -211,7 +232,7 @@ export async function runDurableRecovery(
   const sleep = ownedOptions.sleep ?? defaultSleep;
 
   for (;;) {
-    if (ownedOptions.signal?.aborted) throw abortError();
+    if (readRecoverySignalAborted(ownedOptions.signal)) throw abortError();
     const now = nowFn();
     const decision = beginDurableRecovery(repo, requestId, {
       ownerId: ownedOptions.ownerId,
