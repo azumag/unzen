@@ -26,6 +26,17 @@ The following duration/runtime controls must be finite, non-negative numbers whe
 - `recoveryOwnershipRenewIntervalMs`
 - `recoveryPollIntervalMs`
 
+Timer-backed controls are additionally limited to `2147483647ms` (`MAX_TIMER_DELAY_MS`), the largest delay consistently representable by browser/Node host timers:
+
+- `heartbeatIntervalMs`
+- `segmentTimeoutMs`
+- `retryDelayMs`
+- `checkpointCleanupIntervalMs`
+- `recoveryOwnershipRenewIntervalMs`
+- `recoveryPollIntervalMs`
+
+Comparison/deadline metadata (`heartbeatTimeoutMs`, `leaseTtlMs`, `checkpointTtlMs`, `cancelAckDeadlineMs`, and `recoveryOwnershipTtlMs`) remains finite/non-negative but is intentionally not capped merely because its numeric value can exceed the host-timer range. These fields are not passed directly to a host timer at this constructor boundary.
+
 `maxCheckpointBytes` must be a non-negative safe integer. This matches the authoritative checkpoint-envelope byte-budget validator, so a fractional or unsafe byte ceiling cannot survive construction and reach a payload-allocation path.
 
 `maxRetries` must also be a non-negative safe integer. Explicit zero remains valid for existing tests/contracts.
@@ -34,7 +45,7 @@ The following duration/runtime controls must be finite, non-negative numbers whe
 
 ## Ordering
 
-Constructor option resolution and validation completes before the core coordinator constructor can initialize repository-backed worker/lease state, timers, recovery state, or apply the fixture-manifest gate. Invalid options therefore fail closed without repository/registry side effects.
+Constructor option resolution and validation completes before the core coordinator constructor can initialize repository-backed worker/lease state, timers, recovery state, or apply the fixture-manifest gate. Invalid or host-timer-overflowing options therefore fail closed without repository/registry side effects.
 
 The direct durable-core checkpoint path also treats its resolved `maxCheckpointBytes` value as untrusted runtime configuration. It rechecks that ceiling as a non-negative safe integer before copying checkpoint payload bytes, so direct-core test/integration callers cannot bypass the allocation-order guarantee by supplying an invalid runtime value.
 

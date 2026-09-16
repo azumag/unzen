@@ -15,6 +15,7 @@ import type { RecoveryOwnership } from './durable-repository.js';
 import type { DurableRepository } from './durable-repository.js';
 import { ErrorCode, UnzenError } from './errors.js';
 import type { CheckpointEnvelope } from './checkpoint-envelope.js';
+import { MAX_TIMER_DELAY_MS } from './pipeline-utils.js';
 import type { InferenceRequestId } from './types.js';
 
 export interface DurableRecoveryResumeContext {
@@ -63,6 +64,20 @@ function snapshotRecoveryRunnerOptions(
   const sleep = options.sleep;
   const signal = options.signal;
   const onResume = options.onResume;
+
+  for (const [field, value] of [
+    ['ownershipRenewIntervalMs', ownershipRenewIntervalMs],
+    ['pollIntervalMs', pollIntervalMs],
+  ] as const) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new TypeError(`Durable recovery ${field} must be a non-negative finite number`);
+    }
+    if (value > MAX_TIMER_DELAY_MS) {
+      throw new RangeError(
+        `Durable recovery ${field} must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+      );
+    }
+  }
 
   return Object.freeze({
     ownerId,
