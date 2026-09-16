@@ -33,6 +33,7 @@ import {
 } from './model-manifest.js';
 import { assertValidModelManifest } from './model-manifest-validator.js';
 import { snapshotWorkerMessage } from './worker-message-boundary.js';
+import { MAX_TIMER_DELAY_MS } from './pipeline-utils.js';
 
 export interface CoordinatorOptions {
   /** Heartbeat check interval in ms (default: 5000). */
@@ -131,6 +132,15 @@ function resolveCoordinatorOptions(options: unknown): CoordinatorOptions {
   ] as const) {
     if (!isNonNegativeFiniteNumber(value)) {
       throw new TypeError(`Coordinator ${field} must be a non-negative finite number`);
+    }
+  }
+  for (const [field, value] of [
+    ['heartbeatIntervalMs', heartbeatIntervalMs],
+    ['segmentTimeoutMs', segmentTimeoutMs],
+    ['retryDelayMs', retryDelayMs],
+  ] as const) {
+    if (value > MAX_TIMER_DELAY_MS) {
+      throw new RangeError(`Coordinator ${field} must not exceed ${MAX_TIMER_DELAY_MS}ms`);
     }
   }
   if (!isNonNegativeSafeInteger(maxRetries)) {
