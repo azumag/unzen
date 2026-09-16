@@ -6,7 +6,12 @@
  * timeout must surface as SegmentTimeoutError.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { withAbortableTimeout, withTimeout, delay } from '../src/pipeline-utils.js';
+import {
+  MAX_TIMER_DELAY_MS,
+  withAbortableTimeout,
+  withTimeout,
+  delay,
+} from '../src/pipeline-utils.js';
 import { SegmentTimeoutError, ErrorCode } from '../src/errors.js';
 
 describe('withAbortableTimeout', () => {
@@ -111,6 +116,23 @@ describe('withAbortableTimeout', () => {
     );
 
     await expect(pending).rejects.toThrow('timeoutMs must be a finite non-negative number');
+    expect(factory).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a timeout above the host timer maximum before side effects', async () => {
+    vi.useFakeTimers();
+    const factory = vi.fn(() => Promise.resolve('done'));
+
+    const pending = withAbortableTimeout(
+      factory,
+      MAX_TIMER_DELAY_MS + 1,
+      'seg',
+    );
+
+    await expect(pending).rejects.toThrow(
+      `timeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+    );
     expect(factory).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -230,6 +252,21 @@ describe('legacy withTimeout / delay', () => {
     );
 
     await expect(pending).rejects.toThrow('timeoutMs must be a finite non-negative number');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a legacy timeout above the host timer maximum before arming a timer', async () => {
+    vi.useFakeTimers();
+
+    const pending = withTimeout(
+      Promise.resolve('ok'),
+      MAX_TIMER_DELAY_MS + 1,
+      'seg',
+    );
+
+    await expect(pending).rejects.toThrow(
+      `timeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+    );
     expect(vi.getTimerCount()).toBe(0);
   });
 
