@@ -202,6 +202,20 @@ def _tier(byte_size: int, budget: dict[str, object]) -> str:
     return "rejected"
 
 
+def _claim_artifact_path(
+    seen: dict[Path, str],
+    path: Path,
+    *,
+    field: str,
+) -> None:
+    """Require one resolved filesystem path per declared graph/external-data role."""
+
+    previous = seen.get(path)
+    if previous is not None:
+        raise ValueError(f"duplicate declared artifact path: {field} aliases {previous}")
+    seen[path] = field
+
+
 def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     """Return a measured integrity report or fail closed on any mismatch."""
 
@@ -246,7 +260,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
 
     root = manifest_path.parent
     reports: list[dict[str, object]] = []
-    seen_external_locations: set[tuple[int, str]] = set()
+    seen_artifact_paths: dict[Path, str] = {}
 
     for expected_index, raw_segment in enumerate(raw_segments):
         if not isinstance(raw_segment, dict):
@@ -257,12 +271,10 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                 f"segment indices must cover 0..n-1; expected {expected_index}, got {index}"
             )
 
-        graph_location = _non_empty_string(
-            raw_segment.get("path"), field=f"segments[{index}].path"
-        )
-        graph_path = _safe_relative_path(
-            root, graph_location, field=f"segments[{index}].path"
-        )
+        graph_field = f"segments[{index}].path"
+        graph_location = _non_empty_string(raw_segment.get("path"), field=graph_field)
+        graph_path = _safe_relative_path(root, graph_location, field=graph_field)
+        _claim_artifact_path(seen_artifact_paths, graph_path, field=graph_field)
         expected_graph_sha = _canonical_sha256(
             raw_segment.get("sha256"), field=f"segments[{index}].sha256"
         )
@@ -287,16 +299,14 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                     f"segments[{index}].externalData[{external_index}] must be an object"
                 )
             field_prefix = f"segments[{index}].externalData[{external_index}]"
-            location = _non_empty_string(
-                raw_entry.get("location"), field=f"{field_prefix}.location"
+            location_field = f"{field_prefix}.location"
+            location = _non_empty_string(raw_entry.get("location"), field=location_field)
+            external_path = _safe_relative_path(root, location, field=location_field)
+            _claim_artifact_path(
+                seen_artifact_paths,
+                external_path,
+                field=location_field,
             )
-            external_path = _safe_relative_path(
-                root, location, field=f"{field_prefix}.location"
-            )
-            identity = (index, location)
-            if identity in seen_external_locations:
-                raise ValueError(f"segment {index} contains duplicate external data location: {location}")
-            seen_external_locations.add(identity)
 
             expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             observed_bytes, observed_sha = _measure_file(
