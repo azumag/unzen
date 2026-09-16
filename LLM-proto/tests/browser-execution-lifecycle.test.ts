@@ -56,6 +56,60 @@ describe('browser execution lifecycle', () => {
     expect(abortedReads).toBe(2);
   });
 
+  it('settles normally even when caller-owned listener removal throws', async () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn(() => {
+      throw new Error('cleanup exploded');
+    });
+    const signal = {
+      aborted: false,
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(delayWithSignal(0, signal)).resolves.toBeUndefined();
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a throwing listener subscription without leaving the delay pending', async () => {
+    const removeEventListener = vi.fn();
+    const signal = {
+      aborted: false,
+      addEventListener() {
+        throw new Error('subscription exploded');
+      },
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(delayWithSignal(10_000, signal)).rejects.toThrow(
+      'AbortSignal could not be subscribed for delay',
+    );
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when AbortSignal state becomes unreadable after subscription', async () => {
+    let abortedReads = 0;
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const signal = {
+      get aborted() {
+        abortedReads += 1;
+        if (abortedReads > 1) throw new Error('state exploded');
+        return false;
+      },
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(delayWithSignal(10_000, signal)).rejects.toThrow(
+      'AbortSignal could not be subscribed for delay',
+    );
+    expect(abortedReads).toBe(2);
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['negative', -1],
     ['fractional', 1.5],
