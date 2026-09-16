@@ -37,6 +37,21 @@ function requirePositiveSafeInteger(value, label) {
   return value;
 }
 
+function requireNonNegativeSafeInteger(value, label) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer: ${String(value)}`);
+  }
+  return value;
+}
+
+function readClockSample(now, label) {
+  if (typeof now !== 'function') throw new TypeError(`${label} must be a function`);
+  // Intentionally do not wrap exceptions thrown by the caller-owned clock: the
+  // clock failure is the root cause and should not be misclassified as a timer
+  // validation failure.
+  return requireNonNegativeSafeInteger(now(), `${label} sample`);
+}
+
 function requireHostTimerDelay(value, label, { allowZero }) {
   const minimum = allowZero ? 0 : 1;
   if (
@@ -118,9 +133,11 @@ export async function waitForCheckpointBounded({
   );
   // Keep long timeout budgets in their original safe-integer domain instead of
   // adding them to an epoch timestamp, which can cross MAX_SAFE_INTEGER and
-  // lose millisecond identity even though the timeout itself is valid.
-  const startedAt = now();
-  const elapsedSinceStart = () => now() - startedAt;
+  // lose millisecond identity even though the timeout itself is valid. Clock
+  // samples are validated independently so malformed caller-owned clocks never
+  // feed NaN/fractional/unsafe values into residual timer arithmetic.
+  const startedAt = readClockSample(now, 'checkpoint clock');
+  const elapsedSinceStart = () => readClockSample(now, 'checkpoint clock') - startedAt;
   for (;;) {
     throwIfAborted(signal);
     const response = await fetchCheckpoint(signal);
