@@ -21,6 +21,7 @@ from typing import Mapping, Sequence
 import numpy as np
 import onnxruntime as ort
 
+from direct_verifier_runtime import non_negative_int, preflight_direct_verifier_parameters
 from verify_multi_segment_artifacts import _read_stable_manifest, verify_artifact_integrity
 from verify_multi_segment_onnx import (
     _boundary_report,
@@ -296,10 +297,23 @@ def verify_multi_segment_kv_decode(
     atol: float = 1e-4,
     rtol: float = 1e-4,
 ) -> dict[str, object]:
-    if not prompt_token_ids:
-        raise ValueError("at least one prompt token ID is required")
-    if next_token_id < 0:
-        raise ValueError("next_token_id must be non-negative")
+    (
+        prompt_token_ids,
+        provider,
+        kv_heads,
+        head_size,
+        atol,
+        rtol,
+    ) = preflight_direct_verifier_parameters(
+        prompt_token_ids,
+        token_field="promptTokenIds",
+        provider=provider,
+        kv_heads=kv_heads,
+        head_size=head_size,
+        atol=atol,
+        rtol=rtol,
+    )
+    next_token_id = non_negative_int(next_token_id, field="nextTokenId")
 
     artifact_integrity = verify_artifact_integrity(manifest_path)
     manifest_bytes = _read_stable_manifest(manifest_path)
