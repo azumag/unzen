@@ -7,13 +7,19 @@ proposal/evaluation paths. Values can cross JSON, test-double, plugin, or
 type-assertion boundaries, so TypeScript signatures are not treated as runtime
 validation.
 
+JavaScript host timers represent delay values with a signed 32-bit range. The
+shared timeout boundary therefore exports `MAX_TIMER_DELAY_MS=2147483647`; larger
+values are rejected instead of being passed to a host where they may overflow or
+execute immediately.
+
 ## Abortable timeout preflight contract
 
 Before a timer is armed, an external abort listener is registered, or the
 execution factory is invoked, `withAbortableTimeout()` validates:
 
 - `factory` is callable;
-- `timeoutMs` is a finite, non-negative number (`0` remains an immediate timeout);
+- `timeoutMs` is a finite, non-negative number no greater than
+  `MAX_TIMER_DELAY_MS` (`0` remains an immediate timeout);
 - `label` is a non-empty string;
 - an optional external signal structurally exposes a boolean `aborted` plus
   callable `addEventListener` and `removeEventListener` methods.
@@ -22,16 +28,16 @@ The signal check is structural rather than `instanceof AbortSignal`, so a valid
 signal originating from another JavaScript realm is not rejected solely because
 its prototype identity differs.
 
-Malformed inputs reject without partially arming timeout machinery or invoking
-the execution factory. This keeps failure ordering deterministic and prevents a
-bad runtime envelope from leaving a timer/listener side effect behind.
+Malformed or unsupported inputs reject without partially arming timeout machinery
+or invoking the execution factory. This keeps failure ordering deterministic and
+prevents a bad runtime envelope from leaving a timer/listener side effect behind.
 
 ## Legacy timeout preflight contract
 
 Before `withTimeout()` arms its timer, it validates:
 
-- `timeoutMs` is a finite, non-negative number (`0` remains an immediate timeout
-  for pending work);
+- `timeoutMs` is a finite, non-negative number no greater than
+  `MAX_TIMER_DELAY_MS` (`0` remains an immediate timeout for pending work);
 - `label` is a non-empty string;
 - the input is structurally promise-like and exposes a callable `then` method.
 
@@ -59,7 +65,8 @@ The established behavior is unchanged for valid callers:
 ## Evidence boundary
 
 This contract is coordinator/swarm-side reliability coverage. It verifies timeout
-preflight, cleanup, and cooperative signal propagation in the TypeScript harness.
-It does not prove that a real browser/WebGPU backend consumes a signal promptly,
-nor does it provide real prepared-1B, physical GPU working-set, multi-browser
-relay, or worker-loss-resume evidence for issue #167.
+preflight, cleanup, host timer range enforcement, and cooperative signal
+propagation in the TypeScript harness. It does not prove that a real
+browser/WebGPU backend consumes a signal promptly, nor does it provide real
+prepared-1B, physical GPU working-set, multi-browser relay, or worker-loss-resume
+evidence for issue #167.
