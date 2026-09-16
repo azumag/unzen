@@ -16,6 +16,13 @@ export function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
 }
 
+function requirePositiveSafeInteger(value, label) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive safe integer: ${String(value)}`);
+  }
+  return value;
+}
+
 function requireHostTimerDelay(value, label, { allowZero }) {
   const minimum = allowZero ? 0 : 1;
   if (
@@ -68,15 +75,17 @@ export async function waitForCheckpointBounded({
   now = () => Date.now(),
   sleep = delayWithSignal,
 }) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error(`checkpoint timeout must be positive: ${timeoutMs}`);
-  }
+  const stableTimeoutMs = requirePositiveSafeInteger(timeoutMs, 'checkpoint timeout');
   const stablePollIntervalMs = requireHostTimerDelay(
     pollIntervalMs,
     'checkpoint poll interval',
     { allowZero: false },
   );
-  const deadline = now() + timeoutMs;
+  // Keep long timeout budgets in their original safe-integer domain instead of
+  // adding them to an epoch timestamp, which can cross MAX_SAFE_INTEGER and
+  // lose millisecond identity even though the timeout itself is valid.
+  const startedAt = now();
+  const elapsedSinceStart = () => now() - startedAt;
   for (;;) {
     throwIfAborted(signal);
     const response = await fetchCheckpoint(signal);
@@ -85,10 +94,12 @@ export async function waitForCheckpointBounded({
       if (!response.ok) throw new Error(`checkpoint fetch failed: ${response.status}`);
       return response.json();
     }
-    const remaining = deadline - now();
-    if (remaining <= 0) throw new CheckpointWaitTimeoutError(timeoutMs);
+    const remaining = stableTimeoutMs - elapsedSinceStart();
+    if (remaining <= 0) throw new CheckpointWaitTimeoutError(stableTimeoutMs);
     await sleep(Math.min(stablePollIntervalMs, remaining), signal);
-    if (now() >= deadline) throw new CheckpointWaitTimeoutError(timeoutMs);
+    if (elapsedSinceStart() >= stableTimeoutMs) {
+      throw new CheckpointWaitTimeoutError(stableTimeoutMs);
+    }
   }
 }
 
