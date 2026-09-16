@@ -30,6 +30,13 @@ export function throwIfAborted(signal) {
   if (readAbortSignalState(signal)) throw abortError();
 }
 
+function requireFunction(value, label) {
+  if (typeof value !== 'function') {
+    throw new TypeError(`${label} must be a function`);
+  }
+  return value;
+}
+
 function requirePositiveSafeInteger(value, label) {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive safe integer: ${String(value)}`);
@@ -131,6 +138,12 @@ export async function waitForCheckpointBounded({
     'checkpoint poll interval',
     { allowZero: false },
   );
+  const stableFetchCheckpoint = requireFunction(fetchCheckpoint, 'checkpoint fetch');
+  const stableSleep = requireFunction(sleep, 'checkpoint sleep');
+  // Fail closed on an already-aborted or malformed caller-owned signal before
+  // invoking the clock or any polling dependency. The loop repeats this check
+  // around every fetch to preserve cancellation at asynchronous boundaries.
+  throwIfAborted(signal);
   // Keep long timeout budgets in their original safe-integer domain instead of
   // adding them to an epoch timestamp, which can cross MAX_SAFE_INTEGER and
   // lose millisecond identity even though the timeout itself is valid. Clock
@@ -140,7 +153,7 @@ export async function waitForCheckpointBounded({
   const elapsedSinceStart = () => readClockSample(now, 'checkpoint clock') - startedAt;
   for (;;) {
     throwIfAborted(signal);
-    const response = await fetchCheckpoint(signal);
+    const response = await stableFetchCheckpoint(signal);
     throwIfAborted(signal);
     if (response.status !== 404) {
       if (!response.ok) throw new Error(`checkpoint fetch failed: ${response.status}`);
@@ -148,7 +161,7 @@ export async function waitForCheckpointBounded({
     }
     const remaining = stableTimeoutMs - elapsedSinceStart();
     if (remaining <= 0) throw new CheckpointWaitTimeoutError(stableTimeoutMs);
-    await sleep(Math.min(stablePollIntervalMs, remaining), signal);
+    await stableSleep(Math.min(stablePollIntervalMs, remaining), signal);
     if (elapsedSinceStart() >= stableTimeoutMs) {
       throw new CheckpointWaitTimeoutError(stableTimeoutMs);
     }
