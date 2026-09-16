@@ -16,6 +16,7 @@ import type { DurableRepository } from './durable-repository.js';
 import type { ExecutionFailure, ExecutionResult, ResultIdentity } from './durable-types.js';
 import { ErrorCode, UnzenError, classifyErrorCode } from './errors.js';
 import type { SegmentedModelManifest } from './model-manifest.js';
+import { MAX_TIMER_DELAY_MS } from './pipeline-utils.js';
 import { WorkerTier, type WorkerId } from './types.js';
 
 export type {
@@ -93,6 +94,21 @@ function resolveDurableCoordinatorOptions(
   ] as const) {
     if (value !== undefined && !isNonNegativeFiniteNumber(value)) {
       throw new TypeError(`DurableCoordinator ${field} must be a non-negative finite number`);
+    }
+  }
+
+  for (const [field, value] of [
+    ['heartbeatIntervalMs', heartbeatIntervalMs],
+    ['segmentTimeoutMs', segmentTimeoutMs],
+    ['retryDelayMs', retryDelayMs],
+    ['checkpointCleanupIntervalMs', checkpointCleanupIntervalMs],
+    ['recoveryOwnershipRenewIntervalMs', recoveryOwnershipRenewIntervalMs],
+    ['recoveryPollIntervalMs', recoveryPollIntervalMs],
+  ] as const) {
+    if (value !== undefined && value > MAX_TIMER_DELAY_MS) {
+      throw new RangeError(
+        `DurableCoordinator ${field} must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+      );
     }
   }
 
@@ -177,6 +193,21 @@ function snapshotDurableSubmissionOptions(
   const idempotencyKeyValue = options.idempotencyKey;
   const signalValue = options.signal;
   const timeoutMsValue = options.timeoutMs;
+
+  // Preserve the core validator's diagnostics for malformed values, but reject
+  // a well-formed timer value that the browser/Node host cannot represent
+  // before idempotency or durable request state can be mutated.
+  if (
+    typeof timeoutMsValue === 'number'
+    && Number.isFinite(timeoutMsValue)
+    && timeoutMsValue >= 0
+    && timeoutMsValue > MAX_TIMER_DELAY_MS
+  ) {
+    throw new UnzenError(
+      `submission timeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+      ErrorCode.ProtocolViolation,
+    );
+  }
 
   return {
     idempotencyKey: idempotencyKeyValue as string | undefined,
