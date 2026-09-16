@@ -81,7 +81,11 @@ export async function waitForCheckpointBounded({
     'checkpoint poll interval',
     { allowZero: false },
   );
-  const deadline = now() + stableTimeoutMs;
+  // Keep long timeout budgets in their original safe-integer domain instead of
+  // adding them to an epoch timestamp, which can cross MAX_SAFE_INTEGER and
+  // lose millisecond identity even though the timeout itself is valid.
+  const startedAt = now();
+  const elapsedSinceStart = () => now() - startedAt;
   for (;;) {
     throwIfAborted(signal);
     const response = await fetchCheckpoint(signal);
@@ -90,10 +94,12 @@ export async function waitForCheckpointBounded({
       if (!response.ok) throw new Error(`checkpoint fetch failed: ${response.status}`);
       return response.json();
     }
-    const remaining = deadline - now();
+    const remaining = stableTimeoutMs - elapsedSinceStart();
     if (remaining <= 0) throw new CheckpointWaitTimeoutError(stableTimeoutMs);
     await sleep(Math.min(stablePollIntervalMs, remaining), signal);
-    if (now() >= deadline) throw new CheckpointWaitTimeoutError(stableTimeoutMs);
+    if (elapsedSinceStart() >= stableTimeoutMs) {
+      throw new CheckpointWaitTimeoutError(stableTimeoutMs);
+    }
   }
 }
 
