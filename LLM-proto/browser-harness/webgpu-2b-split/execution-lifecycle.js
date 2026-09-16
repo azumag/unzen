@@ -16,6 +16,13 @@ export function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
 }
 
+function requirePositiveSafeInteger(value, label) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive safe integer: ${String(value)}`);
+  }
+  return value;
+}
+
 function requireHostTimerDelay(value, label, { allowZero }) {
   const minimum = allowZero ? 0 : 1;
   if (
@@ -68,15 +75,13 @@ export async function waitForCheckpointBounded({
   now = () => Date.now(),
   sleep = delayWithSignal,
 }) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error(`checkpoint timeout must be positive: ${timeoutMs}`);
-  }
+  const stableTimeoutMs = requirePositiveSafeInteger(timeoutMs, 'checkpoint timeout');
   const stablePollIntervalMs = requireHostTimerDelay(
     pollIntervalMs,
     'checkpoint poll interval',
     { allowZero: false },
   );
-  const deadline = now() + timeoutMs;
+  const deadline = now() + stableTimeoutMs;
   for (;;) {
     throwIfAborted(signal);
     const response = await fetchCheckpoint(signal);
@@ -86,9 +91,9 @@ export async function waitForCheckpointBounded({
       return response.json();
     }
     const remaining = deadline - now();
-    if (remaining <= 0) throw new CheckpointWaitTimeoutError(timeoutMs);
+    if (remaining <= 0) throw new CheckpointWaitTimeoutError(stableTimeoutMs);
     await sleep(Math.min(stablePollIntervalMs, remaining), signal);
-    if (now() >= deadline) throw new CheckpointWaitTimeoutError(timeoutMs);
+    if (now() >= deadline) throw new CheckpointWaitTimeoutError(stableTimeoutMs);
   }
 }
 
