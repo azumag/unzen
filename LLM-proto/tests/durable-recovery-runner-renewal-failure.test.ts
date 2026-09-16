@@ -77,11 +77,15 @@ describe('durable recovery runner renewal failure containment', () => {
         markResumeStarted();
       }),
     });
+    // Attach the rejection observer before advancing the timer that can make
+    // runPromise reject. Vitest treats a transiently unhandled rejection as a
+    // test failure even when an assertion is attached later in the same test.
+    const runExpectation = expect(runPromise).rejects.toBe(renewalError);
 
     await resumeStarted;
     await vi.advanceTimersByTimeAsync(10);
 
-    await expect(runPromise).rejects.toBe(renewalError);
+    await runExpectation;
     expect(resumeSignal?.aborted).toBe(true);
     expect(repo.claims).toBe(2);
     expect(repo.getRecoveryOwnership(record.requestId)).toBeUndefined();
@@ -111,12 +115,13 @@ describe('durable recovery runner renewal failure containment', () => {
         await resumeGate;
       },
     });
+    const runExpectation = expect(runPromise).rejects.toBe(renewalError);
 
     await vi.advanceTimersByTimeAsync(10);
     expect(resumeSignal?.aborted).toBe(true);
     releaseResume();
 
-    await expect(runPromise).rejects.toBe(renewalError);
+    await runExpectation;
     expect(repo.claims).toBe(2);
     expect(repo.getRecoveryOwnership(record.requestId)).toBeUndefined();
   });
@@ -150,12 +155,13 @@ describe('durable recovery runner renewal failure containment', () => {
         await resumeGate;
       },
     });
+    const runExpectation = expect(runPromise).rejects.toBe(renewalError);
 
     await vi.advanceTimersByTimeAsync(10);
     expect(resumeSignal?.aborted).toBe(true);
     releaseResume();
 
-    await expect(runPromise).rejects.toBe(renewalError);
+    await runExpectation;
     expect(clockReads).toBe(2);
     expect(repo.getRecoveryOwnership(record.requestId)).toBeUndefined();
   });
