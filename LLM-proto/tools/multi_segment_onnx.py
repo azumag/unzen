@@ -536,6 +536,99 @@ def plan_layer_spans(
     )
 
 
+def _measure_source_external_file(
+    source_path: Path,
+    *,
+    hash_file: bool,
+) -> tuple[int, str | None]:
+    """Bind external-data byte length and optional digest to one file identity."""
+
+    requested = source_path.expanduser().absolute()
+    try:
+        source = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise FileNotFoundError(f"external data file not found: {requested}") from error
+
+    try:
+        before = os.lstat(source)
+    except OSError as error:
+        raise FileNotFoundError(f"external data file not found: {requested}") from error
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError(
+            f"external data must resolve to a regular file: {requested}"
+        )
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(source, flags)
+    except OSError as error:
+        raise RuntimeError(
+            f"external data could not be opened safely: {requested}: {error}"
+        ) from error
+
+    opened: os.stat_result
+    digest = hashlib.sha256() if hash_file else None
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(
+                f"external data must remain a regular file: {requested}"
+            )
+        if _file_stat_signature(opened) != _file_stat_signature(before):
+            raise RuntimeError(
+                f"external data changed between path check and open: {requested}"
+            )
+
+        if digest is not None:
+            while True:
+                block = os.read(fd, 4 * 1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+                observed += len(block)
+
+        after_fd = os.fstat(fd)
+        if _file_stat_signature(after_fd) != _file_stat_signature(opened):
+            action = "hashed" if hash_file else "measured"
+            raise RuntimeError(
+                f"external data changed while being {action}: {requested}"
+            )
+        if hash_file and observed != after_fd.st_size:
+            raise RuntimeError(
+                f"external data changed while being hashed: {requested}"
+            )
+    finally:
+        os.close(fd)
+
+    try:
+        after_path = os.lstat(source)
+    except OSError as error:
+        raise RuntimeError(
+            f"external data path disappeared after measurement: {requested}"
+        ) from error
+    if (
+        stat.S_ISLNK(after_path.st_mode)
+        or _file_stat_signature(after_path) != _file_stat_signature(opened)
+    ):
+        raise RuntimeError(
+            f"external data path changed while being measured: {requested}"
+        )
+    try:
+        requested_after = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise RuntimeError(
+            f"external data requested path changed while being measured: {requested}"
+        ) from error
+    if requested_after != source:
+        raise RuntimeError(
+            f"external data requested path changed while being measured: {requested}"
+        )
+
+    return opened.st_size, None if digest is None else digest.hexdigest()
+
+
 def _source_external_manifest(
     model: onnx.ModelProto,
     source_model_path: Path,
@@ -554,9 +647,10 @@ def _source_external_manifest(
     manifest: list[dict[str, object]] = []
     for location in sorted(ranges_by_location):
         source = source_model_path.parent / Path(location)
-        if not source.is_file():
-            raise FileNotFoundError(f"external data file not found: {source}")
-        file_size = source.stat().st_size
+        file_size, source_sha256 = _measure_source_external_file(
+            source,
+            hash_file=hash_files,
+        )
         for offset, length in ranges_by_location[location]:
             if offset + length > file_size:
                 raise ValueError(
@@ -567,8 +661,8 @@ def _source_external_manifest(
             "location": location,
             "bytes": file_size,
         }
-        if hash_files:
-            entry["sha256"] = sha256_file(source)
+        if source_sha256 is not None:
+            entry["sha256"] = source_sha256
         manifest.append(entry)
     return manifest
 
