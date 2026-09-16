@@ -195,6 +195,12 @@ function captureSpanRunEnvelope(
       requestId as InferenceRequestId,
     );
   }
+  if (initialCurrentSegment > totalSegments) {
+    throw new SpanPipelineError(
+      `SpanPipeline request currentSegment ${initialCurrentSegment} exceeds totalSegments ${totalSegments}`,
+      requestId as InferenceRequestId,
+    );
+  }
   if (totalSegments !== expectedTotalSegments) {
     throw new SpanPipelineError(
       `SpanPipeline request totalSegments ${totalSegments} does not match pipeline segment count ${expectedTotalSegments}`,
