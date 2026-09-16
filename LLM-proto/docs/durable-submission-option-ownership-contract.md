@@ -14,6 +14,8 @@ Malformed option containers (null, arrays, primitives, functions) fail with the 
 
 Only the top-level `signal` reference is captured. The `AbortSignal` object itself is intentionally not frozen or converted into a static snapshot: a controller must still be able to abort it after `submit()` returns. Existing core validation continues to require an AbortSignal-compatible object before listener installation.
 
+The durable core treats listener installation as a race-sensitive boundary: it checks `signal.aborted`, installs the one-shot abort listener when still live, and then checks `signal.aborted` again. Native `AbortSignal` does not replay an abort event that was already dispatched before a late listener became active, so the post-subscription check closes that check-then-listen window. Terminal cleanup removes the listener idempotently whether cancellation, completion, failure, or timeout settles the request.
+
 This contract prevents a top-level accessor from returning a valid signal/timeout/idempotency key during validation and a different value during durable mutation or timer/listener setup, while preserving live cancellation semantics.
 
 ## Evidence boundary
