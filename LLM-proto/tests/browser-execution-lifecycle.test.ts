@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CheckpointWaitTimeoutError,
+  MAX_HOST_TIMER_DELAY_MS,
+  delayWithSignal,
   ownSession,
   waitForCheckpointBounded,
 } from '../browser-harness/webgpu-2b-split/execution-lifecycle.js';
@@ -33,6 +35,78 @@ describe('browser execution lifecycle', () => {
 
     await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetches).toBe(1);
+  });
+
+  it('closes the abort race between the initial check and listener installation', async () => {
+    let abortedReads = 0;
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const signal = {
+      get aborted() {
+        abortedReads += 1;
+        return abortedReads >= 2;
+      },
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(delayWithSignal(10_000, signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(abortedReads).toBe(2);
+  });
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', Number.NaN],
+    ['infinite', Number.POSITIVE_INFINITY],
+    ['host timer overflow', MAX_HOST_TIMER_DELAY_MS + 1],
+    ['runtime string', '1'],
+  ])('rejects an invalid %s direct delay before listener registration', (_name, value) => {
+    const addEventListener = vi.fn();
+    const signal = {
+      aborted: false,
+      addEventListener,
+      removeEventListener: vi.fn(),
+    } as unknown as AbortSignal;
+
+    expect(() => delayWithSignal(value as number, signal)).toThrow(/delay must be a non-negative safe integer/);
+    expect(addEventListener).not.toHaveBeenCalled();
+  });
+
+  it('preserves a zero millisecond direct delay', async () => {
+    await expect(delayWithSignal(0)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', Number.NaN],
+    ['infinite', Number.POSITIVE_INFINITY],
+    ['host timer overflow', MAX_HOST_TIMER_DELAY_MS + 1],
+    ['runtime string', '500'],
+  ])('rejects an invalid %s poll interval before fetching a checkpoint', async (_name, value) => {
+    const fetchCheckpoint = vi.fn(async () => response(404));
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 10_000,
+      pollIntervalMs: value as number,
+      fetchCheckpoint,
+    })).rejects.toThrow(/checkpoint poll interval must be a positive safe integer/);
+    expect(fetchCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('keeps the absolute timeout independent from the host timer ceiling', async () => {
+    const checkpoint = { checkpointId: 'cp-long-budget' };
+    const value = await waitForCheckpointBounded({
+      timeoutMs: MAX_HOST_TIMER_DELAY_MS + 10_000,
+      pollIntervalMs: 500,
+      fetchCheckpoint: async () => response(200, checkpoint),
+    });
+
+    expect(value).toEqual(checkpoint);
   });
 
   it('stops at the configured checkpoint deadline', async () => {
