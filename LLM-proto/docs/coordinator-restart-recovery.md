@@ -36,6 +36,8 @@ A non-terminal replay no longer calls the old unbounded result poll. It runs thr
 
 If recovery ownership is lost while this Coordinator is executing, the recovery signal is aborted without terminalizing the shared request. The replacement owner remains free to continue it.
 
+The resume handoff classifies that abort at a race-sensitive subscription boundary. It checks `context.signal.aborted`, installs the one-shot listener only while live, then checks the signal again after registration. If ownership was lost in the check-then-listen window, the local in-flight entry is still marked `recovery-ownership`; `runRequest()` therefore leaves durable state non-terminal for the replacement owner. A local user/deadline abort that already fired the Coordinator controller is not overwritten by this classification, and the resume listener is removed in the callback cleanup path.
+
 ## Deadline and retry behavior
 
 While recovery is waiting, the runner applies the original absolute deadline. During resumed execution, `DurableCoordinator` installs a timer for only the remaining duration; restart never grants a fresh timeout window.
