@@ -207,6 +207,12 @@ function captureSpanRunEnvelope(
       requestId as InferenceRequestId,
     );
   }
+  if (totalSegments > 0 && initialCurrentSegment === totalSegments) {
+    throw new SpanPipelineError(
+      `SpanPipeline request currentSegment ${initialCurrentSegment} has no executable segment for totalSegments ${totalSegments}`,
+      requestId as InferenceRequestId,
+    );
+  }
 
   return Object.freeze({
     requestId: requestId as InferenceRequestId,
