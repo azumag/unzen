@@ -32,6 +32,14 @@ Malformed or unsupported inputs reject without partially arming timeout machiner
 or invoking the execution factory. This keeps failure ordering deterministic and
 prevents a bad runtime envelope from leaving a timer/listener side effect behind.
 
+After preflight, cancellation subscription is treated as a race-sensitive
+boundary. The helper checks an already-aborted signal, registers the abort
+listener, and then checks `aborted` again before invoking the execution factory.
+The post-registration check closes the window where abort can be dispatched after
+the first check but before the listener becomes active. If cancellation wins that
+window, the inner controller is aborted, the timeout/listener are cleaned up, the
+returned promise rejects as `AbortError`, and the factory is not invoked.
+
 ## Legacy timeout preflight contract
 
 Before `withTimeout()` arms its timer, it validates:
