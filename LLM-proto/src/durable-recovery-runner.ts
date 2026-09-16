@@ -79,6 +79,22 @@ function snapshotRecoveryRunnerOptions(
     }
   }
 
+  if (signal !== undefined) {
+    if (typeof signal !== 'object' || signal === null || Array.isArray(signal)) {
+      throw new TypeError('Durable recovery signal must be an AbortSignal-compatible object');
+    }
+    const signalCandidate = signal as unknown as Record<string, unknown>;
+    if (
+      typeof signalCandidate.aborted !== 'boolean'
+      || typeof signalCandidate.addEventListener !== 'function'
+      || typeof signalCandidate.removeEventListener !== 'function'
+    ) {
+      throw new TypeError(
+        'Durable recovery signal must expose boolean aborted and event-listener methods',
+      );
+    }
+  }
+
   return Object.freeze({
     ownerId,
     ownershipTtlMs,
