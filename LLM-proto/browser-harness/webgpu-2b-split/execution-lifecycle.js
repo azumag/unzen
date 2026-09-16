@@ -12,8 +12,22 @@ export function abortError(reason = 'operation aborted') {
   return new DOMException(reason, 'AbortError');
 }
 
+function readAbortSignalState(signal) {
+  if (signal === undefined || signal === null) return false;
+  let aborted;
+  try {
+    aborted = signal.aborted;
+  } catch {
+    throw new TypeError('AbortSignal state could not be read');
+  }
+  if (typeof aborted !== 'boolean') {
+    throw new TypeError('AbortSignal aborted state must be boolean');
+  }
+  return aborted;
+}
+
 export function throwIfAborted(signal) {
-  if (signal?.aborted) throw abortError();
+  if (readAbortSignalState(signal)) throw abortError();
 }
 
 function requirePositiveSafeInteger(value, label) {
@@ -45,21 +59,42 @@ export function delayWithSignal(ms, signal) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer;
+    let listenerMayBeRegistered = false;
+    const removeAbortListener = () => {
+      if (!listenerMayBeRegistered) return;
+      listenerMayBeRegistered = false;
+      try {
+        signal?.removeEventListener('abort', onAbort);
+      } catch {
+        // Caller-owned cleanup must never prevent the delay from settling.
+      }
+    };
     const finish = (action) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
+      if (timer !== undefined) clearTimeout(timer);
+      removeAbortListener();
       action();
     };
     const onAbort = () => finish(() => reject(abortError()));
     timer = setTimeout(() => finish(resolve), delayMs);
-    signal?.addEventListener('abort', onAbort, { once: true });
 
-    // Close the check-then-listen race: an AbortSignal that flips after the
-    // initial throwIfAborted() but before listener installation must still
-    // cancel this delay rather than resolving after the timer.
-    if (signal?.aborted) onAbort();
+    if (signal !== undefined && signal !== null) {
+      listenerMayBeRegistered = true;
+      try {
+        signal.addEventListener('abort', onAbort, { once: true });
+        // Close the check-then-listen race: an AbortSignal that flips after the
+        // initial throwIfAborted() but before listener installation must still
+        // cancel this delay rather than resolving after the timer.
+        if (readAbortSignalState(signal)) onAbort();
+      } catch (error) {
+        finish(() => reject(
+          error?.name === 'AbortError'
+            ? error
+            : new TypeError('AbortSignal could not be subscribed for delay'),
+        ));
+      }
+    }
   });
 }
 

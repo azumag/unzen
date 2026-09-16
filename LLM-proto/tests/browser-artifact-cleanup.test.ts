@@ -22,6 +22,109 @@ describe('artifact body ownership and cleanup', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it('cancels and releases a reader when AbortSignal subscription throws', async () => {
+    const cancel = vi.fn();
+    const releaseLock = vi.fn();
+    const reader = {
+      read: vi.fn(async () => ({ done: true, value: undefined })),
+      cancel,
+      releaseLock,
+    };
+    const response = {
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+    };
+    const removeEventListener = vi.fn();
+    const signal = {
+      aborted: false,
+      addEventListener() {
+        throw new Error('subscription exploded');
+      },
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(readResponseBytesBounded(response, { signal }))
+      .rejects.toThrow('artifact AbortSignal could not be subscribed');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(reader.read).not.toHaveBeenCalled();
+  });
+
+  it('cancels and releases a reader when signal state becomes unreadable after subscription', async () => {
+    const cancel = vi.fn();
+    const releaseLock = vi.fn();
+    const reader = {
+      read: vi.fn(async () => ({ done: true, value: undefined })),
+      cancel,
+      releaseLock,
+    };
+    const response = {
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+    };
+    let abortedReads = 0;
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const signal = {
+      get aborted() {
+        abortedReads += 1;
+        if (abortedReads > 1) throw new Error('state exploded');
+        return false;
+      },
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(readResponseBytesBounded(response, { signal }))
+      .rejects.toThrow('artifact AbortSignal could not be subscribed');
+    expect(abortedReads).toBe(2);
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(reader.read).not.toHaveBeenCalled();
+  });
+
+  it('preserves successful bytes when signal and reader cleanup hooks throw', async () => {
+    const releaseLock = vi.fn(() => {
+      throw new Error('release exploded');
+    });
+    let reads = 0;
+    const reader = {
+      async read() {
+        reads += 1;
+        return reads === 1
+          ? { done: false, value: new Uint8Array([1, 2]) }
+          : { done: true, value: undefined };
+      },
+      cancel: vi.fn(),
+      releaseLock,
+    };
+    const response = {
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+    };
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn(() => {
+      throw new Error('listener cleanup exploded');
+    });
+    const signal = {
+      aborted: false,
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    await expect(readResponseBytesBounded(response, {
+      maxBytes: 2,
+      expectedBytes: 2,
+      signal,
+    })).resolves.toEqual(new Uint8Array([1, 2]));
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects an oversized tee branch without waiting for its sibling to cancel', async () => {
     const source = new ReadableStream<Uint8Array>({
       start(controller) { controller.enqueue(new Uint8Array([1, 2])); },

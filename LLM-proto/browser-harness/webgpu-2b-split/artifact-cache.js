@@ -42,6 +42,34 @@ function cancelReadable(readable, reason) {
   }
 }
 
+function removeAbortListener(signal, onAbort, mayBeRegistered) {
+  if (!mayBeRegistered) return;
+  try {
+    signal?.removeEventListener('abort', onAbort);
+  } catch {
+    // Caller-owned cleanup must not mask the artifact result/error.
+  }
+}
+
+function releaseReader(reader) {
+  try {
+    reader.releaseLock?.();
+  } catch {
+    // Reader cleanup is best-effort after the primary read outcome is known.
+  }
+}
+
+function allowsCorruptionCleanup(signal) {
+  if (signal === undefined || signal === null) return true;
+  try {
+    return signal.aborted === false;
+  } catch {
+    // If caller-owned signal state is no longer readable, avoid destructive
+    // cache cleanup because cancellation cannot be ruled out safely.
+    return false;
+  }
+}
+
 function hex(bytes) {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
@@ -110,18 +138,30 @@ export async function readResponseBytesBounded(
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
+  let listenerMayBeRegistered = false;
   const onAbort = () => {
     cancelReadable(reader, 'artifact-load-aborted');
   };
-  signal?.addEventListener('abort', onAbort, { once: true });
   try {
+    if (signal !== undefined && signal !== null) {
+      listenerMayBeRegistered = true;
+      try {
+        signal.addEventListener('abort', onAbort, { once: true });
+        // Close the state-check/listener race before the first reader pull.
+        throwIfAborted(signal);
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        throw new TypeError('artifact AbortSignal could not be subscribed');
+      }
+    }
+
     for (;;) {
       throwIfAborted(signal);
       let next;
       try {
         next = await reader.read();
       } catch (error) {
-        if (signal?.aborted) throw abortError();
+        throwIfAborted(signal);
         throw error;
       }
       throwIfAborted(signal);
@@ -145,8 +185,8 @@ export async function readResponseBytesBounded(
     cancelReadable(reader, error);
     throw error;
   } finally {
-    signal?.removeEventListener('abort', onAbort);
-    reader.releaseLock?.();
+    removeAbortListener(signal, onAbort, listenerMayBeRegistered);
+    releaseReader(reader);
   }
 
   if (expectedBytes !== undefined && total !== expectedBytes) {
@@ -241,7 +281,7 @@ export async function loadVerifiedArtifact(
     // Cancellation is not evidence of corruption. A failed cache miss also
     // owns no old entry: deleting its key could evict another caller's newly
     // verified download (including a put that completed as Stop arrived).
-    if (cacheHit && !signal?.aborted && error?.name !== 'AbortError') {
+    if (cacheHit && allowsCorruptionCleanup(signal) && error?.name !== 'AbortError') {
       try {
         await cache.delete(key);
       } catch {

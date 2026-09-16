@@ -14,12 +14,14 @@ The absolute timeout budget is intentionally **not** capped to the host timer ce
 
 `waitForCheckpointBounded()` applies the same host-timer domain to `pollIntervalMs`, except that polling requires a strictly positive interval. Invalid polling intervals are rejected before the first checkpoint fetch.
 
-## Abort race closure
+## Abort race and cleanup containment
 
-A checkpoint delay checks `signal.aborted` before creating the timer, installs its abort listener, and then re-checks `signal.aborted`. This closes the check-then-listen window where an AbortSignal could previously flip after the first check but before listener installation and leave a cancelled wait sleeping until the timer fired.
+A checkpoint delay checks `signal.aborted` before creating the timer, installs its abort listener, and then re-checks `signal.aborted`. This closes the check-then-listen window where an AbortSignal could otherwise flip after the first check but before listener installation and leave a cancelled wait sleeping until the timer fired.
 
-Abort cleanup is idempotent: the timer is cleared, the listener is removed, and the promise rejects with `AbortError` at most once.
+Caller-owned signal state and listener methods are treated as a trust boundary. The `aborted` state must remain boolean and readable. Subscription or post-subscription state failure rejects the delay deterministically after clearing its timer, while listener removal is best-effort. A throwing `removeEventListener()` therefore cannot prevent resolve/reject or leave the delay pending.
+
+The streamed artifact reader follows the same lifecycle. Once `getReader()` has acquired the body lock, signal subscription and the post-subscription state check run inside the reader's cancellation/release scope. If setup fails, cancellation and `releaseLock()` are attempted before the error escapes. Listener removal and reader release are independent best-effort cleanup steps, so a cleanup hook cannot replace a successful byte result or an earlier integrity/cancellation failure.
 
 ## Evidence boundary
 
-This contract hardens the browser-side lifecycle used by the multi-browser/WebGPU path. It does not by itself provide new evidence for real Llama-3.2-1B q4 artifact materialization, physical WebGPU working-set, observed Coordinator checkpoint relay/latency, or worker-loss resume acceptance tracked by #167.
+This contract hardens the browser-side lifecycle used by the multi-browser/WebGPU path. It does not by itself provide new evidence for real Llama-3.2-1B q4 artifact materialization, physical WebGPU working-set, observed Coordinator checkpoint relay/latency, or worker-loss resume acceptance tracked by #167. It also does not change persisted legacy deadline policy in #877 or production deployment work in #158.
