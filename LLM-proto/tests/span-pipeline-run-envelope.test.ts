@@ -203,6 +203,39 @@ describe('SpanPipeline run envelope', () => {
     expect(workerPool.get(workerId('run-envelope-b'))?.status).toBe(WorkerStatus.IDLE);
   });
 
+  it('rejects exhausted non-zero currentSegment before worker or checkpoint side effects', async () => {
+    const workerPool = new WorkerPool();
+    registerOneSegmentWorkers(workerPool);
+    const checkpointStore = new CheckpointStore();
+    checkpointStore.save(makeCheckpoint('req-run-exhausted', 0));
+    let executeCalls = 0;
+    const executor: SpanExecutor = {
+      execute: async () => {
+        executeCalls++;
+        throw new Error('executor must not run');
+      },
+    };
+    const pipeline = new SpanPipeline(
+      makeSegments(2),
+      workerPool,
+      checkpointStore,
+      executor,
+      { retryDelayMs: 0 },
+    );
+    const request = makeRequest(2, 2, 'req-run-exhausted');
+
+    await expect(pipeline.run(request)).rejects.toThrow(
+      'SpanPipeline request currentSegment 2 has no executable segment for totalSegments 2',
+    );
+
+    expect(executeCalls).toBe(0);
+    expect(checkpointStore.size).toBe(1);
+    expect(request.status).toBe(InferenceStatus.QUEUED);
+    expect(request.currentSegment).toBe(2);
+    expect(workerPool.get(workerId('run-envelope-a'))?.status).toBe(WorkerStatus.IDLE);
+    expect(workerPool.get(workerId('run-envelope-b'))?.status).toBe(WorkerStatus.IDLE);
+  });
+
   it('preserves zero-segment completion and clears stale checkpoint state', async () => {
     const executor: SpanExecutor = {
       execute: async () => {
