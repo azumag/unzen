@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -26,8 +27,11 @@ from typing import Iterable, Sequence
 import onnx
 from onnx import TensorProto, helper
 
+from source_file_snapshot import measure_regular_file, read_regular_file_snapshot
+
 
 PRESENT_OUTPUT_RE = re.compile(r"(?:^|/)present\.(\d+)\.(key|value)$")
+DEFAULT_SOURCE_GRAPH_MAX_BYTES = 64 * 1024 * 1024
 
 # SmolLM2's q4 export contains this ONNX Runtime custom operator in the
 # default domain.  The runtime knows how to execute it, but the stock ONNX
@@ -379,8 +383,13 @@ def split_model(
     external_data_mode: str = "symlink",
     hash_external_data: bool = True,
 ) -> dict[str, object]:
+    source_graph_bytes, source_graph_sha256 = read_regular_file_snapshot(
+        source_model_path,
+        max_bytes=DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+        label="source model",
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
-    model = onnx.load_model(str(source_model_path), load_external_data=False)
+    model = onnx.load_model(io.BytesIO(source_graph_bytes), load_external_data=False)
     plan = discover_split_plan(model, split_layer)
     boundary_names = [tensor.name for tensor in plan.boundary_tensors]
 
@@ -412,12 +421,17 @@ def split_model(
     external_manifest: list[dict[str, object]] = []
     for location in locations:
         source = source_model_path.parent / location
+        file_size, source_sha256 = measure_regular_file(
+            source,
+            hash_file=hash_external_data,
+            label="external data",
+        )
         entry: dict[str, object] = {
             "location": location,
-            "bytes": source.stat().st_size,
+            "bytes": file_size,
         }
-        if hash_external_data:
-            entry["sha256"] = sha256_file(source)
+        if source_sha256 is not None:
+            entry["sha256"] = source_sha256
         external_manifest.append(entry)
 
     manifest: dict[str, object] = {
@@ -425,7 +439,7 @@ def split_model(
         "kind": "unzen-real-two-segment-onnx",
         "sourceModel": {
             "path": str(source_model_path),
-            "sha256": sha256_file(source_model_path),
+            "sha256": source_graph_sha256,
             "externalData": external_manifest,
         },
         "splitLayer": split_layer,
