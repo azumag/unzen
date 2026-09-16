@@ -165,6 +165,14 @@ export function withAbortableTimeout<T>(
     }
     signal?.addEventListener('abort', onOuterAbort, { once: true });
 
+    // A structural signal may synchronously invoke the listener before its
+    // addEventListener implementation finishes storing it. Cleanup once more
+    // after registration returns so that late storage cannot leak a listener.
+    if (settled) {
+      signal?.removeEventListener('abort', onOuterAbort);
+      return;
+    }
+
     // An abort may have been dispatched after the first state check but before
     // the listener became active. Re-check after subscription so caller
     // cancellation wins before any underlying execution is started.
