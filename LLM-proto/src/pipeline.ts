@@ -227,6 +227,19 @@ export class Pipeline {
    */
   async run(request: InferenceRequest): Promise<InferenceResult> {
     const runRequest = capturePipelineRunRequest(request, this.segments.length);
+
+    if (runRequest.totalSegments === 0) {
+      runRequest.status = InferenceStatus.COMPLETED;
+      this.checkpointStore.deleteAll(runRequest.id);
+      return {
+        requestId: runRequest.id,
+        tokens: [],
+        text: '',
+        totalTimeMs: 0,
+        segmentsCompleted: 0,
+      };
+    }
+
     const startTime = Date.now();
     runRequest.status = InferenceStatus.IN_PROGRESS;
 
