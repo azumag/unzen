@@ -194,7 +194,7 @@ class BrowserArtifactBudgetError(RuntimeError):
     def as_dict(self) -> dict[str, object]:
         return {
             "requiredMaxBytes": self.required_max_bytes,
-            "minimumAchievableMaximumBytes": self.minimum_achievable_ceiling,
+            "minimumAchievableMaximumBytes": self.minimum_achievable_maximum_bytes,
             "oversizedSingleLayerSpans": [
                 {
                     "startLayer": layer,
