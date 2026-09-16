@@ -120,7 +120,9 @@ function assertLegacyTimeoutRuntimeEnvelope<T>(
  * returned promise always settles even if the underlying work ignores abort.
  * Runtime inputs are validated before timer/listener registration or factory
  * invocation so malformed asserted/decoded values cannot partially arm the
- * timeout machinery before failing.
+ * timeout machinery before failing. After registering an external abort
+ * listener, the signal state is re-checked before factory invocation so an
+ * abort that wins the check-then-listen window cannot be lost.
  */
 export function withAbortableTimeout<T>(
   factory: (signal: AbortSignal) => Promise<T>,
@@ -162,6 +164,12 @@ export function withAbortableTimeout<T>(
       return;
     }
     signal?.addEventListener('abort', onOuterAbort, { once: true });
+
+    // An abort may have been dispatched after the first state check but before
+    // the listener became active. Re-check after subscription so caller
+    // cancellation wins before any underlying execution is started.
+    if (signal?.aborted) onOuterAbort();
+    if (settled) return;
 
     // Invoke the factory synchronously so the caller can observe the signal
     // before awaiting the returned promise.
