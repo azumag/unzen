@@ -54,6 +54,10 @@ describe('durable recovery runner renewal failure containment', () => {
     const repo = new ThrowOnRenewRepository(renewalError);
     const record = seed(repo);
     let resumeSignal: AbortSignal | undefined;
+    let markResumeStarted!: () => void;
+    const resumeStarted = new Promise<void>((resolve) => {
+      markResumeStarted = resolve;
+    });
 
     const runPromise = runDurableRecovery(repo, record.requestId, {
       ownerId: 'renewal-failure-owner',
@@ -65,12 +69,16 @@ describe('durable recovery runner renewal failure containment', () => {
       now: () => START,
       onResume: ({ signal }) => new Promise<void>((_resolve, reject) => {
         resumeSignal = signal;
-        signal.addEventListener('abort', () => {
-          reject(new DOMException('AbortError', 'AbortError'));
-        }, { once: true });
+        const onAbort = () => reject(new DOMException('AbortError', 'AbortError'));
+        signal.addEventListener('abort', onAbort, { once: true });
+        // Mirror the production check-listen-recheck discipline so the test
+        // cannot lose an abort if fake-timer scheduling interleaves here.
+        if (signal.aborted) onAbort();
+        markResumeStarted();
       }),
     });
 
+    await resumeStarted;
     await vi.advanceTimersByTimeAsync(10);
 
     await expect(runPromise).rejects.toBe(renewalError);
