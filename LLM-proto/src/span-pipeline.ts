@@ -244,6 +244,7 @@ export class SpanPipeline {
 
     if (run.totalSegments === 0) {
       request.status = InferenceStatus.COMPLETED;
+      this.checkpointStore.deleteAll(run.requestId);
       return {
         requestId: run.requestId,
         tokens: [],

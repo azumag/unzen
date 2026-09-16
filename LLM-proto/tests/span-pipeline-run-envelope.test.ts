@@ -203,17 +203,19 @@ describe('SpanPipeline run envelope', () => {
     expect(workerPool.get(workerId('run-envelope-b'))?.status).toBe(WorkerStatus.IDLE);
   });
 
-  it('preserves zero-segment completion when the request declares matching geometry', async () => {
+  it('preserves zero-segment completion and clears stale checkpoint state', async () => {
     const executor: SpanExecutor = {
       execute: async () => {
         throw new Error('zero-segment request must not execute');
       },
     };
+    const checkpointStore = new CheckpointStore();
+    checkpointStore.save(makeCheckpoint('req-run-zero', 0));
     const request = makeRequest(0, 0, 'req-run-zero');
     const pipeline = new SpanPipeline(
       [],
       new WorkerPool(),
-      new CheckpointStore(),
+      checkpointStore,
       executor,
       { retryDelayMs: 0 },
     );
@@ -226,5 +228,6 @@ describe('SpanPipeline run envelope', () => {
       segmentsCompleted: 0,
     });
     expect(request.status).toBe(InferenceStatus.COMPLETED);
+    expect(checkpointStore.size).toBe(0);
   });
 });
