@@ -8,16 +8,25 @@ multi-browser WebGPU execution.
 
 ## Prepare browser-sized artifacts
 
-Use the budget-driven generator:
+Use the fail-closed staged publisher for final or repeated evidence runs:
 
 ```bash
-python tools/multi_segment_onnx.py \
+python tools/prepare_budgeted_multi_split_atomic.py \
   /absolute/path/to/Llama-3.2-1B-Instruct/onnx/model_q4.onnx \
   /absolute/path/to/llama-1b-budget-split
 ```
 
-The generator chooses contiguous layer spans, targets roughly 200 MiB per
-browser artifact, requires every generated artifact to remain within the
+The wrapper runs the budget-driven `multi_segment_onnx.py` generator entirely in
+a same-filesystem staging directory. Only after graph extraction, external-data
+repacking, ONNX checks, measured byte accounting and budget validation succeed
+does it publish graph/data files, with `split-manifest.json` moved into place
+last as the commit marker. See `multi-segment-fail-closed-publication.md` for the
+failure and concurrency boundary. Direct `multi_segment_onnx.py` invocation is
+retained for compatibility or callers that deliberately own destination
+lifecycle themselves.
+
+The underlying generator chooses contiguous layer spans, targets roughly 200 MiB
+per browser artifact, requires every generated artifact to remain within the
 preferred 256 MiB ceiling, repacks external data independently per segment and
 writes the measured plan to `split-manifest.json`.
 
