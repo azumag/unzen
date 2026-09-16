@@ -40,6 +40,13 @@ the first check but before the listener becomes active. If cancellation wins tha
 window, the inner controller is aborted, the timeout/listener are cleaned up, the
 returned promise rejects as `AbortError`, and the factory is not invoked.
 
+Structural signal implementations are allowed by this boundary, so subscription
+and cleanup are also fail-safe: a throwing `addEventListener` rejects without
+leaving the already-armed timeout behind, a throwing `removeEventListener` cannot
+prevent promise settlement, and a signal that invokes its listener synchronously
+before finishing registration receives a second cleanup after registration
+returns.
+
 ## Legacy timeout preflight contract
 
 Before `withTimeout()` arms its timer, it validates:
