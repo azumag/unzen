@@ -6,14 +6,14 @@ To keep one inference run on one durable identity and geometry, `SpanPipeline.ru
 
 - `id` — must be a non-empty string and becomes the run's request identity;
 - `totalSegments` — must be a non-negative safe integer and must equal the pipeline-owned segment count;
-- initial `currentSegment` — must be a non-negative safe integer and cannot exceed `totalSegments`, so malformed caller state is rejected before execution.
+- initial `currentSegment` — must be a non-negative safe integer. It cannot exceed `totalSegments`, and for a non-zero pipeline it must be strictly less than `totalSegments` so an already-exhausted caller envelope is rejected before execution.
 
 The captured values form the run envelope. Later span assignment, checkpoint lookup/save/cleanup, checkpoint/result identity validation, error identity, final result identity, final progress and `segmentsCompleted` all use that envelope rather than rereading caller-owned identity/geometry fields.
 
 The request object remains the caller-visible progress surface. `status` and `currentSegment` continue to be updated during execution, so existing progress observers remain compatible. Mutating `id` or `totalSegments` through a retained JavaScript reference after `run()` begins cannot redirect later checkpoint operations or change the returned result identity.
 
-`currentSegment` is validated as caller geometry but is not authoritative resume state. Durable `CheckpointStore` state still determines the unfinished suffix; accepting a bounded caller progress value therefore does not change existing checkpoint-resume semantics.
+`currentSegment` is validated as caller geometry but is not authoritative resume state. Durable `CheckpointStore` state still determines the unfinished suffix for a valid non-zero request. The caller envelope must nevertheless identify an executable non-zero position (`currentSegment < totalSegments`); durable checkpoints do not rescue malformed or already-exhausted caller geometry.
 
-A geometry mismatch fails before routing, executor invocation, worker-state mutation, or checkpoint cleanup. Zero-segment pipelines remain valid only when the request also declares `totalSegments === 0` and `currentSegment === 0`; they complete without worker execution and, like every other terminal-success path, clear any stale checkpoints for the captured request ID before returning.
+A geometry mismatch fails before routing, executor invocation, worker-state mutation, status mutation, or checkpoint cleanup. Zero-segment pipelines remain valid only when the request also declares `totalSegments === 0` and `currentSegment === 0`; they complete without worker execution and, like every other terminal-success path, clear any stale checkpoints for the captured request ID before returning.
 
-Regression coverage includes changed-on-second-read accessors, explicit mid-run mutation between spans, `currentSegment > totalSegments` rejection with pre-existing checkpoint state left untouched, mismatch fail-closed behavior, and zero-segment terminal cleanup with pre-existing stale checkpoint state.
+Regression coverage includes changed-on-second-read accessors, explicit mid-run mutation between spans, `currentSegment > totalSegments` rejection, exhausted non-zero `currentSegment === totalSegments` rejection with pre-existing checkpoint state left untouched, mismatch fail-closed behavior, and zero-segment terminal cleanup with pre-existing stale checkpoint state.
