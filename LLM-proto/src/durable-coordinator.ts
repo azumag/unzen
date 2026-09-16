@@ -278,7 +278,7 @@ function bridgeSubmissionSignal(surface: CapturedSubmissionSignalSurface): Bridg
     },
     addEventListener(
       type: string,
-      listener: EventListenerOrEventListenerObject | null,
+      listener: EventListenerOrEventListenerObject,
       options?: boolean | AddEventListenerOptions,
     ) {
       if (type === 'abort') observedByCore = true;
@@ -286,7 +286,7 @@ function bridgeSubmissionSignal(surface: CapturedSubmissionSignalSurface): Bridg
     },
     removeEventListener(
       type: string,
-      listener: EventListenerOrEventListenerObject | null,
+      listener: EventListenerOrEventListenerObject,
       options?: boolean | EventListenerOptions,
     ) {
       innerSignal.removeEventListener(type, listener, options);
