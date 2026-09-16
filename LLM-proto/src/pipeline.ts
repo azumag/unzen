@@ -30,7 +30,7 @@ import {
   type FinalOutputSnapshot,
 } from './final-output-snapshot.js';
 import { snapshotSegmentResultRoot } from './worker-result-root-snapshot.js';
-import { withAbortableTimeout, delay } from './pipeline-utils.js';
+import { MAX_TIMER_DELAY_MS, withAbortableTimeout, delay } from './pipeline-utils.js';
 
 /**
  * Abstracts segment execution on a browser worker.
@@ -124,8 +124,16 @@ function resolvePipelineOptions(options: unknown): PipelineOptions {
   if (!isNonNegativeFiniteNumber(segmentTimeoutMs)) {
     throw new TypeError('Pipeline segmentTimeoutMs must be a non-negative finite number');
   }
+  if (segmentTimeoutMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(
+      `Pipeline segmentTimeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+    );
+  }
   if (!isNonNegativeFiniteNumber(retryDelayMs)) {
     throw new TypeError('Pipeline retryDelayMs must be a non-negative finite number');
+  }
+  if (retryDelayMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(`Pipeline retryDelayMs must not exceed ${MAX_TIMER_DELAY_MS}ms`);
   }
 
   return {
