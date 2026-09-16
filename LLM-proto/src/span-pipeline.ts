@@ -304,6 +304,11 @@ export class SpanPipeline {
         );
       }
 
+      // Effective deadlines are route-derived coordinator configuration, not
+      // worker behavior. Validate the complete route before any span marks a
+      // worker busy so arithmetic overflow cannot disconnect a healthy worker.
+      this.assertFiniteRouteTimeouts(run.requestId, route);
+
       try {
         return await this.executeRoute(
           request,
@@ -335,6 +340,22 @@ export class SpanPipeline {
     }
 
     throw new SpanPipelineError('Route execution exhausted all retries', run.requestId);
+  }
+
+  private assertFiniteRouteTimeouts(
+    requestId: InferenceRequestId,
+    route: Route,
+  ): void {
+    for (const span of route) {
+      const spanSize = span.endSegment - span.startSegment + 1;
+      const timeoutMs = spanSize * this.options.perSegmentTimeoutMs;
+      if (!Number.isFinite(timeoutMs)) {
+        throw new SpanPipelineError(
+          `effective timeout for span ${span.startSegment}..${span.endSegment} must be finite`,
+          requestId,
+        );
+      }
+    }
   }
 
   /** Execute one suffix route, relaying checkpoints only at span boundaries. */
