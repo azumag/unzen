@@ -15,6 +15,12 @@ Recovery does not reuse the old unbounded `waitForTerminalResult()` behavior.
 
 When a request reaches its original absolute deadline while another lease is still present, the next recovery command terminalizes it with the structured deadline error and reclaims only the exact persisted lease selected by the planner.
 
+### Cancellation subscription lifecycle
+
+Timer-backed waits treat `AbortSignal` subscription as a race-sensitive boundary. The runner checks an already-aborted signal before arming the timer, subscribes the abort listener, and then checks the signal again after registration. The second check closes the window where abort can happen after the first check but before the listener is active; an already-dispatched abort event is therefore not lost. Timer and listener cleanup is idempotent, so timeout and abort races settle the wait at most once.
+
+The same post-subscription re-check is used when forwarding caller cancellation into the resume handoff signal. `onResume()` must therefore never receive a live signal solely because caller abort won the listener-registration race.
+
 ## Resume handoff
 
 When the command returns `resume-claimed`, the runner invokes `onResume()` while the durable recovery ownership remains held. The callback contract is intentionally strict: it must not return until either
