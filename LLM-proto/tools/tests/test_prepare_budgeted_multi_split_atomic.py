@@ -214,6 +214,50 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
                         generator.assert_not_called()
                         self.assertFalse(output.exists())
 
+    def test_source_digest_flag_rejects_non_booleans_before_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "not-created"
+            malformed = (None, 0, 1, "", "false", object())
+
+            with mock.patch.object(atomic, "prepare_budgeted_multi_split") as generator:
+                for value in malformed:
+                    with self.subTest(value=repr(value)):
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            r"hash_source_external_data must be a boolean",
+                        ):
+                            atomic.prepare_budgeted_multi_split_atomic(
+                                root / "missing.onnx",
+                                output,
+                                target_bytes=1,
+                                preferred_max_bytes=1,
+                                hash_source_external_data=value,  # type: ignore[arg-type]
+                            )
+                        generator.assert_not_called()
+                        self.assertFalse(output.exists())
+
+    def test_source_digest_flag_preserves_literal_boolean_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+
+            for value in (True, False):
+                output = root / f"output-{value}"
+                with self.subTest(value=value), mock.patch.object(
+                    atomic,
+                    "prepare_budgeted_multi_split",
+                    return_value=make_manifest(external_data=False),
+                ) as generator, mock.patch.object(atomic, "_publish_staged_split"):
+                    atomic.prepare_budgeted_multi_split_atomic(
+                        source,
+                        output,
+                        target_bytes=1,
+                        preferred_max_bytes=1,
+                        hash_source_external_data=value,
+                    )
+                    self.assertIs(generator.call_args.kwargs["hash_source_external_data"], value)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,14 @@ from multi_segment_onnx import (
 from prepare_browser_p0 import PREFERRED_MAX_BYTES
 
 
+def _require_bool(raw: object, *, field: str) -> bool:
+    """Reject truthiness coercion at programmatic option boundaries."""
+
+    if not isinstance(raw, bool):
+        raise ValueError(f"{field} must be a boolean")
+    return raw
+
+
 def _require_generated_layout(manifest: dict[str, object]) -> tuple[dict[str, object], ...]:
     """Snapshot the generator-owned paths that are eligible for publication."""
 
@@ -161,6 +169,10 @@ def prepare_budgeted_multi_split_atomic(
 ) -> dict[str, object]:
     """Prepare in an isolated staging directory, then publish fail-closed."""
 
+    hash_source_external_data = _require_bool(
+        hash_source_external_data,
+        field="hash_source_external_data",
+    )
     _validate_budget_options(
         hidden_size=hidden_size,
         target_bytes=target_bytes,
