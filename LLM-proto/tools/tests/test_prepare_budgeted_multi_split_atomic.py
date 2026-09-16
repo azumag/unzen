@@ -187,6 +187,33 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
                 any(path.name.startswith(".unzen-budgeted-split-stage-") for path in output.iterdir())
             )
 
+    def test_invalid_options_fail_before_output_or_staging_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "not-created"
+            defaults: dict[str, object] = {
+                "hidden_size": 2048,
+                "target_bytes": 1,
+                "preferred_max_bytes": 1,
+            }
+
+            with mock.patch.object(atomic, "prepare_budgeted_multi_split") as generator:
+                for name in defaults:
+                    options = dict(defaults)
+                    options[name] = True
+                    with self.subTest(name=name):
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            rf"{name} must be a positive integer",
+                        ):
+                            atomic.prepare_budgeted_multi_split_atomic(
+                                root / "missing.onnx",
+                                output,
+                                **options,  # type: ignore[arg-type]
+                            )
+                        generator.assert_not_called()
+                        self.assertFalse(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

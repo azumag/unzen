@@ -13,6 +13,7 @@ from multi_segment_onnx import (
     _generated_artifact_paths,
     _preflight_generated_artifact_collisions,
     _preflight_generated_artifact_destinations,
+    _validate_budget_options,
     prepare_budgeted_multi_split,
 )
 from prepare_browser_p0 import PREFERRED_MAX_BYTES
@@ -160,6 +161,11 @@ def prepare_budgeted_multi_split_atomic(
 ) -> dict[str, object]:
     """Prepare in an isolated staging directory, then publish fail-closed."""
 
+    _validate_budget_options(
+        hidden_size=hidden_size,
+        target_bytes=target_bytes,
+        preferred_max_bytes=preferred_max_bytes,
+    )
     output_dir = output_dir.expanduser().absolute()
     output_dir.mkdir(parents=True, exist_ok=True)
 
