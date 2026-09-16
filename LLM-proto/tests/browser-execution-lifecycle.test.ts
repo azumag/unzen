@@ -85,6 +85,28 @@ describe('browser execution lifecycle', () => {
     ['fractional', 1.5],
     ['NaN', Number.NaN],
     ['infinite', Number.POSITIVE_INFINITY],
+    ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
+    ['runtime string', '1000'],
+  ])('rejects an invalid %s checkpoint timeout before fetching', async (_name, value) => {
+    const fetchCheckpoint = vi.fn(async () => response(404));
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: value as number,
+      pollIntervalMs: 500,
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toThrow(/checkpoint timeout must be a positive safe integer/);
+    expect(fetchCheckpoint).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', Number.NaN],
+    ['infinite', Number.POSITIVE_INFINITY],
     ['host timer overflow', MAX_HOST_TIMER_DELAY_MS + 1],
     ['runtime string', '500'],
   ])('rejects an invalid %s poll interval before fetching a checkpoint', async (_name, value) => {
