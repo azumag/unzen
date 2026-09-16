@@ -185,6 +185,16 @@ export async function waitForCheckpointBounded({
  * tests without importing the browser runner.
  */
 export function ownSession(session) {
+  if (
+    session === null
+    || (typeof session !== 'object' && typeof session !== 'function')
+  ) {
+    throw new TypeError('ORT session must be an object');
+  }
+  // Snapshot the validated cleanup capability once. A caller that mutates a
+  // custom/fake session after ownership transfer cannot replace the release
+  // method that the owner already accepted.
+  const stableRelease = requireFunction(session.release, 'ORT session release');
   let released = false;
   return {
     session,
@@ -194,7 +204,7 @@ export function ownSession(session) {
     async release() {
       if (released) return false;
       released = true;
-      await session.release();
+      await stableRelease.call(session);
       return true;
     },
   };

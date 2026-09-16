@@ -59,7 +59,9 @@ A missing/wrong run ID therefore ends with a distinct timeout state even if the 
 
 ## Session ownership
 
-`execution-lifecycle.js` exposes `ownSession(session)`. Segment 0 and Segment 1 wrap every created ORT session and release it from `finally`. The owner is idempotent, so an early release after inference plus the `finally` cleanup still calls the underlying ORT `release()` at most once.
+`execution-lifecycle.js` exposes `ownSession(session)`. Segment 0 and Segment 1 wrap every created ORT session and release it from `finally`. Ownership now validates the runtime session before retaining it: the value must be object/function-like and expose a callable `release` method. The accepted cleanup method is captured once and later invoked with the original session as its receiver, so caller-side mutation cannot replace the already-validated cleanup capability.
+
+The owner is idempotent, so an early release after inference plus the `finally` cleanup still calls the underlying ORT `release()` at most once. A rejection/exception from the accepted `release()` remains the cleanup root cause; the owner does not wrap it. Malformed sessions fail at ownership time rather than surfacing only during `finally` cleanup.
 
 This covers failures in feed construction, `session.run()`, tensor conversion/validation, token decoding, cancellation after WebGPU completion, and Coordinator network errors.
 
@@ -75,7 +77,7 @@ For the next #168 real run, verify all of the following in Chrome Task Manager /
 
 ## Automated evidence
 
-Vitest covers bounded checkpoint waiting, explicit abort, timeout, session release exactly once, try/finally release on inference failure, and abort during streamed artifact reads. The CI browser-harness syntax check continues to parse the actual runner.
+Vitest covers bounded checkpoint waiting, explicit abort, timeout, session ownership preflight, release exactly once, try/finally release on inference failure, and abort during streamed artifact reads. The CI browser-harness syntax check continues to parse the actual runner.
 
 Checkpoint-envelope boundary validation separately rejects malformed/non-finite or
 negative creation times, TTLs and clocks, and expiry sums beyond the safe numeric range.
