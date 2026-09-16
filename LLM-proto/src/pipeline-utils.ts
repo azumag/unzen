@@ -141,11 +141,18 @@ export function withAbortableTimeout<T>(
     const controller = new AbortController();
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const removeOuterAbortListener = (): void => {
+      try {
+        signal?.removeEventListener('abort', onOuterAbort);
+      } catch {
+        // Caller-owned structural signals must not prevent promise settlement.
+      }
+    };
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener('abort', onOuterAbort);
+      removeOuterAbortListener();
       action();
     };
     const onOuterAbort = (): void => {
@@ -163,13 +170,19 @@ export function withAbortableTimeout<T>(
       onOuterAbort();
       return;
     }
-    signal?.addEventListener('abort', onOuterAbort, { once: true });
+    try {
+      signal?.addEventListener('abort', onOuterAbort, { once: true });
+    } catch {
+      controller.abort();
+      finish(() => reject(new TypeError('timeout signal could not be subscribed')));
+      return;
+    }
 
     // A structural signal may synchronously invoke the listener before its
     // addEventListener implementation finishes storing it. Cleanup once more
     // after registration returns so that late storage cannot leak a listener.
     if (settled) {
-      signal?.removeEventListener('abort', onOuterAbort);
+      removeOuterAbortListener();
       return;
     }
 
