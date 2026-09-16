@@ -7,6 +7,12 @@ import operator
 from typing import Sequence
 
 
+EMPTY_TOKEN_MESSAGES = {
+    "inputTokenIds": "at least one token ID is required",
+    "promptTokenIds": "at least one prompt token ID is required",
+}
+
+
 def non_negative_int(raw: object, *, field: str) -> int:
     """Normalize one integer-like runtime value while rejecting bool/negative values."""
 
@@ -60,7 +66,9 @@ def preflight_direct_verifier_parameters(
     """Validate runtime configuration before any artifact I/O or ORT session creation."""
 
     if not token_ids:
-        raise ValueError(f"at least one {token_field} is required")
+        raise ValueError(
+            EMPTY_TOKEN_MESSAGES.get(token_field, f"at least one {token_field} is required")
+        )
     normalized_tokens = [
         non_negative_int(value, field=f"{token_field}[{index}]")
         for index, value in enumerate(token_ids)
