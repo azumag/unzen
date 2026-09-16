@@ -8,6 +8,14 @@ The real browser split harness treats checkpoint polling delays as runtime data.
 
 The absolute timeout budget is intentionally **not** capped to the host timer ceiling. A valid safe-integer timeout may exceed `2_147_483_647` milliseconds because the wait is advanced through bounded polling intervals rather than one host timer. Elapsed time is measured relative to the captured start time instead of computing `Date.now() + timeoutMs`; this avoids losing millisecond identity when a long but valid timeout plus an epoch timestamp would cross `Number.MAX_SAFE_INTEGER`.
 
+## Checkpoint clock contract
+
+The injected `now()` function is a runtime trust boundary, not a typed-only convenience. Every clock sample used by `waitForCheckpointBounded()` must be a non-negative JavaScript safe integer. The initial sample is validated before the first checkpoint fetch or sleep, so malformed values cannot start a polling lifecycle. Later samples are validated before residual timeout values are passed to the sleep/timer helper, preventing `NaN`, infinities, fractional values, runtime strings, or unsafe integers from being reinterpreted as timer delays.
+
+If the caller-owned clock throws, that original exception remains the root error. The wait does not wrap it as a timer validation or timeout failure. This keeps clock failures distinguishable from `CheckpointWaitTimeoutError` and host-timer domain violations.
+
+This contract validates sample identity but does not attempt to synthesize a monotonic clock. Production callers should continue to supply a stable millisecond clock; the default remains `Date.now()`.
+
 ## Timer-backed delay contract
 
 `delayWithSignal(ms, signal)` accepts only non-negative safe integers up to `2_147_483_647` milliseconds, the host timer ceiling used by the runtime. Validation happens before timer or abort-listener registration. `0ms` remains valid for callers that intentionally yield through the event loop.
