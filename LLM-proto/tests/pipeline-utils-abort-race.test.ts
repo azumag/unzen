@@ -46,10 +46,13 @@ describe('withAbortableTimeout AbortSignal registration race', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('does not invoke the factory when a structural signal calls back synchronously during registration', async () => {
+  it('cleans up a listener stored after a synchronous registration callback', async () => {
     vi.useFakeTimers();
     let aborted = false;
-    const removeEventListener = vi.fn();
+    let storedListener: EventListenerOrEventListenerObject | undefined;
+    const removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+      if (type === 'abort' && storedListener === listener) storedListener = undefined;
+    });
     const signal = {
       get aborted() {
         return aborted;
@@ -59,6 +62,10 @@ describe('withAbortableTimeout AbortSignal registration race', () => {
         aborted = true;
         if (typeof listener === 'function') listener(new Event('abort'));
         else listener.handleEvent(new Event('abort'));
+        // A hostile structural stand-in can finish storing the listener only
+        // after synchronously invoking it. The helper must clean this up once
+        // addEventListener returns.
+        storedListener = listener;
       },
       removeEventListener,
     } as unknown as AbortSignal;
@@ -68,7 +75,8 @@ describe('withAbortableTimeout AbortSignal registration race', () => {
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(factory).not.toHaveBeenCalled();
-    expect(removeEventListener).toHaveBeenCalledOnce();
+    expect(storedListener).toBeUndefined();
+    expect(removeEventListener).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
