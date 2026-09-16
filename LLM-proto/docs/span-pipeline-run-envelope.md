@@ -6,12 +6,14 @@ To keep one inference run on one durable identity and geometry, `SpanPipeline.ru
 
 - `id` — must be a non-empty string and becomes the run's request identity;
 - `totalSegments` — must be a non-negative safe integer and must equal the pipeline-owned segment count;
-- initial `currentSegment` — must be a non-negative safe integer so malformed caller state is rejected before execution.
+- initial `currentSegment` — must be a non-negative safe integer and cannot exceed `totalSegments`, so malformed caller state is rejected before execution.
 
 The captured values form the run envelope. Later span assignment, checkpoint lookup/save/cleanup, checkpoint/result identity validation, error identity, final result identity, final progress and `segmentsCompleted` all use that envelope rather than rereading caller-owned identity/geometry fields.
 
 The request object remains the caller-visible progress surface. `status` and `currentSegment` continue to be updated during execution, so existing progress observers remain compatible. Mutating `id` or `totalSegments` through a retained JavaScript reference after `run()` begins cannot redirect later checkpoint operations or change the returned result identity.
 
-A geometry mismatch fails before routing, executor invocation, or checkpoint mutation. Zero-segment pipelines remain valid only when the request also declares `totalSegments === 0`; they complete without worker execution.
+`currentSegment` is validated as caller geometry but is not authoritative resume state. Durable `CheckpointStore` state still determines the unfinished suffix; accepting a bounded caller progress value therefore does not change existing checkpoint-resume semantics.
 
-Regression coverage includes changed-on-second-read accessors, explicit mid-run mutation between spans, mismatch fail-closed behavior with pre-existing checkpoint state, and the zero-segment path.
+A geometry mismatch fails before routing, executor invocation, worker-state mutation, or checkpoint cleanup. Zero-segment pipelines remain valid only when the request also declares `totalSegments === 0` and `currentSegment === 0`; they complete without worker execution.
+
+Regression coverage includes changed-on-second-read accessors, explicit mid-run mutation between spans, `currentSegment > totalSegments` rejection with pre-existing checkpoint state left untouched, mismatch fail-closed behavior, and the zero-segment path.
