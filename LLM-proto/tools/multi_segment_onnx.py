@@ -686,6 +686,56 @@ def _validate_budget_options(
         )
 
 
+def _generated_artifact_paths(output_dir: Path, segment_count: int) -> tuple[Path, ...]:
+    """Return every destination written by a budgeted split run."""
+
+    generated = [
+        path
+        for index in range(segment_count)
+        for path in (
+            output_dir / f"segment{index}.onnx",
+            output_dir / f"segment{index}.onnx_data",
+        )
+    ]
+    generated.append(output_dir / "split-manifest.json")
+    return tuple(generated)
+
+
+def _preflight_generated_artifact_collisions(
+    source_artifacts: set[Path],
+    generated_artifacts: tuple[Path, ...],
+) -> None:
+    """Fail before writes when a destination aliases any source artifact."""
+
+    resolved_sources = {path.resolve(strict=True) for path in source_artifacts}
+    collisions: set[Path] = set()
+    for generated in generated_artifacts:
+        resolved_generated = generated.resolve()
+        if resolved_generated in resolved_sources:
+            collisions.add(resolved_generated)
+            continue
+
+        for source in resolved_sources:
+            try:
+                aliases_source = generated.samefile(source)
+            except FileNotFoundError:
+                aliases_source = False
+            except OSError as error:
+                raise RuntimeError(
+                    f"generated artifact path could not be inspected safely: "
+                    f"{generated}: {error}"
+                ) from error
+            if aliases_source:
+                collisions.add(resolved_generated)
+                break
+
+    if collisions:
+        raise ValueError(
+            "generated artifact path would overwrite source data: "
+            + ", ".join(str(path) for path in sorted(collisions, key=str))
+        )
+
+
 def prepare_budgeted_multi_split(
     source_model_path: Path,
     output_dir: Path,
@@ -725,27 +775,17 @@ def prepare_budgeted_multi_split(
         raise AssertionError("planner/generator segment count mismatch")
 
     # Fail before opening any output file if a generated name would overwrite
-    # the source graph or one of its external-data files. This matters when an
-    # operator intentionally reuses the source directory as the output directory.
-    source_artifacts = {source_model_path.resolve()}
+    # the source graph or one of its external-data files. Resolved-path checks
+    # catch lexical/symlink aliases; samefile() additionally catches hard links.
+    source_artifacts = {source_model_path.resolve(strict=True)}
     source_artifacts.update(
-        (source_model_path.parent / str(entry["location"])).resolve()
+        (source_model_path.parent / str(entry["location"])).resolve(strict=True)
         for entry in source_external
     )
-    generated_artifacts = {
-        path.resolve()
-        for index in range(len(specs))
-        for path in (
-            output_dir / f"segment{index}.onnx",
-            output_dir / f"segment{index}.onnx_data",
-        )
-    }
-    collisions = sorted(source_artifacts & generated_artifacts, key=str)
-    if collisions:
-        raise ValueError(
-            "generated artifact path would overwrite source data: "
-            + ", ".join(str(path) for path in collisions)
-        )
+    _preflight_generated_artifact_collisions(
+        source_artifacts,
+        _generated_artifact_paths(output_dir, len(specs)),
+    )
 
     segments: list[dict[str, object]] = []
     for index, (spec, estimated) in enumerate(zip(specs, estimated_costs)):
