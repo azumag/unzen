@@ -12,9 +12,11 @@ import type {
   DurableCoordinatorOptions,
   DurableSegmentExecutor,
 } from './durable-coordinator-core.js';
+import { InMemoryRepository } from './durable-repository.js';
 import type { DurableRepository } from './durable-repository.js';
 import type { ExecutionFailure, ExecutionResult, ResultIdentity } from './durable-types.js';
 import { ErrorCode, UnzenError, classifyErrorCode } from './errors.js';
+import { idempotencyKey as brandIdempotencyKey } from './ids.js';
 import type { SegmentedModelManifest } from './model-manifest.js';
 import { MAX_TIMER_DELAY_MS } from './pipeline-utils.js';
 import { WorkerTier, type WorkerId } from './types.js';
@@ -177,6 +179,127 @@ interface OwnedDurableSubmissionOptions {
   readonly timeoutMs?: number;
 }
 
+interface CapturedSubmissionSignalSurface {
+  readonly signal: AbortSignal;
+  readonly aborted: boolean;
+  readonly addEventListener: AbortSignal['addEventListener'];
+  readonly removeEventListener: AbortSignal['removeEventListener'];
+}
+
+interface BridgedSubmissionSignal {
+  readonly signal: AbortSignal;
+  readonly observedByCore: () => boolean;
+  readonly cleanup: () => void;
+}
+
+function submissionSignalError(message: string): UnzenError {
+  return new UnzenError(message, ErrorCode.ProtocolViolation);
+}
+
+function captureSubmissionSignalSurface(
+  signal: unknown,
+): CapturedSubmissionSignalSurface | undefined {
+  if (signal === undefined) return undefined;
+  if (!isRecord(signal)) {
+    throw submissionSignalError('submission signal must be an AbortSignal-compatible object');
+  }
+
+  const aborted = signal.aborted;
+  const addEventListener = signal.addEventListener;
+  const removeEventListener = signal.removeEventListener;
+  if (
+    typeof aborted !== 'boolean'
+    || typeof addEventListener !== 'function'
+    || typeof removeEventListener !== 'function'
+  ) {
+    throw submissionSignalError(
+      'submission signal must expose boolean aborted and event-listener methods',
+    );
+  }
+
+  return {
+    signal: signal as unknown as AbortSignal,
+    aborted,
+    addEventListener: addEventListener as AbortSignal['addEventListener'],
+    removeEventListener: removeEventListener as AbortSignal['removeEventListener'],
+  };
+}
+
+function bridgeSubmissionSignal(surface: CapturedSubmissionSignalSurface): BridgedSubmissionSignal {
+  const controller = new AbortController();
+  let callerSubscribed = false;
+  let cleaned = false;
+  let observedByCore = false;
+  const onAbort = () => controller.abort();
+
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (!callerSubscribed) return;
+    try {
+      surface.removeEventListener.call(surface.signal, 'abort', onAbort);
+    } catch {
+      // Caller-owned cleanup must not replace a durable request result or leak
+      // the in-flight entry. The stable bridge is already independent of it.
+    }
+  };
+
+  if (surface.aborted) {
+    onAbort();
+  } else {
+    callerSubscribed = true;
+    try {
+      surface.addEventListener.call(surface.signal, 'abort', onAbort, { once: true });
+    } catch {
+      cleanup();
+      throw submissionSignalError('submission signal could not be subscribed');
+    }
+
+    let abortedAfterSubscribe: unknown;
+    try {
+      abortedAfterSubscribe = surface.signal.aborted;
+    } catch {
+      cleanup();
+      throw submissionSignalError('submission signal state could not be read after subscription');
+    }
+    if (typeof abortedAfterSubscribe !== 'boolean') {
+      cleanup();
+      throw submissionSignalError(
+        'submission signal aborted state must remain boolean after subscription',
+      );
+    }
+    if (abortedAfterSubscribe) onAbort();
+  }
+
+  const innerSignal = controller.signal;
+  const stableSignal = {
+    get aborted() {
+      return innerSignal.aborted;
+    },
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type === 'abort') observedByCore = true;
+      innerSignal.addEventListener(type, listener, options);
+    },
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ) {
+      innerSignal.removeEventListener(type, listener, options);
+    },
+  } as unknown as AbortSignal;
+
+  return {
+    signal: stableSignal,
+    observedByCore: () => observedByCore,
+    cleanup,
+  };
+}
+
 function snapshotDurableSubmissionOptions(
   options: unknown,
 ): OwnedDurableSubmissionOptions {
@@ -187,16 +310,29 @@ function snapshotDurableSubmissionOptions(
     );
   }
 
-  // submit() historically uses normal property lookup. Detach only the
-  // top-level envelope; the AbortSignal object itself intentionally remains
-  // live so future aborts still propagate after submission.
+  // submit() historically uses normal property lookup. Detach the top-level
+  // envelope once so later validation, idempotency checks and signal bridging
+  // all operate on the same captured option identities.
   const idempotencyKeyValue = options.idempotencyKey;
   const signalValue = options.signal;
   const timeoutMsValue = options.timeoutMs;
 
-  // Preserve the core validator's diagnostics for malformed values, but reject
-  // a well-formed timer value that the browser/Node host cannot represent
-  // before idempotency or durable request state can be mutated.
+  if (
+    timeoutMsValue !== undefined
+    && (
+      typeof timeoutMsValue !== 'number'
+      || !Number.isFinite(timeoutMsValue)
+      || timeoutMsValue < 0
+    )
+  ) {
+    throw new UnzenError(
+      'submission timeoutMs must be a non-negative finite number',
+      ErrorCode.ProtocolViolation,
+    );
+  }
+
+  // Reject a well-formed timer value that the browser/Node host cannot
+  // represent before idempotency or durable request state can be mutated.
   if (
     typeof timeoutMsValue === 'number'
     && Number.isFinite(timeoutMsValue)
@@ -432,6 +568,8 @@ function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
 }
 
 export class DurableCoordinator extends DurableCoordinatorCore {
+  private readonly submissionRepository: DurableRepository;
+
   constructor(
     executor: DurableSegmentExecutor,
     manifest: SegmentedModelManifest,
@@ -439,15 +577,63 @@ export class DurableCoordinator extends DurableCoordinatorCore {
     repository?: DurableRepository,
   ) {
     const ownedOptions = resolveDurableCoordinatorOptions(options);
-    super(executor, manifest, ownedOptions, repository);
+    const ownedRepository = repository ?? new InMemoryRepository();
+    super(executor, manifest, ownedOptions, ownedRepository);
+    this.submissionRepository = ownedRepository;
   }
 
   submit(
     prompt: string,
     options: { readonly idempotencyKey?: string; readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
   ) {
+    // Keep the public boundary aligned with the core ordering so no caller
+    // listener is attached for a prompt that would be rejected immediately.
+    if (typeof prompt !== 'string') {
+      throw new UnzenError('submission prompt must be a string', ErrorCode.ProtocolViolation);
+    }
+
     const ownedOptions = snapshotDurableSubmissionOptions(options);
-    return super.submit(prompt, ownedOptions);
+    const signalSurface = captureSubmissionSignalSurface(ownedOptions.signal);
+    const key = ownedOptions.idempotencyKey === undefined
+      ? undefined
+      : brandIdempotencyKey(ownedOptions.idempotencyKey);
+
+    // Preserve the existing-idempotency fast path: duplicate submission must
+    // not subscribe to a new caller signal because that signal must never gain
+    // cancellation authority over an already-existing durable request.
+    if (
+      key !== undefined
+      && this.submissionRepository.getIdempotencyMapping(key) !== undefined
+    ) {
+      return super.submit(prompt, ownedOptions);
+    }
+
+    const bridge = signalSurface === undefined
+      ? undefined
+      : bridgeSubmissionSignal(signalSurface);
+    try {
+      const submission = super.submit(prompt, {
+        ...ownedOptions,
+        signal: bridge?.signal,
+      });
+
+      if (bridge !== undefined) {
+        // A concurrent idempotency winner returns before the core subscribes
+        // to the stable bridge. Drop the speculative caller listener
+        // immediately. An already-aborted bridge also needs no live listener.
+        if (bridge.signal.aborted || !bridge.observedByCore()) {
+          bridge.cleanup();
+        } else {
+          // Consume either settlement branch so caller-owned cleanup can never
+          // create a secondary rejected promise or replace the durable result.
+          void submission.result.then(bridge.cleanup, bridge.cleanup);
+        }
+      }
+      return submission;
+    } catch (error) {
+      bridge?.cleanup();
+      throw error;
+    }
   }
 
   registerWorker(
