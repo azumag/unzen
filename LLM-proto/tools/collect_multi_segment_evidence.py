@@ -64,7 +64,7 @@ def canonical_json_bytes(value: object) -> bytes:
 def ensure_provider_available(provider: str) -> tuple[str, ...]:
     """Fail closed before numerical execution when ORT cannot load the provider."""
 
-    if not provider:
+    if not isinstance(provider, str) or not provider.strip():
         raise ValueError("provider must be a non-empty ONNX Runtime provider name")
     available = tuple(str(item) for item in ort.get_available_providers())
     if provider not in available:
