@@ -157,17 +157,35 @@ function boundedWaitMs(
 function forwardAbort(source: AbortSignal | undefined, target: AbortController): () => void {
   if (!source) return () => {};
   const onAbort = () => target.abort();
-  if (source.aborted) {
-    onAbort();
-    return () => {};
-  }
+  let mayBeRegistered = false;
+  const cleanup = () => {
+    if (!mayBeRegistered) return;
+    mayBeRegistered = false;
+    try {
+      source.removeEventListener('abort', onAbort);
+    } catch {
+      // Caller-owned cleanup must never prevent durable ownership release.
+    }
+  };
 
-  source.addEventListener('abort', onAbort, { once: true });
-  // As with the wait helper, an abort can win between the first state check
-  // and listener registration. Re-check after subscribing so the target
-  // cannot remain live after caller cancellation.
-  if (source.aborted) onAbort();
-  return () => source.removeEventListener('abort', onAbort);
+  try {
+    if (source.aborted) {
+      onAbort();
+      return () => {};
+    }
+    // Assume registration may have partially happened before a structural
+    // signal throws. The catch path will attempt best-effort removal.
+    mayBeRegistered = true;
+    source.addEventListener('abort', onAbort, { once: true });
+    // As with the wait helper, an abort can win between the first state check
+    // and listener registration. Re-check after subscribing so the target
+    // cannot remain live after caller cancellation.
+    if (source.aborted) onAbort();
+    return cleanup;
+  } catch {
+    cleanup();
+    throw new TypeError('Durable recovery signal could not be subscribed');
+  }
 }
 
 /**
@@ -228,30 +246,36 @@ export async function runDurableRecovery(
         continue;
       case 'resume-claimed': {
         const resumeController = new AbortController();
-        const stopForwarding = forwardAbort(ownedOptions.signal, resumeController);
+        let stopForwarding = () => {};
+        let renewalTimer: ReturnType<typeof setInterval> | undefined;
         let ownershipLost = false;
-        const renewEvery = Math.max(1, Math.min(
-          ownedOptions.ownershipRenewIntervalMs,
-          Math.max(1, ownedOptions.ownershipTtlMs - 1),
-        ));
-        const renewalTimer = setInterval(() => {
-          const renewNow = nowFn();
-          const claim = repo.claimRecoveryOwnership(
-            {
-              requestId,
-              ownerId: ownedOptions.ownerId,
-              claimedAt: decision.ownership.claimedAt,
-              expiresAt: renewNow + ownedOptions.ownershipTtlMs,
-            },
-            renewNow,
-          );
-          if (claim === 'owned-by-peer') {
-            ownershipLost = true;
-            resumeController.abort();
-          }
-        }, renewEvery);
 
         try {
+          // Subscription itself is caller-controlled for structural signals.
+          // Keep it inside the ownership-release scope so even a Proxy/getter
+          // that changes after entry validation cannot strand the claim.
+          stopForwarding = forwardAbort(ownedOptions.signal, resumeController);
+          const renewEvery = Math.max(1, Math.min(
+            ownedOptions.ownershipRenewIntervalMs,
+            Math.max(1, ownedOptions.ownershipTtlMs - 1),
+          ));
+          renewalTimer = setInterval(() => {
+            const renewNow = nowFn();
+            const claim = repo.claimRecoveryOwnership(
+              {
+                requestId,
+                ownerId: ownedOptions.ownerId,
+                claimedAt: decision.ownership.claimedAt,
+                expiresAt: renewNow + ownedOptions.ownershipTtlMs,
+              },
+              renewNow,
+            );
+            if (claim === 'owned-by-peer') {
+              ownershipLost = true;
+              resumeController.abort();
+            }
+          }, renewEvery);
+
           await ownedOptions.onResume({
             requestId,
             segmentIndex: decision.segmentIndex,
@@ -272,7 +296,7 @@ export async function runDurableRecovery(
             segmentIndex: decision.segmentIndex,
           };
         } finally {
-          clearInterval(renewalTimer);
+          if (renewalTimer !== undefined) clearInterval(renewalTimer);
           stopForwarding();
           releaseDurableRecoveryOwnership(repo, requestId, ownedOptions.ownerId);
         }
