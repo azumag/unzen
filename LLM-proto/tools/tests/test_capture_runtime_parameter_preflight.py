@@ -60,7 +60,11 @@ class CaptureRuntimeParameterPreflightTest(unittest.TestCase):
                 "ensure_provider_available",
                 side_effect=ValueError("provider unavailable"),
             ) as provider_check,
-            patch.object(capture_module, "ensure_destination_available") as destination,
+            patch.object(
+                capture_module,
+                "ensure_destination_available",
+                return_value=Path("capture"),
+            ) as destination,
             patch.object(capture_module, "sha256_file") as source_hash,
             patch.object(capture_module, "_make_staging_dir") as staging,
             patch.object(capture_module, "prepare_budgeted_multi_split") as prepare,
@@ -74,7 +78,7 @@ class CaptureRuntimeParameterPreflightTest(unittest.TestCase):
                 )
 
         provider_check.assert_called_once_with("MissingExecutionProvider")
-        destination.assert_not_called()
+        destination.assert_called_once_with(Path("capture"))
         source_hash.assert_not_called()
         staging.assert_not_called()
         prepare.assert_not_called()
@@ -87,12 +91,7 @@ class CaptureRuntimeParameterPreflightTest(unittest.TestCase):
         )
         for kwargs in cases:
             with self.subTest(kwargs=kwargs):
-                with patch.object(
-                    capture_module,
-                    "ensure_provider_available",
-                    return_value=("CPUExecutionProvider",),
-                ):
-                    self._assert_rejected_before_capture_side_effects(**kwargs)
+                self._assert_rejected_before_capture_side_effects(**kwargs)
 
     def test_preflight_normalizes_numerical_parameters_before_destination_check(self) -> None:
         class IndexLike:
@@ -108,15 +107,15 @@ class CaptureRuntimeParameterPreflightTest(unittest.TestCase):
         with (
             patch.object(
                 capture_module,
-                "ensure_provider_available",
-                return_value=("CPUExecutionProvider",),
-            ),
-            patch.object(
-                capture_module,
                 "ensure_destination_available",
                 side_effect=DestinationReached,
             ) as destination,
-            patch.object(capture_module, "validate_run_parameters", wraps=capture_module.validate_run_parameters) as validate,
+            patch.object(
+                capture_module,
+                "validate_run_parameters",
+                wraps=capture_module.validate_run_parameters,
+            ) as validate,
+            patch.object(capture_module, "ensure_provider_available") as provider_check,
             patch.object(capture_module, "sha256_file") as source_hash,
             patch.object(capture_module, "prepare_budgeted_multi_split") as prepare,
         ):
@@ -133,6 +132,7 @@ class CaptureRuntimeParameterPreflightTest(unittest.TestCase):
 
         validate.assert_called_once()
         destination.assert_called_once_with(Path("capture"))
+        provider_check.assert_not_called()
         source_hash.assert_not_called()
         prepare.assert_not_called()
 
