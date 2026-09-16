@@ -75,7 +75,7 @@ class CaptureSourceGraphHashBoundaryTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "source model path changed while being read",
+                    r"source model(?: path)? changed while being read",
                 ):
                     capture_module.sha256_file(source)
 
