@@ -12,6 +12,9 @@ type TimeoutThen<T> = (
   onRejected: (reason: unknown) => unknown,
 ) => unknown;
 
+/** Maximum delay that browser/Node timers can represent without 32-bit overflow. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 /**
  * Race a promise against a timeout. Rejects with an Error if the timeout fires first.
  *
@@ -62,6 +65,12 @@ export function withTimeout<T>(
   });
 }
 
+function assertSupportedTimerDelay(timeoutMs: number): void {
+  if (timeoutMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(`timeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`);
+  }
+}
+
 function assertLegacyTimeoutRuntimeEnvelope<T>(
   promise: unknown,
   timeoutMs: unknown,
@@ -70,6 +79,7 @@ function assertLegacyTimeoutRuntimeEnvelope<T>(
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new TypeError('timeoutMs must be a finite non-negative number');
   }
+  assertSupportedTimerDelay(timeoutMs);
   if (typeof label !== 'string' || label.trim().length === 0) {
     throw new TypeError('timeout label must be a non-empty string');
   }
@@ -180,6 +190,7 @@ function assertAbortableTimeoutRuntimeEnvelope(
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new TypeError('timeoutMs must be a finite non-negative number');
   }
+  assertSupportedTimerDelay(timeoutMs);
   if (typeof label !== 'string' || label.trim().length === 0) {
     throw new TypeError('timeout label must be a non-empty string');
   }

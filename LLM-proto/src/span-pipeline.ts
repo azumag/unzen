@@ -41,7 +41,7 @@ import {
   type FinalOutputSnapshot,
 } from './final-output-snapshot.js';
 import { snapshotSpanResultRoot } from './worker-result-root-snapshot.js';
-import { withAbortableTimeout, delay } from './pipeline-utils.js';
+import { MAX_TIMER_DELAY_MS, withAbortableTimeout, delay } from './pipeline-utils.js';
 import { SegmentTimeoutError } from './errors.js';
 
 /**
@@ -146,8 +146,16 @@ function resolveSpanPipelineOptions(options: unknown): SpanPipelineOptions {
   if (!isNonNegativeFiniteNumber(perSegmentTimeoutMs)) {
     throw new TypeError('SpanPipeline perSegmentTimeoutMs must be a non-negative finite number');
   }
+  if (perSegmentTimeoutMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(
+      `SpanPipeline perSegmentTimeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+    );
+  }
   if (!isNonNegativeFiniteNumber(retryDelayMs)) {
     throw new TypeError('SpanPipeline retryDelayMs must be a non-negative finite number');
+  }
+  if (retryDelayMs > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(`SpanPipeline retryDelayMs must not exceed ${MAX_TIMER_DELAY_MS}ms`);
   }
 
   const artifactResidencyLedger = readOwnEnumerableOption(source, 'artifactResidencyLedger');
@@ -312,7 +320,8 @@ export class SpanPipeline {
 
       // Effective deadlines are route-derived coordinator configuration, not
       // worker behavior. Validate the complete route before any span marks a
-      // worker busy so arithmetic overflow cannot disconnect a healthy worker.
+      // worker busy so arithmetic overflow or unsupported host timer ranges
+      // cannot disconnect a healthy worker.
       this.assertFiniteRouteTimeouts(run.requestId, route);
 
       try {
@@ -358,6 +367,12 @@ export class SpanPipeline {
       if (!Number.isFinite(timeoutMs)) {
         throw new SpanPipelineError(
           `effective timeout for span ${span.startSegment}..${span.endSegment} must be finite`,
+          requestId,
+        );
+      }
+      if (timeoutMs > MAX_TIMER_DELAY_MS) {
+        throw new SpanPipelineError(
+          `effective timeout for span ${span.startSegment}..${span.endSegment} exceeds host timer maximum ${MAX_TIMER_DELAY_MS}ms`,
           requestId,
         );
       }
