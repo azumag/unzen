@@ -8,7 +8,6 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from multi_segment_onnx import (
     _generated_artifact_paths,
