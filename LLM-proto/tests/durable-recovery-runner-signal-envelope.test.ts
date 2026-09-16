@@ -74,6 +74,33 @@ describe('durable recovery runner signal envelope', () => {
     expect(onResume).not.toHaveBeenCalled();
   });
 
+  it('releases a resume claim if a structural signal changes after entry validation', async () => {
+    const repo = new InMemoryRepository();
+    const record = seedQueued(repo);
+    const onResume = vi.fn(async () => {});
+    let addReads = 0;
+    const hostileSignal = {
+      aborted: false,
+      get addEventListener() {
+        addReads += 1;
+        if (addReads === 1) return () => {};
+        throw new Error('listener surface changed after validation');
+      },
+      removeEventListener() {},
+    } as unknown as AbortSignal;
+
+    await expect(runDurableRecovery(
+      repo,
+      record.requestId,
+      options(hostileSignal, onResume),
+    )).rejects.toThrow('Durable recovery signal could not be subscribed');
+
+    expect(addReads).toBe(2);
+    expect(repo.getRecoveryOwnership(record.requestId)).toBeUndefined();
+    expect(repo.getRequest(record.requestId)?.stage).toBe('queued');
+    expect(onResume).not.toHaveBeenCalled();
+  });
+
   it('continues to accept an AbortSignal-compatible structural signal', async () => {
     const repo = new InMemoryRepository();
     const record = seedQueued(repo);
