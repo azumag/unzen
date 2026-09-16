@@ -364,13 +364,13 @@ def capture_run(
         atol=atol,
         rtol=rtol,
     )
-    ensure_provider_available(provider)
     _validate_budget_options(
         hidden_size=hidden_size,
         target_bytes=target_bytes,
         preferred_max_bytes=preferred_max_bytes,
     )
     output_root = ensure_destination_available(destination)
+    ensure_provider_available(provider)
     # The source graph is small relative to the external q4 weights, so hashing
     # it once before generation is cheap and closes a real TOCTOU gap: the shard
     # generator keeps an in-memory ModelProto while generation may run for a long
