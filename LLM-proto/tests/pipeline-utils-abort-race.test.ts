@@ -1,0 +1,126 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { withAbortableTimeout } from '../src/pipeline-utils.js';
+
+function abortDuringSubscriptionSignal(): {
+  readonly signal: AbortSignal;
+  readonly addEventListener: ReturnType<typeof vi.fn>;
+  readonly removeEventListener: ReturnType<typeof vi.fn>;
+} {
+  let aborted = false;
+  const addEventListener = vi.fn((type: string) => {
+    if (type === 'abort') {
+      // Model an AbortSignal that flips after the caller's first `.aborted`
+      // check but before the newly registered listener becomes active. Abort
+      // events are not replayed to listeners that missed dispatch.
+      aborted = true;
+    }
+  });
+  const removeEventListener = vi.fn();
+  const signal = {
+    get aborted() {
+      return aborted;
+    },
+    addEventListener,
+    removeEventListener,
+  } as unknown as AbortSignal;
+
+  return { signal, addEventListener, removeEventListener };
+}
+
+describe('withAbortableTimeout AbortSignal registration race', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('rejects before factory invocation when abort wins listener registration', async () => {
+    vi.useFakeTimers();
+    const race = abortDuringSubscriptionSignal();
+    const factory = vi.fn(() => Promise.resolve('must-not-run'));
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', race.signal);
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(factory).not.toHaveBeenCalled();
+    expect(race.addEventListener).toHaveBeenCalledOnce();
+    expect(race.removeEventListener).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cleans up a listener stored after a synchronous registration callback', async () => {
+    vi.useFakeTimers();
+    let aborted = false;
+    let storedListener: EventListenerOrEventListenerObject | undefined;
+    const removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+      if (type === 'abort' && storedListener === listener) storedListener = undefined;
+    });
+    const signal = {
+      get aborted() {
+        return aborted;
+      },
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        if (type !== 'abort') return;
+        aborted = true;
+        if (typeof listener === 'function') listener(new Event('abort'));
+        else listener.handleEvent(new Event('abort'));
+        // A hostile structural stand-in can finish storing the listener only
+        // after synchronously invoking it. The helper must clean this up once
+        // addEventListener returns.
+        storedListener = listener;
+      },
+      removeEventListener,
+    } as unknown as AbortSignal;
+    const factory = vi.fn(() => Promise.resolve('must-not-run'));
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', signal);
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(factory).not.toHaveBeenCalled();
+    expect(storedListener).toBeUndefined();
+    expect(removeEventListener).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a throwing subscription without leaking the armed timeout', async () => {
+    vi.useFakeTimers();
+    const factory = vi.fn(() => Promise.resolve('must-not-run'));
+    const removeEventListener = vi.fn();
+    const signal = {
+      aborted: false,
+      addEventListener() {
+        throw new Error('subscription exploded');
+      },
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', signal);
+
+    await expect(pending).rejects.toThrow('timeout signal could not be subscribed');
+    expect(factory).not.toHaveBeenCalled();
+    expect(removeEventListener).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('still settles cancellation when structural listener cleanup throws', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const factory = vi.fn(() => new Promise<never>(() => {}));
+    const signal = {
+      get aborted() {
+        return controller.signal.aborted;
+      },
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) {
+        controller.signal.addEventListener(type, listener, options);
+      },
+      removeEventListener() {
+        throw new Error('cleanup exploded');
+      },
+    } as unknown as AbortSignal;
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', signal);
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(factory).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

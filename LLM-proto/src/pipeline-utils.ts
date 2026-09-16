@@ -120,7 +120,9 @@ function assertLegacyTimeoutRuntimeEnvelope<T>(
  * returned promise always settles even if the underlying work ignores abort.
  * Runtime inputs are validated before timer/listener registration or factory
  * invocation so malformed asserted/decoded values cannot partially arm the
- * timeout machinery before failing.
+ * timeout machinery before failing. After registering an external abort
+ * listener, the signal state is re-checked before factory invocation so an
+ * abort that wins the check-then-listen window cannot be lost.
  */
 export function withAbortableTimeout<T>(
   factory: (signal: AbortSignal) => Promise<T>,
@@ -139,11 +141,18 @@ export function withAbortableTimeout<T>(
     const controller = new AbortController();
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const removeOuterAbortListener = (): void => {
+      try {
+        signal?.removeEventListener('abort', onOuterAbort);
+      } catch {
+        // Caller-owned structural signals must not prevent promise settlement.
+      }
+    };
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener('abort', onOuterAbort);
+      removeOuterAbortListener();
       action();
     };
     const onOuterAbort = (): void => {
@@ -161,7 +170,27 @@ export function withAbortableTimeout<T>(
       onOuterAbort();
       return;
     }
-    signal?.addEventListener('abort', onOuterAbort, { once: true });
+    try {
+      signal?.addEventListener('abort', onOuterAbort, { once: true });
+    } catch {
+      controller.abort();
+      finish(() => reject(new TypeError('timeout signal could not be subscribed')));
+      return;
+    }
+
+    // A structural signal may synchronously invoke the listener before its
+    // addEventListener implementation finishes storing it. Cleanup once more
+    // after registration returns so that late storage cannot leak a listener.
+    if (settled) {
+      removeOuterAbortListener();
+      return;
+    }
+
+    // An abort may have been dispatched after the first state check but before
+    // the listener became active. Re-check after subscription so caller
+    // cancellation wins before any underlying execution is started.
+    if (signal?.aborted) onOuterAbort();
+    if (settled) return;
 
     // Invoke the factory synchronously so the caller can observe the signal
     // before awaiting the returned promise.
