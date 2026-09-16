@@ -14,6 +14,6 @@ The request object remains the caller-visible progress surface. `status` and `cu
 
 `currentSegment` is validated as caller geometry but is not authoritative resume state. Durable `CheckpointStore` state still determines the unfinished suffix; accepting a bounded caller progress value therefore does not change existing checkpoint-resume semantics.
 
-A geometry mismatch fails before routing, executor invocation, worker-state mutation, or checkpoint cleanup. Zero-segment pipelines remain valid only when the request also declares `totalSegments === 0` and `currentSegment === 0`; they complete without worker execution.
+A geometry mismatch fails before routing, executor invocation, worker-state mutation, or checkpoint cleanup. Zero-segment pipelines remain valid only when the request also declares `totalSegments === 0` and `currentSegment === 0`; they complete without worker execution and, like every other terminal-success path, clear any stale checkpoints for the captured request ID before returning.
 
-Regression coverage includes changed-on-second-read accessors, explicit mid-run mutation between spans, `currentSegment > totalSegments` rejection with pre-existing checkpoint state left untouched, mismatch fail-closed behavior, and the zero-segment path.
+Regression coverage includes changed-on-second-read accessors, explicit mid-run mutation between spans, `currentSegment > totalSegments` rejection with pre-existing checkpoint state left untouched, mismatch fail-closed behavior, and zero-segment terminal cleanup with pre-existing stale checkpoint state.
