@@ -270,6 +270,8 @@ export async function runDurableRecovery(
         let stopForwarding = () => {};
         let renewalTimer: ReturnType<typeof setInterval> | undefined;
         let ownershipLost = false;
+        let renewalFailed = false;
+        let renewalFailure: unknown;
 
         try {
           // Subscription itself is caller-controlled for structural signals.
@@ -281,30 +283,46 @@ export async function runDurableRecovery(
             Math.max(1, ownedOptions.ownershipTtlMs - 1),
           ));
           renewalTimer = setInterval(() => {
-            const renewNow = nowFn();
-            const claim = repo.claimRecoveryOwnership(
-              {
-                requestId,
-                ownerId: ownedOptions.ownerId,
-                claimedAt: decision.ownership.claimedAt,
-                expiresAt: renewNow + ownedOptions.ownershipTtlMs,
-              },
-              renewNow,
-            );
-            if (claim === 'owned-by-peer') {
-              ownershipLost = true;
+            if (ownershipLost || renewalFailed) return;
+            try {
+              const renewNow = nowFn();
+              const claim = repo.claimRecoveryOwnership(
+                {
+                  requestId,
+                  ownerId: ownedOptions.ownerId,
+                  claimedAt: decision.ownership.claimedAt,
+                  expiresAt: renewNow + ownedOptions.ownershipTtlMs,
+                },
+                renewNow,
+              );
+              if (claim === 'owned-by-peer') {
+                ownershipLost = true;
+                resumeController.abort();
+              }
+            } catch (error) {
+              // Timer callbacks cannot surface failures through the awaited
+              // resume promise on their own. Capture the root cause, abort the
+              // runner-owned resume signal, and rethrow after onResume settles.
+              renewalFailed = true;
+              renewalFailure = error;
               resumeController.abort();
             }
           }, renewEvery);
 
-          await ownedOptions.onResume({
-            requestId,
-            segmentIndex: decision.segmentIndex,
-            checkpoint: decision.checkpoint,
-            deadlineAt: decision.deadlineAt,
-            ownership: decision.ownership,
-            signal: resumeController.signal,
-          });
+          try {
+            await ownedOptions.onResume({
+              requestId,
+              segmentIndex: decision.segmentIndex,
+              checkpoint: decision.checkpoint,
+              deadlineAt: decision.deadlineAt,
+              ownership: decision.ownership,
+              signal: resumeController.signal,
+            });
+          } catch (error) {
+            if (renewalFailed) throw renewalFailure;
+            throw error;
+          }
+          if (renewalFailed) throw renewalFailure;
           if (ownershipLost) {
             throw new UnzenError(
               `durable recovery ownership lost for ${requestId}`,
