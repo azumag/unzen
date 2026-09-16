@@ -9,6 +9,14 @@ function okResponse(value: unknown = {}) {
   };
 }
 
+function missingResponse() {
+  return {
+    status: 404,
+    ok: false,
+    json: async () => ({}),
+  };
+}
+
 describe('browser checkpoint wait runtime dependency preflight', () => {
   it('rejects a malformed fetch dependency before clock, sleep, or poll work', async () => {
     const now = vi.fn(() => 1_000);
@@ -85,6 +93,48 @@ describe('browser checkpoint wait runtime dependency preflight', () => {
     expect(now).not.toHaveBeenCalled();
     expect(fetchCheckpoint).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('rejects a regressing clock before extending the first residual wait', async () => {
+    const now = vi.fn()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(999);
+    const fetchCheckpoint = vi.fn(async () => missingResponse());
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      now,
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toThrow('checkpoint clock must be monotonic non-decreasing');
+
+    expect(now).toHaveBeenCalledTimes(2);
+    expect(fetchCheckpoint).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('rejects a clock regression after sleep before another checkpoint fetch', async () => {
+    const now = vi.fn()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_050)
+      .mockReturnValueOnce(1_049);
+    const fetchCheckpoint = vi.fn(async () => missingResponse());
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      now,
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toThrow('checkpoint clock must be monotonic non-decreasing');
+
+    expect(now).toHaveBeenCalledTimes(3);
+    expect(fetchCheckpoint).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(100, undefined);
   });
 
   it('preserves the valid immediate checkpoint path', async () => {
