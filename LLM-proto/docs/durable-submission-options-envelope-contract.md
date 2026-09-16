@@ -8,9 +8,9 @@ Malformed top-level containers such as `null`, primitives, arrays, symbols, and 
 
 ## `timeoutMs`
 
-When present, `timeoutMs` must be a non-negative finite JavaScript number. Strings, booleans, objects, symbols, `NaN`, infinities, and negative numbers are rejected before any durable or idempotency mutation.
+When present, `timeoutMs` must be a non-negative finite JavaScript number no greater than `2147483647ms` (`MAX_TIMER_DELAY_MS`). Strings, booleans, objects, symbols, `NaN`, infinities, negative numbers, and larger finite values are rejected before any durable/idempotency mutation or deadline timer registration.
 
-`timeoutMs = 0` remains supported and preserves the existing immediate-deadline behavior. This hardening intentionally does not introduce a new positive-only minimum or a new maximum deadline; those would be public behavior changes outside this issue. Fractional finite non-negative values likewise retain the platform timer semantics that existed before this boundary was added.
+`timeoutMs = 0` remains supported and preserves the existing immediate-deadline behavior. All previously representable positive values, including the exact host-timer maximum, remain accepted. Fractional finite non-negative values within the host range likewise retain the platform timer semantics that existed before this boundary was added.
 
 ## `signal`
 
@@ -24,4 +24,4 @@ This is an interface-shape gate, not an identity check. A structurally compatibl
 
 Caller-supplied idempotency keys continue to use their dedicated runtime validation contract and retain exact accepted string identity. `prompt` validation remains a separate concern and is not changed by this contract.
 
-Regression coverage lives in `tests/durable-coordinator-submission-options-envelope.test.ts`. It verifies malformed top-level containers and field values leave idempotency state, durable request state, and coordinator in-flight state untouched; it also verifies a structurally compatible signal is accepted and `timeoutMs = 0` is retained on the durable request record.
+Regression coverage lives in `tests/durable-coordinator-submission-options-envelope.test.ts` and `tests/durable-host-timer-range-options.test.ts`. It verifies malformed and host-timer-overflowing values leave idempotency state, durable request state, coordinator in-flight state, and host timers untouched; it also verifies a structurally compatible signal is accepted and `timeoutMs = 0` remains valid.
