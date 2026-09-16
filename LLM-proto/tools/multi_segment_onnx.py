@@ -254,9 +254,6 @@ def build_segment_spec(
             f"invalid layer span [{start_layer}, {end_layer}) for {total} layers"
         )
 
-    # Preserve every present key/value output owned by this span. These outputs
-    # are part of the real exported graph contract and may retain dependencies
-    # that materially change both the graph and external-weight byte count.
     outputs = [
         name
         for layer, name in _present_outputs(model)
@@ -353,9 +350,6 @@ def _external_range(initializer: TensorProto) -> tuple[str, int, int]:
 def _external_initializer_bytes(segment_model: onnx.ModelProto) -> int:
     """Count the bytes the repacker will actually materialize for a segment."""
 
-    # Multiple initializers may intentionally alias the same source byte range.
-    # ``repack_segment_external_data`` writes that range once, so the planner
-    # must deduplicate by the same (location, offset, length) identity.
     ranges = {
         _external_range(initializer)
         for initializer in segment_model.graph.initializer
@@ -379,8 +373,6 @@ def estimate_segment_bytes(
         hidden_size=hidden_size,
         graph_name=f"unzen-budget-segment-{spec.start_layer}-{spec.end_layer - 1}",
     )
-    # Serialization excludes external payloads and closely tracks the graph
-    # component of the saved .onnx artifact.
     return len(segment.SerializeToString()) + _external_initializer_bytes(segment)
 
 
@@ -419,7 +411,6 @@ def _select_partition(
                 raise ValueError(f"negative span cost for [{start}, {end}): {cost}")
             costs[(start, end)] = cost
 
-    # Exactly zero segments can cover exactly zero layers with a zero maximum.
     previous_minimax: dict[int, int] = {0: 0}
     chosen_count: int | None = None
     chosen_ceiling: int | None = None
@@ -466,8 +457,6 @@ def _select_partition(
             oversized_single_layer_spans=oversized_singletons,
         )
 
-    # With the minimax ceiling fixed, deviation is additive, so retaining the
-    # best (deviation, cuts) prefix for each state is globally optimal.
     previous: dict[int, tuple[int, tuple[int, ...]]] = {0: (0, ())}
     for segment_count in range(1, chosen_count + 1):
         current: dict[int, tuple[int, tuple[int, ...]]] = {}
@@ -675,6 +664,14 @@ def _require_positive_int(name: str, value: object) -> int:
     return value
 
 
+def _require_bool(name: str, value: object) -> bool:
+    """Reject truthy/falsy runtime values that are not actual Python booleans."""
+
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
 def _validate_budget_options(
     *,
     hidden_size: int,
@@ -790,6 +787,7 @@ def prepare_budgeted_multi_split(
         target_bytes=target_bytes,
         preferred_max_bytes=preferred_max_bytes,
     )
+    _require_bool("hash_source_external_data", hash_source_external_data)
     source_graph_bytes, source_graph_sha256 = _read_source_graph_snapshot(
         source_model_path
     )
@@ -812,10 +810,6 @@ def prepare_budgeted_multi_split(
     if len(specs) != len(estimated_costs):
         raise AssertionError("planner/generator segment count mismatch")
 
-    # Fail before opening any output file if a generated name would overwrite
-    # the source graph or one of its external-data files, or if an existing
-    # destination is unsafe to truncate. Resolved-path checks catch lexical /
-    # symlink source aliases; samefile() additionally catches hard links.
     source_artifacts = {source_model_path.resolve(strict=True)}
     source_artifacts.update(
         (source_model_path.parent / str(entry["location"])).resolve(strict=True)
@@ -847,8 +841,6 @@ def prepare_budgeted_multi_split(
             source_model_path.parent,
             f"segment{index}.onnx_data",
         )
-        # The repacker validates external-data graphs after rewriting them. A
-        # fully embedded graph bypasses the repacker, so validate that path here.
         if external is None:
             check_model_for_runtime(segment_path)
         entry: dict[str, object] = {
@@ -898,9 +890,6 @@ def prepare_budgeted_multi_split(
         "segments": segments,
     }
 
-    # The fixed product policy remains authoritative. The caller-provided
-    # ceiling may be stricter (for tests or a smaller deployment profile), so
-    # enforce both against real generated graph + external-data byte counts.
     apply_browser_budget(manifest, output_dir, require_tier="preferred")
     oversized = [
         segment
