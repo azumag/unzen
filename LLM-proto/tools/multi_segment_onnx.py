@@ -675,6 +675,14 @@ def _require_positive_int(name: str, value: object) -> int:
     return value
 
 
+def _require_bool(name: str, value: object) -> bool:
+    """Reject truthy/falsy runtime values that are not actual Python booleans."""
+
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
 def _validate_budget_options(
     *,
     hidden_size: int,
@@ -790,6 +798,7 @@ def prepare_budgeted_multi_split(
         target_bytes=target_bytes,
         preferred_max_bytes=preferred_max_bytes,
     )
+    _require_bool("hash_source_external_data", hash_source_external_data)
     source_graph_bytes, source_graph_sha256 = _read_source_graph_snapshot(
         source_model_path
     )
