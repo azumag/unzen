@@ -31,7 +31,6 @@ import os
 from pathlib import Path
 import secrets
 import shutil
-import stat
 from typing import Sequence
 
 from collect_multi_segment_evidence import (
@@ -41,11 +40,12 @@ from collect_multi_segment_evidence import (
     write_evidence,
 )
 from multi_segment_onnx import (
+    DEFAULT_SOURCE_GRAPH_MAX_BYTES,
     PREFERRED_MAX_BYTES,
+    _read_source_graph_snapshot,
     _validate_budget_options,
     prepare_budgeted_multi_split,
 )
-from verify_multi_segment_artifacts import sha256_file as _descriptor_sha256_file
 from verify_multi_segment_artifact_snapshot import (
     PATH_RESOLUTION_COMPONENT_ANCHORED,
     PATH_RESOLUTION_FINAL_ONLY,
@@ -62,39 +62,23 @@ RUN_SCHEMA_VERSION = "1.0.0"
 DEFAULT_TARGET_BYTES = 200 * 1024 * 1024
 
 
-def _path_identity(metadata: os.stat_result) -> tuple[int, int]:
-    """Return the filesystem object identity relevant to capture source binding."""
-
-    return (metadata.st_dev, metadata.st_ino)
-
-
 def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
-    """Hash one source graph while requiring its pathname target to stay stable.
+    """Hash one bounded source-graph snapshot and return its SHA-256 digest.
 
-    ``verify_multi_segment_artifacts.sha256_file`` already pins the bytes to one
-    opened regular-file descriptor and detects in-place mutation. Capture adds a
-    stricter pathname contract around that helper: the path must resolve to the
-    same filesystem object before and immediately after hashing. This keeps a
-    same-content rename/replacement from silently rebinding the capture source.
+    Capture intentionally reuses the budgeted split generator's source-graph
+    snapshot helper and ``DEFAULT_SOURCE_GRAPH_MAX_BYTES`` policy. The helper
+    pins one regular-file descriptor, bounds the bytes read, and verifies both
+    descriptor metadata and the requested pathname before returning. ``chunk_size``
+    remains accepted for compatibility with older in-process callers; bounded
+    snapshot reads use the generator's fixed internal read chunking.
     """
 
-    try:
-        before_path = path.stat()
-    except FileNotFoundError:
-        raise FileNotFoundError(f"source model graph not found: {path}") from None
-    if not stat.S_ISREG(before_path.st_mode):
-        raise ValueError(f"source model graph must be a regular file: {path}")
-
-    digest = _descriptor_sha256_file(path, chunk_size=chunk_size)
-
-    try:
-        after_path = path.stat()
-    except FileNotFoundError:
-        raise RuntimeError(
-            f"source model graph path changed while hashing: {path}"
-        ) from None
-    if _path_identity(after_path) != _path_identity(before_path):
-        raise RuntimeError(f"source model graph path changed while hashing: {path}")
+    if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+        raise ValueError("chunk_size must be a positive integer")
+    _, digest = _read_source_graph_snapshot(
+        path,
+        max_bytes=DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+    )
     return digest
 
 
@@ -371,10 +355,9 @@ def capture_run(
     )
     output_root = ensure_destination_available(destination)
     ensure_provider_available(provider)
-    # The source graph is small relative to the external q4 weights, so hashing
-    # it once before generation is cheap and closes a real TOCTOU gap: the shard
-    # generator keeps an in-memory ModelProto while generation may run for a long
-    # time on the 1B artifact.
+    # The source graph is small relative to the external q4 weights. Bind it
+    # before generation through the same 64 MiB bounded snapshot policy used by
+    # the generator so malformed source paths cannot trigger an unbounded hash.
     source_graph_sha256 = sha256_file(full_model_path)
     staging = _make_staging_dir(output_root)
     published = False
