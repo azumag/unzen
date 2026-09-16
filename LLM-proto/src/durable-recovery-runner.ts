@@ -100,16 +100,28 @@ function abortError(): DOMException {
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, Math.max(0, ms));
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      reject(abortError());
     };
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      action();
+    };
+    const onAbort = () => finish(() => reject(abortError()));
+
+    timer = setTimeout(() => finish(resolve), Math.max(0, ms));
     signal?.addEventListener('abort', onAbort, { once: true });
+
+    // Close the check-then-listen race: if the signal flipped after the
+    // initial aborted check but before listener registration became active,
+    // the event may already have been dispatched and would otherwise be lost.
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -129,8 +141,16 @@ function boundedWaitMs(
 function forwardAbort(source: AbortSignal | undefined, target: AbortController): () => void {
   if (!source) return () => {};
   const onAbort = () => target.abort();
-  if (source.aborted) target.abort();
-  else source.addEventListener('abort', onAbort, { once: true });
+  if (source.aborted) {
+    onAbort();
+    return () => {};
+  }
+
+  source.addEventListener('abort', onAbort, { once: true });
+  // As with the wait helper, an abort can win between the first state check
+  // and listener registration. Re-check after subscribing so the target
+  // cannot remain live after caller cancellation.
+  if (source.aborted) onAbort();
   return () => source.removeEventListener('abort', onAbort);
 }
 
