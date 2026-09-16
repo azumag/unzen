@@ -347,8 +347,15 @@ export class DurableCoordinator {
     const outerSignal = options.signal;
     const onOuterAbort = () => controller.abort();
     if (outerSignal) {
-      if (outerSignal.aborted) controller.abort();
-      else outerSignal.addEventListener('abort', onOuterAbort, { once: true });
+      if (outerSignal.aborted) {
+        onOuterAbort();
+      } else {
+        outerSignal.addEventListener('abort', onOuterAbort, { once: true });
+        // An AbortSignal does not replay an abort event to a listener that was
+        // registered after dispatch. Re-check after subscribing so caller
+        // cancellation cannot be lost in the check-then-listen window.
+        if (outerSignal.aborted) onOuterAbort();
+      }
     }
     const deadlineTimer = options.timeoutMs !== undefined
       ? setTimeout(() => {
@@ -461,7 +468,16 @@ export class DurableCoordinator {
         const onResumeAbort = () => {
           if (!controller.signal.aborted) entry.cancelKind = 'recovery-ownership';
         };
-        context.signal.addEventListener('abort', onResumeAbort, { once: true });
+        if (context.signal.aborted) {
+          onResumeAbort();
+        } else {
+          context.signal.addEventListener('abort', onResumeAbort, { once: true });
+          // Recovery ownership can be lost after the state check but before
+          // listener registration becomes active. Re-check after subscribing
+          // so that cancellation is classified as ownership loss, not user
+          // cancellation, even if the abort event itself was already dispatched.
+          if (context.signal.aborted) onResumeAbort();
+        }
 
         let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
         if (context.deadlineAt !== undefined) {
