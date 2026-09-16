@@ -174,6 +174,98 @@ describe('browser execution lifecycle', () => {
     expect(fetchCheckpoint).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', Number.NaN],
+    ['infinite', Number.POSITIVE_INFINITY],
+    ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
+    ['runtime string', '1000'],
+  ])('rejects an invalid initial %s checkpoint clock sample before fetching', async (_name, value) => {
+    const fetchCheckpoint = vi.fn(async () => response(404));
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 10_000,
+      pollIntervalMs: 500,
+      now: () => value as number,
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toThrow(/checkpoint clock sample must be a non-negative safe integer/);
+    expect(fetchCheckpoint).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-function checkpoint clock before fetching', async () => {
+    const fetchCheckpoint = vi.fn(async () => response(404));
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 10_000,
+      pollIntervalMs: 500,
+      now: 'clock' as unknown as () => number,
+      fetchCheckpoint,
+    })).rejects.toThrow('checkpoint clock must be a function');
+    expect(fetchCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('preserves an initial checkpoint clock failure as the root cause', async () => {
+    const clockError = new Error('clock exploded before polling');
+    const fetchCheckpoint = vi.fn(async () => response(404));
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 10_000,
+      pollIntervalMs: 500,
+      now: () => {
+        throw clockError;
+      },
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toBe(clockError);
+    expect(fetchCheckpoint).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('rejects a later invalid checkpoint clock sample before sleeping', async () => {
+    let clockReads = 0;
+    const fetchCheckpoint = vi.fn(async () => response(404));
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 10_000,
+      pollIntervalMs: 500,
+      now: () => {
+        clockReads += 1;
+        return clockReads === 1 ? 1_000 : Number.NaN;
+      },
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toThrow(/checkpoint clock sample must be a non-negative safe integer/);
+    expect(fetchCheckpoint).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('preserves a later checkpoint clock failure instead of reporting a timer error', async () => {
+    const clockError = new Error('clock exploded after fetch');
+    let clockReads = 0;
+    const fetchCheckpoint = vi.fn(async () => response(404));
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBounded({
+      timeoutMs: 10_000,
+      pollIntervalMs: 500,
+      now: () => {
+        clockReads += 1;
+        if (clockReads > 1) throw clockError;
+        return 1_000;
+      },
+      fetchCheckpoint,
+      sleep,
+    })).rejects.toBe(clockError);
+    expect(fetchCheckpoint).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it('keeps the absolute timeout independent from the host timer ceiling', async () => {
     const checkpoint = { checkpointId: 'cp-long-budget' };
     const value = await waitForCheckpointBounded({
