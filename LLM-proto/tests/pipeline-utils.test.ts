@@ -351,5 +351,46 @@ describe('legacy withTimeout / delay', () => {
   it('delay(0) resolves immediately (fake-timer friendly)', async () => {
     vi.useFakeTimers();
     await expect(delay(0)).resolves.toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('preserves finite negative delay as immediate resolution', async () => {
+    vi.useFakeTimers();
+    await expect(delay(-1)).resolves.toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    '100',
+  ])('rejects malformed delay %p before arming a timer', async (ms) => {
+    vi.useFakeTimers();
+
+    await expect(delay(ms as unknown as number)).rejects.toThrow(
+      'delay ms must be a finite number',
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects delay above the host timer maximum before arming a timer', async () => {
+    vi.useFakeTimers();
+
+    await expect(delay(MAX_TIMER_DELAY_MS + 1)).rejects.toThrow(
+      `delay ms must not exceed ${MAX_TIMER_DELAY_MS}ms`,
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('accepts the exact host timer maximum', async () => {
+    vi.useFakeTimers();
+    const pending = delay(MAX_TIMER_DELAY_MS);
+    const assertion = expect(pending).resolves.toBeUndefined();
+
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(MAX_TIMER_DELAY_MS);
+    await assertion;
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
