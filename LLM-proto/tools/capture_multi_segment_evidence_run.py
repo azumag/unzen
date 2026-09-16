@@ -34,8 +34,17 @@ import shutil
 import stat
 from typing import Sequence
 
-from collect_multi_segment_evidence import collect_evidence, write_evidence
-from multi_segment_onnx import PREFERRED_MAX_BYTES, prepare_budgeted_multi_split
+from collect_multi_segment_evidence import (
+    collect_evidence,
+    ensure_provider_available,
+    validate_run_parameters,
+    write_evidence,
+)
+from multi_segment_onnx import (
+    PREFERRED_MAX_BYTES,
+    _validate_budget_options,
+    prepare_budgeted_multi_split,
+)
 from verify_multi_segment_artifacts import sha256_file as _descriptor_sha256_file
 from verify_multi_segment_artifact_snapshot import (
     PATH_RESOLUTION_COMPONENT_ANCHORED,
@@ -348,7 +357,20 @@ def capture_run(
 ) -> dict[str, object]:
     """Generate, preflight, verify, and publish one complete capture bundle."""
 
+    input_token_ids, kv_heads, head_size, atol, rtol = validate_run_parameters(
+        token_ids,
+        kv_heads=kv_heads,
+        head_size=head_size,
+        atol=atol,
+        rtol=rtol,
+    )
+    _validate_budget_options(
+        hidden_size=hidden_size,
+        target_bytes=target_bytes,
+        preferred_max_bytes=preferred_max_bytes,
+    )
     output_root = ensure_destination_available(destination)
+    ensure_provider_available(provider)
     # The source graph is small relative to the external q4 weights, so hashing
     # it once before generation is cheap and closes a real TOCTOU gap: the shard
     # generator keeps an in-memory ModelProto while generation may run for a long
@@ -390,7 +412,7 @@ def capture_run(
             collect_evidence(
                 full_model_path,
                 manifest_path,
-                token_ids,
+                input_token_ids,
                 provider=provider,
                 kv_heads=kv_heads,
                 head_size=head_size,
@@ -426,7 +448,7 @@ def capture_run(
                 "targetBytes": target_bytes,
                 "preferredMaxBytes": preferred_max_bytes,
                 "provider": provider,
-                "inputTokenIds": list(token_ids),
+                "inputTokenIds": input_token_ids,
                 "kvHeads": kv_heads,
                 "headSize": head_size,
                 "atol": atol,
