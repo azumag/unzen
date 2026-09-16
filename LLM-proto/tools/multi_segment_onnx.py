@@ -667,16 +667,23 @@ def _source_external_manifest(
     return manifest
 
 
+def _require_positive_int(name: str, value: object) -> int:
+    """Reject asserted runtime values that are not positive Python integers."""
+
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 def _validate_budget_options(
     *,
     hidden_size: int,
     target_bytes: int,
     preferred_max_bytes: int,
 ) -> None:
-    if hidden_size <= 0:
-        raise ValueError("hidden_size must be positive")
-    if target_bytes <= 0 or preferred_max_bytes <= 0:
-        raise ValueError("target_bytes and preferred_max_bytes must be positive")
+    _require_positive_int("hidden_size", hidden_size)
+    _require_positive_int("target_bytes", target_bytes)
+    _require_positive_int("preferred_max_bytes", preferred_max_bytes)
     if target_bytes > preferred_max_bytes:
         raise ValueError("target_bytes cannot exceed preferred_max_bytes")
     if preferred_max_bytes > PREFERRED_MAX_BYTES:
