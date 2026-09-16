@@ -1,16 +1,16 @@
 # Pipeline Timeout Runtime Contract
 
-`pipeline-utils.ts` exposes two timeout primitives with different cancellation
-semantics. `withAbortableTimeout()` is used by the legacy Pipeline, SpanPipeline,
-and DurableCoordinator, while legacy `withTimeout()` remains in use by swarm
-proposal/evaluation paths. Values can cross JSON, test-double, plugin, or
-type-assertion boundaries, so TypeScript signatures are not treated as runtime
-validation.
+`pipeline-utils.ts` exposes timeout and delay primitives with different
+cancellation semantics. `withAbortableTimeout()` is used by the legacy Pipeline,
+SpanPipeline, and DurableCoordinator, legacy `withTimeout()` remains in use by
+swarm proposal/evaluation paths, and `delay()` is the shared retry/backoff sleep.
+Values can cross JSON, test-double, plugin, or type-assertion boundaries, so
+TypeScript signatures are not treated as runtime validation.
 
 JavaScript host timers represent delay values with a signed 32-bit range. The
 shared timeout boundary therefore exports `MAX_TIMER_DELAY_MS=2147483647`; larger
-values are rejected instead of being passed to a host where they may overflow or
-execute immediately.
+positive values are rejected instead of being passed to a host where they may
+overflow or execute immediately.
 
 ## Abortable timeout preflight contract
 
@@ -62,6 +62,19 @@ snapshotted before timer creation, so an accessor cannot pass preflight and then
 change or throw only after a timer has been armed. If subscription itself throws,
 the timer is cleared before that error is propagated.
 
+## Shared delay preflight contract
+
+`delay(ms)` is also an exported host-timer boundary. Before a positive delay is
+passed to `setTimeout()`, it requires `ms` to be a finite number and no greater
+than `MAX_TIMER_DELAY_MS`. Non-number values, `NaN`, infinities, and oversized
+positive delays return a rejected promise without registering a timer.
+
+The existing finite non-positive behavior remains unchanged: `delay(0)` and
+finite negative delays resolve immediately and register no timer. The exact
+`MAX_TIMER_DELAY_MS` value remains supported. This preserves current retry/backoff
+callers while preventing decoded/asserted/plugin values from being coerced or
+overflowing in the host timer implementation.
+
 ## Valid-call semantics
 
 The established behavior is unchanged for valid callers:
@@ -75,12 +88,14 @@ The established behavior is unchanged for valid callers:
   the abort signal;
 - `withTimeout()` continues to race legacy promise-like work against the timeout,
   preserves the existing `${label} timed out after ${timeoutMs}ms` diagnostic,
-  and propagates successful or rejected work settlement unchanged.
+  and propagates successful or rejected work settlement unchanged;
+- `delay()` keeps finite non-positive values as immediate resolution and arms
+  one bounded timer for valid positive values.
 
 ## Evidence boundary
 
 This contract is coordinator/swarm-side reliability coverage. It verifies timeout
-preflight, cleanup, host timer range enforcement, and cooperative signal
+and delay preflight, cleanup, host timer range enforcement, and cooperative signal
 propagation in the TypeScript harness. It does not prove that a real
 browser/WebGPU backend consumes a signal promptly, nor does it provide real
 prepared-1B, physical GPU working-set, multi-browser relay, or worker-loss-resume

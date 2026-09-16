@@ -65,9 +65,12 @@ export function withTimeout<T>(
   });
 }
 
-function assertSupportedTimerDelay(timeoutMs: number): void {
+function assertSupportedTimerDelay(
+  timeoutMs: number,
+  fieldName = 'timeoutMs',
+): void {
   if (timeoutMs > MAX_TIMER_DELAY_MS) {
-    throw new RangeError(`timeoutMs must not exceed ${MAX_TIMER_DELAY_MS}ms`);
+    throw new RangeError(`${fieldName} must not exceed ${MAX_TIMER_DELAY_MS}ms`);
   }
 }
 
@@ -239,10 +242,23 @@ function assertAbortableTimeoutRuntimeEnvelope(
   }
 }
 
+function assertDelayRuntimeEnvelope(ms: unknown): asserts ms is number {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) {
+    throw new TypeError('delay ms must be a finite number');
+  }
+  assertSupportedTimerDelay(ms, 'delay ms');
+}
+
 /**
- * Async delay. Returns immediately if ms <= 0 (avoids fake-timer freeze in tests).
+ * Async delay. Finite values <= 0 resolve immediately (avoids fake-timer freeze
+ * in tests). Positive delays are validated before they reach the host timer.
  */
 export function delay(ms: number): Promise<void> {
+  try {
+    assertDelayRuntimeEnvelope(ms);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
