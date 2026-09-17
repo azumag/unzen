@@ -54,12 +54,17 @@ verifier は少なくとも次を fail-close で確認する。
 8. run summary / evidence envelope / embedded verification の `status` が一致すること。
 9. source graph SHA-256 が run summary と embedded verification で一致すること。
 10. provider、input token IDs、KV heads、head size、`atol`、`rtol` が run summary と evidence envelopeで一致し、provider/token IDs は embedded verification とも一致すること。
+11. 成功を返す直前に `run-summary.json`、選択済み split manifest、`same-machine-evidence.json` を既存の bounded / descriptor-stable JSON reader で再snapshotし、開始時またはartifact auditで確定した digest と一致すること。
+
+最後の再snapshotにより、multi-gigabyte artifact audit中に summary が差し替えられた場合、artifact snapshot完了後に manifest が別byte列へ更新された場合、または evidence の初回read後に evidence が変更された場合でも、古いin-memory controlを根拠に `status=pass` を返さない。これは成功時点の control byte snapshot consistency を保証するものであり、監査全体を通じて pathname inode を固定するtransactionではない。同じbyte列へ戻ったreplacementは同じdigest identityとして扱う。
 
 これにより、capture directory 公開後に summary、evidence JSON、manifest、segment artifact のいずれかが差し替えられた場合、ONNX Runtime を起動せず検出できる。対応platformでは artifact verifier 自体の実行中に生じる intermediate-directory replacement / symlink race も component-anchored mode でfail-closeする。
 
 ## Evidence boundary
 
-この verifier が証明するのは published host-side bundle の post-publication integrity と cross-file identity binding である。capture時の `pathResolutionMode` は run summary に記録された metadata であり、署名された独立snapshot reportではない。また、capture preflightから numerical verification 全体まで同じ file descriptor を保持するtransactionでもないため、capture中のあらゆる same-content inode replacement を証明対象にはしない。legacy bundleで `captureSnapshotPathResolutionMode=null` の場合、現在のoffline auditが強いmodeで成功しても、過去のcapture時にも同じmodeが使われたとは扱わない。
+この verifier が証明するのは published host-side bundle の post-publication integrity と cross-file identity binding、および verifier 成功直前にも選択済みcontrol filesが同じbyte digestへ戻っていることである。capture時の `pathResolutionMode` は run summary に記録された metadata であり、署名された独立snapshot reportではない。また、capture preflightから numerical verification 全体まで同じ file descriptor を保持するtransactionでもないため、capture中のあらゆる same-content inode replacement を証明対象にはしない。legacy bundleで `captureSnapshotPathResolutionMode=null` の場合、現在のoffline auditが強いmodeで成功しても、過去のcapture時にも同じmodeが使われたとは扱わない。
+
+このstart/end control bindingは #908 で検討している reader-isolated artifact publicationを選択するものではなく、artifact URL/layoutやbrowser cache keyも変更しない。
 
 実 `Llama-3.2-1B-Instruct` q4 の numerical correctnessそのものは元の capture resultに従い、real multi-browser WebGPU、Coordinator relay、cold/warm cache、worker-loss resume、SpanPipeline の実機 evidence は別途必要になる。
 
