@@ -35,10 +35,16 @@ class SinglePassTokens:
         yield 8
 
 
+class BrokenTokens:
+    def __iter__(self):
+        yield 1
+        raise RuntimeError("caller iterator failed")
+
+
 class DirectVerifierRuntimeTokenSnapshotTest(unittest.TestCase):
     def _preflight(self, token_ids: object, *, token_field: str = "inputTokenIds"):
         return preflight_direct_verifier_parameters(
-            token_ids,
+            token_ids,  # type: ignore[arg-type]
             token_field=token_field,
             provider="CPUExecutionProvider",
             kv_heads=4,
@@ -60,6 +66,10 @@ class DirectVerifierRuntimeTokenSnapshotTest(unittest.TestCase):
         result = self._preflight(tokens)
         self.assertEqual(result[0], [7, 8])
         self.assertEqual(tokens.iterations, 1)
+
+    def test_caller_iterator_failure_is_not_reclassified(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "caller iterator failed"):
+            self._preflight(BrokenTokens())
 
     def test_text_and_scalar_inputs_fail_with_stable_boundary_error(self) -> None:
         for malformed in ("123", b"123", bytearray(b"123"), 123, None):
