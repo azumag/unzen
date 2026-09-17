@@ -40,6 +40,15 @@ the first check but before the listener becomes active. If cancellation wins tha
 window, the inner controller is aborted, the timeout/listener are cleaned up, the
 returned promise rejects as `AbortError`, and the factory is not invoked.
 
+Because structural signal fields remain caller-owned after preflight, both dynamic
+`aborted` reads are fail-safe as well. If an accessor throws after the timeout has
+been armed, or if it stops returning a boolean, the helper aborts the inner
+controller and routes rejection through the same cleanup path. A failure before
+subscription clears the timer; a failure after subscription clears the timer and
+removes the listener. In either case the execution factory is not invoked. This
+prevents a hostile or mutable structural signal from converting a validation
+failure into a leaked host timer.
+
 Structural signal implementations are allowed by this boundary, so subscription
 and cleanup are also fail-safe: a throwing `addEventListener` rejects without
 leaving the already-armed timeout behind, a throwing `removeEventListener` cannot

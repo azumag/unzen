@@ -123,4 +123,54 @@ describe('withAbortableTimeout AbortSignal registration race', () => {
     expect(factory).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('cleans up the armed timeout when an aborted getter throws after preflight', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const signal = {
+      get aborted() {
+        reads += 1;
+        if (reads === 1) return false;
+        throw new Error('aborted getter exploded');
+      },
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+    const factory = vi.fn(() => Promise.resolve('must-not-run'));
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', signal);
+
+    await expect(pending).rejects.toThrow('timeout signal aborted state could not be read');
+    expect(factory).not.toHaveBeenCalled();
+    expect(addEventListener).not.toHaveBeenCalled();
+    expect(removeEventListener).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a non-boolean aborted state after subscription and removes the listener', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const signal = {
+      get aborted() {
+        reads += 1;
+        if (reads <= 2) return false;
+        return 'yes';
+      },
+      addEventListener,
+      removeEventListener,
+    } as unknown as AbortSignal;
+    const factory = vi.fn(() => Promise.resolve('must-not-run'));
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', signal);
+
+    await expect(pending).rejects.toThrow('timeout signal aborted state must remain boolean');
+    expect(factory).not.toHaveBeenCalled();
+    expect(addEventListener).toHaveBeenCalledOnce();
+    expect(removeEventListener).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

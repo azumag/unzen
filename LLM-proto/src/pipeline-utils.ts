@@ -125,7 +125,9 @@ function assertLegacyTimeoutRuntimeEnvelope<T>(
  * invocation so malformed asserted/decoded values cannot partially arm the
  * timeout machinery before failing. After registering an external abort
  * listener, the signal state is re-checked before factory invocation so an
- * abort that wins the check-then-listen window cannot be lost.
+ * abort that wins the check-then-listen window cannot be lost. Post-preflight
+ * state reads are also fail-safe: a hostile accessor that throws or stops
+ * returning a boolean is rejected through the normal cleanup path.
  */
 export function withAbortableTimeout<T>(
   factory: (signal: AbortSignal) => Promise<T>,
@@ -164,12 +166,24 @@ export function withAbortableTimeout<T>(
       // Coordinator boundary (classifyError checks name === 'AbortError').
       finish(() => reject(new DOMException('AbortError', 'AbortError')));
     };
+    const readOuterAborted = (): boolean | undefined => {
+      if (signal === undefined) return false;
+      try {
+        return readAbortSignalState(signal);
+      } catch (error) {
+        controller.abort();
+        finish(() => reject(error));
+        return undefined;
+      }
+    };
     timer = setTimeout(() => {
       controller.abort();
       finish(() => reject(new SegmentTimeoutError(`${label} exceeded ${timeoutMs}ms`)));
     }, timeoutMs);
 
-    if (signal?.aborted) {
+    const initiallyAborted = readOuterAborted();
+    if (settled) return;
+    if (initiallyAborted) {
       onOuterAbort();
       return;
     }
@@ -191,8 +205,12 @@ export function withAbortableTimeout<T>(
 
     // An abort may have been dispatched after the first state check but before
     // the listener became active. Re-check after subscription so caller
-    // cancellation wins before any underlying execution is started.
-    if (signal?.aborted) onOuterAbort();
+    // cancellation wins before any underlying execution is started. Structural
+    // accessors that become malformed at this point reject through finish(), so
+    // the already-armed timer/listener cannot leak.
+    const abortedAfterSubscription = readOuterAborted();
+    if (settled) return;
+    if (abortedAfterSubscription) onOuterAbort();
     if (settled) return;
 
     // Invoke the factory synchronously so the caller can observe the signal
@@ -208,6 +226,19 @@ export function withAbortableTimeout<T>(
       (error) => finish(() => reject(error)),
     );
   });
+}
+
+function readAbortSignalState(signal: AbortSignal): boolean {
+  let aborted: unknown;
+  try {
+    aborted = (signal as { aborted?: unknown }).aborted;
+  } catch {
+    throw new TypeError('timeout signal aborted state could not be read');
+  }
+  if (typeof aborted !== 'boolean') {
+    throw new TypeError('timeout signal aborted state must remain boolean');
+  }
+  return aborted;
 }
 
 function assertAbortableTimeoutRuntimeEnvelope(
