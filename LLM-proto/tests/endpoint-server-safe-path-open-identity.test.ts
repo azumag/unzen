@@ -14,7 +14,9 @@ describe('endpoint diagnostic canonical open identity', () => {
     const root = join(workspace, 'root');
     const outside = join(workspace, 'outside.bin');
     const artifact = join(root, 'artifact.bin');
-    let redirectedHandle: Awaited<ReturnType<typeof import('node:fs/promises')['open']>> | undefined;
+    let redirectedHandle:
+      | Awaited<ReturnType<(typeof import('node:fs/promises'))['open']>>
+      | undefined;
     let closeCalls = 0;
 
     try {
@@ -26,7 +28,7 @@ describe('endpoint diagnostic canonical open identity', () => {
       vi.resetModules();
       vi.doMock('node:fs/promises', () => ({
         ...actual,
-        open: vi.fn(async (path: Parameters<typeof actual.open>[0], flags: Parameters<typeof actual.open>[1]) => {
+        open: vi.fn(async (path: any, flags: any) => {
           if (String(path) !== artifact) return actual.open(path, flags);
 
           redirectedHandle = await actual.open(outside, 'r');
