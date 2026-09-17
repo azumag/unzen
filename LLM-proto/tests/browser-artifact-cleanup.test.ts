@@ -86,6 +86,93 @@ describe('artifact body ownership and cleanup', () => {
     expect(reader.read).not.toHaveBeenCalled();
   });
 
+  it('snapshots structural AbortSignal listener methods once for subscription and cleanup', async () => {
+    const releaseLock = vi.fn();
+    const reader = {
+      read: vi.fn(async () => ({ done: true, value: undefined })),
+      cancel: vi.fn(),
+      releaseLock,
+    };
+    const response = {
+      headers: { get: () => null },
+      body: { getReader: vi.fn(() => reader) },
+    };
+    let addGetterReads = 0;
+    let removeGetterReads = 0;
+    const signal = { aborted: false } as unknown as AbortSignal;
+    const addEventListener = vi.fn(function (this: unknown) {
+      expect(this).toBe(signal);
+    });
+    const removeEventListener = vi.fn(function (this: unknown) {
+      expect(this).toBe(signal);
+    });
+    Object.defineProperties(signal, {
+      addEventListener: {
+        get() {
+          addGetterReads += 1;
+          if (addGetterReads > 1) throw new Error('add method was re-read');
+          return addEventListener;
+        },
+      },
+      removeEventListener: {
+        get() {
+          removeGetterReads += 1;
+          if (removeGetterReads > 1) throw new Error('remove method was re-read');
+          return removeEventListener;
+        },
+      },
+    });
+
+    await expect(readResponseBytesBounded(response, { signal })).resolves.toEqual(new Uint8Array());
+    expect(addGetterReads).toBe(1);
+    expect(removeGetterReads).toBe(1);
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects throwing listener method getters before reader ownership', async () => {
+    const cancel = vi.fn();
+    const getReader = vi.fn();
+    const response = {
+      headers: { get: () => null },
+      body: { cancel, getReader },
+    };
+    const signal = { aborted: false } as unknown as AbortSignal;
+    Object.defineProperties(signal, {
+      addEventListener: {
+        get() {
+          throw new Error('listener getter exploded');
+        },
+      },
+      removeEventListener: { value: vi.fn() },
+    });
+
+    await expect(readResponseBytesBounded(response, { signal }))
+      .rejects.toThrow('artifact AbortSignal listener methods could not be read');
+    expect(getReader).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects non-callable listener methods before reader ownership', async () => {
+    const cancel = vi.fn();
+    const getReader = vi.fn();
+    const response = {
+      headers: { get: () => null },
+      body: { cancel, getReader },
+    };
+    const signal = {
+      aborted: false,
+      addEventListener: vi.fn(),
+      removeEventListener: null,
+    } as unknown as AbortSignal;
+
+    await expect(readResponseBytesBounded(response, { signal }))
+      .rejects.toThrow('artifact AbortSignal listener methods must be functions');
+    expect(getReader).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves successful bytes when signal and reader cleanup hooks throw', async () => {
     const releaseLock = vi.fn(() => {
       throw new Error('release exploded');

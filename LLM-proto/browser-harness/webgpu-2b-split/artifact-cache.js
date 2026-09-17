@@ -42,10 +42,26 @@ function cancelReadable(readable, reason) {
   }
 }
 
-function removeAbortListener(signal, onAbort, mayBeRegistered) {
+function snapshotAbortListenerMethods(signal) {
+  if (signal === undefined || signal === null) return undefined;
+  let addEventListener;
+  let removeEventListener;
+  try {
+    addEventListener = signal.addEventListener;
+    removeEventListener = signal.removeEventListener;
+  } catch {
+    throw new TypeError('artifact AbortSignal listener methods could not be read');
+  }
+  if (typeof addEventListener !== 'function' || typeof removeEventListener !== 'function') {
+    throw new TypeError('artifact AbortSignal listener methods must be functions');
+  }
+  return { addEventListener, removeEventListener };
+}
+
+function removeAbortListener(signal, removeEventListener, onAbort, mayBeRegistered) {
   if (!mayBeRegistered) return;
   try {
-    signal?.removeEventListener('abort', onAbort);
+    removeEventListener.call(signal, 'abort', onAbort);
   } catch {
     // Caller-owned cleanup must not mask the artifact result/error.
   }
@@ -135,6 +151,14 @@ export async function readResponseBytesBounded(
     return new Uint8Array(buffer);
   }
 
+  let abortListenerMethods;
+  try {
+    abortListenerMethods = snapshotAbortListenerMethods(signal);
+  } catch (error) {
+    cancelReadable(response.body, error);
+    throw error;
+  }
+
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
@@ -146,7 +170,7 @@ export async function readResponseBytesBounded(
     if (signal !== undefined && signal !== null) {
       listenerMayBeRegistered = true;
       try {
-        signal.addEventListener('abort', onAbort, { once: true });
+        abortListenerMethods.addEventListener.call(signal, 'abort', onAbort, { once: true });
         // Close the state-check/listener race before the first reader pull.
         throwIfAborted(signal);
       } catch (error) {
@@ -185,7 +209,12 @@ export async function readResponseBytesBounded(
     cancelReadable(reader, error);
     throw error;
   } finally {
-    removeAbortListener(signal, onAbort, listenerMayBeRegistered);
+    removeAbortListener(
+      signal,
+      abortListenerMethods?.removeEventListener,
+      onAbort,
+      listenerMayBeRegistered,
+    );
     releaseReader(reader);
   }
 
