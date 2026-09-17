@@ -13,6 +13,6 @@ All declared graph/external-data paths are preflighted before the first artifact
 
 This keeps the measured `browserArtifactBytes` ledger aligned with the manifest's logical browser-cache units. A manifest cannot count one resolved file as two independent artifact components and still pass the standalone integrity gate or the numerical verifiers that invoke that gate.
 
-This check is about declared pathname isolation. It does not claim inode-level isolation for two different hard-link pathnames, nor does it lock paths against replacement after verification. The stricter artifact-snapshot verifier remains the boundary for stable path identity across a verification window.
+This check is about declared pathname isolation. It does not claim inode-level isolation for two different hard-link pathnames, nor does it lock paths against replacement after verification. The stricter artifact-snapshot verifier is the stronger boundary: after its first descriptor-pinned measurement it rejects graph/external-data entries that share the same `(device, inode)` identity, and it then requires every accepted file identity to remain stable across the verification window.
 
 For #167 this is host-side artifact-integrity hardening only; it is not new evidence of physical WebGPU execution, distinct browser workers, Coordinator relay latency, cache behavior, or worker-loss recovery.
