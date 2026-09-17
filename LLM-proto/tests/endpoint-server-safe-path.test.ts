@@ -1,11 +1,18 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  openExistingFileWithinRoot,
   resolveExistingFileWithinRoot,
   safePathWithPathApi,
 } from '../browser-harness/webgpu-2b-split/server-safe-path.mjs';
+
+async function readUtf8Stream(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 describe('endpoint diagnostic server path containment', () => {
   it('accepts nested files with POSIX separators', () => {
@@ -63,9 +70,29 @@ describe('endpoint diagnostic server path containment', () => {
         throw error;
       }
 
-      await expect(resolveExistingFileWithinRoot(root, 'escape/secret.bin')).rejects.toThrow(
+      await expect(openExistingFileWithinRoot(root, 'escape/secret.bin')).rejects.toThrow(
         'path escapes root',
       );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the response stream bound to the file that was opened before a pathname replacement', async () => {
+    if (process.platform === 'win32') return;
+
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const root = join(workspace, 'root');
+    const file = join(root, 'artifact.bin');
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(file, 'original-bytes', 'utf8');
+
+      const opened = await openExistingFileWithinRoot(root, 'artifact.bin');
+      await rename(file, join(root, 'artifact.original.bin'));
+      await writeFile(file, 'replacement-bytes', 'utf8');
+
+      expect(await readUtf8Stream(opened.stream)).toBe('original-bytes');
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
