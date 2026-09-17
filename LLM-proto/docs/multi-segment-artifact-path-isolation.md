@@ -9,6 +9,8 @@ Budgeted split manifests declare `artifactLayout=per-segment-external-data`. Und
 - a graph path reused as any segment's external-data path;
 - lexical path aliases that resolve to the same path under the existing safe-relative-path rules.
 
+All declared graph/external-data paths are preflighted before the first artifact payload is measured. A duplicate or unsafe path in a later segment therefore fails without hashing earlier large artifacts. After this lightweight path-contract gate succeeds, the existing descriptor-pinned size/digest and browser-budget verification proceeds unchanged.
+
 This keeps the measured `browserArtifactBytes` ledger aligned with the manifest's logical browser-cache units. A manifest cannot count one resolved file as two independent artifact components and still pass the standalone integrity gate or the numerical verifiers that invoke that gate.
 
 This check is about declared pathname isolation. It does not claim inode-level isolation for two different hard-link pathnames, nor does it lock paths against replacement after verification. The stricter artifact-snapshot verifier remains the boundary for stable path identity across a verification window.
