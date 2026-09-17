@@ -102,6 +102,48 @@ def _source_artifacts_from_manifest(
     return sources
 
 
+def _previous_tail_artifacts(
+    output_dir: Path,
+    *,
+    current_segment_count: int,
+) -> tuple[Path, ...]:
+    """Return generator-owned tail artifacts from a valid previous publication.
+
+    A malformed/legacy manifest must not make an otherwise valid replacement
+    impossible to publish, so stale-tail cleanup is best-effort unless the old
+    manifest has the current generated layout contract. Once that contract is
+    recognized, both graph and external-data names in the removed tail belong to
+    the generator namespace and can be cleaned safely after normal preflight.
+    """
+
+    final_manifest = output_dir / "split-manifest.json"
+    try:
+        raw = final_manifest.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeError):
+        return ()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(parsed, dict):
+        return ()
+    try:
+        previous_segments = _require_generated_layout(parsed)
+    except RuntimeError:
+        return ()
+    if len(previous_segments) <= current_segment_count:
+        return ()
+
+    return tuple(
+        path
+        for index in range(current_segment_count, len(previous_segments))
+        for path in (
+            output_dir / f"segment{index}.onnx",
+            output_dir / f"segment{index}.onnx_data",
+        )
+    )
+
+
 def _publish_staged_split(
     *,
     staged_dir: Path,
@@ -121,9 +163,14 @@ def _publish_staged_split(
 
     segments = _require_generated_layout(manifest)
     final_artifacts = _generated_artifact_paths(output_dir, len(segments))
+    stale_tail_artifacts = _previous_tail_artifacts(
+        output_dir,
+        current_segment_count=len(segments),
+    )
     source_artifacts = _source_artifacts_from_manifest(source_model_path, manifest)
-    _preflight_generated_artifact_collisions(source_artifacts, final_artifacts)
-    _preflight_generated_artifact_destinations(final_artifacts)
+    mutation_targets = (*final_artifacts, *stale_tail_artifacts)
+    _preflight_generated_artifact_collisions(source_artifacts, mutation_targets)
+    _preflight_generated_artifact_destinations(mutation_targets)
 
     staged_manifest = staged_dir / "split-manifest.json"
     if not staged_manifest.is_file():
@@ -154,6 +201,12 @@ def _publish_staged_split(
             os.replace(staged_external, final_external)
         elif final_external.exists():
             final_external.unlink()
+
+    for stale in stale_tail_artifacts:
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
 
     os.replace(staged_manifest, final_manifest)
 
