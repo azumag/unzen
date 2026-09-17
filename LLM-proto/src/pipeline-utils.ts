@@ -12,6 +12,23 @@ type TimeoutThen<T> = (
   onRejected: (reason: unknown) => unknown,
 ) => unknown;
 
+type AbortAddEventListener = (
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: boolean | AddEventListenerOptions,
+) => void;
+
+type AbortRemoveEventListener = (
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: boolean | EventListenerOptions,
+) => void;
+
+interface AbortSignalListenerMethods {
+  readonly addEventListener: AbortAddEventListener;
+  readonly removeEventListener: AbortRemoveEventListener;
+}
+
 /** Maximum delay that browser/Node timers can represent without 32-bit overflow. */
 export const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
@@ -123,11 +140,13 @@ function assertLegacyTimeoutRuntimeEnvelope<T>(
  * returned promise always settles even if the underlying work ignores abort.
  * Runtime inputs are validated before timer/listener registration or factory
  * invocation so malformed asserted/decoded values cannot partially arm the
- * timeout machinery before failing. After registering an external abort
- * listener, the signal state is re-checked before factory invocation so an
- * abort that wins the check-then-listen window cannot be lost. Post-preflight
- * state reads are also fail-safe: a hostile accessor that throws or stops
- * returning a boolean is rejected through the normal cleanup path.
+ * timeout machinery before failing. Listener methods are captured during that
+ * preflight so accessor-backed structural signals cannot swap out cleanup after
+ * a listener has been registered. After registering an external abort listener,
+ * the signal state is re-checked before factory invocation so an abort that wins
+ * the check-then-listen window cannot be lost. Post-preflight state reads are
+ * also fail-safe: a hostile accessor that throws or stops returning a boolean is
+ * rejected through the normal cleanup path.
  */
 export function withAbortableTimeout<T>(
   factory: (signal: AbortSignal) => Promise<T>,
@@ -136,8 +155,9 @@ export function withAbortableTimeout<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let signalMethods: AbortSignalListenerMethods | undefined;
     try {
-      assertAbortableTimeoutRuntimeEnvelope(factory, timeoutMs, label, signal);
+      signalMethods = assertAbortableTimeoutRuntimeEnvelope(factory, timeoutMs, label, signal);
     } catch (error) {
       reject(error);
       return;
@@ -147,8 +167,9 @@ export function withAbortableTimeout<T>(
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const removeOuterAbortListener = (): void => {
+      if (signal === undefined || signalMethods === undefined) return;
       try {
-        signal?.removeEventListener('abort', onOuterAbort);
+        signalMethods.removeEventListener.call(signal, 'abort', onOuterAbort);
       } catch {
         // Caller-owned structural signals must not prevent promise settlement.
       }
@@ -188,7 +209,9 @@ export function withAbortableTimeout<T>(
       return;
     }
     try {
-      signal?.addEventListener('abort', onOuterAbort, { once: true });
+      if (signal !== undefined && signalMethods !== undefined) {
+        signalMethods.addEventListener.call(signal, 'abort', onOuterAbort, { once: true });
+      }
     } catch {
       controller.abort();
       finish(() => reject(new TypeError('timeout signal could not be subscribed')));
@@ -246,7 +269,7 @@ function assertAbortableTimeoutRuntimeEnvelope(
   timeoutMs: unknown,
   label: unknown,
   signal: unknown,
-): void {
+): AbortSignalListenerMethods | undefined {
   if (typeof factory !== 'function') {
     throw new TypeError('timeout factory must be a function');
   }
@@ -258,19 +281,32 @@ function assertAbortableTimeoutRuntimeEnvelope(
     throw new TypeError('timeout label must be a non-empty string');
   }
   if (signal === undefined) {
-    return;
+    return undefined;
   }
-  if (
-    typeof signal !== 'object'
-    || signal === null
-    || typeof (signal as { aborted?: unknown }).aborted !== 'boolean'
-    || typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function'
-    || typeof (signal as { removeEventListener?: unknown }).removeEventListener !== 'function'
-  ) {
+  if (typeof signal !== 'object' || signal === null) {
     throw new TypeError(
       'timeout signal must expose boolean aborted and callable addEventListener/removeEventListener',
     );
   }
+
+  readAbortSignalState(signal as AbortSignal);
+  let addEventListener: unknown;
+  let removeEventListener: unknown;
+  try {
+    addEventListener = (signal as { addEventListener?: unknown }).addEventListener;
+    removeEventListener = (signal as { removeEventListener?: unknown }).removeEventListener;
+  } catch {
+    throw new TypeError('timeout signal listener methods could not be read');
+  }
+  if (typeof addEventListener !== 'function' || typeof removeEventListener !== 'function') {
+    throw new TypeError(
+      'timeout signal must expose boolean aborted and callable addEventListener/removeEventListener',
+    );
+  }
+  return {
+    addEventListener: addEventListener as AbortAddEventListener,
+    removeEventListener: removeEventListener as AbortRemoveEventListener,
+  };
 }
 
 function assertDelayRuntimeEnvelope(ms: unknown): asserts ms is number {
