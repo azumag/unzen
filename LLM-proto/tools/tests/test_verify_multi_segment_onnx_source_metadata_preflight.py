@@ -93,6 +93,23 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                         verify_source_model_identity(source, manifest)
                 measure.assert_not_called()
 
+    def test_resolved_external_path_alias_fails_before_any_payload_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, manifest = self._fixture(Path(tmp))
+            first = manifest["sourceModel"]["externalData"][0]
+            second = manifest["sourceModel"]["externalData"][1]
+            second["location"] = f"./{first['location']}"
+            second["bytes"] = first["bytes"]
+            second["sha256"] = first["sha256"]
+
+            with patch("verify_multi_segment_onnx._measure_file") as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"duplicate source external-data location: .* aliases .*",
+                ):
+                    verify_source_model_identity(source, manifest)
+            measure.assert_not_called()
+
     def test_valid_metadata_preserves_source_identity_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source, manifest = self._fixture(Path(tmp))
