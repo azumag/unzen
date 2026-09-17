@@ -42,6 +42,40 @@ describe('artifact response body ownership', () => {
     expect(reader.releaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it('treats a null body as an empty payload without invoking arrayBuffer', async () => {
+    const arrayBuffer = vi.fn(async () => {
+      throw new Error('arrayBuffer must not be used by bounded reads');
+    });
+    const response = {
+      headers: { get: () => null },
+      body: null,
+      arrayBuffer,
+    };
+
+    await expect(readResponseBytesBounded(response, { expectedBytes: 0 }))
+      .resolves.toEqual(new Uint8Array());
+    expect(arrayBuffer).not.toHaveBeenCalled();
+
+    await expect(readResponseBytesBounded(response, { expectedBytes: 1, url: 'empty.bin' }))
+      .rejects.toThrow('artifact byte size mismatch for empty.bin: expected 1, got 0');
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('rejects structural non-stream bodies before an unbounded arrayBuffer fallback can run', async () => {
+    const cancel = vi.fn();
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(1024));
+    const response = {
+      headers: { get: () => null },
+      body: { cancel },
+      arrayBuffer,
+    };
+
+    await expect(readResponseBytesBounded(response, { maxBytes: 4 }))
+      .rejects.toThrow('artifact response body must be null or expose getReader');
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels the owned body when getReader capability lookup fails', async () => {
     const cancel = vi.fn();
     const body = { cancel };
