@@ -65,6 +65,39 @@ function positiveBytes(value, label) {
   return bytes;
 }
 
+function normalizedSha256(value, label) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/i.test(value)) {
+    throw new Error(`${label} must be a 64-character hexadecimal SHA-256`);
+  }
+  return value.toLowerCase();
+}
+
+function immutableArtifactLoadSnapshot({
+  label,
+  graphPath,
+  graphSha256,
+  graphBytes,
+  externalData,
+}) {
+  const graph = Object.freeze({
+    path: requireSafeArtifactRelativePath(graphPath, `${label} path`),
+    sha256: normalizedSha256(graphSha256, `${label} sha256`),
+    bytes: graphBytes,
+  });
+  const external = externalData.map((entry, index) => Object.freeze({
+    location: requireSafeArtifactRelativePath(
+      entry.location,
+      `${label} externalData[${index}].location`,
+    ),
+    sha256: normalizedSha256(entry.sha256, `${label} externalData[${index}].sha256`),
+    bytes: entry.bytes,
+  }));
+  return Object.freeze({
+    graph,
+    externalData: Object.freeze(external),
+  });
+}
+
 export function planSegmentArtifactBudget(segment, mode = 'absolute') {
   if (!['p0', 'absolute'].includes(mode)) {
     throw new Error(`unsupported browser artifact budget mode: ${diagnosticValue(mode)}`);
@@ -84,8 +117,8 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     throw new Error(`${label} must declare external data`);
   }
 
-  // Detach external-data membership before any entry byte getter runs, then
-  // capture each consumed bytes field exactly once and sum owned primitives.
+  // Detach membership first, then preserve the established byte-validation
+  // ordering before touching later locator/digest accessors.
   const externalDataMembershipSnapshot = [...externalData];
   const externalDataBytesSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.bytes);
   const externalDeclaredBytes = externalDataBytesSnapshot.reduce(
@@ -99,11 +132,9 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     );
   }
 
-  // Runtime manifests later interpolate these locators into browser URLs. When
-  // locator fields are present, reject traversal, platform aliases, and URL
-  // syntax escapes before any network load can begin. Keeping the fields
-  // optional preserves the budget helper's standalone/synthetic-call contract;
-  // real split manifests always declare graph and external-data locators.
+  // Runtime manifests later interpolate these locators into browser URLs. Path
+  // fields remain independently optional for standalone/synthetic budget tests,
+  // but every present locator is validated before digest capture or loading.
   const graphPathSnapshot = validatedSegment.path;
   if (graphPathSnapshot !== undefined) {
     requireSafeArtifactRelativePath(graphPathSnapshot, `${label} path`);
@@ -113,6 +144,28 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     if (location !== undefined) {
       requireSafeArtifactRelativePath(location, `${label} externalData[${index}].location`);
     }
+  }
+
+  // Digest-bearing inputs are load identities, not budget-only metadata. Once
+  // any digest is present, require and own the complete graph/external identity
+  // so async browser loading never re-reads the caller-owned manifest object.
+  const graphSha256Snapshot = validatedSegment.sha256;
+  const externalDataSha256Snapshot = externalDataMembershipSnapshot.map((entry) => entry?.sha256);
+  const hasArtifactDigest = graphSha256Snapshot !== undefined
+    || externalDataSha256Snapshot.some((sha256) => sha256 !== undefined);
+  let artifactLoad;
+  if (hasArtifactDigest) {
+    artifactLoad = immutableArtifactLoadSnapshot({
+      label,
+      graphPath: graphPathSnapshot,
+      graphSha256: graphSha256Snapshot,
+      graphBytes: graphDeclaredBytes,
+      externalData: externalDataMembershipSnapshot.map((entry, index) => ({
+        bytes: externalDataBytesSnapshot[index],
+        location: externalDataLocationSnapshot[index],
+        sha256: externalDataSha256Snapshot[index],
+      })),
+    });
   }
 
   const requiredMaxBytes = mode === 'p0'
@@ -136,6 +189,7 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     externalDeclaredBytes,
     requiredMaxBytes,
     absoluteMaxBytes: BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
+    artifactLoad,
     verdict: 'accepted',
   };
 }
