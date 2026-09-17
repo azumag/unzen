@@ -11,6 +11,8 @@ The original source model does not need to remain on disk.  This is deliberately
 an offline, read-only audit over the persisted capture bundle.  It does not
 claim evidence-author authenticity, source-file availability, WebGPU execution,
 GPU-memory reclamation, multi-browser relay/resume, or production suitability.
+Before success, the published JSON controls are re-snapshotted and required to
+end on the same byte digests that the base bundle verifier bound at audit start.
 """
 
 from __future__ import annotations
@@ -221,6 +223,13 @@ def _require_digest(actual: str, expected: object, *, field: str) -> None:
         )
 
 
+def _revalidate_control(path: Path, *, field: str, expected: object) -> None:
+    """Require one control to end on the base bundle's byte snapshot."""
+
+    _value, observed_sha = _stable_json_object(path, field=field)
+    _require_digest(observed_sha, expected, field=f"{field} final snapshot")
+
+
 def verify_capture_source_provenance(capture_dir: Path) -> dict[str, object]:
     """Cross-bind source graph and external-data identities in one capture bundle."""
 
@@ -229,8 +238,9 @@ def verify_capture_source_provenance(capture_dir: Path) -> dict[str, object]:
     if not isinstance(base, dict) or base.get("status") != "pass":
         raise RuntimeError("base capture-bundle verification did not pass")
 
+    summary_path = root / "run-summary.json"
     summary, summary_sha = _stable_json_object(
-        root / "run-summary.json",
+        summary_path,
         field="run summary",
     )
     _require_digest(
@@ -331,6 +341,22 @@ def verify_capture_source_provenance(capture_dir: Path) -> dict[str, object]:
             "source external-data identity mismatch between split manifest and "
             "numerical verification"
         )
+
+    _revalidate_control(
+        summary_path,
+        field="run summary",
+        expected=base.get("runSummarySha256"),
+    )
+    _revalidate_control(
+        manifest_path,
+        field="split manifest",
+        expected=base.get("manifestSha256"),
+    )
+    _revalidate_control(
+        evidence_path,
+        field="same-machine evidence",
+        expected=base.get("evidenceSha256"),
+    )
 
     total_external_bytes = sum(value[0] for value in manifest_external.values())
     return {
