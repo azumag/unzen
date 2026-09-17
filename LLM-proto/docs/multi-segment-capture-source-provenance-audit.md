@@ -24,7 +24,9 @@ python tools/verify_multi_segment_capture_source_provenance.py \
   --capture-dir /path/to/capture
 ```
 
-The command first requires the existing full bundle verifier to pass. It then re-reads the exact summary, evidence, and manifest bytes with bounded stable regular-file reads and requires their SHA-256 digests to remain identical to the base verifier result.
+The command first requires the existing full bundle verifier to pass. It then re-reads the exact summary, evidence, and manifest bytes with bounded stable regular-file reads and requires their SHA-256 digests to remain identical to the base verifier result. After the source graph/external-data identities have been cross-bound, it re-reads all three selected JSON controls again before returning success and requires those final digests to equal the same base-bundle digests. This start/end binding prevents the offline audit from reporting `status=pass` while one of the published controls has moved to a different byte snapshot during the audit.
+
+The final check is deliberately byte/digest based rather than a long-lived pathname inode lock. A temporary replacement that ends with exactly the same bytes remains the same persisted evidence identity. This does not provide reader-isolated publication for generated segment paths or select the publication/cache-key policy tracked separately in #908.
 
 A passing result requires:
 
@@ -48,7 +50,7 @@ Keeping the second check explicit prevents a malformed or regressed capture from
 
 ## Proof boundary
 
-A pass means only that the persisted capture bundle is internally cross-bound to one source graph/external-data identity.
+A pass means only that the persisted capture bundle is internally cross-bound to one source graph/external-data identity and that the selected JSON control byte snapshots still match the base bundle at the end of this offline audit.
 
 It does **not** prove:
 
