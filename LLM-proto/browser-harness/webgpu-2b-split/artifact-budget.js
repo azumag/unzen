@@ -117,17 +117,12 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     throw new Error(`${label} must declare external data`);
   }
 
-  // Detach external-data membership before any entry field getter runs. Capture
-  // the exact primitive fields consumed by browser loading once so the awaited
-  // loader never needs to re-read caller-owned manifest entries.
+  // Detach membership first, then preserve the established byte-validation
+  // ordering before touching later locator/digest accessors.
   const externalDataMembershipSnapshot = [...externalData];
-  const externalDataSnapshot = externalDataMembershipSnapshot.map((entry) => ({
-    bytes: entry?.bytes,
-    location: entry?.location,
-    sha256: entry?.sha256,
-  }));
-  const externalDeclaredBytes = externalDataSnapshot.reduce(
-    (sum, entry, index) => sum + safeBytes(entry.bytes, `${label} externalData[${index}].bytes`),
+  const externalDataBytesSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.bytes);
+  const externalDeclaredBytes = externalDataBytesSnapshot.reduce(
+    (sum, bytes, index) => sum + safeBytes(bytes, `${label} externalData[${index}].bytes`),
     0,
   );
   const graphDeclaredBytes = declaredBytes - externalDeclaredBytes;
@@ -137,22 +132,39 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     );
   }
 
-  // Runtime manifests later interpolate these locators into browser URLs. Keep
-  // locator/digest fields optional only for standalone synthetic budget callers;
-  // if any load identity is present, require a complete immutable load snapshot.
+  // Runtime manifests later interpolate these locators into browser URLs. Path
+  // fields remain independently optional for standalone/synthetic budget tests,
+  // but every present locator is validated before digest capture or loading.
   const graphPathSnapshot = validatedSegment.path;
+  if (graphPathSnapshot !== undefined) {
+    requireSafeArtifactRelativePath(graphPathSnapshot, `${label} path`);
+  }
+  const externalDataLocationSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.location);
+  for (const [index, location] of externalDataLocationSnapshot.entries()) {
+    if (location !== undefined) {
+      requireSafeArtifactRelativePath(location, `${label} externalData[${index}].location`);
+    }
+  }
+
+  // Digest-bearing inputs are load identities, not budget-only metadata. Once
+  // any digest is present, require and own the complete graph/external identity
+  // so async browser loading never re-reads the caller-owned manifest object.
   const graphSha256Snapshot = validatedSegment.sha256;
-  const hasArtifactLoadIdentity = graphPathSnapshot !== undefined
-    || graphSha256Snapshot !== undefined
-    || externalDataSnapshot.some((entry) => entry.location !== undefined || entry.sha256 !== undefined);
+  const externalDataSha256Snapshot = externalDataMembershipSnapshot.map((entry) => entry?.sha256);
+  const hasArtifactDigest = graphSha256Snapshot !== undefined
+    || externalDataSha256Snapshot.some((sha256) => sha256 !== undefined);
   let artifactLoad;
-  if (hasArtifactLoadIdentity) {
+  if (hasArtifactDigest) {
     artifactLoad = immutableArtifactLoadSnapshot({
       label,
       graphPath: graphPathSnapshot,
       graphSha256: graphSha256Snapshot,
       graphBytes: graphDeclaredBytes,
-      externalData: externalDataSnapshot,
+      externalData: externalDataMembershipSnapshot.map((entry, index) => ({
+        bytes: externalDataBytesSnapshot[index],
+        location: externalDataLocationSnapshot[index],
+        sha256: externalDataSha256Snapshot[index],
+      })),
     });
   }
 
