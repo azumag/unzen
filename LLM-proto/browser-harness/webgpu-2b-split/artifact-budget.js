@@ -1,3 +1,7 @@
+import {
+  requireSafeArtifactRelativePath,
+} from './artifact-path.js';
+
 export const BROWSER_SEGMENT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024;
 export const BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES = 1024 * 1024 * 1024;
 
@@ -93,6 +97,16 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     throw new Error(
       `${label} browserArtifactBytes must exceed declared external-data bytes`,
     );
+  }
+
+  // The same manifest values are later interpolated into browser URLs. Reject
+  // traversal, platform aliases, and URL-syntax escapes before any network load
+  // can begin. Generated runtime manifests always carry these fields, so making
+  // them part of the planner preflight also rejects missing artifact locators.
+  requireSafeArtifactRelativePath(validatedSegment.path, `${label} path`);
+  const externalDataLocationSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.location);
+  for (const [index, location] of externalDataLocationSnapshot.entries()) {
+    requireSafeArtifactRelativePath(location, `${label} externalData[${index}].location`);
   }
 
   const requiredMaxBytes = mode === 'p0'
