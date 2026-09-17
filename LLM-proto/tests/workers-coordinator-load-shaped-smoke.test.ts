@@ -16,6 +16,8 @@ import {
 import { WorkerTier } from '../src/types.js';
 import { makeSegments } from './test-helpers.js';
 
+const LOAD_SHAPED_FANOUT_BUDGET_MS = 10_000;
+
 const baseTelemetry: WorkerTelemetry = {
   uptimeMs: 2 * 60 * 60 * 1000,
   vramFreeMB: 4200,
@@ -57,6 +59,10 @@ function createManifestFixture(index: number): WorkersCoordinatorPrototypeManife
     ...createDefaultWorkersCoordinatorManifest(assignments, segments),
     requestId: `load-shaped-workers-coordinator-smoke-${index}`,
     receivedAtMs: 1_779_321_600_000 + index * 1_000,
+    // The aggregate load-shaped smoke already chooses this explicit real-time
+    // budget. Keep each nested Miniflare report on the same budget so CI host
+    // scheduling cannot trip the default 750ms fixture limit first.
+    maxFanoutLatencyMs: LOAD_SHAPED_FANOUT_BUDGET_MS,
   };
 }
 
@@ -77,10 +83,13 @@ describe('Workers Coordinator load-shaped runtime smoke', () => {
         manifests,
         durableObjectsPersistRoot: persistRoot,
         heartbeatBursts: 4,
-        maxP95FanoutLatencyMs: 10_000,
+        maxP95FanoutLatencyMs: LOAD_SHAPED_FANOUT_BUDGET_MS,
       });
 
       expect(report.runtime).toBe('miniflare-load-shaped');
+      // Keep the concrete invariant visible if this smoke fails again instead
+      // of stopping first on the less diagnostic status mismatch.
+      expect(report.failureReason).toBeUndefined();
       expect(report.status).toBe('pass');
       expect(report.customerTraffic).toMatchObject({
         concurrentApiRequests: 3,
@@ -127,7 +136,6 @@ describe('Workers Coordinator load-shaped runtime smoke', () => {
         totalResumeCount: 3,
         maxEstimatedDelayMs: 470,
       });
-      expect(report.failureReason).toBeUndefined();
     });
   });
 
