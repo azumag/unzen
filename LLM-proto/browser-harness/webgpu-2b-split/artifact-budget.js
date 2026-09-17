@@ -99,14 +99,20 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     );
   }
 
-  // The same manifest values are later interpolated into browser URLs. Reject
-  // traversal, platform aliases, and URL-syntax escapes before any network load
-  // can begin. Generated runtime manifests always carry these fields, so making
-  // them part of the planner preflight also rejects missing artifact locators.
-  requireSafeArtifactRelativePath(validatedSegment.path, `${label} path`);
+  // Runtime manifests later interpolate these locators into browser URLs. When
+  // locator fields are present, reject traversal, platform aliases, and URL
+  // syntax escapes before any network load can begin. Keeping the fields
+  // optional preserves the budget helper's standalone/synthetic-call contract;
+  // real split manifests always declare graph and external-data locators.
+  const graphPathSnapshot = validatedSegment.path;
+  if (graphPathSnapshot !== undefined) {
+    requireSafeArtifactRelativePath(graphPathSnapshot, `${label} path`);
+  }
   const externalDataLocationSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.location);
   for (const [index, location] of externalDataLocationSnapshot.entries()) {
-    requireSafeArtifactRelativePath(location, `${label} externalData[${index}].location`);
+    if (location !== undefined) {
+      requireSafeArtifactRelativePath(location, `${label} externalData[${index}].location`);
+    }
   }
 
   const requiredMaxBytes = mode === 'p0'
