@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from multi_segment_onnx import (
     prepare_budgeted_multi_split,
 )
 from prepare_browser_p0 import PREFERRED_MAX_BYTES
+
+
+MAX_PREVIOUS_MANIFEST_BYTES = 4 * 1024 * 1024
 
 
 def _require_bool(raw: object, *, field: str) -> bool:
@@ -102,6 +106,102 @@ def _source_artifacts_from_manifest(
     return sources
 
 
+def _stat_signature(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _read_previous_manifest_snapshot(final_manifest: Path) -> bytes | None:
+    """Best-effort bounded read of a regular, single-link previous commit marker."""
+
+    try:
+        before = os.lstat(final_manifest)
+    except (FileNotFoundError, OSError):
+        return None
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_size > MAX_PREVIOUS_MANIFEST_BYTES
+    ):
+        return None
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(final_manifest, flags)
+    except OSError:
+        return None
+
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size > MAX_PREVIOUS_MANIFEST_BYTES
+            or _stat_signature(opened) != _stat_signature(before)
+        ):
+            return None
+        while observed < opened.st_size:
+            block = os.read(fd, min(64 * 1024, opened.st_size - observed))
+            if not block:
+                break
+            chunks.append(block)
+            observed += len(block)
+        after = os.fstat(fd)
+        if observed != opened.st_size or _stat_signature(after) != _stat_signature(opened):
+            return None
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
+def _previous_tail_artifacts(
+    output_dir: Path,
+    *,
+    current_segment_count: int,
+) -> tuple[Path, ...]:
+    """Return generator-owned tail artifacts from a valid previous publication.
+
+    A malformed/legacy manifest must not make an otherwise valid replacement
+    impossible to publish, so stale-tail cleanup is best-effort unless the old
+    manifest has the current generated layout contract. Once that contract is
+    recognized, both graph and external-data names in the removed tail belong to
+    the generator namespace and can be cleaned safely after normal preflight.
+    """
+
+    raw_bytes = _read_previous_manifest_snapshot(output_dir / "split-manifest.json")
+    if raw_bytes is None:
+        return ()
+    try:
+        parsed = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ()
+    if not isinstance(parsed, dict):
+        return ()
+    try:
+        previous_segments = _require_generated_layout(parsed)
+    except RuntimeError:
+        return ()
+    if len(previous_segments) <= current_segment_count:
+        return ()
+
+    return tuple(
+        path
+        for index in range(current_segment_count, len(previous_segments))
+        for path in (
+            output_dir / f"segment{index}.onnx",
+            output_dir / f"segment{index}.onnx_data",
+        )
+    )
+
+
 def _publish_staged_split(
     *,
     staged_dir: Path,
@@ -121,9 +221,14 @@ def _publish_staged_split(
 
     segments = _require_generated_layout(manifest)
     final_artifacts = _generated_artifact_paths(output_dir, len(segments))
+    stale_tail_artifacts = _previous_tail_artifacts(
+        output_dir,
+        current_segment_count=len(segments),
+    )
     source_artifacts = _source_artifacts_from_manifest(source_model_path, manifest)
-    _preflight_generated_artifact_collisions(source_artifacts, final_artifacts)
-    _preflight_generated_artifact_destinations(final_artifacts)
+    mutation_targets = (*final_artifacts, *stale_tail_artifacts)
+    _preflight_generated_artifact_collisions(source_artifacts, mutation_targets)
+    _preflight_generated_artifact_destinations(mutation_targets)
 
     staged_manifest = staged_dir / "split-manifest.json"
     if not staged_manifest.is_file():
@@ -154,6 +259,12 @@ def _publish_staged_split(
             os.replace(staged_external, final_external)
         elif final_external.exists():
             final_external.unlink()
+
+    for stale in stale_tail_artifacts:
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
 
     os.replace(staged_manifest, final_manifest)
 

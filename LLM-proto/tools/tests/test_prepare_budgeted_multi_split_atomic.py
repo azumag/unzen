@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -15,7 +16,7 @@ if str(TOOLS) not in sys.path:
 import prepare_budgeted_multi_split_atomic as atomic  # noqa: E402
 
 
-def make_manifest(*, external_data: bool) -> dict[str, object]:
+def make_manifest(*, external_data: bool, segment_count: int = 1) -> dict[str, object]:
     return {
         "sourceModel": {
             "path": "model.onnx",
@@ -23,14 +24,15 @@ def make_manifest(*, external_data: bool) -> dict[str, object]:
         },
         "segments": [
             {
-                "index": 0,
-                "path": "segment0.onnx",
+                "index": index,
+                "path": f"segment{index}.onnx",
                 "externalData": (
-                    [{"location": "segment0.onnx_data"}]
+                    [{"location": f"segment{index}.onnx_data"}]
                     if external_data
                     else []
                 ),
             }
+            for index in range(segment_count)
         ],
     }
 
@@ -123,6 +125,129 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
                 (output / "split-manifest.json").read_text(encoding="utf-8"),
                 "new-manifest\n",
             )
+
+    def test_shrinking_segment_count_prunes_previous_tail_before_new_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            for index in range(3):
+                (output / f"segment{index}.onnx").write_bytes(f"old-graph-{index}".encode())
+                (output / f"segment{index}.onnx_data").write_bytes(
+                    f"old-weights-{index}".encode()
+                )
+            previous_manifest = make_manifest(external_data=True, segment_count=3)
+            (output / "split-manifest.json").write_text(
+                json.dumps(previous_manifest) + "\n",
+                encoding="utf-8",
+            )
+            unrelated = output / "notes.txt"
+            unrelated.write_text("keep me\n", encoding="utf-8")
+
+            real_replace = os.replace
+
+            def observing_replace(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
+                dst_path = Path(dst)
+                if dst_path.name == "split-manifest.json":
+                    for index in (1, 2):
+                        self.assertFalse((output / f"segment{index}.onnx").exists())
+                        self.assertFalse((output / f"segment{index}.onnx_data").exists())
+                real_replace(src, dst)
+
+            with mock.patch.object(atomic.os, "replace", side_effect=observing_replace):
+                atomic._publish_staged_split(
+                    staged_dir=staged,
+                    output_dir=output,
+                    source_model_path=source,
+                    manifest=make_manifest(external_data=True),
+                )
+
+            self.assertEqual((output / "segment0.onnx").read_bytes(), b"new-graph")
+            self.assertEqual((output / "segment0.onnx_data").read_bytes(), b"new-weights")
+            for index in (1, 2):
+                self.assertFalse((output / f"segment{index}.onnx").exists())
+                self.assertFalse((output / f"segment{index}.onnx_data").exists())
+            self.assertEqual(unrelated.read_text(encoding="utf-8"), "keep me\n")
+
+    def test_unsafe_previous_tail_is_rejected_before_old_manifest_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            (output / "segment0.onnx").write_bytes(b"old-graph")
+            (output / "segment0.onnx_data").write_bytes(b"old-weights")
+            outside = root / "outside.bin"
+            outside.write_bytes(b"outside")
+            (output / "segment1.onnx").symlink_to(outside)
+            previous_manifest = make_manifest(external_data=True, segment_count=2)
+            previous_text = json.dumps(previous_manifest) + "\n"
+            (output / "split-manifest.json").write_text(previous_text, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"must not be a symlink"):
+                atomic._publish_staged_split(
+                    staged_dir=staged,
+                    output_dir=output,
+                    source_model_path=source,
+                    manifest=make_manifest(external_data=True),
+                )
+
+            self.assertEqual(
+                (output / "split-manifest.json").read_text(encoding="utf-8"),
+                previous_text,
+            )
+            self.assertTrue((output / "segment1.onnx").is_symlink())
+            self.assertEqual(outside.read_bytes(), b"outside")
+
+    def test_stale_tail_cleanup_failure_leaves_manifest_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            for index in range(2):
+                (output / f"segment{index}.onnx").write_bytes(f"old-graph-{index}".encode())
+                (output / f"segment{index}.onnx_data").write_bytes(
+                    f"old-weights-{index}".encode()
+                )
+            (output / "split-manifest.json").write_text(
+                json.dumps(make_manifest(external_data=True, segment_count=2)) + "\n",
+                encoding="utf-8",
+            )
+
+            real_unlink = Path.unlink
+
+            def failing_unlink(path: Path, *args: object, **kwargs: object) -> None:
+                if path.name == "segment1.onnx":
+                    raise OSError("simulated stale cleanup failure")
+                real_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", autospec=True, side_effect=failing_unlink):
+                with self.assertRaisesRegex(OSError, "simulated stale cleanup failure"):
+                    atomic._publish_staged_split(
+                        staged_dir=staged,
+                        output_dir=output,
+                        source_model_path=source,
+                        manifest=make_manifest(external_data=True),
+                    )
+
+            self.assertFalse((output / "split-manifest.json").exists())
+            self.assertEqual((output / "segment0.onnx").read_bytes(), b"new-graph")
+            self.assertEqual((output / "segment0.onnx_data").read_bytes(), b"new-weights")
+            self.assertTrue((output / "segment1.onnx").exists())
 
     def test_publish_failure_leaves_manifest_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
