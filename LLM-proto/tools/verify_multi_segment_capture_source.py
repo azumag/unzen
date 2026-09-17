@@ -617,7 +617,6 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
     source_root_fd: int | None = None
     source_root_stat: os.stat_result | None = None
     if _component_walk_supported():
-        source_root = source_root.resolve()
         source_root_fd, source_root_stat = _open_directory_anchor(source_root)
         source_mode = PATH_RESOLUTION_COMPONENT_ANCHORED
 
