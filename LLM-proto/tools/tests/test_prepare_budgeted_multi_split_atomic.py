@@ -208,6 +208,47 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
             self.assertTrue((output / "segment1.onnx").is_symlink())
             self.assertEqual(outside.read_bytes(), b"outside")
 
+    def test_stale_tail_cleanup_failure_leaves_manifest_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            for index in range(2):
+                (output / f"segment{index}.onnx").write_bytes(f"old-graph-{index}".encode())
+                (output / f"segment{index}.onnx_data").write_bytes(
+                    f"old-weights-{index}".encode()
+                )
+            (output / "split-manifest.json").write_text(
+                json.dumps(make_manifest(external_data=True, segment_count=2)) + "\n",
+                encoding="utf-8",
+            )
+
+            real_unlink = Path.unlink
+
+            def failing_unlink(path: Path, *args: object, **kwargs: object) -> None:
+                if path.name == "segment1.onnx":
+                    raise OSError("simulated stale cleanup failure")
+                real_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", autospec=True, side_effect=failing_unlink):
+                with self.assertRaisesRegex(OSError, "simulated stale cleanup failure"):
+                    atomic._publish_staged_split(
+                        staged_dir=staged,
+                        output_dir=output,
+                        source_model_path=source,
+                        manifest=make_manifest(external_data=True),
+                    )
+
+            self.assertFalse((output / "split-manifest.json").exists())
+            self.assertEqual((output / "segment0.onnx").read_bytes(), b"new-graph")
+            self.assertEqual((output / "segment0.onnx_data").read_bytes(), b"new-weights")
+            self.assertTrue((output / "segment1.onnx").exists())
+
     def test_publish_failure_leaves_manifest_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
