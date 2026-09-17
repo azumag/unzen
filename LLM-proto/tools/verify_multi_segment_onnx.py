@@ -131,7 +131,7 @@ def _source_file_identity(
     except OSError as error:
         raise ValueError(f"{field} is not readable: {path}: {error}") from error
     if not stat.S_ISREG(metadata.st_mode):
-        raise ValueError(f"{field} must be a regular file: {path}")
+        raise ValueError(f"artifact must be a regular file ({field}): {path}")
     return metadata.st_dev, metadata.st_ino
 
 
