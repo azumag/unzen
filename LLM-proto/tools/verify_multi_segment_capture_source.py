@@ -148,6 +148,51 @@ def _directory_identity(value: os.stat_result) -> tuple[int, int]:
     return (value.st_dev, value.st_ino)
 
 
+def _source_file_identity(path: Path, *, field: str) -> tuple[int, int]:
+    """Return one source role's filesystem identity without reading payload bytes."""
+
+    source = path.expanduser().absolute()
+    try:
+        metadata = os.lstat(source)
+    except OSError as error:
+        raise FileNotFoundError(f"{field} not found: {source}") from error
+    if stat.S_ISLNK(metadata.st_mode):
+        raise ValueError(f"{field} must not be a symlink: {source}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{field} must be a regular file: {source}")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _preflight_source_file_identities(
+    full_model: Path,
+    manifest_external: list[dict[str, object]],
+) -> None:
+    """Reject source provenance roles that alias one filesystem object."""
+
+    seen: dict[tuple[int, int], str] = {}
+    graph_identity = _source_file_identity(full_model, field="full model graph")
+    seen[graph_identity] = "full model graph"
+
+    for index, entry in enumerate(manifest_external):
+        location = str(entry["location"])
+        source_path = _safe_source_relative_path(
+            full_model.parent,
+            location,
+            field=f"split-manifest.sourceModel.externalData[{index}].location",
+        )
+        identity = _source_file_identity(
+            source_path,
+            field=f"source external data {location}",
+        )
+        previous = seen.get(identity)
+        if previous is not None:
+            raise ValueError(
+                "source provenance hard-link alias: "
+                f"{location} aliases {previous}"
+            )
+        seen[identity] = f"source external data {location}"
+
+
 def _component_walk_supported() -> bool:
     return (
         os.open in getattr(os, "supports_dir_fd", set())
@@ -447,6 +492,7 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
     manifest_external = _normalized_external_entries(
         manifest_source.get("externalData"), field="split-manifest.sourceModel.externalData"
     )
+    _preflight_source_file_identities(full_model, manifest_external)
 
     source_mode = PATH_RESOLUTION_FINAL_ONLY
     source_root = full_model.parent
