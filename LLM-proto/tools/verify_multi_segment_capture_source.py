@@ -166,24 +166,39 @@ def _source_file_identity(path: Path, *, field: str) -> tuple[int, int]:
 def _preflight_source_file_identities(
     full_model: Path,
     manifest_external: list[dict[str, object]],
+    *,
+    root_fd: int | None = None,
 ) -> None:
     """Reject source provenance roles that alias one filesystem object."""
 
     seen: dict[tuple[int, int], str] = {}
-    graph_identity = _source_file_identity(full_model, field="full model graph")
+    if root_fd is not None:
+        graph_identity = _source_file_identity_at(
+            root_fd,
+            (full_model.name,),
+            field="full model graph",
+        )
+    else:
+        graph_identity = _source_file_identity(full_model, field="full model graph")
     seen[graph_identity] = "full model graph"
 
     for index, entry in enumerate(manifest_external):
         location = str(entry["location"])
-        source_path = _safe_source_relative_path(
-            full_model.parent,
-            location,
-            field=f"split-manifest.sourceModel.externalData[{index}].location",
-        )
-        identity = _source_file_identity(
-            source_path,
-            field=f"source external data {location}",
-        )
+        location_field = f"split-manifest.sourceModel.externalData[{index}].location"
+        field = f"source external data {location}"
+        if root_fd is not None:
+            _value, _relative, parts = _relative_parts(
+                location,
+                field=location_field,
+            )
+            identity = _source_file_identity_at(root_fd, parts, field=field)
+        else:
+            source_path = _safe_source_relative_path(
+                full_model.parent,
+                location,
+                field=location_field,
+            )
+            identity = _source_file_identity(source_path, field=field)
         previous = seen.get(identity)
         if previous is not None:
             raise ValueError(
@@ -303,6 +318,72 @@ def _relative_parts(raw: object, *, field: str) -> tuple[str, Path, tuple[str, .
     if not parts or any(part in ("", ".", "..") for part in parts):
         raise ValueError(f"unsafe {field}: {value}")
     return value, Path(value), parts
+
+
+def _source_file_identity_at(
+    root_fd: int,
+    parts: tuple[str, ...],
+    *,
+    field: str,
+) -> tuple[int, int]:
+    """Return a source identity via no-follow traversal without hashing payload bytes."""
+
+    if not parts:
+        raise ValueError(f"{field} must name a file below the source model directory")
+    current_fd = os.dup(root_fd)
+    prefix: list[str] = []
+    try:
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
+        directory_flags |= getattr(os, "O_NONBLOCK", 0)
+        for part in parts[:-1]:
+            prefix.append(part)
+            try:
+                before = os.stat(part, dir_fd=current_fd, follow_symlinks=False)
+            except OSError as error:
+                raise ValueError(
+                    f"{field} parent component is not readable: {'/'.join(prefix)}: {error}"
+                ) from error
+            if stat.S_ISLNK(before.st_mode):
+                raise ValueError(
+                    f"{field} parent component must not be a symlink: {'/'.join(prefix)}"
+                )
+            if not stat.S_ISDIR(before.st_mode):
+                raise ValueError(
+                    f"{field} parent component must be a directory: {'/'.join(prefix)}"
+                )
+            try:
+                next_fd = os.open(part, directory_flags, dir_fd=current_fd)
+            except OSError as error:
+                raise ValueError(
+                    f"{field} parent component could not be opened safely: {'/'.join(prefix)}: {error}"
+                ) from error
+            try:
+                opened_parent = os.fstat(next_fd)
+                if (
+                    not stat.S_ISDIR(opened_parent.st_mode)
+                    or _directory_identity(opened_parent) != _directory_identity(before)
+                ):
+                    raise RuntimeError(
+                        f"{field} parent component changed between path check and open: {'/'.join(prefix)}"
+                    )
+            except Exception:
+                os.close(next_fd)
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+
+        final = parts[-1]
+        try:
+            metadata = os.stat(final, dir_fd=current_fd, follow_symlinks=False)
+        except OSError as error:
+            raise FileNotFoundError(f"{field} not found: {'/'.join(parts)}") from error
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"{field} must not be a symlink: {'/'.join(parts)}")
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"{field} must be a regular file: {'/'.join(parts)}")
+        return metadata.st_dev, metadata.st_ino
+    finally:
+        os.close(current_fd)
 
 
 def _check_anchored_path(
@@ -492,7 +573,6 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
     manifest_external = _normalized_external_entries(
         manifest_source.get("externalData"), field="split-manifest.sourceModel.externalData"
     )
-    _preflight_source_file_identities(full_model, manifest_external)
 
     source_mode = PATH_RESOLUTION_FINAL_ONLY
     source_root = full_model.parent
@@ -504,6 +584,12 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
         source_mode = PATH_RESOLUTION_COMPONENT_ANCHORED
 
     try:
+        _preflight_source_file_identities(
+            full_model,
+            manifest_external,
+            root_fd=source_root_fd,
+        )
+
         if source_root_fd is not None:
             graph_bytes, observed_graph_sha = _stable_identity_at(
                 source_root_fd, (full_model.name,), field="full model graph"
