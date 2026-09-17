@@ -86,7 +86,7 @@ describe('endpoint WebGPU shared-module server routes', () => {
         const origin = `http://127.0.0.1:${port}`;
         const runnerResponse = await fetchUntilReady(`${origin}/runner.js`, child);
         const runnerSource = await runnerResponse.text();
-        expect(runnerSource).toContain("../webgpu-2b-split/artifact-cache.js");
+        expect(runnerSource).toContain('../webgpu-2b-split/artifact-cache.js');
 
         const sharedModules = [
           '/webgpu-2b-split/artifact-cache.js',
