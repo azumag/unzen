@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
+const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
 const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : null;
 const PREFLIGHT_REPORT = process.env.PREFLIGHT_REPORT ? resolve(process.env.PREFLIGHT_REPORT) : null;
 const GRAPH_PATH = process.env.GRAPH_PATH ? resolve(process.env.GRAPH_PATH) : null;
@@ -77,6 +78,8 @@ const server = createServer(async (req, res) => {
       path = GRAPH_PATH;
     } else if (url.pathname.startsWith('/data/')) {
       path = safePath(DATA_DIR, url.pathname.slice('/data/'.length));
+    } else if (url.pathname.startsWith('/webgpu-2b-split/')) {
+      path = safePath(SHARED_SPLIT_ROOT, url.pathname.slice('/webgpu-2b-split/'.length));
     } else {
       path = safePath(ROOT, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
     }
