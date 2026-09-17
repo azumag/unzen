@@ -13,11 +13,12 @@ Before the first source `_measure_file()` call, the verifier now validates the c
 - `sourceModel.externalData` is an array;
 - every external-data entry is an object;
 - every `location` is non-empty and passes the existing safe-relative-path rules;
+- the resolved source graph path is reserved for the graph role and cannot also be declared as external data;
 - external-data locations are globally unique by resolved filesystem path, so syntactic aliases such as `weights.bin` and `./weights.bin` cannot name the same payload twice;
 - every `bytes` field is a non-negative integer (booleans and coercible strings are rejected);
 - every external-data entry has a canonical lowercase `sha256` digest.
 
-If any later entry is malformed or aliases an earlier resolved source path, the verifier fails before hashing the source graph or any earlier external-data payload. This is a fail-fast performance and trust-boundary guarantee; it does not weaken the measured identity checks.
+If any later entry is malformed, aliases the source graph path, or aliases an earlier resolved external-data path, the verifier fails before hashing the source graph or any earlier external-data payload. This is a fail-fast performance and trust-boundary guarantee; it does not weaken the measured identity checks.
 
 ## Authoritative measured identity
 
@@ -27,4 +28,4 @@ The emitted `sourceModel` verification report is unchanged for valid manifests: 
 
 ## Scope
 
-This hardening is host-side numerical-evidence reliability for #167 / #943 / #945. It does not change ONNX Runtime provider policy, browser artifact layout, production deployment, credentials, billing, or count as new real-browser/WebGPU evidence. Resolved-path alias rejection does not claim inode/hard-link identity isolation; that requires a separate filesystem-object policy if needed.
+This hardening is host-side numerical-evidence reliability for #167 / #943 / #945 / #947. It does not change ONNX Runtime provider policy, browser artifact layout, production deployment, credentials, billing, or count as new real-browser/WebGPU evidence. Resolved-path alias rejection does not claim inode/hard-link identity isolation; that requires a separate filesystem-object policy if needed.
