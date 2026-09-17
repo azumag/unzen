@@ -62,6 +62,70 @@ describe('artifact stream reader ownership', () => {
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it('owns reused producer bytes directly in the known-size destination', async () => {
+    const chunk = new Uint8Array(2);
+    let pulls = 0;
+    const cancel = vi.fn();
+    const releaseLock = vi.fn();
+    const reader = {
+      read: vi.fn(async () => {
+        pulls += 1;
+        if (pulls === 1) {
+          chunk.set([1, 2]);
+          return { done: false, value: chunk };
+        }
+        if (pulls === 2) {
+          chunk.set([3, 4]);
+          return { done: false, value: chunk };
+        }
+        return { done: true, value: undefined };
+      }),
+      cancel,
+      releaseLock,
+    };
+    const response = {
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+    };
+
+    await expect(readResponseBytesBounded(response, {
+      maxBytes: 4,
+      expectedBytes: 4,
+    })).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps exact-size mismatch behavior on the known-size destination path', async () => {
+    let pulls = 0;
+    const cancel = vi.fn();
+    const releaseLock = vi.fn();
+    const reader = {
+      read: vi.fn(async () => {
+        pulls += 1;
+        return pulls === 1
+          ? { done: false, value: new Uint8Array([1, 2]) }
+          : { done: true, value: undefined };
+      }),
+      cancel,
+      releaseLock,
+    };
+    const response = {
+      headers: { get: () => null },
+      body: { getReader: () => reader },
+    };
+
+    await expect(readResponseBytesBounded(response, {
+      maxBytes: 4,
+      expectedBytes: 4,
+      url: 'known.bin',
+    })).rejects.toThrow('artifact byte size mismatch for known.bin: expected 4, got 2');
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the captured cancel capability when a later pull violates the byte limit', async () => {
     let cancelGetterReads = 0;
     let releaseGetterReads = 0;
