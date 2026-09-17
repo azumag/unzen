@@ -16,6 +16,8 @@ report. Source artifacts are hashed through already-open file descriptors and ar
 required to remain the same non-symlink regular files for the entire read. On
 platforms with dir_fd + O_NOFOLLOW support, the source root is anchored once and
 all graph/external-data path components are opened relative to that descriptor.
+Before returning success, the verifier re-snapshots the published control files
+and requires their byte digests to remain equal to the bundle-bound snapshot.
 """
 
 from __future__ import annotations
@@ -581,6 +583,13 @@ def _require_equal(left: object, right: object, *, field: str) -> None:
         raise ValueError(f"{field} mismatch: expected={left!r}, observed={right!r}")
 
 
+def _revalidate_control_snapshot(path: Path, *, field: str, expected_sha: str) -> None:
+    """Require a published JSON control to end on the bundle-bound byte snapshot."""
+
+    _value, observed_sha = _stable_json_object(path, field=field)
+    _require_equal(expected_sha, observed_sha, field=f"{field} final snapshot")
+
+
 def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str, object]:
     """Bind a valid published capture bundle to its original source artifacts."""
 
@@ -720,6 +729,22 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
         manifest_external,
         verification_external,
         field="split manifest source external data vs embedded verification",
+    )
+
+    _revalidate_control_snapshot(
+        summary_path,
+        field="run summary",
+        expected_sha=bundle_run_summary_sha,
+    )
+    _revalidate_control_snapshot(
+        manifest_path,
+        field="split manifest",
+        expected_sha=bundle_manifest_sha,
+    )
+    _revalidate_control_snapshot(
+        evidence_path,
+        field="same-machine evidence",
+        expected_sha=bundle_evidence_sha,
     )
 
     return {
