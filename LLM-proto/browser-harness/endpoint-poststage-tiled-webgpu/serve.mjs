@@ -5,6 +5,7 @@ import { extname, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
+const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
 const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : null;
 const PORT = Number(process.env.PORT ?? 8795);
 const MIME = {
@@ -26,9 +27,14 @@ function safePath(root, relative) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
-    const path = url.pathname.startsWith('/data/')
-      ? safePath(DATA_DIR, url.pathname.slice('/data/'.length))
-      : safePath(ROOT, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
+    let path;
+    if (url.pathname.startsWith('/data/')) {
+      path = safePath(DATA_DIR, url.pathname.slice('/data/'.length));
+    } else if (url.pathname.startsWith('/webgpu-2b-split/')) {
+      path = safePath(SHARED_SPLIT_ROOT, url.pathname.slice('/webgpu-2b-split/'.length));
+    } else {
+      path = safePath(ROOT, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
+    }
     const info = await stat(path);
     if (!info.isFile()) throw new Error('not a file');
     res.writeHead(200, {
