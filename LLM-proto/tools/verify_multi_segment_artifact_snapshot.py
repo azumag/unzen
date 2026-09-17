@@ -425,6 +425,28 @@ def _measure_all(entries: list[dict[str, object]], *, root_fd: int | None) -> li
     return measured
 
 
+def _assert_distinct_file_identities(entries: list[dict[str, object]]) -> None:
+    """Reject distinct declared pathnames that are hard links to one file object."""
+
+    seen: dict[tuple[int, int], str] = {}
+    for entry in entries:
+        identity = entry.get("identity")
+        if not isinstance(identity, tuple) or len(identity) < 2:
+            raise AssertionError("internal artifact identity must include device/inode")
+        device, inode = identity[0], identity[1]
+        if not isinstance(device, int) or not isinstance(inode, int):
+            raise AssertionError("internal artifact device/inode must be integers")
+        object_identity = (device, inode)
+        field = str(entry["field"])
+        previous = seen.get(object_identity)
+        if previous is not None:
+            raise ValueError(
+                "duplicate declared artifact file identity: "
+                f"{field} aliases {previous}"
+            )
+        seen[object_identity] = field
+
+
 def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
     manifest_path = manifest_path.expanduser().absolute()
     root = manifest_path.parent.resolve()
@@ -447,6 +469,7 @@ def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
         manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
         declared = _declared_files(manifest, root)
         before = _measure_all(declared, root_fd=root_fd)
+        _assert_distinct_file_identities(before)
 
         integrity_manifest = root / manifest_path.name if root_fd is not None else manifest_path
         integrity = verify_artifact_integrity(integrity_manifest)
