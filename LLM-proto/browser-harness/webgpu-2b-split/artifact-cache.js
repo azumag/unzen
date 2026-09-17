@@ -196,6 +196,14 @@ export async function readResponseBytesBounded(
     throw new TypeError('artifact response body could not be read');
   }
 
+  if (body === null) {
+    throwIfAborted(signal);
+    if (expectedBytes !== undefined && expectedBytes !== 0) {
+      throw new Error(`artifact byte size mismatch for ${url}: expected ${expectedBytes}, got 0`);
+    }
+    return new Uint8Array();
+  }
+
   let getReader;
   try {
     getReader = body?.getReader;
@@ -204,15 +212,9 @@ export async function readResponseBytesBounded(
     throw new TypeError('artifact response getReader capability could not be read');
   }
   if (getReader === undefined || getReader === null) {
-    const buffer = await response.arrayBuffer();
-    throwIfAborted(signal);
-    if (buffer.byteLength > effectiveMax) {
-      throw new Error(`artifact exceeds byte limit for ${url}: ${buffer.byteLength} > ${effectiveMax}`);
-    }
-    if (expectedBytes !== undefined && buffer.byteLength !== expectedBytes) {
-      throw new Error(`artifact byte size mismatch for ${url}: expected ${expectedBytes}, got ${buffer.byteLength}`);
-    }
-    return new Uint8Array(buffer);
+    const error = new TypeError('artifact response body must be null or expose getReader');
+    cancelReadable(body, error);
+    throw error;
   }
   if (typeof getReader !== 'function') {
     const error = new TypeError('artifact response getReader capability must be a function');
