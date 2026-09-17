@@ -37,11 +37,13 @@ describe('endpoint WebGPU artifact reads', () => {
       expect(body).not.toContain('response.arrayBuffer()');
 
       const server = loadSource(`${harnessPath}/serve.mjs`);
+      expect(server).toContain("import { safePath } from '../webgpu-2b-split/server-safe-path.mjs';");
       expect(server).toContain("const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');");
       expect(server).toContain("url.pathname.startsWith('/webgpu-2b-split/')");
       expect(server).toContain(
         "safePath(SHARED_SPLIT_ROOT, url.pathname.slice('/webgpu-2b-split/'.length))",
       );
+      expect(server).not.toContain('function safePath(');
     });
   }
 });
