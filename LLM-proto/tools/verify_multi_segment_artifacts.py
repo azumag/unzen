@@ -256,6 +256,77 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
             )
 
 
+def _preflight_artifact_metadata(
+    raw_segments: list[object],
+    raw_budget_segments: list[object],
+    budget: dict[str, object],
+    split_plan: dict[str, object],
+) -> None:
+    """Validate immutable manifest metadata before hashing any artifact payload."""
+
+    _non_negative_int(
+        budget.get("maximumSegmentArtifactBytes"),
+        field="browserArtifactBudget.maximumSegmentArtifactBytes",
+    )
+    _non_negative_int(
+        split_plan.get("maximumGeneratedSegmentBytes"),
+        field="splitPlan.maximumGeneratedSegmentBytes",
+    )
+
+    for expected_index, raw_segment in enumerate(raw_segments):
+        if not isinstance(raw_segment, dict):
+            raise ValueError(f"segment {expected_index} must be an object")
+        index = _non_negative_int(
+            raw_segment.get("index"), field=f"segments[{expected_index}].index"
+        )
+        if index != expected_index:
+            raise ValueError(
+                f"segment indices must cover 0..n-1; expected {expected_index}, got {index}"
+            )
+
+        _canonical_sha256(raw_segment.get("sha256"), field=f"segments[{index}].sha256")
+        _non_negative_int(
+            raw_segment.get("browserArtifactBytes"),
+            field=f"segments[{index}].browserArtifactBytes",
+        )
+        _non_empty_string(
+            raw_segment.get("browserArtifactTier"),
+            field=f"segments[{index}].browserArtifactTier",
+        )
+
+        raw_external = raw_segment.get("externalData")
+        if not isinstance(raw_external, list):
+            raise ValueError(f"segments[{index}].externalData must be an array")
+        for external_index, raw_entry in enumerate(raw_external):
+            if not isinstance(raw_entry, dict):
+                raise ValueError(
+                    f"segments[{index}].externalData[{external_index}] must be an object"
+                )
+            field_prefix = f"segments[{index}].externalData[{external_index}]"
+            _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
+            _canonical_sha256(raw_entry.get("sha256"), field=f"{field_prefix}.sha256")
+
+        raw_budget_entry = raw_budget_segments[index]
+        if not isinstance(raw_budget_entry, dict):
+            raise ValueError(f"browserArtifactBudget.segments[{index}] must be an object")
+        if (
+            _non_negative_int(
+                raw_budget_entry.get("index"),
+                field=f"browserArtifactBudget.segments[{index}].index",
+            )
+            != index
+        ):
+            raise ValueError(f"browserArtifactBudget.segments[{index}] index mismatch")
+        _non_negative_int(
+            raw_budget_entry.get("artifactBytes"),
+            field=f"browserArtifactBudget.segments[{index}].artifactBytes",
+        )
+        _non_empty_string(
+            raw_budget_entry.get("tier"),
+            field=f"browserArtifactBudget.segments[{index}].tier",
+        )
+
+
 def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     """Return a measured integrity report or fail closed on any mismatch."""
 
@@ -300,6 +371,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
 
     root = manifest_path.parent
     _preflight_artifact_paths(raw_segments, root)
+    _preflight_artifact_metadata(raw_segments, raw_budget_segments, budget, split_plan)
     reports: list[dict[str, object]] = []
 
     for expected_index, raw_segment in enumerate(raw_segments):
