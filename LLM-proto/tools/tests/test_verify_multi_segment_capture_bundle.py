@@ -17,13 +17,15 @@ import verify_multi_segment_capture_bundle as bundle_module  # noqa: E402
 
 
 class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
-    @staticmethod
-    def _integrity() -> dict[str, object]:
+    MANIFEST_SHA = hashlib.sha256(b"{}\n").hexdigest()
+
+    @classmethod
+    def _integrity(cls) -> dict[str, object]:
         return {
             "schemaVersion": "1.0.0",
             "kind": "unzen-budgeted-multi-segment-artifact-integrity",
             "status": "pass",
-            "manifestSha256": "a" * 64,
+            "manifestSha256": cls.MANIFEST_SHA,
             "segmentCount": 2,
             "maximumSegmentArtifactBytes": 123,
             "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
@@ -75,7 +77,7 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
         root: Path,
         *,
         evidence_path: str = "same-machine-evidence.json",
-        summary_manifest_sha: str = "a" * 64,
+        summary_manifest_sha: str | None = None,
         capture_path_resolution_mode: str | None = None,
         include_snapshot_preflight: bool = True,
     ) -> tuple[Path, dict[str, object], dict[str, object]]:
@@ -136,7 +138,7 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
         artifacts: dict[str, object] = {
             "manifest": "split/split-manifest.json",
-            "manifestSha256": summary_manifest_sha,
+            "manifestSha256": summary_manifest_sha or self.MANIFEST_SHA,
             "segmentCount": 2,
             "maximumSegmentArtifactBytes": 123,
             "effectiveRequiredMaxBytes": 256 * 1024 * 1024,
@@ -172,6 +174,12 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
         )
         return capture, summary, evidence
 
+    @staticmethod
+    def _mutate_json(path: Path, marker: str) -> None:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["auditMutation"] = marker
+        path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
     def test_happy_path_remeasures_and_cross_binds_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             capture, _summary, _evidence = self._write_bundle(Path(raw_dir))
@@ -184,7 +192,7 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
 
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["captureStatus"], "pass")
-            self.assertEqual(report["manifestSha256"], "a" * 64)
+            self.assertEqual(report["manifestSha256"], self.MANIFEST_SHA)
             self.assertEqual(report["segmentCount"], 2)
             self.assertEqual(report["sourceGraphSha256"], "c" * 64)
             self.assertEqual(
@@ -198,6 +206,74 @@ class VerifyMultiSegmentCaptureBundleTest(unittest.TestCase):
             verify.assert_called_once_with(
                 (capture / "split" / "split-manifest.json").resolve()
             )
+
+    def test_summary_drift_during_artifact_audit_is_rejected_before_success(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, _summary, _evidence = self._write_bundle(Path(raw_dir))
+            summary_path = capture / "run-summary.json"
+
+            def snapshot_then_mutate(_manifest_path: Path) -> dict[str, object]:
+                self._mutate_json(summary_path, "during-artifact-audit")
+                return self._snapshot()
+
+            with patch.object(
+                bundle_module,
+                "verify_artifact_snapshot",
+                side_effect=snapshot_then_mutate,
+            ):
+                with self.assertRaisesRegex(ValueError, "run summary final snapshot"):
+                    bundle_module.verify_capture_bundle(capture)
+
+    def test_manifest_drift_after_artifact_audit_is_rejected_before_success(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, _summary, _evidence = self._write_bundle(Path(raw_dir))
+            manifest_path = capture / "split" / "split-manifest.json"
+
+            def snapshot_then_mutate(_manifest_path: Path) -> dict[str, object]:
+                snapshot = self._snapshot()
+                self._mutate_json(manifest_path, "after-artifact-audit")
+                return snapshot
+
+            with patch.object(
+                bundle_module,
+                "verify_artifact_snapshot",
+                side_effect=snapshot_then_mutate,
+            ):
+                with self.assertRaisesRegex(ValueError, "split manifest final snapshot"):
+                    bundle_module.verify_capture_bundle(capture)
+
+    def test_evidence_drift_after_first_read_is_rejected_before_success(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            capture, _summary, _evidence = self._write_bundle(Path(raw_dir))
+            evidence_path = capture / "same-machine-evidence.json"
+            real_snapshot = bundle_module._json_snapshot
+            evidence_reads = 0
+
+            def mutating_snapshot(path: Path, *, field: str, max_bytes: int = bundle_module.DEFAULT_CAPTURE_JSON_MAX_BYTES):
+                nonlocal evidence_reads
+                value, digest = real_snapshot(path, field=field, max_bytes=max_bytes)
+                if path == evidence_path:
+                    evidence_reads += 1
+                    if evidence_reads == 1:
+                        self._mutate_json(evidence_path, "after-first-read")
+                return value, digest
+
+            with (
+                patch.object(
+                    bundle_module,
+                    "verify_artifact_snapshot",
+                    return_value=self._snapshot(),
+                ),
+                patch.object(
+                    bundle_module,
+                    "_json_snapshot",
+                    side_effect=mutating_snapshot,
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, "same-machine evidence final snapshot"):
+                    bundle_module.verify_capture_bundle(capture)
+
+            self.assertEqual(evidence_reads, 2)
 
     def test_capture_and_audit_snapshot_modes_may_differ(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
