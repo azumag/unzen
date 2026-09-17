@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import tempfile
 import unittest
@@ -40,6 +41,13 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                 "externalData": external_entries,
             }
         }
+
+    def _replace_with_hard_link(self, source: Path, destination: Path) -> None:
+        destination.unlink()
+        try:
+            os.link(source, destination)
+        except OSError as error:
+            self.skipTest(f"hard links unavailable in test filesystem: {error}")
 
     def test_later_malformed_external_metadata_fails_before_any_payload_measurement(self) -> None:
         cases = [
@@ -123,6 +131,46 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ValueError,
                     r"source external-data location aliases source graph path: model\.onnx",
+                ):
+                    verify_source_model_identity(source, manifest)
+            measure.assert_not_called()
+
+    def test_source_graph_hard_link_alias_fails_before_any_payload_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, manifest = self._fixture(root)
+            external = manifest["sourceModel"]["externalData"][0]
+            external_path = root / str(external["location"])
+            self._replace_with_hard_link(source, external_path)
+            graph_payload = source.read_bytes()
+            external["bytes"] = len(graph_payload)
+            external["sha256"] = hashlib.sha256(graph_payload).hexdigest()
+
+            with patch("verify_multi_segment_onnx._measure_file") as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"source provenance hard-link alias: model\.onnx_data\.0 aliases source graph",
+                ):
+                    verify_source_model_identity(source, manifest)
+            measure.assert_not_called()
+
+    def test_external_hard_link_alias_fails_before_any_payload_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, manifest = self._fixture(root)
+            first = manifest["sourceModel"]["externalData"][0]
+            second = manifest["sourceModel"]["externalData"][1]
+            first_path = root / str(first["location"])
+            second_path = root / str(second["location"])
+            self._replace_with_hard_link(first_path, second_path)
+            first_payload = first_path.read_bytes()
+            second["bytes"] = len(first_payload)
+            second["sha256"] = hashlib.sha256(first_payload).hexdigest()
+
+            with patch("verify_multi_segment_onnx._measure_file") as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"source provenance hard-link alias: model\.onnx_data\.1 aliases model\.onnx_data\.0",
                 ):
                     verify_source_model_identity(source, manifest)
             measure.assert_not_called()

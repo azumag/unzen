@@ -21,6 +21,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import stat
 from typing import Sequence
 
 import numpy as np
@@ -115,6 +116,54 @@ def _non_negative_int(raw: object, *, field: str) -> int:
     return raw
 
 
+def _source_file_identity(
+    path: Path,
+    *,
+    field: str,
+    missing_message: str,
+) -> tuple[int, int]:
+    """Return the filesystem-object identity without streaming payload bytes."""
+
+    try:
+        metadata = path.stat()
+    except FileNotFoundError:
+        raise FileNotFoundError(missing_message) from None
+    except OSError as error:
+        raise ValueError(f"{field} is not readable: {path}: {error}") from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"artifact must be a regular file ({field}): {path}")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _preflight_source_file_identities(
+    full_model_path: Path,
+    external_contract: Sequence[tuple[str, Path, int, str]],
+) -> None:
+    """Reject source provenance roles that alias one filesystem object."""
+
+    seen: dict[tuple[int, int], str] = {}
+    graph_identity = _source_file_identity(
+        full_model_path,
+        field="source graph",
+        missing_message=f"full model not found: {full_model_path}",
+    )
+    seen[graph_identity] = "source graph"
+
+    for location, external_path, _, _ in external_contract:
+        identity = _source_file_identity(
+            external_path,
+            field=f"source external data {location}",
+            missing_message=f"source external data not found: {external_path}",
+        )
+        previous = seen.get(identity)
+        if previous is not None:
+            raise ValueError(
+                "source provenance hard-link alias: "
+                f"{location} aliases {previous}"
+            )
+        seen[identity] = location
+
+
 def _preflight_source_model_identity(
     full_model_path: Path,
     manifest: dict[str, object],
@@ -186,6 +235,7 @@ def verify_source_model_identity(
         full_model_path,
         manifest,
     )
+    _preflight_source_file_identities(full_model_path, external_contract)
     graph_bytes, observed_graph_sha = _measure_file(
         full_model_path,
         missing_message=f"full model not found: {full_model_path}",
