@@ -60,6 +60,18 @@ describe('artifact response body ownership', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a non-callable getReader capability before stream ownership', async () => {
+    const cancel = vi.fn();
+    const response = {
+      headers: { get: () => null },
+      body: { cancel, getReader: 1 },
+    };
+
+    await expect(readResponseBytesBounded(response))
+      .rejects.toThrow('artifact response getReader capability must be a function');
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves an abort preflight failure when body capture for cleanup also throws', async () => {
     const controller = new AbortController();
     controller.abort();
