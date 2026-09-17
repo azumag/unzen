@@ -41,7 +41,10 @@ def write_staged_split(staged: Path, *, external_data: bool) -> None:
     (staged / "segment0.onnx").write_bytes(b"new-graph")
     if external_data:
         (staged / "segment0.onnx_data").write_bytes(b"new-weights")
-    (staged / "split-manifest.json").write_text("new-manifest\n", encoding="utf-8")
+    (staged / "split-manifest.json").write_text(
+        json.dumps(make_manifest(external_data=external_data)) + "\n",
+        encoding="utf-8",
+    )
 
 
 class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
@@ -94,8 +97,8 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
             self.assertEqual((output / "segment0.onnx").read_bytes(), b"new-graph")
             self.assertEqual((output / "segment0.onnx_data").read_bytes(), b"new-weights")
             self.assertEqual(
-                (output / "split-manifest.json").read_text(encoding="utf-8"),
-                "new-manifest\n",
+                json.loads((output / "split-manifest.json").read_text(encoding="utf-8")),
+                make_manifest(external_data=True),
             )
 
     def test_embedded_segment_removes_previous_external_data_before_manifest_publish(self) -> None:
@@ -122,8 +125,8 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
             self.assertEqual((output / "segment0.onnx").read_bytes(), b"new-graph")
             self.assertFalse((output / "segment0.onnx_data").exists())
             self.assertEqual(
-                (output / "split-manifest.json").read_text(encoding="utf-8"),
-                "new-manifest\n",
+                json.loads((output / "split-manifest.json").read_text(encoding="utf-8")),
+                make_manifest(external_data=False),
             )
 
     def test_staged_symlink_nodes_are_rejected_before_old_manifest_invalidation(self) -> None:
@@ -180,6 +183,100 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
                 )
 
             self.assertEqual(previous.read_text(encoding="utf-8"), "old-manifest\n")
+
+    def test_staged_manifest_mismatch_is_rejected_before_old_manifest_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            mismatched = make_manifest(external_data=True)
+            mismatched["unexpected"] = "different"
+            (staged / "split-manifest.json").write_text(
+                json.dumps(mismatched) + "\n",
+                encoding="utf-8",
+            )
+            previous = output / "split-manifest.json"
+            previous.write_text("old-manifest\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, r"does not match the generated split manifest"):
+                atomic._publish_staged_split(
+                    staged_dir=staged,
+                    output_dir=output,
+                    source_model_path=source,
+                    manifest=make_manifest(external_data=True),
+                )
+
+            self.assertEqual(previous.read_text(encoding="utf-8"), "old-manifest\n")
+            self.assertFalse((output / "segment0.onnx").exists())
+            self.assertFalse((output / "segment0.onnx_data").exists())
+
+    def test_malformed_staged_manifest_is_rejected_before_old_manifest_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            (staged / "split-manifest.json").write_text("{not-json\n", encoding="utf-8")
+            previous = output / "split-manifest.json"
+            previous.write_text("old-manifest\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, r"must contain valid UTF-8 JSON"):
+                atomic._publish_staged_split(
+                    staged_dir=staged,
+                    output_dir=output,
+                    source_model_path=source,
+                    manifest=make_manifest(external_data=True),
+                )
+
+            self.assertEqual(previous.read_text(encoding="utf-8"), "old-manifest\n")
+            self.assertFalse((output / "segment0.onnx").exists())
+            self.assertFalse((output / "segment0.onnx_data").exists())
+
+    def test_staged_manifest_mutation_during_snapshot_is_rejected_before_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            previous = output / "split-manifest.json"
+            previous.write_text("old-manifest\n", encoding="utf-8")
+            real_read = os.read
+            mutated = False
+
+            def mutating_read(fd: int, count: int) -> bytes:
+                nonlocal mutated
+                block = real_read(fd, count)
+                if block and not mutated:
+                    mutated = True
+                    with (staged / "split-manifest.json").open("ab") as handle:
+                        handle.write(b" ")
+                return block
+
+            with mock.patch.object(atomic.os, "read", side_effect=mutating_read):
+                with self.assertRaisesRegex(RuntimeError, r"changed during snapshot read"):
+                    atomic._publish_staged_split(
+                        staged_dir=staged,
+                        output_dir=output,
+                        source_model_path=source,
+                        manifest=make_manifest(external_data=True),
+                    )
+
+            self.assertEqual(previous.read_text(encoding="utf-8"), "old-manifest\n")
+            self.assertFalse((output / "segment0.onnx").exists())
+            self.assertFalse((output / "segment0.onnx_data").exists())
 
     def test_shrinking_segment_count_prunes_previous_tail_before_new_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
