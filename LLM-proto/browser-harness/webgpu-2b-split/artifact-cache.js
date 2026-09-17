@@ -128,6 +128,18 @@ export async function readResponseBytesBounded(
     throw new Error(`expectedBytes must be a non-negative safe integer: ${diagnosticValue(expectedBytes)}`);
   }
   const effectiveMax = expectedBytes === undefined ? maxBytes : Math.min(maxBytes, expectedBytes);
+
+  // Preserve the established abort/content-length fail-fast ordering. If that
+  // preflight fails, capture the body once only for best-effort cleanup.
+  let body;
+  let bodyCaptured = false;
+  const ownResponseBody = () => {
+    if (!bodyCaptured) {
+      bodyCaptured = true;
+      body = response.body;
+    }
+    return body;
+  };
   try {
     throwIfAborted(signal);
     const contentLength = parseContentLength(response);
@@ -135,11 +147,31 @@ export async function readResponseBytesBounded(
       throw new Error(`artifact exceeds byte limit before body read for ${url}: ${contentLength} > ${effectiveMax}`);
     }
   } catch (error) {
-    cancelReadable(response.body, error);
+    if (!bodyCaptured) {
+      try {
+        ownResponseBody();
+      } catch {
+        // Preserve the primary preflight failure if the body getter is hostile.
+      }
+    }
+    cancelReadable(body, error);
     throw error;
   }
 
-  if (!response.body?.getReader) {
+  try {
+    ownResponseBody();
+  } catch {
+    throw new TypeError('artifact response body could not be read');
+  }
+
+  let getReader;
+  try {
+    getReader = body?.getReader;
+  } catch (error) {
+    cancelReadable(body, error);
+    throw new TypeError('artifact response getReader capability could not be read');
+  }
+  if (getReader === undefined || getReader === null) {
     const buffer = await response.arrayBuffer();
     throwIfAborted(signal);
     if (buffer.byteLength > effectiveMax) {
@@ -150,16 +182,27 @@ export async function readResponseBytesBounded(
     }
     return new Uint8Array(buffer);
   }
+  if (typeof getReader !== 'function') {
+    const error = new TypeError('artifact response getReader capability must be a function');
+    cancelReadable(body, error);
+    throw error;
+  }
 
   let abortListenerMethods;
   try {
     abortListenerMethods = snapshotAbortListenerMethods(signal);
   } catch (error) {
-    cancelReadable(response.body, error);
+    cancelReadable(body, error);
     throw error;
   }
 
-  const reader = response.body.getReader();
+  let reader;
+  try {
+    reader = getReader.call(body);
+  } catch (error) {
+    cancelReadable(body, error);
+    throw error;
+  }
   const chunks = [];
   let total = 0;
   let listenerMayBeRegistered = false;
