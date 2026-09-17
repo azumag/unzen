@@ -9,7 +9,7 @@ The existing `tools/multi_segment_onnx.py` generator is retained for compatibili
 1. Create a private temporary staging directory inside the requested output directory. Keeping staging on the destination filesystem allows final `os.replace()` operations to stay same-filesystem.
 2. Run `prepare_budgeted_multi_split()` entirely inside staging. Graph extraction, external-data repacking, ONNX runtime checks, measured byte accounting, browser budget enforcement, hashes, and the final staged `split-manifest.json` must all succeed before the published artifact set is touched.
 3. Re-run the existing source-collision and destination-node preflights against the *final* output paths. If the previous valid publication used more segments than the staged replacement, include the removed tail `segmentN.onnx` / `segmentN.onnx_data` paths in those preflights as generator-owned mutation targets. This preserves the source overwrite, symlink, non-regular node, and multiple-hard-link protections before the old commit marker is invalidated.
-4. Verify that every staged graph/external-data file named by the generated layout exists.
+4. Apply the same node-type preflight to every generator-owned staging path, including staged `split-manifest.json`: an existing staged node must be a regular file, not a symlink, and have exactly one hard link. Then verify that every graph/external-data file required by the generated layout and the staged manifest actually exists. Missing `segmentN.onnx_data` remains valid for a fully embedded segment.
 5. Remove the previously published `split-manifest.json` before replacing or deleting the first final artifact.
 6. Move current graph and external-data files into place. If a current segment is fully embedded, remove a stale previous `segmentN.onnx_data` for that segment. If the new split has fewer segments than the previous valid generated layout, remove the old tail graph/data files as well. Unrelated files in the output directory are not part of this cleanup.
 7. Move the new `split-manifest.json` into place last. The manifest acts as the publication commit marker.
@@ -19,7 +19,7 @@ The existing `tools/multi_segment_onnx.py` generator is retained for compatibili
 This is **fail-closed multi-file publication**, not a globally atomic filesystem transaction.
 
 - If generation or staging validation fails, previously published graph/data files and manifest remain untouched.
-- Unsafe previous tail artifacts are rejected during preflight while the previous manifest is still present.
+- Unsafe previous tail artifacts or unsafe staged nodes are rejected during preflight while the previous manifest is still present.
 - If publication fails after the old manifest has been invalidated, the directory may contain a mixture of old and new graph/data files, but `split-manifest.json` remains absent. Consumers therefore cannot mistake an old manifest for a coherent mixed artifact set.
 - A successful publication exposes the new manifest only after every current graph/data file has reached its final name and any generator-owned tail from a larger previous split has been removed.
 - Temporary staging content is removed automatically on both success and failure.
