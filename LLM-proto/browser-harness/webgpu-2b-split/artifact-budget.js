@@ -1,3 +1,7 @@
+import {
+  requireSafeArtifactRelativePath,
+} from './artifact-path.js';
+
 export const BROWSER_SEGMENT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024;
 export const BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES = 1024 * 1024 * 1024;
 
@@ -93,6 +97,22 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
     throw new Error(
       `${label} browserArtifactBytes must exceed declared external-data bytes`,
     );
+  }
+
+  // Runtime manifests later interpolate these locators into browser URLs. When
+  // locator fields are present, reject traversal, platform aliases, and URL
+  // syntax escapes before any network load can begin. Keeping the fields
+  // optional preserves the budget helper's standalone/synthetic-call contract;
+  // real split manifests always declare graph and external-data locators.
+  const graphPathSnapshot = validatedSegment.path;
+  if (graphPathSnapshot !== undefined) {
+    requireSafeArtifactRelativePath(graphPathSnapshot, `${label} path`);
+  }
+  const externalDataLocationSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.location);
+  for (const [index, location] of externalDataLocationSnapshot.entries()) {
+    if (location !== undefined) {
+      requireSafeArtifactRelativePath(location, `${label} externalData[${index}].location`);
+    }
   }
 
   const requiredMaxBytes = mode === 'p0'
