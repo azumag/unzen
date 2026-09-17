@@ -12,7 +12,9 @@ summary, evidence envelope, embedded numerical report, and measured artifact
 preflight all refer to one identical byte-level snapshot. It intentionally
 depends only on the Python standard library plus the existing stdlib-only
 artifact/snapshot verifiers, so operators can audit a multi-gigabyte capture
-without loading ONNX Runtime or the full model.
+without loading ONNX Runtime or the full model. Before success, the published
+JSON controls are re-snapshotted and required to end on the byte digests bound
+during this audit.
 """
 
 from __future__ import annotations
@@ -231,6 +233,13 @@ def _require_status(raw: object, *, field: str) -> str:
 def _require_equal(left: object, right: object, *, field: str) -> None:
     if left != right:
         raise ValueError(f"{field} mismatch: expected={left!r}, observed={right!r}")
+
+
+def _revalidate_control_snapshot(path: Path, *, field: str, expected_sha: str) -> None:
+    """Require one published JSON control to end on the audit-bound bytes."""
+
+    _value, observed_sha = _json_snapshot(path, field=field)
+    _require_equal(expected_sha, observed_sha, field=f"{field} final snapshot")
 
 
 def _bind_snapshot_preflight(
@@ -579,6 +588,26 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
     )
     _bind_run_parameters(summary_parameters, evidence_parameters, verification)
 
+    measured_manifest_sha = _canonical_sha256(
+        integrity.get("manifestSha256"),
+        field="measured integrity.manifestSha256",
+    )
+    _revalidate_control_snapshot(
+        summary_path,
+        field="run summary",
+        expected_sha=summary_sha,
+    )
+    _revalidate_control_snapshot(
+        manifest_path,
+        field="split manifest",
+        expected_sha=measured_manifest_sha,
+    )
+    _revalidate_control_snapshot(
+        evidence_path,
+        field="same-machine evidence",
+        expected_sha=observed_evidence_sha,
+    )
+
     return {
         "schemaVersion": "1.1.0",
         "kind": "unzen-budgeted-multi-segment-capture-bundle-verification",
@@ -587,7 +616,7 @@ def verify_capture_bundle(capture_dir: Path) -> dict[str, object]:
         "runSummarySha256": summary_sha,
         "evidenceSha256": observed_evidence_sha,
         "verificationSha256": observed_verification_sha,
-        "manifestSha256": integrity["manifestSha256"],
+        "manifestSha256": measured_manifest_sha,
         "segmentCount": _positive_int(
             integrity.get("segmentCount"),
             field="measured integrity.segmentCount",
