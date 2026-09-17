@@ -1,8 +1,7 @@
 import { createServer } from 'node:http';
-import { createReadStream } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
+import { openExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
@@ -26,10 +25,22 @@ const server = createServer(async (req, res) => {
       selectedRoot = ROOT;
       relativePath = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     }
-    const { path, info } = await resolveExistingFileWithinRoot(selectedRoot, relativePath);
-    res.writeHead(200, { 'Content-Type': MIME[extname(path)] ?? 'application/octet-stream', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
-    createReadStream(path).pipe(res);
+    const { path, info, stream } = await openExistingFileWithinRoot(selectedRoot, relativePath);
+    stream.once('error', () => {
+      if (!res.destroyed) res.destroy();
+    });
+    try {
+      res.writeHead(200, { 'Content-Type': MIME[extname(path)] ?? 'application/octet-stream', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
+      stream.pipe(res);
+    } catch (error) {
+      stream.destroy();
+      throw error;
+    }
   } catch (error) {
+    if (res.headersSent || res.destroyed) {
+      if (!res.destroyed) res.destroy();
+      return;
+    }
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('not found');
   }
