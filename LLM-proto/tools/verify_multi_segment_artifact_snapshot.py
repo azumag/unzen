@@ -447,6 +447,38 @@ def _assert_distinct_file_identities(entries: list[dict[str, object]]) -> None:
         seen[object_identity] = field
 
 
+def _preflight_distinct_file_identities(
+    entries: list[dict[str, object]],
+    *,
+    root_fd: int | None,
+) -> None:
+    """Reject hard-link aliases before streaming any artifact payload bytes."""
+
+    opened_entries: list[dict[str, object]] = []
+    for entry in entries:
+        path = entry["absolute"]
+        parts = entry["parts"]
+        field = str(entry["field"])
+        if not isinstance(path, Path):
+            raise AssertionError("internal artifact path must be a Path")
+        if not isinstance(parts, tuple) or not all(isinstance(part, str) for part in parts):
+            raise AssertionError("internal artifact path parts must be strings")
+        if root_fd is None:
+            fd, opened = _open_regular(path, field=field)
+        else:
+            fd, opened, _parents = _open_regular_at(
+                root_fd,
+                parts,
+                path=path,
+                field=field,
+            )
+        try:
+            opened_entries.append({**entry, "identity": _identity(opened)})
+        finally:
+            os.close(fd)
+    _assert_distinct_file_identities(opened_entries)
+
+
 def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
     manifest_path = manifest_path.expanduser().absolute()
     root = manifest_path.parent.resolve()
@@ -468,6 +500,7 @@ def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
 
         manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
         declared = _declared_files(manifest, root)
+        _preflight_distinct_file_identities(declared, root_fd=root_fd)
         before = _measure_all(declared, root_fd=root_fd)
         _assert_distinct_file_identities(before)
 
