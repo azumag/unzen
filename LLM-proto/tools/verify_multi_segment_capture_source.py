@@ -88,6 +88,12 @@ def _unsafe_windows_component(part: str) -> bool:
 
 def _relative_path_text(raw: object, *, field: str) -> str:
     value = _non_empty_string(raw, field=field)
+    # PurePath normalizes explicit dot components and redundant separators.
+    # Reject those spellings before normalization so one source filesystem
+    # object cannot survive as multiple provenance identities.
+    lexical_parts = re.split(r"[\\/]", value)
+    if any(part in {"", "."} for part in lexical_parts):
+        raise ValueError(f"unsafe {field}: {value}")
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
@@ -389,20 +395,10 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
     for index, raw_entry in enumerate(raw):
         prefix = f"{field}[{index}]"
         entry = _require_mapping(raw_entry, field=prefix)
-        location = _non_empty_string(entry.get("location"), field=f"{prefix}.location")
-        posix = PurePosixPath(location)
-        windows = PureWindowsPath(location)
-        if (
-            posix.is_absolute()
-            or windows.is_absolute()
-            or bool(windows.drive)
-            or bool(windows.root)
-            or any(":" in part for part in windows.parts)
-            or any(_unsafe_windows_component(part) for part in windows.parts)
-            or ".." in posix.parts
-            or ".." in windows.parts
-        ):
-            raise ValueError(f"unsafe {prefix}.location: {location}")
+        location = _relative_path_text(
+            entry.get("location"),
+            field=f"{prefix}.location",
+        )
         if location in seen:
             raise ValueError(f"duplicate external-data location in {field}: {location}")
         seen.add(location)
