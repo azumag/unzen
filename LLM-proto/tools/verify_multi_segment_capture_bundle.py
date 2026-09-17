@@ -92,10 +92,14 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     ):
         raise ValueError(f"unsafe {field}: {value}")
     resolved_root = root.resolve()
-    resolved = (root / Path(value)).resolve()
+    candidate = (root / Path(value)).absolute()
+    resolved = candidate.resolve()
     if resolved != resolved_root and resolved_root not in resolved.parents:
         raise ValueError(f"{field} escapes capture directory: {value}")
-    return resolved
+    # Use resolution only to prove containment. Returning the declared lexical
+    # path preserves its final component so downstream O_NOFOLLOW/lstat checks
+    # can still reject a symlink instead of silently auditing its target.
+    return candidate
 
 
 def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
