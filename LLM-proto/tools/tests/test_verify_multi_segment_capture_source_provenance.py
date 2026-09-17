@@ -27,6 +27,12 @@ class CaptureSourceProvenanceVerifierTest(unittest.TestCase):
         path.write_bytes(raw)
         return hashlib.sha256(raw).hexdigest()
 
+    @staticmethod
+    def _mutate_json(path: Path, marker: str) -> None:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["auditMutation"] = marker
+        path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
     def _bundle(self, root: Path) -> tuple[dict[str, object], dict[str, object]]:
         manifest = {
             "sourceModel": {
@@ -80,7 +86,15 @@ class CaptureSourceProvenanceVerifierTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             base, _ = self._bundle(root)
-            with patch.object(provenance, "verify_capture_bundle", return_value=base):
+            real_reader = provenance._stable_json_object
+            with (
+                patch.object(provenance, "verify_capture_bundle", return_value=base),
+                patch.object(
+                    provenance,
+                    "_stable_json_object",
+                    wraps=real_reader,
+                ) as stable_reader,
+            ):
                 report = provenance.verify_capture_source_provenance(root)
 
             self.assertEqual(report["status"], "pass")
@@ -91,6 +105,88 @@ class CaptureSourceProvenanceVerifierTest(unittest.TestCase):
             self.assertEqual(report["runSummarySha256"], base["runSummarySha256"])
             self.assertEqual(report["manifestSha256"], base["manifestSha256"])
             self.assertEqual(report["evidenceSha256"], base["evidenceSha256"])
+            self.assertEqual(stable_reader.call_count, 6)
+
+    def test_run_summary_drift_after_first_read_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            base, _ = self._bundle(root)
+            summary_path = root / "run-summary.json"
+            real_reader = provenance._stable_json_object
+            summary_reads = 0
+
+            def mutating_reader(path: Path, *, field: str):
+                nonlocal summary_reads
+                value, digest = real_reader(path, field=field)
+                if path == summary_path:
+                    summary_reads += 1
+                    if summary_reads == 1:
+                        self._mutate_json(summary_path, "after-first-summary-read")
+                return value, digest
+
+            with (
+                patch.object(provenance, "verify_capture_bundle", return_value=base),
+                patch.object(provenance, "_stable_json_object", side_effect=mutating_reader),
+            ):
+                with self.assertRaisesRegex(ValueError, "run summary final snapshot"):
+                    provenance.verify_capture_source_provenance(root)
+
+            self.assertEqual(summary_reads, 2)
+
+    def test_manifest_drift_after_first_read_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            base, _ = self._bundle(root)
+            manifest_path = root / "split" / "split-manifest.json"
+            real_reader = provenance._stable_json_object
+            manifest_reads = 0
+
+            def mutating_reader(path: Path, *, field: str):
+                nonlocal manifest_reads
+                value, digest = real_reader(path, field=field)
+                if path == manifest_path:
+                    manifest_reads += 1
+                    if manifest_reads == 1:
+                        self._mutate_json(manifest_path, "after-first-manifest-read")
+                return value, digest
+
+            with (
+                patch.object(provenance, "verify_capture_bundle", return_value=base),
+                patch.object(provenance, "_stable_json_object", side_effect=mutating_reader),
+            ):
+                with self.assertRaisesRegex(ValueError, "split manifest final snapshot"):
+                    provenance.verify_capture_source_provenance(root)
+
+            self.assertEqual(manifest_reads, 2)
+
+    def test_evidence_drift_after_first_read_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            base, _ = self._bundle(root)
+            evidence_path = root / "same-machine-evidence.json"
+            real_reader = provenance._stable_json_object
+            evidence_reads = 0
+
+            def mutating_reader(path: Path, *, field: str):
+                nonlocal evidence_reads
+                value, digest = real_reader(path, field=field)
+                if path == evidence_path:
+                    evidence_reads += 1
+                    if evidence_reads == 1:
+                        self._mutate_json(evidence_path, "after-first-evidence-read")
+                return value, digest
+
+            with (
+                patch.object(provenance, "verify_capture_bundle", return_value=base),
+                patch.object(provenance, "_stable_json_object", side_effect=mutating_reader),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "same-machine evidence final snapshot",
+                ):
+                    provenance.verify_capture_source_provenance(root)
+
+            self.assertEqual(evidence_reads, 2)
 
     def test_external_digest_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
