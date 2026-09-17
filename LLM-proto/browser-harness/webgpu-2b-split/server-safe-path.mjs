@@ -1,4 +1,5 @@
-import { open, realpath, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, realpath, stat } from 'node:fs/promises';
 import * as nodePath from 'node:path';
 
 function assertPathWithinRoot(pathApi, root, value) {
@@ -32,6 +33,16 @@ async function canonicalPathWithinRoot(root, relativePath) {
   return canonicalPath;
 }
 
+function sameFileIdentity(expected, actual) {
+  return expected.dev === actual.dev && expected.ino === actual.ino;
+}
+
+function readOnlyNoFollowFlags() {
+  return typeof constants.O_NOFOLLOW === 'number'
+    ? constants.O_RDONLY | constants.O_NOFOLLOW
+    : 'r';
+}
+
 export async function resolveExistingFileWithinRoot(root, relativePath) {
   const path = await canonicalPathWithinRoot(root, relativePath);
   const info = await stat(path);
@@ -41,10 +52,14 @@ export async function resolveExistingFileWithinRoot(root, relativePath) {
 
 export async function openExistingFileWithinRoot(root, relativePath) {
   const path = await canonicalPathWithinRoot(root, relativePath);
-  const handle = await open(path, 'r');
+  const expectedInfo = await lstat(path);
+  if (!expectedInfo.isFile()) throw new Error('not a file');
+
+  const handle = await open(path, readOnlyNoFollowFlags());
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw new Error('not a file');
+    if (!sameFileIdentity(expectedInfo, info)) throw new Error('file changed before open');
     const stream = handle.createReadStream({ autoClose: true });
     return { path, info, stream };
   } catch (error) {
