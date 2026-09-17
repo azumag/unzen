@@ -42,6 +42,20 @@ class CaptureSourceProvenanceLexicalPathTest(unittest.TestCase):
                 field="source.externalData",
             )
 
+    def test_repeated_separator_alias_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"unsafe .*location"):
+            provenance._source_external_identity(
+                [self._entry("dir//weights.bin")],
+                field="source.externalData",
+            )
+
+    def test_trailing_separator_alias_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"unsafe .*location"):
+            provenance._source_external_identity(
+                [self._entry("dir/weights.bin/")],
+                field="source.externalData",
+            )
+
     def test_normal_nested_relative_location_is_preserved(self) -> None:
         identity = provenance._source_external_identity(
             [self._entry("dir/weights.bin")],
