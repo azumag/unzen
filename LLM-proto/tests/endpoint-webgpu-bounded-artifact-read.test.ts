@@ -48,8 +48,13 @@ describe('endpoint WebGPU artifact reads', () => {
         'await openExistingFileWithinRoot(selectedRoot, relativePath)',
       );
       expect(server).toContain("stream.once('error', () => {");
+      expect(server).toContain("res.once('close', () => {");
+      expect(server).toContain('if (!stream.destroyed) stream.destroy();');
       expect(server).toContain('stream.destroy();');
       expect(server).toContain('stream.pipe(res);');
+      expect(server.indexOf("res.once('close', () => {")).toBeLessThan(
+        server.indexOf('stream.pipe(res);'),
+      );
       expect(server).not.toContain("from 'node:fs';");
       expect(server).not.toContain('createReadStream(');
       expect(server).not.toContain('function safePath(');
