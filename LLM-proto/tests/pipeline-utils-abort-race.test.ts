@@ -173,4 +173,55 @@ describe('withAbortableTimeout AbortSignal registration race', () => {
     expect(removeEventListener).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('captures listener method accessors once and uses the snapshots for cleanup', async () => {
+    vi.useFakeTimers();
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    let addReads = 0;
+    let removeReads = 0;
+    const signal = {
+      aborted: false,
+      get addEventListener() {
+        addReads += 1;
+        if (addReads === 1) return addEventListener;
+        throw new Error('addEventListener was re-read');
+      },
+      get removeEventListener() {
+        removeReads += 1;
+        if (removeReads === 1) return removeEventListener;
+        throw new Error('removeEventListener was re-read');
+      },
+    } as unknown as AbortSignal;
+
+    await expect(
+      withAbortableTimeout(() => Promise.resolve('done'), 10_000, 'segment', signal),
+    ).resolves.toBe('done');
+
+    expect(addReads).toBe(1);
+    expect(removeReads).toBe(1);
+    expect(addEventListener).toHaveBeenCalledOnce();
+    expect(removeEventListener).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a throwing listener method getter before arming a timeout', async () => {
+    vi.useFakeTimers();
+    const factory = vi.fn(() => Promise.resolve('must-not-run'));
+    const removeEventListener = vi.fn();
+    const signal = {
+      aborted: false,
+      get addEventListener() {
+        throw new Error('listener getter exploded');
+      },
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    const pending = withAbortableTimeout(factory, 10_000, 'segment', signal);
+
+    await expect(pending).rejects.toThrow('timeout signal listener methods could not be read');
+    expect(factory).not.toHaveBeenCalled();
+    expect(removeEventListener).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
