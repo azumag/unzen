@@ -1,22 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const runnerPaths = [
-  '../browser-harness/endpoint-tile-webgpu/runner.js',
-  '../browser-harness/endpoint-five-way-tile-webgpu/runner.js',
-  '../browser-harness/endpoint-embedding-tiled-webgpu/runner.js',
-  '../browser-harness/endpoint-poststage-tiled-webgpu/runner.js',
-  '../browser-harness/endpoint-embedding-eight-physical-webgpu/runner.js',
+const harnesses = [
+  '../browser-harness/endpoint-tile-webgpu',
+  '../browser-harness/endpoint-five-way-tile-webgpu',
+  '../browser-harness/endpoint-embedding-tiled-webgpu',
+  '../browser-harness/endpoint-poststage-tiled-webgpu',
+  '../browser-harness/endpoint-embedding-eight-physical-webgpu',
 ] as const;
 
-function loadRunner(relativePath: string) {
+function loadSource(relativePath: string) {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 }
 
 describe('endpoint WebGPU artifact reads', () => {
-  for (const relativePath of runnerPaths) {
-    it(`${relativePath} uses the shared bounded reader`, () => {
-      const runner = loadRunner(relativePath);
+  for (const harnessPath of harnesses) {
+    it(`${harnessPath} uses and serves the shared bounded reader`, () => {
+      const runner = loadSource(`${harnessPath}/runner.js`);
       expect(runner).toContain(
         "import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from '../webgpu-2b-split/artifact-budget.js';",
       );
@@ -35,6 +35,13 @@ describe('endpoint WebGPU artifact reads', () => {
       expect(body).toContain('expectedBytes,');
       expect(body).toContain('url: path,');
       expect(body).not.toContain('response.arrayBuffer()');
+
+      const server = loadSource(`${harnessPath}/serve.mjs`);
+      expect(server).toContain("const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');");
+      expect(server).toContain("url.pathname.startsWith('/webgpu-2b-split/')");
+      expect(server).toContain(
+        "safePath(SHARED_SPLIT_ROOT, url.pathname.slice('/webgpu-2b-split/'.length))",
+      );
     });
   }
 });
