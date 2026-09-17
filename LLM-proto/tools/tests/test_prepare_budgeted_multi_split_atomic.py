@@ -126,6 +126,61 @@ class PrepareBudgetedMultiSplitAtomicTest(unittest.TestCase):
                 "new-manifest\n",
             )
 
+    def test_staged_symlink_nodes_are_rejected_before_old_manifest_invalidation(self) -> None:
+        for staged_name in ("segment0.onnx", "segment0.onnx_data", "split-manifest.json"):
+            with self.subTest(staged_name=staged_name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / "model.onnx"
+                source.write_bytes(b"source")
+                staged = root / "staged"
+                output = root / "output"
+                staged.mkdir()
+                output.mkdir()
+                write_staged_split(staged, external_data=True)
+                outside = root / f"outside-{staged_name.replace('/', '-')}.bin"
+                outside.write_bytes(b"outside")
+                (staged / staged_name).unlink()
+                (staged / staged_name).symlink_to(outside)
+                previous = output / "split-manifest.json"
+                previous.write_text("old-manifest\n", encoding="utf-8")
+
+                with self.assertRaisesRegex(ValueError, r"must not be a symlink"):
+                    atomic._publish_staged_split(
+                        staged_dir=staged,
+                        output_dir=output,
+                        source_model_path=source,
+                        manifest=make_manifest(external_data=True),
+                    )
+
+                self.assertEqual(previous.read_text(encoding="utf-8"), "old-manifest\n")
+                self.assertEqual(outside.read_bytes(), b"outside")
+
+    def test_staged_manifest_multiple_hard_links_are_rejected_before_old_manifest_invalidation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "model.onnx"
+            source.write_bytes(b"source")
+            staged = root / "staged"
+            output = root / "output"
+            staged.mkdir()
+            output.mkdir()
+            write_staged_split(staged, external_data=True)
+            os.link(staged / "split-manifest.json", staged / "manifest-alias.json")
+            previous = output / "split-manifest.json"
+            previous.write_text("old-manifest\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"exactly one hard link"):
+                atomic._publish_staged_split(
+                    staged_dir=staged,
+                    output_dir=output,
+                    source_model_path=source,
+                    manifest=make_manifest(external_data=True),
+                )
+
+            self.assertEqual(previous.read_text(encoding="utf-8"), "old-manifest\n")
+
     def test_shrinking_segment_count_prunes_previous_tail_before_new_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
