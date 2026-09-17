@@ -115,11 +115,11 @@ def _non_negative_int(raw: object, *, field: str) -> int:
     return raw
 
 
-def verify_source_model_identity(
+def _preflight_source_model_identity(
     full_model_path: Path,
     manifest: dict[str, object],
-) -> dict[str, object]:
-    """Bind the full-model reference to the source identity recorded at split time."""
+) -> tuple[str, tuple[tuple[str, Path, int, str], ...]]:
+    """Validate all source provenance metadata before streaming source payloads."""
 
     raw_source = manifest.get("sourceModel")
     if not isinstance(raw_source, dict):
@@ -129,21 +129,11 @@ def verify_source_model_identity(
         raw_source.get("sha256"),
         field="sourceModel.sha256",
     )
-    graph_bytes, observed_graph_sha = _measure_file(
-        full_model_path,
-        missing_message=f"full model not found: {full_model_path}",
-    )
-    if observed_graph_sha != expected_graph_sha:
-        raise ValueError(
-            "full-model graph SHA-256 mismatch: "
-            f"expected={expected_graph_sha}, observed={observed_graph_sha}"
-        )
-
     raw_external = raw_source.get("externalData")
     if not isinstance(raw_external, list):
         raise ValueError("sourceModel.externalData must be an array")
 
-    external_reports: list[dict[str, object]] = []
+    external_contract: list[tuple[str, Path, int, str]] = []
     seen_locations: set[str] = set()
     for index, raw_entry in enumerate(raw_external):
         if not isinstance(raw_entry, dict):
@@ -161,7 +151,6 @@ def verify_source_model_identity(
             location,
             field=f"{field_prefix}.location",
         )
-
         expected_bytes = _non_negative_int(
             raw_entry.get("bytes"),
             field=f"{field_prefix}.bytes",
@@ -172,7 +161,33 @@ def verify_source_model_identity(
                 f"{field_prefix}.sha256 is required for numerical evidence binding"
             )
         expected_sha = _canonical_sha256(raw_sha, field=f"{field_prefix}.sha256")
+        external_contract.append((location, external_path, expected_bytes, expected_sha))
 
+    return expected_graph_sha, tuple(external_contract)
+
+
+def verify_source_model_identity(
+    full_model_path: Path,
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    """Bind the full-model reference to the source identity recorded at split time."""
+
+    expected_graph_sha, external_contract = _preflight_source_model_identity(
+        full_model_path,
+        manifest,
+    )
+    graph_bytes, observed_graph_sha = _measure_file(
+        full_model_path,
+        missing_message=f"full model not found: {full_model_path}",
+    )
+    if observed_graph_sha != expected_graph_sha:
+        raise ValueError(
+            "full-model graph SHA-256 mismatch: "
+            f"expected={expected_graph_sha}, observed={observed_graph_sha}"
+        )
+
+    external_reports: list[dict[str, object]] = []
+    for location, external_path, expected_bytes, expected_sha in external_contract:
         observed_bytes, observed_sha = _measure_file(
             external_path,
             missing_message=f"source external data not found: {external_path}",
