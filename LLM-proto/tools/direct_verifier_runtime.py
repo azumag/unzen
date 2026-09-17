@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import operator
+from typing import Iterable
 
 
 EMPTY_TOKEN_MESSAGES = {
@@ -58,10 +59,14 @@ def _snapshot_token_ids(raw: object, *, field: str) -> list[int]:
     if isinstance(raw, (str, bytes, bytearray)):
         raise ValueError(f"{field} must be an iterable of token IDs")
     try:
-        snapshot = list(raw)  # type: ignore[arg-type]
+        iterator = iter(raw)  # type: ignore[arg-type]
     except TypeError as error:
         raise ValueError(f"{field} must be an iterable of token IDs") from error
 
+    # Only classify failure to obtain an iterator as a malformed container. Once
+    # iteration has started, preserve caller-owned iterator failures rather than
+    # masking them as a container-shape error.
+    snapshot = list(iterator)
     if not snapshot:
         raise ValueError(EMPTY_TOKEN_MESSAGES.get(field, f"at least one {field} is required"))
 
@@ -72,7 +77,7 @@ def _snapshot_token_ids(raw: object, *, field: str) -> list[int]:
 
 
 def preflight_direct_verifier_parameters(
-    token_ids: object,
+    token_ids: Iterable[object],
     *,
     token_field: str,
     provider: object,
