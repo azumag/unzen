@@ -4,6 +4,7 @@ import {
 import {
   clearRealSplitArtifactCache,
   loadVerifiedArtifact,
+  readResponseBytesBounded,
 } from './artifact-cache.js';
 import {
   planSegmentArtifactBudget,
@@ -35,6 +36,8 @@ const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
 const checkpointWaitMs = Number(params.get('checkpointWaitMs') ?? 120_000);
+// Mirror the atomic publisher's MAX_PREVIOUS_MANIFEST_BYTES / MAX_STAGED_MANIFEST_BYTES.
+const MAX_SPLIT_MANIFEST_BYTES = 4 * 1024 * 1024;
 
 if (artifactBudgetMode === 'p0') {
   validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });
@@ -112,9 +115,14 @@ async function registerWorker(signal) {
 
 async function loadManifest(signal) {
   throwIfAborted(signal);
-  const response = await fetch(modelUrl('split-manifest.json'), { cache: 'no-store', signal });
+  const manifestUrl = modelUrl('split-manifest.json');
+  const response = await fetch(manifestUrl, { cache: 'no-store', signal });
   if (!response.ok) throw new Error(`split manifest not found: ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await readResponseBytesBounded(response, {
+    maxBytes: MAX_SPLIT_MANIFEST_BYTES,
+    url: manifestUrl,
+    signal,
+  });
   throwIfAborted(signal);
   const manifestDigest = await sha256Bytes(bytes);
   throwIfAborted(signal);
