@@ -216,6 +216,46 @@ def _claim_artifact_path(
     seen[path] = field
 
 
+def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
+    """Reject unsafe/aliased artifact declarations before hashing any payload bytes."""
+
+    seen_artifact_paths: dict[Path, str] = {}
+    for expected_index, raw_segment in enumerate(raw_segments):
+        if not isinstance(raw_segment, dict):
+            raise ValueError(f"segment {expected_index} must be an object")
+        index = _non_negative_int(
+            raw_segment.get("index"), field=f"segments[{expected_index}].index"
+        )
+        if index != expected_index:
+            raise ValueError(
+                f"segment indices must cover 0..n-1; expected {expected_index}, got {index}"
+            )
+
+        graph_field = f"segments[{index}].path"
+        graph_path = _safe_relative_path(root, raw_segment.get("path"), field=graph_field)
+        _claim_artifact_path(seen_artifact_paths, graph_path, field=graph_field)
+
+        raw_external = raw_segment.get("externalData")
+        if not isinstance(raw_external, list):
+            raise ValueError(f"segments[{index}].externalData must be an array")
+        for external_index, raw_entry in enumerate(raw_external):
+            if not isinstance(raw_entry, dict):
+                raise ValueError(
+                    f"segments[{index}].externalData[{external_index}] must be an object"
+                )
+            location_field = f"segments[{index}].externalData[{external_index}].location"
+            external_path = _safe_relative_path(
+                root,
+                raw_entry.get("location"),
+                field=location_field,
+            )
+            _claim_artifact_path(
+                seen_artifact_paths,
+                external_path,
+                field=location_field,
+            )
+
+
 def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     """Return a measured integrity report or fail closed on any mismatch."""
 
@@ -259,8 +299,8 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         raise ValueError("browserArtifactBudget.segments must match manifest segment count")
 
     root = manifest_path.parent
+    _preflight_artifact_paths(raw_segments, root)
     reports: list[dict[str, object]] = []
-    seen_artifact_paths: dict[Path, str] = {}
 
     for expected_index, raw_segment in enumerate(raw_segments):
         if not isinstance(raw_segment, dict):
@@ -274,7 +314,6 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         graph_field = f"segments[{index}].path"
         graph_location = _non_empty_string(raw_segment.get("path"), field=graph_field)
         graph_path = _safe_relative_path(root, graph_location, field=graph_field)
-        _claim_artifact_path(seen_artifact_paths, graph_path, field=graph_field)
         expected_graph_sha = _canonical_sha256(
             raw_segment.get("sha256"), field=f"segments[{index}].sha256"
         )
@@ -302,11 +341,6 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             location_field = f"{field_prefix}.location"
             location = _non_empty_string(raw_entry.get("location"), field=location_field)
             external_path = _safe_relative_path(root, location, field=location_field)
-            _claim_artifact_path(
-                seen_artifact_paths,
-                external_path,
-                field=location_field,
-            )
 
             expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             observed_bytes, observed_sha = _measure_file(
