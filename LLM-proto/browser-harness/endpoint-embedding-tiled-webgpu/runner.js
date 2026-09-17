@@ -1,4 +1,6 @@
 import { validateEndpointEmbeddingWebGpuManifest } from './contract.js';
+import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from '../webgpu-2b-split/artifact-budget.js';
+import { readResponseBytesBounded } from '../webgpu-2b-split/artifact-cache.js';
 
 const statusEl = document.querySelector('#status');
 const reportEl = document.querySelector('#report');
@@ -19,7 +21,11 @@ async function sha256Hex(bytes) {
 async function loadVerified(path, expectedBytes, expectedSha256) {
   const response = await fetch(path, { cache: 'no-store' });
   if (!response.ok) throw new Error(`fetch ${path} failed: ${response.status}`);
-  const data = new Uint8Array(await response.arrayBuffer());
+  const data = await readResponseBytesBounded(response, {
+    maxBytes: BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
+    expectedBytes,
+    url: path,
+  });
   if (data.byteLength !== expectedBytes) {
     throw new Error(`${path} byte length mismatch: expected ${expectedBytes}, got ${data.byteLength}`);
   }
