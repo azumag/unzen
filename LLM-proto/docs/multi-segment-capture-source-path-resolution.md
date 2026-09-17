@@ -11,8 +11,10 @@ The report exposes `sourcePathResolutionMode` so an audit can distinguish the fi
 
 The source-root descriptor is shared across the graph and all external-data entries in `component-anchored-dirfd` mode. A source-root replacement during the audit is rejected before publication of a passing report.
 
+Before either path-resolution mode streams source payload bytes, the verifier performs a cheap filesystem-topology preflight over the graph and every canonical external-data location. Every source role must be a non-symlink regular file, and `(st_dev, st_ino)` must be unique across graph↔external and external↔external roles. This rejects a manifest that presents one filesystem object as multiple source-provenance identities before `_sha256_fd()` reads the potentially large graph or any preceding weight file. The later descriptor-pinned/component-anchored reads remain the authoritative content and race checks; the preflight adds fail-fast topology validation rather than replacing those checks.
+
 ## Security boundary
 
-This hardening closes the nested source external-data pathname gap tracked by #366. It does not turn the whole capture workflow into a single fd-only transaction, authenticate the evidence producer, prove WebGPU/device-memory behavior, or choose a production physical layout. Those remain separate evidence and architecture concerns under #167.
+This hardening closes the nested source external-data pathname gap tracked by #366 and the source filesystem-alias gap tracked by #969. It does not turn the whole capture workflow into a single fd-only transaction, authenticate the evidence producer, prove WebGPU/device-memory behavior, or choose a production physical layout. Those remain separate evidence and architecture concerns under #167.
 
 The split-manifest path validation still rejects absolute paths and parent traversal before any source file is opened. Bundle control files continue to use their existing capture-bundle verification path and are not relaxed by this change.
