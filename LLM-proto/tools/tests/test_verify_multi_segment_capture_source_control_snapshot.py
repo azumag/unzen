@@ -103,7 +103,7 @@ class VerifyMultiSegmentCaptureSourceControlSnapshotTest(unittest.TestCase):
             "sourceGraphSha256": source_module.sha256_file(model),
         }
 
-    def test_control_files_are_read_as_stable_snapshots_without_pathname_rehash(self) -> None:
+    def test_control_files_are_revalidated_as_stable_snapshots_without_pathname_rehash(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             capture, model = self._write_fixture(root)
@@ -128,7 +128,7 @@ class VerifyMultiSegmentCaptureSourceControlSnapshotTest(unittest.TestCase):
                 report = source_module.verify_capture_source(capture, model)
 
             self.assertEqual(report["status"], "pass")
-            self.assertEqual(stable_reader.call_count, 3)
+            self.assertEqual(stable_reader.call_count, 6)
 
     def test_same_content_control_file_symlinks_are_rejected(self) -> None:
         control_paths = (
