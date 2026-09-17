@@ -277,28 +277,32 @@ async function createWebGpuSession(segment, manifest, signal) {
   throwIfAborted(signal);
 
   const budgetPlan = planSegmentArtifactBudget(segment, artifactBudgetMode);
+  const artifactLoad = budgetPlan.artifactLoad;
+  if (!artifactLoad) {
+    throw new Error('segment artifact load identity is missing');
+  }
   let remainingBytes = budgetPlan.requiredMaxBytes;
-  const modelArtifact = await loadVerifiedArtifact(modelUrl(segment.path), segment.sha256, {
-    maxBytes: Math.min(remainingBytes, budgetPlan.graphDeclaredBytes),
-    expectedBytes: budgetPlan.graphDeclaredBytes,
-    signal,
-  });
+  const modelArtifact = await loadVerifiedArtifact(
+    modelUrl(artifactLoad.graph.path),
+    artifactLoad.graph.sha256,
+    {
+      maxBytes: Math.min(remainingBytes, artifactLoad.graph.bytes),
+      expectedBytes: artifactLoad.graph.bytes,
+      signal,
+    },
+  );
   remainingBytes -= modelArtifact.report.bytes;
 
   const externalArtifacts = [];
-  for (const entry of segment.externalData ?? []) {
+  for (const entry of artifactLoad.externalData) {
     throwIfAborted(signal);
-    const expectedBytes = Number(entry.bytes);
     const artifact = await loadVerifiedArtifact(modelUrl(entry.location), entry.sha256, {
-      maxBytes: Math.min(remainingBytes, expectedBytes),
-      expectedBytes,
+      maxBytes: Math.min(remainingBytes, entry.bytes),
+      expectedBytes: entry.bytes,
       signal,
     });
     remainingBytes -= artifact.report.bytes;
     externalArtifacts.push({ entry, artifact });
-  }
-  if (externalArtifacts.length === 0) {
-    throw new Error(`segment ${segment.index} has no external weights`);
   }
 
   const budget = verifyActualSegmentArtifactBudget(
@@ -320,6 +324,7 @@ async function createWebGpuSession(segment, manifest, signal) {
   const sessionCreateMs = Math.round((performance.now() - createStarted) * 10) / 10;
   return {
     sessionOwner: ownSession(session),
+    artifactLoad,
     artifactCache: {
       model: modelArtifact.report,
       externalData: externalArtifacts.map(({ artifact }) => artifact.report),
@@ -460,7 +465,7 @@ async function runSegment1(manifest, manifestDigest, signal) {
       directWorkerNetworking: false,
       relayOwner: 'coordinator',
       artifactLayout: manifest.artifactLayout,
-      segmentExternalData: segment.externalData,
+      segmentExternalData: prepared.artifactLoad.externalData,
     };
     throwIfAborted(signal);
     const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/result`, {
