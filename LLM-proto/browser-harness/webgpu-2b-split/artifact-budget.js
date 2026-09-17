@@ -143,8 +143,14 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     planSnapshot.absoluteMaxBytes,
     'artifact plan absoluteMaxBytes',
   );
+  // Preserve the established fail-fast relationship diagnostics before
+  // enforcing the stronger runtime-policy binding below. A structurally
+  // inconsistent plan should still report that immediate inconsistency.
   if (requiredMaxBytes > absoluteMaxBytes) {
     throw new Error('artifact plan requiredMaxBytes must not exceed absoluteMaxBytes');
+  }
+  if (declaredBytes > requiredMaxBytes || declaredBytes > absoluteMaxBytes) {
+    throw new Error('artifact plan declaredBytes must not exceed runtime limits');
   }
   if (absoluteMaxBytes !== BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES) {
     throw new Error(
@@ -156,9 +162,6 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     : BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES;
   if (requiredMaxBytes !== expectedRequiredMaxBytes) {
     throw new Error('artifact plan requiredMaxBytes must match its budget mode');
-  }
-  if (declaredBytes > requiredMaxBytes || declaredBytes > absoluteMaxBytes) {
-    throw new Error('artifact plan declaredBytes must not exceed runtime limits');
   }
 
   const graphDeclaredBytes = positiveBytes(
