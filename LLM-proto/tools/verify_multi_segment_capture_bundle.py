@@ -44,6 +44,7 @@ VERIFICATION_SCHEMA_VERSION = "1.1.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+DEFAULT_CAPTURE_JSON_MAX_BYTES = 16 * 1024 * 1024
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -111,8 +112,16 @@ def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int
     )
 
 
-def _json_snapshot(path: Path, *, field: str) -> tuple[dict[str, object], str]:
-    """Parse and hash JSON from one stable, nonblocking regular-file descriptor."""
+def _json_snapshot(
+    path: Path,
+    *,
+    field: str,
+    max_bytes: int = DEFAULT_CAPTURE_JSON_MAX_BYTES,
+) -> tuple[dict[str, object], str]:
+    """Parse/hash JSON from one stable, bounded, nonblocking regular-file descriptor."""
+
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
 
     path = path.expanduser().absolute()
     try:
@@ -124,6 +133,8 @@ def _json_snapshot(path: Path, *, field: str) -> tuple[dict[str, object], str]:
 
     if stat.S_ISLNK(before_path.st_mode) or not stat.S_ISREG(before_path.st_mode):
         raise ValueError(f"{field} must be a regular file: {path}")
+    if before_path.st_size > max_bytes:
+        raise ValueError(f"{field} exceeds {max_bytes} bytes: {path}")
 
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -145,11 +156,19 @@ def _json_snapshot(path: Path, *, field: str) -> tuple[dict[str, object], str]:
             raise ValueError(f"{field} must be a regular file: {path}")
         if _stat_fingerprint(opened) != _stat_fingerprint(before_path):
             raise RuntimeError(f"{field} changed between path check and open: {path}")
+        if opened.st_size > max_bytes:
+            raise ValueError(f"{field} exceeds {max_bytes} bytes: {path}")
 
-        while chunk := os.read(fd, 1024 * 1024):
+        while True:
+            remaining = max_bytes + 1 - observed
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
             chunks.append(chunk)
             digest.update(chunk)
             observed += len(chunk)
+            if observed > max_bytes:
+                raise ValueError(f"{field} grew beyond {max_bytes} bytes: {path}")
 
         after_fd = os.fstat(fd)
         if (
