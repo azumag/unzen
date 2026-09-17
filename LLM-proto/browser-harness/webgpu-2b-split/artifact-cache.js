@@ -42,6 +42,35 @@ function cancelReadable(readable, reason) {
   }
 }
 
+function snapshotCleanupMethod(target, property) {
+  try {
+    const method = target?.[property];
+    return typeof method === 'function' ? method : undefined;
+  } catch {
+    // Cleanup capability lookup is itself best-effort. Once a callable method
+    // is accepted, later cleanup uses only that owned method.
+    return undefined;
+  }
+}
+
+function cancelOwnedReader(reader, cancel, reason) {
+  if (cancel === undefined) return;
+  try {
+    void Promise.resolve(cancel.call(reader, reason)).catch(() => {});
+  } catch {
+    // Reader cleanup must not mask the primary stream outcome.
+  }
+}
+
+function releaseOwnedReader(reader, releaseLock) {
+  if (releaseLock === undefined) return;
+  try {
+    releaseLock.call(reader);
+  } catch {
+    // Reader cleanup is best-effort after the primary read outcome is known.
+  }
+}
+
 function snapshotAbortListenerMethods(signal) {
   if (signal === undefined || signal === null) return undefined;
   let addEventListener;
@@ -71,7 +100,7 @@ function releaseReader(reader) {
   try {
     reader.releaseLock?.();
   } catch {
-    // Reader cleanup is best-effort after the primary read outcome is known.
+    // Reader cleanup is best-effort before reader method ownership completes.
   }
 }
 
@@ -203,11 +232,29 @@ export async function readResponseBytesBounded(
     cancelReadable(body, error);
     throw error;
   }
+
+  let read;
+  try {
+    read = reader?.read;
+  } catch (error) {
+    cancelReadable(reader, error);
+    releaseReader(reader);
+    throw new TypeError('artifact reader read capability could not be read');
+  }
+  if (typeof read !== 'function') {
+    const error = new TypeError('artifact reader read capability must be a function');
+    cancelReadable(reader, error);
+    releaseReader(reader);
+    throw error;
+  }
+  const readerCancel = snapshotCleanupMethod(reader, 'cancel');
+  const readerReleaseLock = snapshotCleanupMethod(reader, 'releaseLock');
+
   const chunks = [];
   let total = 0;
   let listenerMayBeRegistered = false;
   const onAbort = () => {
-    cancelReadable(reader, 'artifact-load-aborted');
+    cancelOwnedReader(reader, readerCancel, 'artifact-load-aborted');
   };
   try {
     if (signal !== undefined && signal !== null) {
@@ -226,7 +273,7 @@ export async function readResponseBytesBounded(
       throwIfAborted(signal);
       let next;
       try {
-        next = await reader.read();
+        next = await read.call(reader);
       } catch (error) {
         throwIfAborted(signal);
         throw error;
@@ -249,7 +296,7 @@ export async function readResponseBytesBounded(
       if (chunkBytes > 0) chunks.push(new Uint8Array(value));
     }
   } catch (error) {
-    cancelReadable(reader, error);
+    cancelOwnedReader(reader, readerCancel, error);
     throw error;
   } finally {
     removeAbortListener(
@@ -258,7 +305,7 @@ export async function readResponseBytesBounded(
       onAbort,
       listenerMayBeRegistered,
     );
-    releaseReader(reader);
+    releaseOwnedReader(reader, readerReleaseLock);
   }
 
   if (expectedBytes !== undefined && total !== expectedBytes) {
