@@ -6,12 +6,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import verify_multi_segment_artifacts as verifier  # noqa: E402
 from verify_multi_segment_artifacts import verify_artifact_integrity  # noqa: E402
 
 
@@ -104,6 +106,18 @@ class ArtifactPathAliasPreflightTest(unittest.TestCase):
                 r"duplicate declared artifact path: segments\[1\]\.path aliases segments\[0\]\.path",
             ):
                 verify_artifact_integrity(manifest_path)
+
+    def test_rejects_later_alias_before_any_artifact_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["segments"][1]["path"] = manifest["segments"][0]["path"]
+            self._save(manifest_path, manifest)
+
+            with patch.object(verifier, "_measure_file", wraps=verifier._measure_file) as measure:
+                with self.assertRaisesRegex(ValueError, "duplicate declared artifact path"):
+                    verify_artifact_integrity(manifest_path)
+            measure.assert_not_called()
 
     def test_rejects_external_path_reused_across_segments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
