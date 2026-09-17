@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { extname, normalize, resolve } from 'node:path';
+import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { safePath } from '../webgpu-2b-split/server-safe-path.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
@@ -17,12 +18,6 @@ const MIME = {
   '.f32': 'application/octet-stream',
 };
 if (!DATA_DIR) throw new Error('DATA_DIR is required');
-
-function safePath(root, relative) {
-  const value = resolve(root, `.${normalize(`/${relative}`)}`);
-  if (value !== root && !value.startsWith(`${root}/`)) throw new Error('path escapes root');
-  return value;
-}
 
 const server = createServer(async (req, res) => {
   try {
