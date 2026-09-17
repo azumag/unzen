@@ -61,8 +61,8 @@ describe('browser artifact load snapshot', () => {
 
     // A second caller-owned read now produces unsafe values, proving the owned
     // snapshot is detached from the original accessor-backed manifest entry.
-    expect(segment.path).toBe('../outside.onnx');
-    expect(segment.sha256).toBe('malicious');
+    expect((segment as { path: string }).path).toBe('../outside.onnx');
+    expect((segment as { sha256: string }).sha256).toBe('malicious');
     expect((externalEntry as { location: string }).location).toBe('../outside.bin');
     expect((externalEntry as { sha256: string }).sha256).toBe('malicious');
     expect((externalEntry as { bytes: number }).bytes).toBe(400);
