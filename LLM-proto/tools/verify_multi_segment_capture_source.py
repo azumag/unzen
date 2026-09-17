@@ -208,6 +208,26 @@ def _preflight_source_file_identities(
         seen[identity] = f"source external data {location}"
 
 
+def _claim_measured_source_identity(
+    seen: dict[tuple[int, int], str] | None,
+    metadata: os.stat_result,
+    *,
+    role: str,
+) -> None:
+    """Make cross-role filesystem uniqueness part of the stable measurement."""
+
+    if seen is None:
+        return
+    identity = _directory_identity(metadata)
+    previous = seen.get(identity)
+    if previous is not None:
+        raise ValueError(
+            "source provenance measured hard-link alias: "
+            f"{role} aliases {previous}"
+        )
+    seen[identity] = role
+
+
 def _component_walk_supported() -> bool:
     return (
         os.open in getattr(os, "supports_dir_fd", set())
@@ -270,7 +290,13 @@ def _sha256_fd(fd: int) -> str:
     return digest.hexdigest()
 
 
-def _stable_identity(path: Path, *, field: str) -> tuple[int, str]:
+def _stable_identity(
+    path: Path,
+    *,
+    field: str,
+    measured_identities: dict[tuple[int, int], str] | None = None,
+    role: str | None = None,
+) -> tuple[int, str]:
     """Portable final-component check used when component walking is unavailable."""
 
     source = path.expanduser().absolute()
@@ -296,6 +322,11 @@ def _stable_identity(path: Path, *, field: str) -> tuple[int, str]:
             raise ValueError(f"{field} must remain a regular file: {source}")
         if _stat_identity(opened) != _stat_identity(before):
             raise RuntimeError(f"{field} changed between path check and open: {source}")
+        _claim_measured_source_identity(
+            measured_identities,
+            opened,
+            role=role or field,
+        )
         digest = _sha256_fd(fd)
         after_fd = os.fstat(fd)
         if _stat_identity(after_fd) != _stat_identity(opened):
@@ -441,6 +472,8 @@ def _stable_identity_at(
     parts: tuple[str, ...],
     *,
     field: str,
+    measured_identities: dict[tuple[int, int], str] | None = None,
+    role: str | None = None,
 ) -> tuple[int, str]:
     """Hash a source file via an anchored dirfd and reject parent-path races."""
 
@@ -501,6 +534,11 @@ def _stable_identity_at(
                 raise ValueError(f"{field} must remain a regular file: {'/'.join(parts)}")
             if _stat_identity(opened) != _stat_identity(before):
                 raise RuntimeError(f"{field} changed between path check and open: {'/'.join(parts)}")
+            _claim_measured_source_identity(
+                measured_identities,
+                opened,
+                role=role or field,
+            )
             digest = _sha256_fd(fd)
             after_fd = os.fstat(fd)
             if _stat_identity(after_fd) != _stat_identity(opened):
@@ -590,12 +628,22 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
             root_fd=source_root_fd,
         )
 
+        measured_source_identities: dict[tuple[int, int], str] = {}
         if source_root_fd is not None:
             graph_bytes, observed_graph_sha = _stable_identity_at(
-                source_root_fd, (full_model.name,), field="full model graph"
+                source_root_fd,
+                (full_model.name,),
+                field="full model graph",
+                measured_identities=measured_source_identities,
+                role="full model graph",
             )
         else:
-            graph_bytes, observed_graph_sha = _stable_identity(full_model, field="full model graph")
+            graph_bytes, observed_graph_sha = _stable_identity(
+                full_model,
+                field="full model graph",
+                measured_identities=measured_source_identities,
+                role="full model graph",
+            )
         _require_equal(expected_graph_sha, observed_graph_sha, field="source graph SHA-256")
         _require_equal(
             expected_graph_sha,
@@ -613,7 +661,11 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
                     field=f"split-manifest.sourceModel.externalData[{index}].location",
                 )
                 observed_bytes, observed_sha = _stable_identity_at(
-                    source_root_fd, parts, field=field
+                    source_root_fd,
+                    parts,
+                    field=field,
+                    measured_identities=measured_source_identities,
+                    role=field,
                 )
             else:
                 source_path = _safe_source_relative_path(
@@ -621,7 +673,12 @@ def verify_capture_source(capture_dir: Path, full_model_path: Path) -> dict[str,
                     location,
                     field=f"split-manifest.sourceModel.externalData[{index}].location",
                 )
-                observed_bytes, observed_sha = _stable_identity(source_path, field=field)
+                observed_bytes, observed_sha = _stable_identity(
+                    source_path,
+                    field=field,
+                    measured_identities=measured_source_identities,
+                    role=field,
+                )
             _require_equal(entry["bytes"], observed_bytes, field=f"source external-data bytes for {location}")
             _require_equal(entry["sha256"], observed_sha, field=f"source external-data SHA-256 for {location}")
             observed_external.append(
