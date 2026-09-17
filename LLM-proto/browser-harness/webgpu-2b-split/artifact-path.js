@@ -14,9 +14,12 @@ export function requireSafeArtifactRelativePath(value, label = 'artifact path') 
     || value.startsWith('/')
     || value.includes('\\')
     || value.includes(':')
+    || value.includes('?')
+    || value.includes('#')
+    || value.includes('%')
     || /[\u0000-\u001f\u007f]/.test(value)
   ) {
-    throw new Error(`${label} must be a safe relative POSIX path`);
+    throw new Error(`${label} must be a browser-safe relative POSIX path`);
   }
 
   const parts = value.split('/');
@@ -26,33 +29,7 @@ export function requireSafeArtifactRelativePath(value, label = 'artifact path') 
     || part === '..'
     || isWindowsPathAlias(part)
   ))) {
-    throw new Error(`${label} must be a safe relative POSIX path`);
+    throw new Error(`${label} must be a browser-safe relative POSIX path`);
   }
   return value;
-}
-
-export function resolveArtifactUrl(splitRoot, relativePath, baseHref) {
-  if (typeof splitRoot !== 'string' || splitRoot.length === 0) {
-    throw new Error('splitRoot must be a non-empty string');
-  }
-  if (typeof baseHref !== 'string' || baseHref.length === 0) {
-    throw new Error('baseHref must be a non-empty string');
-  }
-  const safePath = requireSafeArtifactRelativePath(relativePath);
-  const root = splitRoot.endsWith('/') ? splitRoot : `${splitRoot}/`;
-  let rootUrl;
-  try {
-    rootUrl = new URL(root, baseHref);
-  } catch {
-    throw new Error('splitRoot must resolve to a valid URL');
-  }
-
-  // Encode path components independently. Characters such as `?`, `#`, and
-  // `%` are valid filename characters but must never be reinterpreted as URL
-  // query/fragment/escape syntax while resolving manifest-controlled paths.
-  const encodedPath = safePath
-    .split('/')
-    .map((part) => encodeURIComponent(part))
-    .join('/');
-  return new URL(encodedPath, rootUrl).href;
 }
