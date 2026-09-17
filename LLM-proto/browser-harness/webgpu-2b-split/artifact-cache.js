@@ -230,6 +230,16 @@ export async function readResponseBytesBounded(
     throw error;
   }
 
+  let knownSizeBytes;
+  if (expectedBytes !== undefined && expectedBytes <= maxBytes) {
+    try {
+      knownSizeBytes = new Uint8Array(expectedBytes);
+    } catch (error) {
+      cancelReadable(body, error);
+      throw error;
+    }
+  }
+
   let reader;
   try {
     reader = getReader.call(body);
@@ -255,7 +265,7 @@ export async function readResponseBytesBounded(
   const readerCancel = snapshotCleanupMethod(reader, 'cancel');
   const readerReleaseLock = snapshotCleanupMethod(reader, 'releaseLock');
 
-  const chunks = [];
+  const chunks = knownSizeBytes === undefined ? [] : undefined;
   let total = 0;
   let listenerMayBeRegistered = false;
   const onAbort = () => {
@@ -302,10 +312,13 @@ export async function readResponseBytesBounded(
       if (chunkBytes > effectiveMax - total) {
         throw new Error(`artifact exceeds byte limit for ${url}: ${total + chunkBytes} > ${effectiveMax}`);
       }
-      total += chunkBytes;
       // Producers may reuse their buffer on the next pull. Own accepted bytes
       // now, before another read can mutate data awaiting digest verification.
-      if (chunkBytes > 0) chunks.push(new Uint8Array(value));
+      if (chunkBytes > 0) {
+        if (knownSizeBytes !== undefined) knownSizeBytes.set(value, total);
+        else chunks.push(new Uint8Array(value));
+      }
+      total += chunkBytes;
     }
   } catch (error) {
     cancelOwnedReader(reader, readerCancel, error);
@@ -322,6 +335,10 @@ export async function readResponseBytesBounded(
 
   if (expectedBytes !== undefined && total !== expectedBytes) {
     throw new Error(`artifact byte size mismatch for ${url}: expected ${expectedBytes}, got ${total}`);
+  }
+  if (knownSizeBytes !== undefined) {
+    throwIfAborted(signal);
+    return knownSizeBytes;
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
