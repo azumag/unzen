@@ -130,6 +130,10 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
   // plans must not be able to return one value for validation and a different
   // value when the accepted result is constructed later.
   const planSnapshot = { ...validatedPlan };
+  const mode = planSnapshot.mode;
+  if (!['p0', 'absolute'].includes(mode)) {
+    throw new Error(`unsupported artifact plan mode: ${diagnosticValue(mode)}`);
+  }
   const declaredBytes = positiveBytes(planSnapshot.declaredBytes, 'artifact plan declaredBytes');
   const requiredMaxBytes = positiveBytes(
     planSnapshot.requiredMaxBytes,
@@ -139,11 +143,38 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     planSnapshot.absoluteMaxBytes,
     'artifact plan absoluteMaxBytes',
   );
+  // Preserve the established fail-fast relationship diagnostics before
+  // enforcing the stronger runtime-policy binding below. A structurally
+  // inconsistent plan should still report that immediate inconsistency.
   if (requiredMaxBytes > absoluteMaxBytes) {
     throw new Error('artifact plan requiredMaxBytes must not exceed absoluteMaxBytes');
   }
   if (declaredBytes > requiredMaxBytes || declaredBytes > absoluteMaxBytes) {
     throw new Error('artifact plan declaredBytes must not exceed runtime limits');
+  }
+  if (absoluteMaxBytes !== BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES) {
+    throw new Error(
+      'artifact plan absoluteMaxBytes must match the runtime absolute browser artifact limit',
+    );
+  }
+  const expectedRequiredMaxBytes = mode === 'p0'
+    ? BROWSER_SEGMENT_PREFERRED_MAX_BYTES
+    : BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES;
+  if (requiredMaxBytes !== expectedRequiredMaxBytes) {
+    throw new Error('artifact plan requiredMaxBytes must match its budget mode');
+  }
+
+  const graphDeclaredBytes = positiveBytes(
+    planSnapshot.graphDeclaredBytes,
+    'artifact plan graphDeclaredBytes',
+  );
+  const externalDeclaredBytes = safeBytes(
+    planSnapshot.externalDeclaredBytes,
+    'artifact plan externalDeclaredBytes',
+  );
+  const recomposedDeclaredBytes = graphDeclaredBytes + externalDeclaredBytes;
+  if (!Number.isSafeInteger(recomposedDeclaredBytes) || recomposedDeclaredBytes !== declaredBytes) {
+    throw new Error('artifact plan graph/external byte breakdown must equal declaredBytes');
   }
 
   // Detach report membership before reading any report fields. In particular,
