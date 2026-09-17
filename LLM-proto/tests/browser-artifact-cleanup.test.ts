@@ -154,6 +154,25 @@ describe('artifact body ownership and cleanup', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects non-callable listener methods before reader ownership', async () => {
+    const cancel = vi.fn();
+    const getReader = vi.fn();
+    const response = {
+      headers: { get: () => null },
+      body: { cancel, getReader },
+    };
+    const signal = {
+      aborted: false,
+      addEventListener: vi.fn(),
+      removeEventListener: null,
+    } as unknown as AbortSignal;
+
+    await expect(readResponseBytesBounded(response, { signal }))
+      .rejects.toThrow('artifact AbortSignal listener methods must be functions');
+    expect(getReader).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves successful bytes when signal and reader cleanup hooks throw', async () => {
     const releaseLock = vi.fn(() => {
       throw new Error('release exploded');
