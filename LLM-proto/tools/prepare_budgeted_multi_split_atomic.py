@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from multi_segment_onnx import (
     prepare_budgeted_multi_split,
 )
 from prepare_browser_p0 import PREFERRED_MAX_BYTES
+
+
+MAX_PREVIOUS_MANIFEST_BYTES = 4 * 1024 * 1024
 
 
 def _require_bool(raw: object, *, field: str) -> bool:
@@ -102,6 +106,62 @@ def _source_artifacts_from_manifest(
     return sources
 
 
+def _stat_signature(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _read_previous_manifest_snapshot(final_manifest: Path) -> bytes | None:
+    """Best-effort bounded read of a regular, single-link previous commit marker."""
+
+    try:
+        before = os.lstat(final_manifest)
+    except (FileNotFoundError, OSError):
+        return None
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_size > MAX_PREVIOUS_MANIFEST_BYTES
+    ):
+        return None
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(final_manifest, flags)
+    except OSError:
+        return None
+
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size > MAX_PREVIOUS_MANIFEST_BYTES
+            or _stat_signature(opened) != _stat_signature(before)
+        ):
+            return None
+        while observed < opened.st_size:
+            block = os.read(fd, min(64 * 1024, opened.st_size - observed))
+            if not block:
+                break
+            chunks.append(block)
+            observed += len(block)
+        after = os.fstat(fd)
+        if observed != opened.st_size or _stat_signature(after) != _stat_signature(opened):
+            return None
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
 def _previous_tail_artifacts(
     output_dir: Path,
     *,
@@ -116,14 +176,12 @@ def _previous_tail_artifacts(
     the generator namespace and can be cleaned safely after normal preflight.
     """
 
-    final_manifest = output_dir / "split-manifest.json"
-    try:
-        raw = final_manifest.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError, UnicodeError):
+    raw_bytes = _read_previous_manifest_snapshot(output_dir / "split-manifest.json")
+    if raw_bytes is None:
         return ()
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
+        parsed = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return ()
     if not isinstance(parsed, dict):
         return ()
