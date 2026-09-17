@@ -110,6 +110,23 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                     verify_source_model_identity(source, manifest)
             measure.assert_not_called()
 
+    def test_source_graph_path_alias_fails_before_any_payload_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, manifest = self._fixture(Path(tmp))
+            graph_payload = source.read_bytes()
+            external = manifest["sourceModel"]["externalData"][0]
+            external["location"] = source.name
+            external["bytes"] = len(graph_payload)
+            external["sha256"] = hashlib.sha256(graph_payload).hexdigest()
+
+            with patch("verify_multi_segment_onnx._measure_file") as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"source external-data location aliases source graph path: model\.onnx",
+                ):
+                    verify_source_model_identity(source, manifest)
+            measure.assert_not_called()
+
     def test_valid_metadata_preserves_source_identity_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source, manifest = self._fixture(Path(tmp))

@@ -134,7 +134,8 @@ def _preflight_source_model_identity(
         raise ValueError("sourceModel.externalData must be an array")
 
     external_contract: list[tuple[str, Path, int, str]] = []
-    seen_paths: dict[Path, str] = {}
+    source_graph_path = full_model_path.resolve()
+    seen_paths: dict[Path, str] = {source_graph_path: "source graph"}
     for index, raw_entry in enumerate(raw_external):
         if not isinstance(raw_entry, dict):
             raise ValueError(f"sourceModel.externalData[{index}] must be an object")
@@ -150,6 +151,11 @@ def _preflight_source_model_identity(
         )
         previous_location = seen_paths.get(external_path)
         if previous_location is not None:
+            if previous_location == "source graph":
+                raise ValueError(
+                    "source external-data location aliases source graph path: "
+                    f"{location}"
+                )
             raise ValueError(
                 "duplicate source external-data location: "
                 f"{location} aliases {previous_location}"
