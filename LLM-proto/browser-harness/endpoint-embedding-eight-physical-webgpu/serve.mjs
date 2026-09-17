@@ -86,6 +86,9 @@ const server = createServer(async (req, res) => {
     stream.once('error', () => {
       if (!res.destroyed) res.destroy();
     });
+    res.once('close', () => {
+      if (!stream.destroyed) stream.destroy();
+    });
     try {
       res.writeHead(200, {
         'Content-Type': MIME[extname(path)] ?? 'application/octet-stream',
