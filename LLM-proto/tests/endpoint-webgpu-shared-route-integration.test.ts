@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,11 @@ const HARNESSES = [
   'endpoint-poststage-tiled-webgpu',
   'endpoint-embedding-eight-physical-webgpu',
 ] as const;
+
+const EIGHT_PHYSICAL_TILE_BYTES = 131_334_144;
+const EIGHT_PHYSICAL_ROWS_PER_TILE = 16_032;
+const EIGHT_PHYSICAL_GRAPH_FILE = 'embedding-offset-0.onnx';
+const EIGHT_PHYSICAL_GRAPH_SHA256 = '70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50';
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -69,6 +74,72 @@ async function fetchUntilReady(url: string, child: ChildProcessWithoutNullStream
   throw new Error(`endpoint diagnostic server did not become ready: ${String(lastError)}`);
 }
 
+async function serverEnvironment(
+  harness: (typeof HARNESSES)[number],
+  dataDir: string,
+  port: number,
+): Promise<NodeJS.ProcessEnv> {
+  const env: NodeJS.ProcessEnv = { ...process.env, DATA_DIR: dataDir, PORT: String(port) };
+  if (harness !== 'endpoint-embedding-eight-physical-webgpu') return env;
+
+  const graphPath = join(dataDir, EIGHT_PHYSICAL_GRAPH_FILE);
+  const preflightPath = join(dataDir, 'preflight.json');
+  await writeFile(graphPath, new Uint8Array(260));
+
+  const payloads = Array.from({ length: 8 }, (_, index) => ({
+    index,
+    file: `payload-${String(index).padStart(4, '0')}.bin`,
+    bytes: EIGHT_PHYSICAL_TILE_BYTES,
+    sha256: String(index + 1).repeat(64).slice(0, 64),
+    sourceOffsetBytes: index * EIGHT_PHYSICAL_TILE_BYTES,
+    sourceEndOffsetBytesExclusive: (index + 1) * EIGHT_PHYSICAL_TILE_BYTES,
+  }));
+  const runtimePlan = payloads.map((payload, index) => ({
+    tileIndex: index,
+    startRow: index * EIGHT_PHYSICAL_ROWS_PER_TILE,
+    endRowExclusive: (index + 1) * EIGHT_PHYSICAL_ROWS_PER_TILE,
+    physicalArtifactIndex: index,
+    payloadFile: payload.file,
+    expectedPayloadBytes: payload.bytes,
+    expectedPayloadSha256: payload.sha256,
+    sourceOffsetBytes: payload.sourceOffsetBytes,
+    sourceEndOffsetBytesExclusive: payload.sourceEndOffsetBytesExclusive,
+    graphFile: EIGHT_PHYSICAL_GRAPH_FILE,
+    expectedGraphBytes: 260,
+    expectedGraphSha256: EIGHT_PHYSICAL_GRAPH_SHA256,
+    graphExternalDataPath: 'payload-0000.bin',
+    artifactByteOffset: 0,
+    byteLength: EIGHT_PHYSICAL_TILE_BYTES,
+  }));
+  const preflight = {
+    kind: 'unzen-pinned-llama-1b-endpoint-embedding-eight-physical-bundle-preflight',
+    schemaVersion: '1.0.0',
+    status: 'pass',
+    decisionStatus: 'diagnostic-only',
+    selectedPhysicalArtifactCount: null,
+    candidatePhysicalArtifactCount: 8,
+    sourceGraphSha256: 'a3a6f10916f79379d15cfa9270b7be0d09be2b80fe0872bd7030eaf9001baf46',
+    sourceExternalData: {
+      fileName: 'model_q4.onnx_data',
+      bytes: 1_692_672_000,
+      sha256: '07cc629ef2cb7fdb18615ce2e4f3774f763e6fc840207d772a8b511eead36647',
+    },
+    manifestPayloadSetSha256: 'f'.repeat(64),
+    evidenceBoundary: 'actual-file-integrity-preflight-only',
+    graph: {
+      file: EIGHT_PHYSICAL_GRAPH_FILE,
+      bytes: 260,
+      sha256: EIGHT_PHYSICAL_GRAPH_SHA256,
+    },
+    payloads,
+    runtimePlan,
+  };
+  await writeFile(preflightPath, `${JSON.stringify(preflight)}\n`);
+  env.PREFLIGHT_REPORT = preflightPath;
+  env.GRAPH_PATH = graphPath;
+  return env;
+}
+
 describe('endpoint WebGPU shared-module server routes', () => {
   for (const harness of HARNESSES) {
     it(`serves the bounded-reader module graph for ${harness}`, async () => {
@@ -78,7 +149,7 @@ describe('endpoint WebGPU shared-module server routes', () => {
         new URL(`../browser-harness/${harness}/serve.mjs`, import.meta.url),
       );
       const child = spawn(process.execPath, [servePath], {
-        env: { ...process.env, DATA_DIR: dataDir, PORT: String(port) },
+        env: await serverEnvironment(harness, dataDir, port),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
