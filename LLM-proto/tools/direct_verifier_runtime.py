@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import operator
-from typing import Sequence
+from typing import Iterable
 
 
 EMPTY_TOKEN_MESSAGES = {
@@ -53,8 +53,31 @@ def _provider_name(raw: object) -> str:
     return raw
 
 
+def _snapshot_token_ids(raw: object, *, field: str) -> list[int]:
+    """Snapshot caller-owned token input once, then validate the detached values."""
+
+    if isinstance(raw, (str, bytes, bytearray)):
+        raise ValueError(f"{field} must be an iterable of token IDs")
+    try:
+        iterator = iter(raw)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{field} must be an iterable of token IDs") from error
+
+    # Only classify failure to obtain an iterator as a malformed container. Once
+    # iteration has started, preserve caller-owned iterator failures rather than
+    # masking them as a container-shape error.
+    snapshot = list(iterator)
+    if not snapshot:
+        raise ValueError(EMPTY_TOKEN_MESSAGES.get(field, f"at least one {field} is required"))
+
+    return [
+        non_negative_int(value, field=f"{field}[{index}]")
+        for index, value in enumerate(snapshot)
+    ]
+
+
 def preflight_direct_verifier_parameters(
-    token_ids: Sequence[int],
+    token_ids: Iterable[object],
     *,
     token_field: str,
     provider: object,
@@ -65,14 +88,7 @@ def preflight_direct_verifier_parameters(
 ) -> tuple[list[int], str, int, int, float, float]:
     """Validate runtime configuration before any artifact I/O or ORT session creation."""
 
-    if not token_ids:
-        raise ValueError(
-            EMPTY_TOKEN_MESSAGES.get(token_field, f"at least one {token_field} is required")
-        )
-    normalized_tokens = [
-        non_negative_int(value, field=f"{token_field}[{index}]")
-        for index, value in enumerate(token_ids)
-    ]
+    normalized_tokens = _snapshot_token_ids(token_ids, field=token_field)
     return (
         normalized_tokens,
         _provider_name(provider),
