@@ -230,6 +230,8 @@ def _publish_staged_split(
     _preflight_generated_artifact_collisions(source_artifacts, mutation_targets)
     _preflight_generated_artifact_destinations(mutation_targets)
 
+    staged_artifacts = _generated_artifact_paths(staged_dir, len(segments))
+    _preflight_generated_artifact_destinations(staged_artifacts)
     staged_manifest = staged_dir / "split-manifest.json"
     if not staged_manifest.is_file():
         raise RuntimeError("staged split-manifest.json is missing")
