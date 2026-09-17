@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { lstat, readFile } from 'node:fs/promises';
-import { basename, extname, normalize, resolve } from 'node:path';
+import { basename, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { safePath } from '../webgpu-2b-split/server-safe-path.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -24,12 +25,6 @@ if (!PREFLIGHT_REPORT) throw new Error('PREFLIGHT_REPORT is required');
 if (!GRAPH_PATH) throw new Error('GRAPH_PATH is required');
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535');
-}
-
-function safePath(root, relative) {
-  const value = resolve(root, `.${normalize(`/${relative}`)}`);
-  if (value !== root && !value.startsWith(`${root}/`)) throw new Error('path escapes root');
-  return value;
 }
 
 async function requireNonSymlinkDirectory(path, field) {
