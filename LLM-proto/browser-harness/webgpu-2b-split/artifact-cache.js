@@ -282,11 +282,12 @@ export async function readResponseBytesBounded(
       if (next === null || typeof next !== 'object') {
         throw new Error(`artifact reader returned an invalid result for ${url}`);
       }
-      const { done, value } = next;
+      const done = next.done;
       if (typeof done !== 'boolean') {
         throw new Error(`artifact reader returned a non-boolean done flag for ${url}`);
       }
       if (done) break;
+      const value = next.value;
       // Native getters accept cross-realm bytes without trusting a forged
       // byteLength or coercing a non-byte value into a potentially huge buffer.
       if (typedArrayTag.call(value) !== 'Uint8Array') {
