@@ -38,15 +38,20 @@ describe('endpoint WebGPU artifact reads', () => {
 
       const server = loadSource(`${harnessPath}/serve.mjs`);
       expect(server).toContain(
-        "import { resolveExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';",
+        "import { openExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';",
       );
       expect(server).toContain("const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');");
       expect(server).toContain("url.pathname.startsWith('/webgpu-2b-split/')");
       expect(server).toContain('selectedRoot = SHARED_SPLIT_ROOT;');
       expect(server).toContain("relativePath = url.pathname.slice('/webgpu-2b-split/'.length);");
       expect(server).toContain(
-        'await resolveExistingFileWithinRoot(selectedRoot, relativePath)',
+        'await openExistingFileWithinRoot(selectedRoot, relativePath)',
       );
+      expect(server).toContain("stream.once('error', () => {");
+      expect(server).toContain('stream.destroy();');
+      expect(server).toContain('stream.pipe(res);');
+      expect(server).not.toContain("from 'node:fs';");
+      expect(server).not.toContain('createReadStream(');
       expect(server).not.toContain('function safePath(');
     });
   }
