@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
+import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
   openExistingFileWithinRoot,
@@ -8,7 +9,7 @@ import {
   safePathWithPathApi,
 } from '../browser-harness/webgpu-2b-split/server-safe-path.mjs';
 
-async function readUtf8Stream(stream: NodeJS.ReadableStream): Promise<string> {
+async function readUtf8Stream(stream: Readable): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks).toString('utf8');
