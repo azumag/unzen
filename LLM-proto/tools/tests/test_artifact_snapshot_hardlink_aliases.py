@@ -87,16 +87,20 @@ class ArtifactSnapshotHardlinkAliasTest(unittest.TestCase):
         except (NotImplementedError, OSError) as error:
             self.skipTest(f"hard-link creation is unavailable: {error}")
 
-    def _assert_rejected_before_integrity(self, manifest_path: Path) -> None:
-        with patch.object(snapshot_module, "verify_artifact_integrity") as integrity:
+    def _assert_rejected_before_hashing_or_integrity(self, manifest_path: Path) -> None:
+        with (
+            patch.object(snapshot_module, "_measure") as measure,
+            patch.object(snapshot_module, "verify_artifact_integrity") as integrity,
+        ):
             with self.assertRaisesRegex(
                 ValueError,
                 "duplicate declared artifact file identity",
             ):
                 snapshot_module.verify_artifact_snapshot(manifest_path)
+        measure.assert_not_called()
         integrity.assert_not_called()
 
-    def test_rejects_graph_to_graph_hardlink_alias_before_integrity(self) -> None:
+    def test_rejects_graph_to_graph_hardlink_alias_before_hashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest_path = self._fixture(root)
@@ -105,9 +109,9 @@ class ArtifactSnapshotHardlinkAliasTest(unittest.TestCase):
                 root / "segment1.onnx",
             )
 
-            self._assert_rejected_before_integrity(manifest_path)
+            self._assert_rejected_before_hashing_or_integrity(manifest_path)
 
-    def test_rejects_graph_to_external_hardlink_alias_before_integrity(self) -> None:
+    def test_rejects_graph_to_external_hardlink_alias_before_hashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest_path = self._fixture(root)
@@ -116,7 +120,7 @@ class ArtifactSnapshotHardlinkAliasTest(unittest.TestCase):
                 root / "segment0.onnx_data",
             )
 
-            self._assert_rejected_before_integrity(manifest_path)
+            self._assert_rejected_before_hashing_or_integrity(manifest_path)
 
 
 if __name__ == "__main__":

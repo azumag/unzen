@@ -18,11 +18,15 @@ python tools/verify_multi_segment_artifact_snapshot.py \
 The wrapper is stdlib-only and does not create an ONNX Runtime session. It first
 reads the manifest as a bounded, non-symlink regular file, records its SHA-256
 and filesystem identity, and resolves every declared segment graph and
-external-data path. Each artifact is then stream-hashed through a descriptor.
-After that first descriptor-pinned measurement, all declared graph/external-data
-entries must have distinct `(device, inode)` identities. Distinct pathnames that
-are hard links to the same file object fail before the underlying integrity
-verifier runs.
+external-data path. Before streaming any artifact payload bytes, it safely opens
+each declared file and preflights `(device, inode)` uniqueness so a hard-link
+alias in a later segment fails without hashing earlier large artifacts. This is
+a fail-fast optimization rather than the authoritative snapshot check: each
+artifact is then stream-hashed through a descriptor, and the descriptor-pinned
+measured identities are checked for uniqueness again. Distinct pathnames that
+are hard links to the same file object therefore fail before the underlying
+integrity verifier runs, while a race introduced after the early preflight still
+fails closed at the measured-snapshot boundary.
 
 On platforms that expose `dir_fd`, `O_DIRECTORY`, `O_NOFOLLOW`, and
 `follow_symlinks=False` for the required filesystem calls, the manifest
