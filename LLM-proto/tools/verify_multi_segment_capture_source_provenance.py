@@ -154,11 +154,13 @@ def _unsafe_windows_component(part: str) -> bool:
 
 def _safe_relative(raw: object, *, field: str) -> str:
     value = _text(raw, field=field)
-    # PurePath/Path normalize explicit `.` components. Reject them from the raw
-    # lexical form first so aliases such as `weights.bin` and `./weights.bin`
-    # cannot survive as distinct provenance identities. Treat both separators as
-    # path syntax because the persisted capture contract is cross-platform.
-    if any(part == "." for part in re.split(r"[\\/]", value)):
+    # PurePath/Path normalize explicit `.` components, repeated separators, and
+    # trailing separators. Reject those non-canonical lexical forms first so
+    # aliases cannot survive as distinct provenance identities. Treat both
+    # separators as path syntax because the persisted capture contract is
+    # cross-platform.
+    lexical_parts = re.split(r"[\\/]", value)
+    if any(part in {"", "."} for part in lexical_parts):
         raise ValueError(f"unsafe {field}: {value}")
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
