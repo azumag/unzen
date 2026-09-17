@@ -247,9 +247,14 @@ def _require_staged_manifest_matches_generated(
 
     raw, signature = _read_staged_manifest_snapshot(staged_manifest)
     try:
-        staged_value = json.loads(raw.decode("utf-8"))
+        text = raw.decode("utf-8")
+        staged_value, end = json.JSONDecoder().raw_decode(text)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("staged split-manifest.json must contain valid UTF-8 JSON") from exc
+    if text[end:] != "\n":
+        raise RuntimeError(
+            "staged split-manifest.json changed during snapshot read or contains unexpected trailing bytes"
+        )
 
     staged_canonical = _canonical_json_bytes(
         staged_value,
@@ -261,7 +266,7 @@ def _require_staged_manifest_matches_generated(
     )
     if staged_canonical != generated_canonical:
         raise RuntimeError(
-            "staged split-manifest.json does not match the generated split manifest"
+            "staged split-manifest.json changed during snapshot read or does not match the generated split manifest"
         )
     return signature
 
