@@ -22,6 +22,7 @@ from prepare_browser_p0 import PREFERRED_MAX_BYTES
 
 MAX_PREVIOUS_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_STAGED_MANIFEST_BYTES = 4 * 1024 * 1024
+StatSignature = tuple[int, int, int, int, int]
 
 
 def _require_bool(raw: object, *, field: str) -> bool:
@@ -107,7 +108,7 @@ def _source_artifacts_from_manifest(
     return sources
 
 
-def _stat_signature(value: os.stat_result) -> tuple[int, int, int, int, int]:
+def _stat_signature(value: os.stat_result) -> StatSignature:
     return (
         value.st_dev,
         value.st_ino,
@@ -163,7 +164,9 @@ def _read_previous_manifest_snapshot(final_manifest: Path) -> bytes | None:
     return b"".join(chunks)
 
 
-def _read_staged_manifest_snapshot(staged_manifest: Path) -> bytes:
+def _read_staged_manifest_snapshot(
+    staged_manifest: Path,
+) -> tuple[bytes, StatSignature]:
     """Read the staged commit marker through a stable, bounded descriptor snapshot."""
 
     try:
@@ -193,11 +196,12 @@ def _read_staged_manifest_snapshot(staged_manifest: Path) -> bytes:
     observed = 0
     try:
         opened = os.fstat(fd)
+        opened_signature = _stat_signature(opened)
         if (
             not stat.S_ISREG(opened.st_mode)
             or opened.st_nlink != 1
             or opened.st_size > MAX_STAGED_MANIFEST_BYTES
-            or _stat_signature(opened) != _stat_signature(before)
+            or opened_signature != _stat_signature(before)
         ):
             raise RuntimeError("staged split-manifest.json changed before snapshot read")
         while observed < opened.st_size:
@@ -207,11 +211,19 @@ def _read_staged_manifest_snapshot(staged_manifest: Path) -> bytes:
             chunks.append(block)
             observed += len(block)
         after = os.fstat(fd)
-        if observed != opened.st_size or _stat_signature(after) != _stat_signature(opened):
+        if observed != opened.st_size or _stat_signature(after) != opened_signature:
             raise RuntimeError("staged split-manifest.json changed during snapshot read")
     finally:
         os.close(fd)
-    return b"".join(chunks)
+
+    try:
+        path_after = os.lstat(staged_manifest)
+    except OSError as exc:
+        raise RuntimeError("staged split-manifest.json changed during snapshot read") from exc
+    if _stat_signature(path_after) != opened_signature:
+        raise RuntimeError("staged split-manifest.json changed during snapshot read")
+
+    return b"".join(chunks), opened_signature
 
 
 def _canonical_json_bytes(value: object, *, label: str) -> bytes:
@@ -230,10 +242,10 @@ def _canonical_json_bytes(value: object, *, label: str) -> bytes:
 def _require_staged_manifest_matches_generated(
     staged_manifest: Path,
     generated_manifest: dict[str, object],
-) -> None:
+) -> StatSignature:
     """Bind staged commit-marker contents to the manifest used for layout decisions."""
 
-    raw = _read_staged_manifest_snapshot(staged_manifest)
+    raw, signature = _read_staged_manifest_snapshot(staged_manifest)
     try:
         staged_value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -250,6 +262,29 @@ def _require_staged_manifest_matches_generated(
     if staged_canonical != generated_canonical:
         raise RuntimeError(
             "staged split-manifest.json does not match the generated split manifest"
+        )
+    return signature
+
+
+def _require_staged_manifest_identity(
+    staged_manifest: Path,
+    expected_signature: StatSignature,
+) -> None:
+    """Fail closed if the validated staged commit marker changed before publication."""
+
+    try:
+        current = os.lstat(staged_manifest)
+    except OSError as exc:
+        raise RuntimeError(
+            "staged split-manifest.json changed after validation and before publication"
+        ) from exc
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or current.st_nlink != 1
+        or _stat_signature(current) != expected_signature
+    ):
+        raise RuntimeError(
+            "staged split-manifest.json changed after validation and before publication"
         )
 
 
@@ -336,7 +371,10 @@ def _publish_staged_split(
             if not external.is_file():
                 raise RuntimeError(f"staged segment external data is missing: {external}")
 
-    _require_staged_manifest_matches_generated(staged_manifest, manifest)
+    staged_manifest_signature = _require_staged_manifest_matches_generated(
+        staged_manifest,
+        manifest,
+    )
 
     final_manifest = output_dir / "split-manifest.json"
     if final_manifest.exists():
@@ -361,6 +399,7 @@ def _publish_staged_split(
         except FileNotFoundError:
             pass
 
+    _require_staged_manifest_identity(staged_manifest, staged_manifest_signature)
     os.replace(staged_manifest, final_manifest)
 
 
