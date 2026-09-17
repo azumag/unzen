@@ -1,9 +1,8 @@
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { safePath } from '../webgpu-2b-split/server-safe-path.mjs';
+import { resolveExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
@@ -15,16 +14,19 @@ if (!DATA_DIR) throw new Error('DATA_DIR is required');
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
-    let path;
+    let selectedRoot;
+    let relativePath;
     if (url.pathname.startsWith('/data/')) {
-      path = safePath(DATA_DIR, url.pathname.slice('/data/'.length));
+      selectedRoot = DATA_DIR;
+      relativePath = url.pathname.slice('/data/'.length);
     } else if (url.pathname.startsWith('/webgpu-2b-split/')) {
-      path = safePath(SHARED_SPLIT_ROOT, url.pathname.slice('/webgpu-2b-split/'.length));
+      selectedRoot = SHARED_SPLIT_ROOT;
+      relativePath = url.pathname.slice('/webgpu-2b-split/'.length);
     } else {
-      path = safePath(ROOT, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
+      selectedRoot = ROOT;
+      relativePath = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     }
-    const info = await stat(path);
-    if (!info.isFile()) throw new Error('not a file');
+    const { path, info } = await resolveExistingFileWithinRoot(selectedRoot, relativePath);
     res.writeHead(200, { 'Content-Type': MIME[extname(path)] ?? 'application/octet-stream', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
     createReadStream(path).pipe(res);
   } catch (error) {

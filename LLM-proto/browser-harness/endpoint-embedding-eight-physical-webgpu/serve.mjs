@@ -1,9 +1,9 @@
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { lstat, readFile } from 'node:fs/promises';
-import { basename, extname, resolve } from 'node:path';
+import { basename, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { safePath } from '../webgpu-2b-split/server-safe-path.mjs';
+import { resolveExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -68,17 +68,22 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    let path;
+    let selectedRoot;
+    let relativePath;
     if (url.pathname === `/data/${preflight.graph.file}`) {
-      path = GRAPH_PATH;
+      selectedRoot = dirname(GRAPH_PATH);
+      relativePath = basename(GRAPH_PATH);
     } else if (url.pathname.startsWith('/data/')) {
-      path = safePath(DATA_DIR, url.pathname.slice('/data/'.length));
+      selectedRoot = DATA_DIR;
+      relativePath = url.pathname.slice('/data/'.length);
     } else if (url.pathname.startsWith('/webgpu-2b-split/')) {
-      path = safePath(SHARED_SPLIT_ROOT, url.pathname.slice('/webgpu-2b-split/'.length));
+      selectedRoot = SHARED_SPLIT_ROOT;
+      relativePath = url.pathname.slice('/webgpu-2b-split/'.length);
     } else {
-      path = safePath(ROOT, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
+      selectedRoot = ROOT;
+      relativePath = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     }
-    const info = await requireNonSymlinkFile(path, 'requested path');
+    const { path, info } = await resolveExistingFileWithinRoot(selectedRoot, relativePath);
     res.writeHead(200, {
       'Content-Type': MIME[extname(path)] ?? 'application/octet-stream',
       'Content-Length': info.size,

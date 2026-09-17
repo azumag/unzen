@@ -1,6 +1,11 @@
-import { posix, win32 } from 'node:path';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, posix, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { safePathWithPathApi } from '../browser-harness/webgpu-2b-split/server-safe-path.mjs';
+import {
+  resolveExistingFileWithinRoot,
+  safePathWithPathApi,
+} from '../browser-harness/webgpu-2b-split/server-safe-path.mjs';
 
 describe('endpoint diagnostic server path containment', () => {
   it('accepts nested files with POSIX separators', () => {
@@ -24,5 +29,45 @@ describe('endpoint diagnostic server path containment', () => {
     expect(() => safePathWithPathApi(win32, 'C:\\repo\\root', 'C:\\outside.js')).toThrow(
       'path escapes root',
     );
+  });
+
+  it('resolves a regular file only after confirming its canonical target stays under the root', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const root = join(workspace, 'root');
+    try {
+      await mkdir(join(root, 'nested'), { recursive: true });
+      await writeFile(join(root, 'nested', 'file.js'), 'export const ok = true;\n', 'utf8');
+
+      const resolved = await resolveExistingFileWithinRoot(root, 'nested/file.js');
+      expect(resolved.path).toBe(join(root, 'nested', 'file.js'));
+      expect(resolved.info.isFile()).toBe(true);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an intermediate directory symlink whose canonical target escapes the root', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const root = join(workspace, 'root');
+    const outside = join(workspace, 'outside');
+    try {
+      await mkdir(root, { recursive: true });
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, 'secret.bin'), 'outside', 'utf8');
+
+      try {
+        await symlink(outside, join(root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EACCES' || code === 'ENOSYS') return;
+        throw error;
+      }
+
+      await expect(resolveExistingFileWithinRoot(root, 'escape/secret.bin')).rejects.toThrow(
+        'path escapes root',
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 });
