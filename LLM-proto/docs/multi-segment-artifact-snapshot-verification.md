@@ -19,6 +19,10 @@ The wrapper is stdlib-only and does not create an ONNX Runtime session. It first
 reads the manifest as a bounded, non-symlink regular file, records its SHA-256
 and filesystem identity, and resolves every declared segment graph and
 external-data path. Each artifact is then stream-hashed through a descriptor.
+After that first descriptor-pinned measurement, all declared graph/external-data
+entries must have distinct `(device, inode)` identities. Distinct pathnames that
+are hard links to the same file object fail before the underlying integrity
+verifier runs.
 
 On platforms that expose `dir_fd`, `O_DIRECTORY`, `O_NOFOLLOW`, and
 `follow_symlinks=False` for the required filesystem calls, the manifest
@@ -49,10 +53,11 @@ portable pre-#356 behavior and reports:
 ```
 
 That fallback still rejects absolute/parent-relative paths, paths resolving
-outside the manifest directory, final symlinks, non-regular files, and file
-identity/digest drift. It does **not** claim protection against a race that swaps
-an intermediate directory component while a pathname is being opened. Evidence
-that depends on the stronger path-race property must therefore require
+outside the manifest directory, final symlinks, non-regular files, shared
+`(device, inode)` identities across declared artifacts, and file identity/digest
+drift. It does **not** claim protection against a race that swaps an intermediate
+directory component while a pathname is being opened. Evidence that depends on
+the stronger path-race property must therefore require
 `component-anchored-dirfd` rather than silently treating the fallback as
 equivalent.
 
@@ -63,6 +68,8 @@ re-measures every artifact. Verification fails if any of the following occurs:
 - the manifest or an artifact is a final symlink or non-regular file;
 - a declared relative path is absolute, parent-relative, or resolves through a
   parent outside the manifest directory;
+- two declared graph/external-data pathnames resolve to the same `(device,
+  inode)` file identity;
 - in `component-anchored-dirfd` mode, an intermediate declared-path component
   is a symlink or ceases to resolve to the same directory instance;
 - in `component-anchored-dirfd` mode, the anchored manifest-directory pathname
@@ -78,8 +85,10 @@ re-measures every artifact. Verification fails if any of the following occurs:
 A same-content replacement is intentionally rejected. Even when a replacement
 has identical bytes and therefore the same SHA-256, a different inode means the
 verification crossed filesystem object instances and is not a single stable
-snapshot. In component-anchored mode the same rule applies to intermediate
-artifact directories by `(device, inode)` identity.
+snapshot. Likewise, two distinct declared pathnames are not accepted as
+independent artifact components when they are hard links to the same file
+object. In component-anchored mode the same stable-identity rule also applies to
+intermediate artifact directories by `(device, inode)` identity.
 
 The output embeds the normal artifact-integrity report and adds the manifest
 SHA-256 plus a compact list of the graph/external-data files observed by the
