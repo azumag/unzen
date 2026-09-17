@@ -34,7 +34,7 @@ A passing result requires:
 
 all to be the same canonical SHA-256 digest.
 
-It also requires the split manifest and numerical verification to contain the exact same source external-data set. Each location must be a safe relative path, unique, have a non-negative byte count, and have a canonical lowercase SHA-256 digest. The numerical verification must state `allExternalDataHashed=true`.
+It also requires the split manifest and numerical verification to contain the exact same source external-data set. Each location must be a safe, canonical lexical relative path, unique, have a non-negative byte count, and have a canonical lowercase SHA-256 digest. Explicit `.` path segments are not canonical: aliases such as `weights.bin` / `./weights.bin` or `dir/weights.bin` / `dir/./weights.bin` are rejected rather than normalized into separate provenance identities. The numerical verification must state `allExternalDataHashed=true`.
 
 The output remains `decisionStatus=diagnostic-only`.
 
