@@ -21,6 +21,7 @@ from prepare_browser_p0 import PREFERRED_MAX_BYTES
 
 
 MAX_PREVIOUS_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_STAGED_MANIFEST_BYTES = 4 * 1024 * 1024
 
 
 def _require_bool(raw: object, *, field: str) -> bool:
@@ -162,6 +163,96 @@ def _read_previous_manifest_snapshot(final_manifest: Path) -> bytes | None:
     return b"".join(chunks)
 
 
+def _read_staged_manifest_snapshot(staged_manifest: Path) -> bytes:
+    """Read the staged commit marker through a stable, bounded descriptor snapshot."""
+
+    try:
+        before = os.lstat(staged_manifest)
+    except FileNotFoundError as exc:
+        raise RuntimeError("staged split-manifest.json is missing") from exc
+    except OSError as exc:
+        raise RuntimeError("could not inspect staged split-manifest.json") from exc
+
+    if not stat.S_ISREG(before.st_mode):
+        raise RuntimeError("staged split-manifest.json must be a regular file")
+    if before.st_nlink != 1:
+        raise RuntimeError("staged split-manifest.json must have exactly one hard link")
+    if before.st_size > MAX_STAGED_MANIFEST_BYTES:
+        raise RuntimeError(
+            "staged split-manifest.json exceeds the publication metadata size limit"
+        )
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(staged_manifest, flags)
+    except OSError as exc:
+        raise RuntimeError("could not open staged split-manifest.json safely") from exc
+
+    chunks: list[bytes] = []
+    observed = 0
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size > MAX_STAGED_MANIFEST_BYTES
+            or _stat_signature(opened) != _stat_signature(before)
+        ):
+            raise RuntimeError("staged split-manifest.json changed before snapshot read")
+        while observed < opened.st_size:
+            block = os.read(fd, min(64 * 1024, opened.st_size - observed))
+            if not block:
+                break
+            chunks.append(block)
+            observed += len(block)
+        after = os.fstat(fd)
+        if observed != opened.st_size or _stat_signature(after) != _stat_signature(opened):
+            raise RuntimeError("staged split-manifest.json changed during snapshot read")
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
+def _canonical_json_bytes(value: object, *, label: str) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{label} is not valid JSON data") from exc
+
+
+def _require_staged_manifest_matches_generated(
+    staged_manifest: Path,
+    generated_manifest: dict[str, object],
+) -> None:
+    """Bind staged commit-marker contents to the manifest used for layout decisions."""
+
+    raw = _read_staged_manifest_snapshot(staged_manifest)
+    try:
+        staged_value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("staged split-manifest.json must contain valid UTF-8 JSON") from exc
+
+    staged_canonical = _canonical_json_bytes(
+        staged_value,
+        label="staged split-manifest.json",
+    )
+    generated_canonical = _canonical_json_bytes(
+        generated_manifest,
+        label="generated split manifest",
+    )
+    if staged_canonical != generated_canonical:
+        raise RuntimeError(
+            "staged split-manifest.json does not match the generated split manifest"
+        )
+
+
 def _previous_tail_artifacts(
     output_dir: Path,
     *,
@@ -244,6 +335,8 @@ def _publish_staged_split(
             external = staged_dir / str(external_data[0]["location"])
             if not external.is_file():
                 raise RuntimeError(f"staged segment external data is missing: {external}")
+
+    _require_staged_manifest_matches_generated(staged_manifest, manifest)
 
     final_manifest = output_dir / "split-manifest.json"
     if final_manifest.exists():
