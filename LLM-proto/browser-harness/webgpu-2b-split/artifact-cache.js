@@ -133,10 +133,13 @@ function cacheKey(url, expectedSha256) {
 
 function parseContentLength(response) {
   const raw = response.headers.get('content-length');
-  if (raw == null || raw === '') return undefined;
+  if (raw === null) return undefined;
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) {
+    throw new Error(`invalid Content-Length: ${diagnosticValue(raw)}`);
+  }
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`invalid Content-Length: ${raw}`);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`invalid Content-Length: ${diagnosticValue(raw)}`);
   }
   return value;
 }
