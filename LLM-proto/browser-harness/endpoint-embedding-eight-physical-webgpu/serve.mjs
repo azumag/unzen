@@ -12,6 +12,8 @@ const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : null;
 const PREFLIGHT_REPORT = process.env.PREFLIGHT_REPORT ? resolve(process.env.PREFLIGHT_REPORT) : null;
 const GRAPH_PATH = process.env.GRAPH_PATH ? resolve(process.env.GRAPH_PATH) : null;
 const PORT = Number(process.env.PORT ?? 8797);
+const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;
+const PREFLIGHT_READ_CHUNK_BYTES = 64 * 1024;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -57,14 +59,38 @@ async function openNonSymlinkFileForField(path, field) {
   }
 }
 
+async function readBoundedUtf8FromHandle(handle, before, field) {
+  if (before.size > MAX_PREFLIGHT_REPORT_BYTES) {
+    throw new Error(`${field} exceeds ${MAX_PREFLIGHT_REPORT_BYTES} bytes`);
+  }
+
+  const chunks = [];
+  let totalBytes = 0;
+  let position = 0;
+  while (true) {
+    const remaining = MAX_PREFLIGHT_REPORT_BYTES - totalBytes;
+    const chunk = Buffer.allocUnsafe(Math.min(PREFLIGHT_READ_CHUNK_BYTES, remaining + 1));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, position);
+    if (bytesRead === 0) break;
+    totalBytes += bytesRead;
+    if (totalBytes > MAX_PREFLIGHT_REPORT_BYTES) {
+      throw new Error(`${field} exceeds ${MAX_PREFLIGHT_REPORT_BYTES} bytes`);
+    }
+    chunks.push(chunk.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+
+  const after = await handle.stat();
+  if (after.size !== before.size || totalBytes !== before.size) {
+    throw new Error(`${field} changed while reading`);
+  }
+  return Buffer.concat(chunks, totalBytes).toString('utf8');
+}
+
 async function readNonSymlinkJson(path, field) {
   const { handle, info: before } = await openNonSymlinkFileForField(path, field);
   try {
-    const text = await handle.readFile('utf8');
-    const after = await handle.stat();
-    if (after.size !== before.size || Buffer.byteLength(text, 'utf8') !== before.size) {
-      throw new Error(`${field} changed while reading`);
-    }
+    const text = await readBoundedUtf8FromHandle(handle, before, field);
     return JSON.parse(text);
   } finally {
     await handle.close().catch(() => {});
