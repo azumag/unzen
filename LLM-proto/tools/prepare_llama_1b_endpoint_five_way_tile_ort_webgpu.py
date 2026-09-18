@@ -38,6 +38,10 @@ ORT_WEB_VERSION = preferred_webgpu.ORT_WEB_VERSION
 
 
 def _copy_source_range(source_fd: int, *, source_offset: int, length: int, destination: Path) -> str:
+    if not isinstance(source_offset, int) or isinstance(source_offset, bool) or source_offset < 0:
+        raise ValueError("source_offset must be a non-negative integer")
+    if not isinstance(length, int) or isinstance(length, bool) or length <= 0:
+        raise ValueError("length must be a positive integer")
     digest = hashlib.sha256()
     cursor = 0
     with destination.open("xb") as dst:
