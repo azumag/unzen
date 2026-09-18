@@ -232,6 +232,13 @@ def _require_snapshot_pass(
         raise ValueError(
             "artifact-snapshot preflight artifactFileCount does not match artifacts"
         )
+    segment_count = report.get("segmentCount")
+    if (
+        isinstance(segment_count, bool)
+        or not isinstance(segment_count, int)
+        or segment_count <= 0
+    ):
+        raise ValueError("artifact-snapshot preflight has invalid segmentCount")
 
     integrity = _require_integrity_pass(report.get("integrity"))
     for field in ("manifestSha256", "segmentCount"):
