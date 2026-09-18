@@ -174,6 +174,9 @@ export async function readResponseBytesBounded(
   };
   try {
     throwIfAborted(signal);
+    if (expectedBytes !== undefined && expectedBytes > maxBytes) {
+      throw new Error(`expectedBytes exceeds maxBytes for ${url}: ${expectedBytes} > ${maxBytes}`);
+    }
     const contentLength = parseContentLength(response);
     if (contentLength !== undefined && contentLength > effectiveMax) {
       throw new Error(`artifact exceeds byte limit before body read for ${url}: ${contentLength} > ${effectiveMax}`);
