@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, mkdir, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, rename, rm, symlink, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -160,6 +160,28 @@ describe('endpoint diagnostic server path containment', () => {
       const { handle, info } = await openExistingNonSymlinkFile(file);
       try {
         await truncate(file, 4);
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: 8,
+          field: 'report',
+          chunkBytes: 3,
+        })).rejects.toThrow('report changed while reading');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects same-size in-place mutation after the descriptor metadata snapshot', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, '12345678', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await writeFile(file, 'ABCDEFGH', 'utf8');
+        await utimes(file, new Date(0), new Date(0));
         await expect(readBoundedUtf8FileHandle(handle, info, {
           maxBytes: 8,
           field: 'report',

@@ -37,6 +37,13 @@ function sameFileIdentity(expected, actual) {
   return expected.dev === actual.dev && expected.ino === actual.ino;
 }
 
+function sameStableReadMetadata(expected, actual) {
+  return sameFileIdentity(expected, actual)
+    && expected.size === actual.size
+    && expected.mtimeMs === actual.mtimeMs
+    && expected.ctimeMs === actual.ctimeMs;
+}
+
 function readOnlyNoFollowFlags() {
   return typeof constants.O_NOFOLLOW === 'number'
     ? constants.O_RDONLY | constants.O_NOFOLLOW
@@ -96,7 +103,7 @@ export async function readBoundedUtf8FileHandle(
     throw new Error(`${field} exceeds ${maxBytes} bytes`);
   }
   if (
-    finalInfo.size !== initialInfo.size
+    !sameStableReadMetadata(initialInfo, finalInfo)
     || totalBytes !== initialInfo.size
     || growthBytesRead !== 0
   ) {
