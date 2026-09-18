@@ -81,6 +81,16 @@ class VerifyMultiSegmentCaptureSourceJsonContractTest(unittest.TestCase):
                 field="sourceModel.externalData",
             )
 
+    def test_non_ascii_case_variants_are_outside_portable_fold(self) -> None:
+        normalized = source_module._normalized_external_entries(
+            [
+                {"location": "weights/Ä.bin", "bytes": 16, "sha256": DIGEST},
+                {"location": "weights/ä.bin", "bytes": 32, "sha256": "b" * 64},
+            ],
+            field="sourceModel.externalData",
+        )
+        self.assertEqual(len(normalized), 2)
+
     def test_distinct_external_locations_remain_accepted(self) -> None:
         normalized = source_module._normalized_external_entries(
             [
