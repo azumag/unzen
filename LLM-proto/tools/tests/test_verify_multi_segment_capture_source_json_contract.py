@@ -17,6 +17,53 @@ DIGEST = "a" * 64
 
 
 class VerifyMultiSegmentCaptureSourceJsonContractTest(unittest.TestCase):
+    def _assert_manifest_locations_fail_before_source_filesystem_access(
+        self,
+        locations: list[str],
+        *,
+        error: str,
+    ) -> None:
+        summary = {
+            "artifacts": {"manifest": "split-manifest.json"},
+            "evidence": {"path": "evidence.json"},
+        }
+        manifest = {
+            "sourceModel": {
+                "sha256": DIGEST,
+                "externalData": [
+                    {
+                        "location": location,
+                        "bytes": 16,
+                        "sha256": chr(ord("a") + index) * 64,
+                    }
+                    for index, location in enumerate(locations)
+                ],
+            }
+        }
+        bundle = {
+            "status": "pass",
+            "runSummarySha256": DIGEST,
+            "manifestSha256": DIGEST,
+            "evidenceSha256": DIGEST,
+            "verificationSha256": DIGEST,
+        }
+
+        with (
+            patch.object(source_module, "verify_capture_bundle", return_value=bundle),
+            patch.object(
+                source_module,
+                "_stable_json_object",
+                side_effect=[(summary, DIGEST), (manifest, DIGEST)],
+            ),
+            patch.object(source_module, "_open_directory_anchor") as open_root,
+            patch.object(source_module, "_preflight_source_file_identities") as preflight_files,
+        ):
+            with self.assertRaisesRegex(ValueError, error):
+                source_module.verify_capture_source(Path("capture"), Path("model.onnx"))
+
+        open_root.assert_not_called()
+        preflight_files.assert_not_called()
+
     def test_non_negative_integer_accepts_only_json_integers(self) -> None:
         self.assertEqual(
             source_module._non_negative_int(0, field="bytes"),
@@ -67,7 +114,7 @@ class VerifyMultiSegmentCaptureSourceJsonContractTest(unittest.TestCase):
                 field="sourceModel.externalData",
             )
 
-    def test_ascii_case_only_external_location_alias_is_rejected(self) -> None:
+    def test_ascii_case_only_external_location_alias_keeps_existing_error(self) -> None:
         with self.assertRaisesRegex(
             ValueError,
             r"portable case alias external-data location in sourceModel\.externalData: "
@@ -77,6 +124,26 @@ class VerifyMultiSegmentCaptureSourceJsonContractTest(unittest.TestCase):
                 [
                     {"location": "weights/Chunk.bin", "bytes": 16, "sha256": DIGEST},
                     {"location": "weights/chunk.bin", "bytes": 32, "sha256": "b" * 64},
+                ],
+                field="sourceModel.externalData",
+            )
+
+    def test_separator_only_external_location_alias_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "portable separator alias external-data location"):
+            source_module._normalized_external_entries(
+                [
+                    {"location": "weights/chunk.bin", "bytes": 16, "sha256": DIGEST},
+                    {"location": "weights\\chunk.bin", "bytes": 32, "sha256": "b" * 64},
+                ],
+                field="sourceModel.externalData",
+            )
+
+    def test_case_and_separator_external_location_alias_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "portable separator alias external-data location"):
+            source_module._normalized_external_entries(
+                [
+                    {"location": "Weights/Chunk.bin", "bytes": 16, "sha256": DIGEST},
+                    {"location": "weights\\chunk.bin", "bytes": 32, "sha256": "b" * 64},
                 ],
                 field="sourceModel.externalData",
             )
@@ -105,42 +172,16 @@ class VerifyMultiSegmentCaptureSourceJsonContractTest(unittest.TestCase):
         )
 
     def test_manifest_case_alias_rejects_before_source_filesystem_access(self) -> None:
-        summary = {
-            "artifacts": {"manifest": "split-manifest.json"},
-            "evidence": {"path": "evidence.json"},
-        }
-        manifest = {
-            "sourceModel": {
-                "sha256": DIGEST,
-                "externalData": [
-                    {"location": "weights/Chunk.bin", "bytes": 16, "sha256": DIGEST},
-                    {"location": "weights/chunk.bin", "bytes": 16, "sha256": "b" * 64},
-                ],
-            }
-        }
-        bundle = {
-            "status": "pass",
-            "runSummarySha256": DIGEST,
-            "manifestSha256": DIGEST,
-            "evidenceSha256": DIGEST,
-            "verificationSha256": DIGEST,
-        }
+        self._assert_manifest_locations_fail_before_source_filesystem_access(
+            ["weights/Chunk.bin", "weights/chunk.bin"],
+            error="portable case alias external-data location",
+        )
 
-        with (
-            patch.object(source_module, "verify_capture_bundle", return_value=bundle),
-            patch.object(
-                source_module,
-                "_stable_json_object",
-                side_effect=[(summary, DIGEST), (manifest, DIGEST)],
-            ),
-            patch.object(source_module, "_open_directory_anchor") as open_root,
-            patch.object(source_module, "_preflight_source_file_identities") as preflight_files,
-        ):
-            with self.assertRaisesRegex(ValueError, "portable case alias external-data location"):
-                source_module.verify_capture_source(Path("capture"), Path("model.onnx"))
-
-        open_root.assert_not_called()
-        preflight_files.assert_not_called()
+    def test_manifest_separator_alias_rejects_before_source_filesystem_access(self) -> None:
+        self._assert_manifest_locations_fail_before_source_filesystem_access(
+            ["weights/chunk.bin", "weights\\chunk.bin"],
+            error="portable separator alias external-data location",
+        )
 
     def test_graph_bytes_uses_the_same_strict_integer_contract(self) -> None:
         with self.assertRaisesRegex(

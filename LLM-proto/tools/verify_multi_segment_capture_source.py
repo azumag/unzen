@@ -562,7 +562,8 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
         raise ValueError(f"{field} must be an array")
     normalized: list[dict[str, object]] = []
     seen: set[str] = set()
-    portable_seen: dict[str, str] = {}
+    portable_case_seen: dict[str, str] = {}
+    portable_separator_seen: dict[str, str] = {}
     for index, raw_entry in enumerate(raw):
         prefix = f"{field}[{index}]"
         entry = _require_mapping(raw_entry, field=prefix)
@@ -572,15 +573,26 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
         )
         if location in seen:
             raise ValueError(f"duplicate external-data location in {field}: {location}")
-        portable_location = location.translate(ASCII_CASE_FOLD)
-        previous_location = portable_seen.get(portable_location)
-        if previous_location is not None:
+
+        portable_case_location = location.translate(ASCII_CASE_FOLD)
+        previous_case_location = portable_case_seen.get(portable_case_location)
+        if previous_case_location is not None:
             raise ValueError(
                 f"portable case alias external-data location in {field}: "
-                f"{location} aliases {previous_location}"
+                f"{location} aliases {previous_case_location}"
             )
+
+        portable_separator_location = portable_case_location.replace("\\", "/")
+        previous_separator_location = portable_separator_seen.get(portable_separator_location)
+        if previous_separator_location is not None:
+            raise ValueError(
+                f"portable separator alias external-data location in {field}: "
+                f"{location} aliases {previous_separator_location}"
+            )
+
         seen.add(location)
-        portable_seen[portable_location] = location
+        portable_case_seen[portable_case_location] = location
+        portable_separator_seen[portable_separator_location] = location
         normalized.append(
             {
                 "location": location,
