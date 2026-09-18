@@ -25,6 +25,41 @@ class EndpointPayloadProbeSnapshotTest(unittest.TestCase):
 
             self.assertEqual(materializer._read_probe_report_snapshot(probe), expected)
 
+    def test_requests_binary_mode_and_reads_crlf_json_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            probe = Path(directory) / "probe.json"
+            raw = (
+                b'{\r\n'
+                b'  "kind": "probe",\r\n'
+                b'  "decisionStatus": "diagnostic-only"\r\n'
+                b'}\r\n'
+            )
+            probe.write_bytes(raw)
+            fake_binary = 1 << 29
+            real_open = os.open
+            observed_binary = False
+
+            def open_without_fake_binary(path, flags, *args, **kwargs):
+                nonlocal observed_binary
+                observed_binary = bool(flags & fake_binary)
+                return real_open(path, flags & ~fake_binary, *args, **kwargs)
+
+            with (
+                mock.patch.object(materializer.os, "O_BINARY", fake_binary, create=True),
+                mock.patch.object(
+                    materializer.os,
+                    "open",
+                    side_effect=open_without_fake_binary,
+                ),
+            ):
+                report = materializer._read_probe_report_snapshot(probe)
+
+            self.assertTrue(observed_binary)
+            self.assertEqual(
+                report,
+                {"kind": "probe", "decisionStatus": "diagnostic-only"},
+            )
+
     def test_invalid_max_bytes_is_rejected_before_path_expansion(self) -> None:
         class ExpansionMustNotRun:
             def expanduser(self):
