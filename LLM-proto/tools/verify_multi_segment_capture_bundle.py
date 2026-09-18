@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
@@ -224,6 +225,31 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
 def _positive_int(raw: object, *, field: str) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
         raise ValueError(f"{field} must be a positive integer")
+    return raw
+
+
+def _non_negative_int(raw: object, *, field: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return raw
+
+
+def _input_token_ids(raw: object, *, field: str) -> list[int]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{field} must be a non-empty array")
+    return [
+        _non_negative_int(value, field=f"{field}[{index}]")
+        for index, value in enumerate(raw)
+    ]
+
+
+def _finite_non_negative_number(raw: object, *, field: str) -> int | float:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"{field} must be a finite non-negative number")
+    if isinstance(raw, float) and not math.isfinite(raw):
+        raise ValueError(f"{field} must be a finite non-negative number")
+    if raw < 0:
+        raise ValueError(f"{field} must be a finite non-negative number")
     return raw
 
 
@@ -432,21 +458,107 @@ def _bind_run_parameters(
     evidence_parameters: dict[str, object],
     verification: dict[str, object],
 ) -> None:
-    for field in ("provider", "inputTokenIds", "kvHeads", "headSize", "atol", "rtol"):
+    """Validate runtime controls semantically before cross-binding their values."""
+
+    summary_provider = _non_empty_string(
+        summary_parameters.get("provider"),
+        field="run-summary.parameters.provider",
+    )
+    evidence_provider = _non_empty_string(
+        evidence_parameters.get("provider"),
+        field="evidence.parameters.provider",
+    )
+    verification_provider = _non_empty_string(
+        verification.get("provider"),
+        field="evidence.verification.provider",
+    )
+
+    summary_tokens = _input_token_ids(
+        summary_parameters.get("inputTokenIds"),
+        field="run-summary.parameters.inputTokenIds",
+    )
+    evidence_tokens = _input_token_ids(
+        evidence_parameters.get("inputTokenIds"),
+        field="evidence.parameters.inputTokenIds",
+    )
+    verification_tokens = _input_token_ids(
+        verification.get("inputTokenIds"),
+        field="evidence.verification.inputTokenIds",
+    )
+
+    summary_kv_heads = _positive_int(
+        summary_parameters.get("kvHeads"),
+        field="run-summary.parameters.kvHeads",
+    )
+    evidence_kv_heads = _positive_int(
+        evidence_parameters.get("kvHeads"),
+        field="evidence.parameters.kvHeads",
+    )
+    summary_head_size = _positive_int(
+        summary_parameters.get("headSize"),
+        field="run-summary.parameters.headSize",
+    )
+    evidence_head_size = _positive_int(
+        evidence_parameters.get("headSize"),
+        field="evidence.parameters.headSize",
+    )
+    summary_atol = _finite_non_negative_number(
+        summary_parameters.get("atol"),
+        field="run-summary.parameters.atol",
+    )
+    evidence_atol = _finite_non_negative_number(
+        evidence_parameters.get("atol"),
+        field="evidence.parameters.atol",
+    )
+    summary_rtol = _finite_non_negative_number(
+        summary_parameters.get("rtol"),
+        field="run-summary.parameters.rtol",
+    )
+    evidence_rtol = _finite_non_negative_number(
+        evidence_parameters.get("rtol"),
+        field="evidence.parameters.rtol",
+    )
+
+    _positive_int(
+        summary_parameters.get("hiddenSize"),
+        field="run-summary.parameters.hiddenSize",
+    )
+    target_bytes = _positive_int(
+        summary_parameters.get("targetBytes"),
+        field="run-summary.parameters.targetBytes",
+    )
+    preferred_max_bytes = _positive_int(
+        summary_parameters.get("preferredMaxBytes"),
+        field="run-summary.parameters.preferredMaxBytes",
+    )
+    if target_bytes > preferred_max_bytes:
+        raise ValueError(
+            "run-summary.parameters.targetBytes cannot exceed "
+            "run-summary.parameters.preferredMaxBytes"
+        )
+
+    for field, summary_value, evidence_value in (
+        ("provider", summary_provider, evidence_provider),
+        ("inputTokenIds", summary_tokens, evidence_tokens),
+        ("kvHeads", summary_kv_heads, evidence_kv_heads),
+        ("headSize", summary_head_size, evidence_head_size),
+        ("atol", summary_atol, evidence_atol),
+        ("rtol", summary_rtol, evidence_rtol),
+    ):
         _require_equal(
-            summary_parameters.get(field),
-            evidence_parameters.get(field),
+            summary_value,
+            evidence_value,
             field=f"run-summary.parameters.{field} vs evidence.parameters",
         )
 
     _require_equal(
-        summary_parameters.get("provider"),
-        verification.get("provider"),
+        summary_provider,
+        verification_provider,
         field="run-summary.parameters.provider vs verification.provider",
     )
     _require_equal(
-        summary_parameters.get("inputTokenIds"),
-        verification.get("inputTokenIds"),
+        summary_tokens,
+        verification_tokens,
         field="run-summary.parameters.inputTokenIds vs verification.inputTokenIds",
     )
 
