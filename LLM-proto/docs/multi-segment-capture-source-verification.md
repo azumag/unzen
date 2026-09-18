@@ -47,7 +47,7 @@ verifier は最初に既存の capture bundle verifier を再実行し、`run-su
 
 次に caller 指定の full model graph を再hashし、split manifest の `sourceModel.sha256`、capture bundle の `sourceGraphSha256`、embedded numerical verification の `sourceModel.graphSha256` と一致することを確認する。
 
-source external-data は manifest に記録された全locationについて、relative-path安全性、重複、実byte数、canonical lowercase SHA-256 を確認し、実ファイルを再hashする。manifest の identity と embedded numerical verification の `sourceModel.externalData[]` も完全一致させる。`allExternalDataHashed=true` は必須である。
+source external-data は manifest に記録された全locationについて、relative-path安全性、重複、実byte数、canonical lowercase SHA-256 を確認し、実ファイルを再hashする。path text は filesystem 解決より前に canonical component 形を要求し、U+0000..U+001F の C0 control と U+007F DEL を拒否する一方、通常の非ASCII / UTF-8名は許容する。manifest の identity と embedded numerical verification の `sourceModel.externalData[]` も完全一致させる。`allExternalDataHashed=true` は必須である。offline の `verify_multi_segment_capture_source_provenance.py` も同じ lexical control-character 境界を共有する。
 
 1B q4 の graph / weight blob はhash中にも差し替えられ得るため、source artifact は final symlink と非regular file を拒否し、すでにopenした file descriptor から直接 SHA-256 を計算する。対応OSでは `O_NOFOLLOW` / `O_CLOEXEC` / `O_NONBLOCK` を用い、source root を一度 anchor した上で graph / external-data の各 path component を no-follow で辿る。各fileは path check -> open -> fstat -> fd hash -> fstat -> path recheck の区間で device / inode / byte size / mtime / ctime が変わっていないことを要求する。これにより、同じ内容を持つ別inodeへのpathname replacementもdigest一致だけで通過しない。対応OSでは declared source-model root の final component 自体も symlink を許容しない。portable fallback は final component の stable-file check を維持する。
 
