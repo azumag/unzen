@@ -60,9 +60,14 @@ async function openNonSymlinkFileForField(path, field) {
 }
 
 async function readNonSymlinkJson(path, field) {
-  const { handle } = await openNonSymlinkFileForField(path, field);
+  const { handle, info: before } = await openNonSymlinkFileForField(path, field);
   try {
-    return JSON.parse(await handle.readFile('utf8'));
+    const text = await handle.readFile('utf8');
+    const after = await handle.stat();
+    if (after.size !== before.size || Buffer.byteLength(text, 'utf8') !== before.size) {
+      throw new Error(`${field} changed while reading`);
+    }
+    return JSON.parse(text);
   } finally {
     await handle.close().catch(() => {});
   }
