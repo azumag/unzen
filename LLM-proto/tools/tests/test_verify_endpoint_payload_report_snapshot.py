@@ -29,6 +29,34 @@ class EndpointPayloadVerifierReportSnapshotTest(unittest.TestCase):
             self.assertEqual(report, {"kind": "test", "value": 1})
             self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
 
+    def test_requests_binary_mode_and_hashes_exact_crlf_json_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            raw = b'{\r\n  "kind": "test",\r\n  "value": 1\r\n}\r\n'
+            report_path.write_bytes(raw)
+            fake_binary = 1 << 29
+            real_open = os.open
+            observed_binary = False
+
+            def open_without_fake_binary(path, flags, *args, **kwargs):
+                nonlocal observed_binary
+                observed_binary = bool(flags & fake_binary)
+                return real_open(path, flags & ~fake_binary, *args, **kwargs)
+
+            with (
+                mock.patch.object(verifier.os, "O_BINARY", fake_binary, create=True),
+                mock.patch.object(
+                    verifier.os,
+                    "open",
+                    side_effect=open_without_fake_binary,
+                ),
+            ):
+                report, digest = verifier._load_json_with_sha256(report_path)
+
+            self.assertTrue(observed_binary)
+            self.assertEqual(report, {"kind": "test", "value": 1})
+            self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
     def test_invalid_max_bytes_is_rejected_before_path_expansion(self) -> None:
         class ExpansionMustNotRun:
             def expanduser(self):
