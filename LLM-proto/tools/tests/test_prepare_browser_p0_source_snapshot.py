@@ -27,6 +27,31 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
                 hashlib.sha256(payload).hexdigest(),
             )
 
+    def test_requests_binary_mode_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "model.onnx"
+            payload = b"line1\r\nline2\x1a\n"
+            source.write_bytes(payload)
+            resolved = source.resolve()
+            fake_binary_flag = 1 << 29
+            real_open = os.open
+            observed: dict[str, object] = {}
+
+            def capturing_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+                observed["path"] = Path(os.fspath(path))
+                observed["flags"] = flags
+                return real_open(path, flags & ~fake_binary_flag, *args, **kwargs)
+
+            with (
+                mock.patch.object(p0_module.os, "O_BINARY", fake_binary_flag, create=True),
+                mock.patch.object(p0_module.os, "open", side_effect=capturing_open),
+            ):
+                digest = p0_module.sha256_file(source)
+
+            self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+            self.assertEqual(observed["path"], resolved)
+            self.assertTrue(int(observed["flags"]) & fake_binary_flag)
+
     def test_accepts_stable_symlink_to_regular_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
