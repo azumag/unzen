@@ -361,6 +361,25 @@ def _preflight_external_data_locations(locations: Sequence[str]) -> tuple[str, .
     return tuple(validated)
 
 
+def _preflight_external_data_destinations(output_dir: Path, locations: Sequence[str]) -> None:
+    for location in locations:
+        destination = output_dir / location
+        if destination.exists() and destination.is_dir() and not destination.is_symlink():
+            raise IsADirectoryError(f"external data destination is a directory: {destination}")
+
+        parent = output_dir
+        required_parents = [parent]
+        for component in Path(location).parts[:-1]:
+            parent = parent / component
+            required_parents.append(parent)
+        for required_parent in required_parents:
+            if required_parent.exists() or required_parent.is_symlink():
+                if not required_parent.is_dir():
+                    raise NotADirectoryError(
+                        f"external data destination parent is not a directory: {required_parent}"
+                    )
+
+
 def materialize_external_data(
     source_model_path: Path,
     output_dir: Path,
@@ -381,6 +400,8 @@ def materialize_external_data(
         if not source.is_file():
             raise OSError(f"external data source is not a regular file: {source}")
         materialization_plan.append((source, output_dir / location))
+
+    _preflight_external_data_destinations(output_dir, validated_locations)
 
     for source, destination in materialization_plan:
         destination.parent.mkdir(parents=True, exist_ok=True)
