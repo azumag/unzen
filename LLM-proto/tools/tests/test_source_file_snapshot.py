@@ -150,6 +150,47 @@ class SourceFileSnapshotTests(unittest.TestCase):
                         label="external data",
                     )
 
+    def test_invalid_graph_limits_fail_before_filesystem_access(self) -> None:
+        invalid_limits: tuple[object, ...] = (
+            True,
+            False,
+            1.0,
+            1.5,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            0,
+            -1,
+        )
+        with patch.object(
+            target,
+            "_pin_regular_file",
+            side_effect=AssertionError("invalid byte limits must fail before filesystem access"),
+        ):
+            for value in invalid_limits:
+                with self.subTest(max_bytes=value):
+                    with self.assertRaisesRegex(ValueError, "positive integer"):
+                        target.read_regular_file_snapshot(
+                            Path("unused.onnx"),
+                            max_bytes=value,  # type: ignore[arg-type]
+                            label="source model",
+                        )
+
+    def test_graph_limit_accepts_exact_positive_integer_boundary(self) -> None:
+        payload = b"12345"
+        with tempfile.TemporaryDirectory() as raw_dir:
+            path = Path(raw_dir) / "model.onnx"
+            path.write_bytes(payload)
+
+            raw, digest = target.read_regular_file_snapshot(
+                path,
+                max_bytes=len(payload),
+                label="source model",
+            )
+
+        self.assertEqual(raw, payload)
+        self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+
     def test_graph_limit_is_fail_close(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             path = Path(raw_dir) / "model.onnx"
