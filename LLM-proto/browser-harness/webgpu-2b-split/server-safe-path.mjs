@@ -43,15 +43,7 @@ function readOnlyNoFollowFlags() {
     : 'r';
 }
 
-export async function resolveExistingFileWithinRoot(root, relativePath) {
-  const path = await canonicalPathWithinRoot(root, relativePath);
-  const info = await stat(path);
-  if (!info.isFile()) throw new Error('not a file');
-  return { path, info };
-}
-
-export async function openExistingFileWithinRoot(root, relativePath) {
-  const path = await canonicalPathWithinRoot(root, relativePath);
+async function openRegularFileByIdentity(path) {
   const expectedInfo = await lstat(path);
   if (!expectedInfo.isFile()) throw new Error('not a file');
 
@@ -60,6 +52,28 @@ export async function openExistingFileWithinRoot(root, relativePath) {
     const info = await handle.stat();
     if (!info.isFile()) throw new Error('not a file');
     if (!sameFileIdentity(expectedInfo, info)) throw new Error('file changed before open');
+    return { handle, info };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+export async function resolveExistingFileWithinRoot(root, relativePath) {
+  const path = await canonicalPathWithinRoot(root, relativePath);
+  const info = await stat(path);
+  if (!info.isFile()) throw new Error('not a file');
+  return { path, info };
+}
+
+export async function openExistingNonSymlinkFile(path) {
+  return openRegularFileByIdentity(path);
+}
+
+export async function openExistingFileWithinRoot(root, relativePath) {
+  const path = await canonicalPathWithinRoot(root, relativePath);
+  const { handle, info } = await openRegularFileByIdentity(path);
+  try {
     const stream = handle.createReadStream({ autoClose: true });
     return { path, info, stream };
   } catch (error) {
