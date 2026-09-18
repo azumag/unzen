@@ -67,7 +67,7 @@ def _stable_json_object(path: Path, *, field: str) -> tuple[dict[str, object], s
             f"{field} exceeds {DEFAULT_JSON_MAX_BYTES} bytes: {path}"
         )
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
