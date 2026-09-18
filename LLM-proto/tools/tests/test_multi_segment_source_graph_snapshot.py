@@ -24,6 +24,35 @@ class SourceGraphSnapshotTests(unittest.TestCase):
         self.assertEqual(raw, payload)
         self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
 
+    def test_snapshot_requests_binary_mode_when_available(self) -> None:
+        payload = b"line1\r\nline2\x1a\n"
+        with tempfile.TemporaryDirectory() as raw_dir:
+            path = Path(raw_dir) / "model.onnx"
+            path.write_bytes(payload)
+            fake_binary_flag = 1 << 29
+            real_open = os.open
+            observed: dict[str, object] = {}
+
+            def capturing_open(
+                name: os.PathLike[str] | str,
+                flags: int,
+                *args: object,
+            ) -> int:
+                observed["path"] = Path(name)
+                observed["flags"] = flags
+                return real_open(name, flags & ~fake_binary_flag, *args)
+
+            with (
+                patch.object(target.os, "O_BINARY", fake_binary_flag, create=True),
+                patch.object(target.os, "open", side_effect=capturing_open),
+            ):
+                raw, digest = target._read_source_graph_snapshot(path)
+
+        self.assertEqual(raw, payload)
+        self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(observed["path"], path.resolve())
+        self.assertTrue(int(observed["flags"]) & fake_binary_flag)
+
     def test_invalid_max_bytes_is_rejected_before_path_expansion(self) -> None:
         class ExpansionMustNotRun:
             def expanduser(self):
