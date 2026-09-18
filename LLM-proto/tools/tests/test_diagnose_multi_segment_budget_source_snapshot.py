@@ -28,6 +28,53 @@ class BudgetDiagnosticSourceSnapshotTest(unittest.TestCase):
             self.assertEqual(observed, raw)
             self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
 
+    def test_rejects_invalid_max_bytes_before_filesystem_access(self) -> None:
+        invalid_limits = (
+            True,
+            False,
+            1.5,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            0,
+            -1,
+        )
+        source = Path("must-not-be-touched.onnx")
+
+        for max_bytes in invalid_limits:
+            with self.subTest(max_bytes=max_bytes):
+                with mock.patch.object(
+                    diagnostic.os,
+                    "lstat",
+                    side_effect=AssertionError("filesystem access must not occur"),
+                ) as lstat_mock:
+                    with self.assertRaisesRegex(ValueError, "positive integer"):
+                        diagnostic._read_source_graph_snapshot(
+                            source,
+                            max_bytes=max_bytes,
+                        )
+                lstat_mock.assert_not_called()
+
+    def test_accepts_exact_integer_limit_and_rejects_smaller_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "model.onnx"
+            raw = b"exact-limit"
+            source.write_bytes(raw)
+
+            reported_path, observed, digest = diagnostic._read_source_graph_snapshot(
+                source,
+                max_bytes=len(raw),
+            )
+
+            self.assertEqual(reported_path, source.absolute())
+            self.assertEqual(observed, raw)
+            self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+            with self.assertRaisesRegex(RuntimeError, "exceeds"):
+                diagnostic._read_source_graph_snapshot(
+                    source,
+                    max_bytes=len(raw) - 1,
+                )
+
     def test_rejects_path_replacement_between_check_and_open(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
