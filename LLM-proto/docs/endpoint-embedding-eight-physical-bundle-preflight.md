@@ -31,6 +31,12 @@ The command fails before any browser work when:
 
 Regular files are opened with no-follow semantics where the host provides them and are re-statted through the open file descriptor. Large payload files are hashed through a bounded 1 MiB buffer rather than being loaded into memory as one `Buffer`.
 
+## Browser diagnostic consumption
+
+When `browser-harness/endpoint-embedding-eight-physical-webgpu/serve.mjs` consumes the generated `PREFLIGHT_REPORT`, it does not perform a path check and then reopen the pathname for the JSON read. The exact report path is opened through the shared descriptor-bound regular-file helper: a pre-open `lstat()` must identify a non-symlink regular file, `O_NOFOLLOW` is used where available, and the opened descriptor must match the pre-open device/inode identity. The JSON bytes are then read from that accepted `FileHandle`, the descriptor is re-statted to catch size drift during the read, and the handle is closed on every path before the validated report is retained by the server.
+
+This closes the report-path check/read TOCTOU gap without changing the report schema or introducing a new report-size policy. A separate bounded-report policy would be a distinct compatibility/resource decision; this hardening only binds the bytes parsed by the diagnostic server to the file object that passed startup validation.
+
 ## Output
 
 On success the command prints a machine-readable JSON report containing:

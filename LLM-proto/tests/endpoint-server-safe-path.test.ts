@@ -5,6 +5,7 @@ import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
   openExistingFileWithinRoot,
+  openExistingNonSymlinkFile,
   resolveExistingFileWithinRoot,
   safePathWithPathApi,
 } from '../browser-harness/webgpu-2b-split/server-safe-path.mjs';
@@ -49,6 +50,42 @@ describe('endpoint diagnostic server path containment', () => {
       const resolved = await resolveExistingFileWithinRoot(root, 'nested/file.js');
       expect(resolved.path).toBe(join(root, 'nested', 'file.js'));
       expect(resolved.info.isFile()).toBe(true);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('opens a direct regular file through the descriptor-bound exact-path helper', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, '{"status":"pass"}\n', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        expect(info.isFile()).toBe(true);
+        expect(await handle.readFile('utf8')).toBe('{"status":"pass"}\n');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a direct symlink through the exact-path helper', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const target = join(workspace, 'target.json');
+    const alias = join(workspace, 'alias.json');
+    try {
+      await writeFile(target, '{}\n', 'utf8');
+      try {
+        await symlink(target, alias, 'file');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EACCES' || code === 'ENOSYS') return;
+        throw error;
+      }
+      await expect(openExistingNonSymlinkFile(alias)).rejects.toThrow('symbolic link');
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
