@@ -22,6 +22,8 @@ const TYPED_ARRAY_TAG_GETTER = Object.getOwnPropertyDescriptor(
   Symbol.toStringTag,
 )?.get;
 const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+const STRING_TRIM = String.prototype.trim;
+const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
 
 function responseSizeError(label: string, maximumBytes: number): Error {
   return new ResponseBodyLimitError(label, maximumBytes);
@@ -65,16 +67,22 @@ function snapshotUint8ArrayChunk(
   }
 }
 
+function assertMaximumBytes(maximumBytes: number, label: string): void {
+  if (!NUMBER_IS_SAFE_INTEGER(maximumBytes) || maximumBytes < 0) {
+    throw new RangeError(`${label} maximumBytes must be a non-negative safe integer`);
+  }
+}
+
 function assertDeclaredResponseSize(
   response: Response,
   maximumBytes: number,
   label: string,
 ): void {
   const headers = (response as Response & { headers?: Headers }).headers;
-  const rawLength = headers?.get?.('Content-Length');
-  if (rawLength === null || rawLength === undefined) return;
+  const rawLength: unknown = headers?.get?.('Content-Length');
+  if (typeof rawLength !== 'string') return;
 
-  const normalized = rawLength.trim();
+  const normalized = Reflect.apply(STRING_TRIM, rawLength, []) as string;
   if (!/^(0|[1-9][0-9]*)$/.test(normalized)) return;
   const declaredBytes = Number(normalized);
   if (!Number.isFinite(declaredBytes) || declaredBytes > maximumBytes) {
@@ -111,12 +119,13 @@ function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): voi
   }
 }
 
-function assertDeclaredResponseSizeOrCancel(
+function assertBoundedResponsePreflightOrCancel(
   response: Response,
   maximumBytes: number,
   label: string,
 ): void {
   try {
+    assertMaximumBytes(maximumBytes, label);
     assertDeclaredResponseSize(response, maximumBytes, label);
   } catch (error) {
     cancelResponseBody(response, error);
@@ -130,7 +139,7 @@ export async function readBoundedResponseBytes(
   maximumBytes: number,
   label: string,
 ): Promise<ArrayBuffer> {
-  assertDeclaredResponseSizeOrCancel(response, maximumBytes, label);
+  assertBoundedResponsePreflightOrCancel(response, maximumBytes, label);
 
   const body = (response as Response & {
     body?: ReadableStream<Uint8Array> | null;
@@ -218,7 +227,7 @@ export async function readBoundedJsonResponse(
 
   // Some embedders/tests expose only response.json(). Preflight declared size,
   // then retain a post-parse encoded-size check so the cap still applies.
-  assertDeclaredResponseSizeOrCancel(response, maximumBytes, label);
+  assertBoundedResponsePreflightOrCancel(response, maximumBytes, label);
   const parseJson = (response as Response & { json?: () => Promise<unknown> }).json;
   if (typeof parseJson !== 'function') {
     throw new Error(`${label} body cannot be read`);
