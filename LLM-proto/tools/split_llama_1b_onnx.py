@@ -362,6 +362,7 @@ def _preflight_external_data_locations(locations: Sequence[str]) -> tuple[str, .
 
 
 def _preflight_external_data_destinations(output_dir: Path, locations: Sequence[str]) -> None:
+    canonical_output_dir = output_dir.resolve(strict=False)
     for location in locations:
         destination = output_dir / location
         if destination.exists() and destination.is_dir() and not destination.is_symlink():
@@ -378,6 +379,14 @@ def _preflight_external_data_destinations(output_dir: Path, locations: Sequence[
                     raise NotADirectoryError(
                         f"external data destination parent is not a directory: {required_parent}"
                     )
+                resolved_parent = required_parent.resolve(strict=False)
+                try:
+                    resolved_parent.relative_to(canonical_output_dir)
+                except ValueError as error:
+                    raise ValueError(
+                        "external data destination parent escapes output directory: "
+                        f"{required_parent} -> {resolved_parent}"
+                    ) from error
 
 
 def materialize_external_data(
