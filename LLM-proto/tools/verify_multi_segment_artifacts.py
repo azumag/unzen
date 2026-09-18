@@ -84,6 +84,9 @@ def _measure_file(
 ) -> tuple[int, str]:
     """Measure one nonblocking regular-file descriptor and fail closed on mutation."""
 
+    if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+        raise ValueError("chunk_size must be a positive integer")
+
     try:
         fd = os.open(path, _readonly_nonblocking_flags())
     except FileNotFoundError:
