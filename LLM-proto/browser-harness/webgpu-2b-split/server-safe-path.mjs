@@ -60,6 +60,45 @@ async function openRegularFileByIdentity(path) {
   }
 }
 
+export async function readBoundedUtf8FileHandle(
+  handle,
+  initialInfo,
+  { maxBytes, field = 'file', chunkBytes = 64 * 1024 },
+) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError('maxBytes must be a non-negative safe integer');
+  }
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) {
+    throw new RangeError('chunkBytes must be a positive safe integer');
+  }
+  if (initialInfo.size > maxBytes) {
+    throw new Error(`${field} exceeds ${maxBytes} bytes`);
+  }
+
+  const chunks = [];
+  let totalBytes = 0;
+  let position = 0;
+  while (true) {
+    const remaining = maxBytes - totalBytes;
+    const readSize = Math.min(chunkBytes, remaining + 1);
+    const chunk = Buffer.allocUnsafe(readSize);
+    const { bytesRead } = await handle.read(chunk, 0, readSize, position);
+    if (bytesRead === 0) break;
+    totalBytes += bytesRead;
+    if (totalBytes > maxBytes) {
+      throw new Error(`${field} exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(chunk.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+
+  const finalInfo = await handle.stat();
+  if (finalInfo.size !== initialInfo.size || totalBytes !== initialInfo.size) {
+    throw new Error(`${field} changed while reading`);
+  }
+  return Buffer.concat(chunks, totalBytes).toString('utf8');
+}
+
 export async function resolveExistingFileWithinRoot(root, relativePath) {
   const path = await canonicalPathWithinRoot(root, relativePath);
   const info = await stat(path);
