@@ -154,8 +154,16 @@ def _unsafe_windows_component(part: str) -> bool:
     )
 
 
+def _contains_ascii_control(value: str) -> bool:
+    """Return whether path text contains C0 controls or DEL."""
+
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _safe_relative(raw: object, *, field: str) -> str:
     value = _text(raw, field=field)
+    if _contains_ascii_control(value):
+        raise ValueError(f"unsafe {field}: {value!r}")
     # PurePath/Path normalize explicit `.` components, repeated separators, and
     # trailing separators. Reject those non-canonical lexical forms first so
     # aliases cannot survive as distinct provenance identities. Treat both
