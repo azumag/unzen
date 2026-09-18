@@ -98,6 +98,7 @@ export async function importGeneratedOnnxSplitManifest(
   const parsedSegments = generatedSegments.map((segment, index) =>
     parseGeneratedSegment(segment, index, budget),
   );
+  validateGeneratedArtifactPathIdentities(parsedSegments);
   validateGeneratedGeometry(parsedSegments);
 
   const memoryEstimates = resolveMemoryEstimates(
@@ -296,6 +297,40 @@ function parseGeneratedSegment(
     graphSha256,
     externalData,
   };
+}
+
+function validateGeneratedArtifactPathIdentities(
+  segments: readonly ParsedGeneratedSegment[],
+): void {
+  const identities = new Map<string, { readonly path: string; readonly segmentIndex: number }>();
+
+  for (const segment of segments) {
+    const componentPaths = [
+      segment.graphPath,
+      ...segment.externalData.map((entry) => entry.path),
+    ];
+    for (const path of componentPaths) {
+      const portableKey = asciiCaseFoldPath(path);
+      const existing = identities.get(portableKey);
+      if (existing !== undefined) {
+        if (existing.path === path) {
+          throw new Error(
+            `generated artifact path ${path} is reused by segments ` +
+            `${existing.segmentIndex} and ${segment.index}`,
+          );
+        }
+        throw new Error(
+          `generated artifact paths ${existing.path} and ${path} are portable case aliases`,
+        );
+      }
+      identities.set(portableKey, { path, segmentIndex: segment.index });
+    }
+  }
+}
+
+function asciiCaseFoldPath(path: string): string {
+  return path.replace(/[A-Z]/g, (character) =>
+    String.fromCharCode(character.charCodeAt(0) + 0x20));
 }
 
 function validateGeneratedGeometry(segments: readonly ParsedGeneratedSegment[]): void {
