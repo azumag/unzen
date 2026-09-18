@@ -404,19 +404,22 @@ def _select_partition(
     ceiling. This avoids enumerating all 2^(layers-1) cut combinations.
     """
 
-    if total_layers <= 0:
-        raise ValueError("total_layers must be positive")
-    if target_bytes <= 0 or required_max_bytes <= 0:
-        raise ValueError("target_bytes and required_max_bytes must be positive")
+    total_layers = _require_positive_int("total_layers", total_layers)
+    target_bytes = _require_positive_int("target_bytes", target_bytes)
+    required_max_bytes = _require_positive_int(
+        "required_max_bytes", required_max_bytes
+    )
     if target_bytes > required_max_bytes:
         raise ValueError("target_bytes cannot exceed required_max_bytes")
 
     costs: dict[tuple[int, int], int] = {}
     for start in range(total_layers):
         for end in range(start + 1, total_layers + 1):
-            cost = int(span_cost(start, end))
-            if cost < 0:
-                raise ValueError(f"negative span cost for [{start}, {end}): {cost}")
+            cost = span_cost(start, end)
+            if not isinstance(cost, int) or isinstance(cost, bool) or cost < 0:
+                raise ValueError(
+                    f"span cost for [{start}, {end}) must be a non-negative integer"
+                )
             costs[(start, end)] = cost
 
     # Exactly zero segments can cover exactly zero layers with a zero maximum.
@@ -508,6 +511,14 @@ def plan_layer_spans(
     required_max_bytes: int,
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """Return cut layers and estimated costs for the optimal feasible partition."""
+
+    hidden_size = _require_positive_int("hidden_size", hidden_size)
+    target_bytes = _require_positive_int("target_bytes", target_bytes)
+    required_max_bytes = _require_positive_int(
+        "required_max_bytes", required_max_bytes
+    )
+    if target_bytes > required_max_bytes:
+        raise ValueError("target_bytes cannot exceed required_max_bytes")
 
     total_layers = discover_total_layers(model)
     cost_cache: dict[tuple[int, int], int] = {}
