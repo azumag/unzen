@@ -111,7 +111,7 @@ def read_stable_regular_file(path: Path, *, max_bytes: int | None = None) -> byt
     if path_stat.st_size > limit:
         raise ValueError(f"evidence file exceeds {limit} bytes: {candidate}")
 
-    flags = os.O_RDONLY
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     # If an attacker swaps the regular path for a FIFO/device between lstat and
