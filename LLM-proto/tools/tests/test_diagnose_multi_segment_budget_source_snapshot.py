@@ -28,6 +28,32 @@ class BudgetDiagnosticSourceSnapshotTest(unittest.TestCase):
             self.assertEqual(observed, raw)
             self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
 
+    def test_snapshot_requests_binary_mode_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "model.onnx"
+            raw = b"line1\r\nline2\x1a\n"
+            source.write_bytes(raw)
+            fake_binary_flag = 1 << 29
+            real_open = os.open
+            observed: dict[str, object] = {}
+
+            def capturing_open(path, flags, *args, **kwargs):
+                observed["path"] = Path(path)
+                observed["flags"] = flags
+                return real_open(path, flags & ~fake_binary_flag, *args, **kwargs)
+
+            with (
+                mock.patch.object(diagnostic.os, "O_BINARY", fake_binary_flag, create=True),
+                mock.patch.object(diagnostic.os, "open", side_effect=capturing_open),
+            ):
+                reported_path, captured, digest = diagnostic._read_source_graph_snapshot(source)
+
+            self.assertEqual(reported_path, source.absolute())
+            self.assertEqual(captured, raw)
+            self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+            self.assertEqual(observed["path"], source.resolve())
+            self.assertTrue(int(observed["flags"]) & fake_binary_flag)
+
     def test_rejects_invalid_max_bytes_before_filesystem_access(self) -> None:
         invalid_limits = (
             True,

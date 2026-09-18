@@ -88,7 +88,7 @@ def _read_source_graph_snapshot(
     if before.st_size > max_bytes:
         raise RuntimeError(f"source model graph exceeds {max_bytes} bytes: {requested}")
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(source, flags)
