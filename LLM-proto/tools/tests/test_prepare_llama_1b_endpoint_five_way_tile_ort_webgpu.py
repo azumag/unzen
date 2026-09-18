@@ -125,6 +125,23 @@ class FiveWayWebGpuPreparationCopyTest(unittest.TestCase):
                 os.close(fd)
             self.assertFalse(destination.exists())
 
+    def test_cleanup_failure_does_not_mask_original_read_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "source.bin"
+            destination = Path(directory) / "payload.bin"
+            source_path.write_bytes(b"source")
+            fd = os.open(source_path, os.O_RDONLY)
+            try:
+                with mock.patch.object(probe.os, "pread", side_effect=OSError("original read failure")):
+                    with mock.patch.object(probe.Path, "unlink", side_effect=OSError("cleanup failure")):
+                        with self.assertRaisesRegex(OSError, "original read failure"):
+                            probe._copy_source_range(
+                                fd, source_offset=0, length=1, destination=destination
+                            )
+            finally:
+                os.close(fd)
+            self.assertTrue(destination.exists())
+
     def test_copy_source_range_never_removes_preexisting_destination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source_path = Path(directory) / "source.bin"
