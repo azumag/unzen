@@ -29,6 +29,49 @@ class EndpointPayloadVerifierReportSnapshotTest(unittest.TestCase):
             self.assertEqual(report, {"kind": "test", "value": 1})
             self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
 
+    def test_invalid_max_bytes_is_rejected_before_path_expansion(self) -> None:
+        class ExpansionMustNotRun:
+            def expanduser(self):
+                raise AssertionError("path expansion reached")
+
+        invalid_limits = (
+            True,
+            False,
+            1.0,
+            1.5,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            0,
+            -1,
+        )
+        for limit in invalid_limits:
+            with self.subTest(max_bytes=limit):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    verifier._load_json_with_sha256(
+                        ExpansionMustNotRun(),  # type: ignore[arg-type]
+                        max_bytes=limit,  # type: ignore[arg-type]
+                    )
+
+    def test_exact_max_bytes_is_accepted_and_smaller_limit_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            raw = b'{"kind":"test","value":1}\n'
+            report_path.write_bytes(raw)
+
+            report, digest = verifier._load_json_with_sha256(
+                report_path,
+                max_bytes=len(raw),
+            )
+            self.assertEqual(report, {"kind": "test", "value": 1})
+            self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds"):
+                verifier._load_json_with_sha256(
+                    report_path,
+                    max_bytes=len(raw) - 1,
+                )
+
     def test_rejects_path_replacement_between_check_and_open(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
