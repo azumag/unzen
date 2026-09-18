@@ -142,9 +142,16 @@ export async function readBoundedResponseBytes(
     let readerCancelled = false;
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const result: unknown = await reader.read();
+        if (result === null || typeof result !== 'object') {
+          throw new Error(`${label} body returned an invalid reader result`);
+        }
+        const done = (result as { done?: unknown }).done;
+        if (typeof done !== 'boolean') {
+          throw new Error(`${label} body returned a non-boolean done flag`);
+        }
         if (done) break;
-        if (value === undefined) continue;
+        const value = (result as { value?: unknown }).value;
         let chunk: Uint8Array;
         try {
           chunk = snapshotUint8ArrayChunk(value, maximumBytes - totalBytes, label);
