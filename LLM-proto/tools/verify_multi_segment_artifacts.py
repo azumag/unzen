@@ -145,7 +145,8 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
-        posix.is_absolute()
+        "\\" in value
+        or posix.is_absolute()
         or windows.is_absolute()
         or bool(windows.drive)
         or bool(windows.root)
