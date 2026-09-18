@@ -34,6 +34,7 @@ from verify_multi_segment_artifacts import sha256_file
 from verify_multi_segment_capture_bundle import verify_capture_bundle
 from verify_multi_segment_capture_source_provenance import (
     _capture_path,
+    _contains_ascii_control,
     _stable_json_object,
 )
 
@@ -94,6 +95,8 @@ def _unsafe_windows_component(part: str) -> bool:
 
 def _relative_path_text(raw: object, *, field: str) -> str:
     value = _non_empty_string(raw, field=field)
+    if _contains_ascii_control(value):
+        raise ValueError(f"unsafe {field}: {value!r}")
     # PurePath normalizes explicit dot components and redundant separators.
     # Reject those spellings before normalization so one source filesystem
     # object cannot survive as multiple provenance identities.
