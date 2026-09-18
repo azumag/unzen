@@ -69,6 +69,10 @@ def _non_empty_string(raw: object, *, field: str) -> str:
     return raw
 
 
+def _contains_ascii_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _unsafe_windows_component(part: str) -> bool:
     if part.endswith((".", " ")):
         return True
@@ -80,6 +84,11 @@ def _unsafe_windows_component(part: str) -> bool:
 
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     value = _non_empty_string(raw, field=field)
+    if _contains_ascii_control(value):
+        raise ValueError(f"unsafe {field}: {value!r}")
+    lexical_parts = re.split(r"[\\/]", value)
+    if any(part in {"", "."} for part in lexical_parts):
+        raise ValueError(f"unsafe {field}: {value}")
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
