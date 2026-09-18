@@ -69,6 +69,9 @@ async function openRegularFileNoFollow(resolvedPath) {
   try {
     const before = await handle.stat();
     if (!before.isFile()) throw new Error(`${resolvedPath} must remain a regular file`);
+    if (before.dev !== pathStat.dev || before.ino !== pathStat.ino) {
+      throw new Error(`${resolvedPath} changed before open`);
+    }
     return { handle, before };
   } catch (error) {
     await handle.close();
