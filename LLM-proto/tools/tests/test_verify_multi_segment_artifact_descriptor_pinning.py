@@ -32,11 +32,21 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
         )
 
         for chunk_size in malformed:
-            with self.subTest(chunk_size=chunk_size):
-                with patch("verify_multi_segment_artifacts.os.open") as open_file:
-                    with self.assertRaisesRegex(ValueError, "chunk_size must be a positive integer"):
-                        _measure_file(Path("never-opened"), chunk_size=chunk_size)  # type: ignore[arg-type]
-                    open_file.assert_not_called()
+            for api in ("measure", "sha256"):
+                with self.subTest(chunk_size=chunk_size, api=api):
+                    with patch("verify_multi_segment_artifacts.os.open") as open_file:
+                        with self.assertRaisesRegex(
+                            ValueError, "chunk_size must be a positive integer"
+                        ):
+                            if api == "measure":
+                                _measure_file(
+                                    Path("never-opened"), chunk_size=chunk_size  # type: ignore[arg-type]
+                                )
+                            else:
+                                sha256_file(
+                                    Path("never-opened"), chunk_size=chunk_size  # type: ignore[arg-type]
+                                )
+                        open_file.assert_not_called()
 
     def test_small_positive_chunk_sizes_hash_complete_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
