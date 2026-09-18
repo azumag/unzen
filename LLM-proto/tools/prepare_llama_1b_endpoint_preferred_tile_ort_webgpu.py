@@ -47,8 +47,10 @@ def _identity(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
 def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple[int, str]:
     """Measure one stable non-symlink regular-file descriptor snapshot."""
 
-    if byte_limit is not None and byte_limit < 0:
-        raise ValueError("byte_limit must be non-negative")
+    if byte_limit is not None and (
+        not isinstance(byte_limit, int) or isinstance(byte_limit, bool) or byte_limit < 0
+    ):
+        raise ValueError("byte_limit must be None or a non-negative integer")
     path = path.expanduser().absolute()
     try:
         before = os.lstat(path)
