@@ -1,8 +1,11 @@
 import { createServer } from 'node:http';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import { basename, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
+import {
+  openExistingFileWithinRoot,
+  openExistingNonSymlinkFile,
+} from '../webgpu-2b-split/server-safe-path.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -39,9 +42,30 @@ async function requireNonSymlinkFile(path, field) {
   return info;
 }
 
+async function openNonSymlinkFileForField(path, field) {
+  try {
+    return await openExistingNonSymlinkFile(path);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'symbolic link') {
+      throw new Error(`${field} must not be a symbolic link`);
+    }
+    if (error instanceof Error && error.message === 'not a file') {
+      throw new Error(`${field} must be a regular file`);
+    }
+    if (error instanceof Error && error.message === 'file changed before open') {
+      throw new Error(`${field} changed before open`);
+    }
+    throw error;
+  }
+}
+
 async function readNonSymlinkJson(path, field) {
-  await requireNonSymlinkFile(path, field);
-  return JSON.parse(await readFile(path, 'utf8'));
+  const { handle } = await openNonSymlinkFileForField(path, field);
+  try {
+    return JSON.parse(await handle.readFile('utf8'));
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 await requireNonSymlinkDirectory(DATA_DIR, 'DATA_DIR');
