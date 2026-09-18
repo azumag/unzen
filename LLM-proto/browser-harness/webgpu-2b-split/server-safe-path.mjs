@@ -45,6 +45,7 @@ function readOnlyNoFollowFlags() {
 
 async function openRegularFileByIdentity(path) {
   const expectedInfo = await lstat(path);
+  if (expectedInfo.isSymbolicLink()) throw new Error('symbolic link');
   if (!expectedInfo.isFile()) throw new Error('not a file');
 
   const handle = await open(path, readOnlyNoFollowFlags());
