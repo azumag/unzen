@@ -119,6 +119,8 @@ def measure_regular_file(
 ) -> tuple[int, str | None]:
     """Measure size and optional SHA-256 from one regular-file descriptor identity."""
 
+    if not isinstance(hash_file, bool):
+        raise ValueError("hash_file must be a boolean")
     requested, resolved, opened, fd = _pin_regular_file(path, label=label)
     digest = hashlib.sha256() if hash_file else None
     observed = 0
