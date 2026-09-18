@@ -368,15 +368,16 @@ def _preflight_external_data_destinations(output_dir: Path, locations: Sequence[
             raise IsADirectoryError(f"external data destination is a directory: {destination}")
 
         parent = output_dir
-        parent_parts = Path(location).parts[:-1]
-        for component in (None, *parent_parts):
-            if parent.exists() or parent.is_symlink():
-                if not parent.is_dir():
+        required_parents = [parent]
+        for component in Path(location).parts[:-1]:
+            parent = parent / component
+            required_parents.append(parent)
+        for required_parent in required_parents:
+            if required_parent.exists() or required_parent.is_symlink():
+                if not required_parent.is_dir():
                     raise NotADirectoryError(
-                        f"external data destination parent is not a directory: {parent}"
+                        f"external data destination parent is not a directory: {required_parent}"
                     )
-            if component is not None:
-                parent = parent / component
 
 
 def materialize_external_data(
