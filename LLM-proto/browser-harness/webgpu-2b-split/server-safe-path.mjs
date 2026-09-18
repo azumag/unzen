@@ -31,7 +31,7 @@ async function canonicalPathWithinRoot(root, relativePath) {
     realpath(lexicalPath),
   ]);
   assertPathWithinRoot(nodePath, canonicalRoot, canonicalPath);
-  return canonicalPath;
+  return { canonicalRoot, canonicalPath };
 }
 
 function sameFileIdentity(expected, actual) {
@@ -74,6 +74,14 @@ async function openRegularFileByIdentity(path) {
     await handle.close().catch(() => {});
     throw error;
   }
+}
+
+export async function verifyOpenedFileWithinRoot(canonicalRoot, path, openedInfo) {
+  const canonicalPath = await realpath(path);
+  assertPathWithinRoot(nodePath, canonicalRoot, canonicalPath);
+  const currentInfo = await stat(canonicalPath);
+  if (!currentInfo.isFile()) throw new Error('not a file');
+  if (!sameFileIdentity(openedInfo, currentInfo)) throw new Error('file changed after open');
 }
 
 export async function readBoundedUtf8FileHandle(
@@ -122,10 +130,10 @@ export async function readBoundedUtf8FileHandle(
 }
 
 export async function resolveExistingFileWithinRoot(root, relativePath) {
-  const path = await canonicalPathWithinRoot(root, relativePath);
-  const info = await stat(path);
+  const { canonicalPath } = await canonicalPathWithinRoot(root, relativePath);
+  const info = await stat(canonicalPath);
   if (!info.isFile()) throw new Error('not a file');
-  return { path, info };
+  return { path: canonicalPath, info };
 }
 
 export async function openExistingNonSymlinkFile(path) {
@@ -133,11 +141,12 @@ export async function openExistingNonSymlinkFile(path) {
 }
 
 export async function openExistingFileWithinRoot(root, relativePath) {
-  const path = await canonicalPathWithinRoot(root, relativePath);
-  const { handle, info } = await openRegularFileByIdentity(path);
+  const { canonicalRoot, canonicalPath } = await canonicalPathWithinRoot(root, relativePath);
+  const { handle, info } = await openRegularFileByIdentity(canonicalPath);
   try {
+    await verifyOpenedFileWithinRoot(canonicalRoot, canonicalPath, info);
     const stream = handle.createReadStream({ autoClose: true });
-    return { path, info, stream };
+    return { path: canonicalPath, info, stream };
   } catch (error) {
     await handle.close().catch(() => {});
     throw error;
