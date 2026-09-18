@@ -25,6 +25,50 @@ class EndpointPayloadProbeSnapshotTest(unittest.TestCase):
 
             self.assertEqual(materializer._read_probe_report_snapshot(probe), expected)
 
+    def test_invalid_max_bytes_is_rejected_before_path_expansion(self) -> None:
+        class ExpansionMustNotRun:
+            def expanduser(self):
+                raise AssertionError("path expansion reached")
+
+        invalid_limits = (
+            True,
+            False,
+            1.0,
+            1.5,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            0,
+            -1,
+        )
+        for limit in invalid_limits:
+            with self.subTest(max_bytes=limit):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    materializer._read_probe_report_snapshot(
+                        ExpansionMustNotRun(),  # type: ignore[arg-type]
+                        max_bytes=limit,  # type: ignore[arg-type]
+                    )
+
+    def test_exact_max_bytes_is_accepted_and_smaller_limit_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            probe = Path(directory) / "probe.json"
+            expected = {"kind": "probe", "decisionStatus": "diagnostic-only"}
+            raw = json.dumps(expected).encode("utf-8")
+            probe.write_bytes(raw)
+
+            self.assertEqual(
+                materializer._read_probe_report_snapshot(
+                    probe,
+                    max_bytes=len(raw),
+                ),
+                expected,
+            )
+            with self.assertRaisesRegex(RuntimeError, "exceeds"):
+                materializer._read_probe_report_snapshot(
+                    probe,
+                    max_bytes=len(raw) - 1,
+                )
+
     def test_rejects_path_replacement_between_check_and_open(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
