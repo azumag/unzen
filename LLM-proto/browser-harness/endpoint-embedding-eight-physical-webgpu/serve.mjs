@@ -3,7 +3,10 @@ import { lstat } from 'node:fs/promises';
 import { basename, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
-import { openExistingNonSymlinkFile } from '../webgpu-2b-split/server-safe-path.mjs';
+import {
+  openExistingNonSymlinkFile,
+  readBoundedUtf8FileHandle,
+} from '../webgpu-2b-split/server-safe-path.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -13,7 +16,6 @@ const PREFLIGHT_REPORT = process.env.PREFLIGHT_REPORT ? resolve(process.env.PREF
 const GRAPH_PATH = process.env.GRAPH_PATH ? resolve(process.env.GRAPH_PATH) : null;
 const PORT = Number(process.env.PORT ?? 8797);
 const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;
-const PREFLIGHT_READ_CHUNK_BYTES = 64 * 1024;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -59,38 +61,13 @@ async function openNonSymlinkFileForField(path, field) {
   }
 }
 
-async function readBoundedUtf8FromHandle(handle, before, field) {
-  if (before.size > MAX_PREFLIGHT_REPORT_BYTES) {
-    throw new Error(`${field} exceeds ${MAX_PREFLIGHT_REPORT_BYTES} bytes`);
-  }
-
-  const chunks = [];
-  let totalBytes = 0;
-  let position = 0;
-  while (true) {
-    const remaining = MAX_PREFLIGHT_REPORT_BYTES - totalBytes;
-    const chunk = Buffer.allocUnsafe(Math.min(PREFLIGHT_READ_CHUNK_BYTES, remaining + 1));
-    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, position);
-    if (bytesRead === 0) break;
-    totalBytes += bytesRead;
-    if (totalBytes > MAX_PREFLIGHT_REPORT_BYTES) {
-      throw new Error(`${field} exceeds ${MAX_PREFLIGHT_REPORT_BYTES} bytes`);
-    }
-    chunks.push(chunk.subarray(0, bytesRead));
-    position += bytesRead;
-  }
-
-  const after = await handle.stat();
-  if (after.size !== before.size || totalBytes !== before.size) {
-    throw new Error(`${field} changed while reading`);
-  }
-  return Buffer.concat(chunks, totalBytes).toString('utf8');
-}
-
 async function readNonSymlinkJson(path, field) {
   const { handle, info: before } = await openNonSymlinkFileForField(path, field);
   try {
-    const text = await readBoundedUtf8FromHandle(handle, before, field);
+    const text = await readBoundedUtf8FileHandle(handle, before, {
+      maxBytes: MAX_PREFLIGHT_REPORT_BYTES,
+      field,
+    });
     return JSON.parse(text);
   } finally {
     await handle.close().catch(() => {});
