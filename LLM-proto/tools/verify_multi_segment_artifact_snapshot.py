@@ -32,6 +32,10 @@ WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
 
 
+def _contains_ascii_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _unsafe_windows_component(part: str) -> bool:
     if part.endswith((".", " ")):
         return True
@@ -360,6 +364,11 @@ def _index(raw: object, *, field: str) -> int:
 
 def _safe_path(root: Path, raw: object, *, field: str) -> tuple[str, Path, tuple[str, ...]]:
     value = _text(raw, field=field)
+    if _contains_ascii_control(value):
+        raise ValueError(f"unsafe {field}: {value!r}")
+    lexical_parts = re.split(r"[\\/]", value)
+    if any(part in {"", "."} for part in lexical_parts):
+        raise ValueError(f"unsafe {field}: {value}")
     posix, windows = PurePosixPath(value), PureWindowsPath(value)
     if (
         posix.is_absolute()
