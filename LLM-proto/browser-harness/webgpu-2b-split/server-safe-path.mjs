@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, open, realpath, stat } from 'node:fs/promises';
 import * as nodePath from 'node:path';
+import { TextDecoder } from 'node:util';
 
 function assertPathWithinRoot(pathApi, root, value) {
   const fromRoot = pathApi.relative(root, value);
@@ -42,6 +43,14 @@ function sameStableReadMetadata(expected, actual) {
     && expected.size === actual.size
     && expected.mtimeMs === actual.mtimeMs
     && expected.ctimeMs === actual.ctimeMs;
+}
+
+function decodeUtf8Strict(data, field) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data);
+  } catch {
+    throw new Error(`${field} is not valid UTF-8`);
+  }
 }
 
 function readOnlyNoFollowFlags() {
@@ -109,7 +118,7 @@ export async function readBoundedUtf8FileHandle(
   ) {
     throw new Error(`${field} changed while reading`);
   }
-  return data.toString('utf8');
+  return decodeUtf8Strict(data, field);
 }
 
 export async function resolveExistingFileWithinRoot(root, relativePath) {
