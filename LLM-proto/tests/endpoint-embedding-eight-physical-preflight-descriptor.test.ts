@@ -18,18 +18,14 @@ function runnerSource() {
 describe('8-physical endpoint preflight descriptor binding', () => {
   it('reads the preflight JSON only from the accepted FileHandle and keeps the host allocation bounded', () => {
     const server = serverSource();
-    expect(server).toContain(
-      "import { openExistingNonSymlinkFile } from '../webgpu-2b-split/server-safe-path.mjs';",
-    );
+    expect(server).toContain('openExistingNonSymlinkFile,');
+    expect(server).toContain('readBoundedUtf8FileHandle,');
     expect(server).toContain(
       'const { handle, info: before } = await openNonSymlinkFileForField(path, field);',
     );
     expect(server).toContain('const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;');
-    expect(server).toContain('if (before.size > MAX_PREFLIGHT_REPORT_BYTES)');
-    expect(server).toContain('const { bytesRead } = await handle.read(');
-    expect(server).toContain('if (totalBytes > MAX_PREFLIGHT_REPORT_BYTES)');
-    expect(server).toContain('const after = await handle.stat();');
-    expect(server).toContain('after.size !== before.size || totalBytes !== before.size');
+    expect(server).toContain('const text = await readBoundedUtf8FileHandle(handle, before, {');
+    expect(server).toContain('maxBytes: MAX_PREFLIGHT_REPORT_BYTES,');
     expect(server).toContain('await handle.close().catch(() => {});');
     expect(server).not.toContain("await handle.readFile('utf8')");
     expect(server).not.toContain("import { lstat, readFile } from 'node:fs/promises';");
