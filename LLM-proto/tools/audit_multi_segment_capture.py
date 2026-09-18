@@ -51,6 +51,10 @@ PATH_RESOLUTION_MODES = frozenset(
 STRONG_PATH_RESOLUTION_MODE = PATH_RESOLUTION_COMPONENT_ANCHORED
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+ASCII_CASE_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
 
 
 def _require_pass(raw: object, *, field: str) -> None:
@@ -116,6 +120,10 @@ def _capture_status(raw: object, *, field: str) -> str:
     return raw
 
 
+def _contains_ascii_control(value: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
 def _unsafe_windows_component(part: str) -> bool:
     if part.endswith((".", " ")):
         return True
@@ -131,10 +139,17 @@ def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]
 
     entries: list[dict[str, object]] = []
     seen_locations: set[str] = set()
+    portable_case_seen: dict[str, str] = {}
+    portable_separator_seen: dict[str, str] = {}
     for index, raw_entry in enumerate(raw):
         prefix = f"{field}[{index}]"
         entry = _require_mapping(raw_entry, field=prefix)
         location = _non_empty_string(entry.get("location"), field=f"{prefix}.location")
+        if _contains_ascii_control(location):
+            raise ValueError(f"unsafe {prefix}.location: {location!r}")
+        lexical_parts = re.split(r"[\\/]", location)
+        if any(part in {"", "."} for part in lexical_parts):
+            raise ValueError(f"unsafe {prefix}.location: {location}")
         posix = PurePosixPath(location)
         windows = PureWindowsPath(location)
         if (
@@ -150,7 +165,26 @@ def _source_external_data(raw: object, *, field: str) -> list[dict[str, object]]
             raise ValueError(f"unsafe {prefix}.location: {location}")
         if location in seen_locations:
             raise ValueError(f"duplicate external-data location in {field}: {location}")
+
+        portable_case_location = location.translate(ASCII_CASE_FOLD)
+        previous_case_location = portable_case_seen.get(portable_case_location)
+        if previous_case_location is not None:
+            raise ValueError(
+                f"portable case alias external-data location in {field}: "
+                f"{location} aliases {previous_case_location}"
+            )
+
+        portable_separator_location = portable_case_location.replace("\\", "/")
+        previous_separator_location = portable_separator_seen.get(portable_separator_location)
+        if previous_separator_location is not None:
+            raise ValueError(
+                f"portable separator alias external-data location in {field}: "
+                f"{location} aliases {previous_separator_location}"
+            )
+
         seen_locations.add(location)
+        portable_case_seen[portable_case_location] = location
+        portable_separator_seen[portable_separator_location] = location
         entries.append(
             {
                 "location": location,

@@ -11,9 +11,11 @@ The delegated verifier return values are runtime inputs to this orchestration la
 
 A `None`, primitive, list/array, or any other non-object container fails closed with an explicit audit validation error. This keeps malformed verifier output inside the same deterministic contract-validation boundary as malformed report fields instead of leaking incidental `.get()`/attribute behavior.
 
-Valid verifier reports retain the existing schema, status, digest, source-artifact, and path-resolution comparison semantics. This change does not alter artifact bytes or choose a segmentation/runtime strategy.
+`sourceExternalData[].location` is also independently validated at this report boundary. The complete audit rejects ASCII C0 controls / DEL, empty or explicit `.` lexical components before `PurePath` normalization, existing absolute/traversal/Windows-unsafe forms, exact duplicates, ASCII case-only aliases, and slash/backslash separator aliases. This mirrors the source verifier's portable provenance identity contract instead of assuming upstream output is trustworthy. Ordinary nested Unicode locations remain valid.
 
-Regression coverage lives in `tools/tests/test_audit_multi_segment_capture_report_container.py`.
+Valid verifier reports retain the existing schema, status, digest, source-artifact, byte-count, and path-resolution comparison semantics. This change does not alter artifact bytes or choose a segmentation/runtime strategy.
+
+Regression coverage lives in `tools/tests/test_audit_multi_segment_capture_report_container.py` and `tools/tests/test_complete_audit_source_path_grammar.py`.
 
 ## Evidence boundary
 
