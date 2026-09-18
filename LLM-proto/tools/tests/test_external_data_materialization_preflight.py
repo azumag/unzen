@@ -80,6 +80,46 @@ class ExternalDataMaterializationPreflightTest(unittest.TestCase):
             self.assertFalse((output_dir / "weights" / "good.bin").exists())
             self.assertFalse(output_dir.exists())
 
+    def test_missing_later_source_cannot_mutate_earlier_destination(self) -> None:
+        for mode in ("copy", "symlink"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source_model = root / "source" / "model.onnx"
+                source = source_model.parent / "weights" / "good.bin"
+                source.parent.mkdir(parents=True)
+                source.write_bytes(b"new")
+
+                output_dir = root / "output"
+                existing = output_dir / "weights" / "good.bin"
+                existing.parent.mkdir(parents=True)
+                existing.write_bytes(b"old")
+
+                with self.assertRaisesRegex(FileNotFoundError, "external data file not found"):
+                    splitter.materialize_external_data(
+                        source_model,
+                        output_dir,
+                        ["weights/good.bin", "weights/missing.bin"],
+                        mode,
+                    )
+
+                self.assertFalse(existing.is_symlink())
+                self.assertEqual(existing.read_bytes(), b"old")
+                self.assertFalse((output_dir / "weights" / "missing.bin").exists())
+
+    def test_none_mode_skips_source_lookup_after_location_preflight(self) -> None:
+        with mock.patch.object(
+            Path,
+            "exists",
+            side_effect=AssertionError("none mode must not inspect source files"),
+        ) as exists_mock:
+            splitter.materialize_external_data(
+                Path("unused/model.onnx"),
+                Path("unused-output"),
+                ["weights/nested/chunk.bin"],
+                "none",
+            )
+        exists_mock.assert_not_called()
+
     def test_nested_relative_location_preserves_copy_symlink_and_none_modes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
