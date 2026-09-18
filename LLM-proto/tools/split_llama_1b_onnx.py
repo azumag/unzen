@@ -56,6 +56,8 @@ class SplitPlan:
 
 
 def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
+    if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+        raise ValueError("chunk_size must be a positive integer")
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         while True:
