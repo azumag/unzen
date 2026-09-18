@@ -29,7 +29,7 @@ The command fails before any browser work when:
 - any of the eight payload files is missing, a symlink, not a regular file, has the wrong byte count, or hashes differently from the generated manifest
 - the payload/tile geometry is no longer 1:1, contiguous, zero-offset, or diagnostic-only
 
-Regular files are opened with no-follow semantics where the host provides them and are re-statted through the open file descriptor. Large payload files are hashed through a bounded 1 MiB buffer rather than being loaded into memory as one `Buffer`.
+Regular files are opened with no-follow semantics where the host provides them and are re-statted through the open file descriptor. The descriptor's device/inode identity must match the non-symlink regular file observed by the pre-open `lstat()`, so a regular-file pathname rebind before `open()` fails before any bytes are consumed. Large payload files are hashed through a bounded 1 MiB buffer rather than being loaded into memory as one `Buffer`.
 
 ## Browser diagnostic consumption
 
