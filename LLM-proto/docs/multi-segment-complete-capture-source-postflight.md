@@ -25,7 +25,7 @@ The postflight source verification must retain the expected source-verifier `kin
 - external-data entry count and aggregate byte count; and
 - `sourcePathResolutionMode`.
 
-The external-data list is revalidated before comparison: unsafe paths, duplicate locations, malformed byte counts, and non-canonical SHA-256 values fail closed. Aggregate count and byte totals must also agree with the entries.
+The external-data list is revalidated before comparison: unsafe paths, exact duplicate locations, ASCII case-only portable path aliases, malformed byte counts, and non-canonical SHA-256 values fail closed. The portable alias guard intentionally folds only ASCII `A-Z`; broader Unicode or locale normalization remains outside this contract. Manifest source locations are normalized before the verifier opens or hashes source artifacts, so a portable alias fails before source-file I/O begins. Aggregate count and byte totals must also agree with the entries.
 
 When `--require-component-anchored-source` is used, the requirement is applied to both source observations. A postflight fallback to `final-component-only` therefore fails even if the earlier source observation used `component-anchored-dirfd`.
 
