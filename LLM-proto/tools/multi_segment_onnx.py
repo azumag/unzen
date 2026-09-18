@@ -71,8 +71,8 @@ def _read_source_graph_snapshot(
 ) -> tuple[bytes, str]:
     """Capture one bounded graph snapshot for both ONNX parsing and identity."""
 
-    if max_bytes <= 0:
-        raise ValueError("max_bytes must be positive")
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
     requested = source_model_path.expanduser().absolute()
     try:
         source = requested.resolve(strict=True)
