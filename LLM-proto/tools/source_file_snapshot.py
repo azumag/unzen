@@ -30,7 +30,7 @@ def _pin_regular_file(path: Path, *, label: str) -> tuple[Path, Path, os.stat_re
     if not stat.S_ISREG(before.st_mode):
         raise RuntimeError(f"{label} must resolve to a regular file: {requested}")
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(resolved, flags)
