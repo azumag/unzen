@@ -106,8 +106,8 @@ def _load_json_with_sha256(
 ) -> tuple[dict[str, object], str]:
     """Read and hash one JSON report from a stable regular-file snapshot."""
 
-    if max_bytes <= 0:
-        raise ValueError("max_bytes must be positive")
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
     path = path.expanduser().absolute()
     try:
         before = os.lstat(path)
@@ -247,7 +247,6 @@ def _expected_pinned_tier_budget(*, stage_kind: str, tier: str) -> dict[str, obj
         "remainingHeadroomBytes": remaining_headroom_bytes,
         "feasible": True,
     }
-
 
 def _expected_pinned_source_payload_chunks(
     *, stage_kind: str, tier: str
@@ -497,7 +496,6 @@ def _validate_source_payload_chunks(
 
         expected_row = end_row
         expected_source_offset = source_end
-
     assert source_location is not None
     assert coverage_start is not None
     assert expected_source_offset is not None
