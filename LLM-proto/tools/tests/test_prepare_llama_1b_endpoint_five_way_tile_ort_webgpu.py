@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import onnx
 
@@ -106,6 +107,39 @@ class FiveWayWebGpuPreparationCopyTest(unittest.TestCase):
                     )
             finally:
                 os.close(fd)
+            self.assertFalse(destination.exists())
+
+    def test_copy_source_range_removes_destination_after_read_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "source.bin"
+            destination = Path(directory) / "payload.bin"
+            source_path.write_bytes(b"source")
+            fd = os.open(source_path, os.O_RDONLY)
+            try:
+                with mock.patch.object(probe.os, "pread", side_effect=OSError("injected read failure")):
+                    with self.assertRaisesRegex(OSError, "injected read failure"):
+                        probe._copy_source_range(
+                            fd, source_offset=0, length=1, destination=destination
+                        )
+            finally:
+                os.close(fd)
+            self.assertFalse(destination.exists())
+
+    def test_copy_source_range_never_removes_preexisting_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "source.bin"
+            destination = Path(directory) / "payload.bin"
+            source_path.write_bytes(b"source")
+            destination.write_bytes(b"keep")
+            fd = os.open(source_path, os.O_RDONLY)
+            try:
+                with self.assertRaises(FileExistsError):
+                    probe._copy_source_range(
+                        fd, source_offset=0, length=1, destination=destination
+                    )
+            finally:
+                os.close(fd)
+            self.assertEqual(destination.read_bytes(), b"keep")
 
 
 if __name__ == "__main__":
