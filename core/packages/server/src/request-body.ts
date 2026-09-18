@@ -21,6 +21,8 @@ const TYPED_ARRAY_TAG_GETTER = Object.getOwnPropertyDescriptor(
   Symbol.toStringTag,
 )?.get;
 const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+const STRING_TRIM = String.prototype.trim;
+const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
 
 function snapshotRequestChunk(
   value: unknown,
@@ -73,15 +75,22 @@ export function cancelUnreadRequestBody(request: Request): void {
   }
 }
 
+function assertMaximumBytes(maximumBytes: number, label: string): void {
+  if (!NUMBER_IS_SAFE_INTEGER(maximumBytes) || maximumBytes < 0) {
+    throw new RangeError(`${label} maximumBytes must be a non-negative safe integer`);
+  }
+}
+
 function assertDeclaredRequestSize(
   request: Request,
   maximumBytes: number,
   label: string,
 ): void {
-  const rawLength = request.headers.get('Content-Length');
-  if (rawLength === null) return;
+  const headers = (request as Request & { headers?: Headers }).headers;
+  const rawLength: unknown = headers?.get?.('Content-Length');
+  if (typeof rawLength !== 'string') return;
 
-  const normalized = rawLength.trim();
+  const normalized = Reflect.apply(STRING_TRIM, rawLength, []) as string;
   if (!/^(0|[1-9][0-9]*)$/.test(normalized)) return;
   const declaredBytes = Number(normalized);
   if (!Number.isFinite(declaredBytes) || declaredBytes > maximumBytes) {
@@ -89,12 +98,13 @@ function assertDeclaredRequestSize(
   }
 }
 
-function assertDeclaredRequestSizeOrCancel(
+function assertBoundedRequestPreflightOrCancel(
   request: Request,
   maximumBytes: number,
   label: string,
 ): void {
   try {
+    assertMaximumBytes(maximumBytes, label);
     assertDeclaredRequestSize(request, maximumBytes, label);
   } catch (error) {
     cancelUnreadRequestBody(request);
@@ -107,7 +117,7 @@ export async function readBoundedJsonRequest(
   maximumBytes: number,
   label: string,
 ): Promise<unknown> {
-  assertDeclaredRequestSizeOrCancel(request, maximumBytes, label);
+  assertBoundedRequestPreflightOrCancel(request, maximumBytes, label);
 
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
@@ -117,9 +127,16 @@ export async function readBoundedJsonRequest(
     let readerCancelled = false;
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const result: unknown = await reader.read();
+        if (result === null || typeof result !== 'object') {
+          throw new TypeError(`${label} body returned an invalid reader result`);
+        }
+        const done = (result as { done?: unknown }).done;
+        if (typeof done !== 'boolean') {
+          throw new TypeError(`${label} body returned a non-boolean done flag`);
+        }
         if (done) break;
-        if (value === undefined) continue;
+        const value = (result as { value?: unknown }).value;
         let chunk: Uint8Array;
         try {
           chunk = snapshotRequestChunk(value, maximumBytes - totalBytes, label);
