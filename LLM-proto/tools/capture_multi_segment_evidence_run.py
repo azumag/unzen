@@ -158,18 +158,27 @@ def _require_integrity_pass(report: object) -> dict[str, object]:
         )
     if not isinstance(report.get("manifestSha256"), str):
         raise ValueError("artifact-integrity preflight is missing manifestSha256")
-    if not isinstance(report.get("segmentCount"), int) or report["segmentCount"] <= 0:
-        raise ValueError("artifact-integrity preflight has invalid segmentCount")
+    segment_count = report.get("segmentCount")
     if (
-        not isinstance(report.get("maximumSegmentArtifactBytes"), int)
-        or report["maximumSegmentArtifactBytes"] <= 0
+        isinstance(segment_count, bool)
+        or not isinstance(segment_count, int)
+        or segment_count <= 0
+    ):
+        raise ValueError("artifact-integrity preflight has invalid segmentCount")
+    maximum_segment_artifact_bytes = report.get("maximumSegmentArtifactBytes")
+    if (
+        isinstance(maximum_segment_artifact_bytes, bool)
+        or not isinstance(maximum_segment_artifact_bytes, int)
+        or maximum_segment_artifact_bytes <= 0
     ):
         raise ValueError(
             "artifact-integrity preflight has invalid maximumSegmentArtifactBytes"
         )
+    effective_required_max_bytes = report.get("effectiveRequiredMaxBytes")
     if (
-        not isinstance(report.get("effectiveRequiredMaxBytes"), int)
-        or report["effectiveRequiredMaxBytes"] <= 0
+        isinstance(effective_required_max_bytes, bool)
+        or not isinstance(effective_required_max_bytes, int)
+        or effective_required_max_bytes <= 0
     ):
         raise ValueError(
             "artifact-integrity preflight has invalid effectiveRequiredMaxBytes"
