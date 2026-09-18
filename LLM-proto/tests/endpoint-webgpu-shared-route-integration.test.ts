@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ const EIGHT_PHYSICAL_TILE_BYTES = 131_334_144;
 const EIGHT_PHYSICAL_ROWS_PER_TILE = 16_032;
 const EIGHT_PHYSICAL_GRAPH_FILE = 'embedding-offset-0.onnx';
 const EIGHT_PHYSICAL_GRAPH_SHA256 = '70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50';
+const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -50,6 +51,17 @@ async function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void>
     child.once('exit', () => {
       clearTimeout(timeout);
       resolve();
+    });
+  });
+}
+
+async function waitForExit(child: ChildProcessWithoutNullStreams): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return child.exitCode;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('endpoint diagnostic server did not exit')), 5_000);
+    child.once('exit', (code) => {
+      clearTimeout(timeout);
+      resolve(code);
     });
   });
 }
@@ -176,4 +188,38 @@ describe('endpoint WebGPU shared-module server routes', () => {
       }
     }, 15_000);
   }
+
+  it('rejects an oversized 8-physical preflight report before listening', async () => {
+    const harness = 'endpoint-embedding-eight-physical-webgpu';
+    const dataDir = await mkdtemp(join(tmpdir(), 'unzen-endpoint-eight-physical-oversized-'));
+    const port = await getFreePort();
+    const preflightPath = join(dataDir, 'oversized-preflight.json');
+    const graphPath = join(dataDir, EIGHT_PHYSICAL_GRAPH_FILE);
+    const servePath = fileURLToPath(
+      new URL(`../browser-harness/${harness}/serve.mjs`, import.meta.url),
+    );
+    await writeFile(preflightPath, '');
+    await truncate(preflightPath, MAX_PREFLIGHT_REPORT_BYTES + 1);
+
+    const child = spawn(process.execPath, [servePath], {
+      env: {
+        ...process.env,
+        DATA_DIR: dataDir,
+        PREFLIGHT_REPORT: preflightPath,
+        GRAPH_PATH: graphPath,
+        PORT: String(port),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    try {
+      const exitCode = await waitForExit(child);
+      const stderr = child.stderr.read()?.toString() ?? '';
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain(`PREFLIGHT_REPORT exceeds ${MAX_PREFLIGHT_REPORT_BYTES} bytes`);
+    } finally {
+      await stopProcess(child);
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
