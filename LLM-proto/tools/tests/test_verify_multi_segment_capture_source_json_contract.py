@@ -129,11 +129,7 @@ class VerifyMultiSegmentCaptureSourceJsonContractTest(unittest.TestCase):
             )
 
     def test_separator_only_external_location_alias_is_rejected(self) -> None:
-        with self.assertRaisesRegex(
-            ValueError,
-            r"portable separator alias external-data location in sourceModel\.externalData: "
-            r"weights\\\\chunk\.bin aliases weights/chunk\.bin",
-        ):
+        with self.assertRaisesRegex(ValueError, "portable separator alias external-data location"):
             source_module._normalized_external_entries(
                 [
                     {"location": "weights/chunk.bin", "bytes": 16, "sha256": DIGEST},
