@@ -80,8 +80,8 @@ def read_regular_file_snapshot(
 ) -> tuple[bytes, str]:
     """Read one bounded regular-file descriptor snapshot and return bytes + SHA-256."""
 
-    if max_bytes <= 0:
-        raise ValueError("max_bytes must be positive")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
     requested, resolved, opened, fd = _pin_regular_file(path, label=label)
     if opened.st_size > max_bytes:
         os.close(fd)
