@@ -147,6 +147,47 @@ class ArtifactPathAliasPreflightTest(unittest.TestCase):
             ):
                 verify_artifact_integrity(manifest_path)
 
+    def test_rejects_case_only_graph_alias_across_segments_before_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["segments"][1]["path"] = "SEGMENT0.ONNX"
+            self._save(manifest_path, manifest)
+
+            with patch.object(verifier, "_measure_file", wraps=verifier._measure_file) as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"portable case alias declared artifact path: segments\[1\]\.path aliases segments\[0\]\.path",
+                ):
+                    verify_artifact_integrity(manifest_path)
+            measure.assert_not_called()
+
+    def test_rejects_case_only_external_alias_across_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["segments"][1]["externalData"][0]["location"] = "SEGMENT0.ONNX_DATA"
+            self._save(manifest_path, manifest)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"portable case alias declared artifact path: segments\[1\]\.externalData\[0\]\.location aliases segments\[0\]\.externalData\[0\]\.location",
+            ):
+                verify_artifact_integrity(manifest_path)
+
+    def test_rejects_case_only_external_aliasing_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["segments"][0]["externalData"][0]["location"] = "SEGMENT0.ONNX"
+            self._save(manifest_path, manifest)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"portable case alias declared artifact path: segments\[0\]\.externalData\[0\]\.location aliases segments\[0\]\.path",
+            ):
+                verify_artifact_integrity(manifest_path)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,10 @@ ARTIFACT_LAYOUT = "per-segment-external-data"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+ASCII_CASE_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
 
 
 def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
@@ -202,24 +206,43 @@ def _tier(byte_size: int, budget: dict[str, object]) -> str:
     return "rejected"
 
 
+def _portable_artifact_path_key(path: Path) -> str:
+    """Return an ASCII-case-folded identity portable to common Windows filesystems."""
+
+    return path.as_posix().translate(ASCII_CASE_FOLD)
+
+
 def _claim_artifact_path(
     seen: dict[Path, str],
+    portable_seen: dict[str, tuple[Path, str]],
     path: Path,
     *,
     field: str,
 ) -> None:
-    """Require one resolved filesystem path per declared graph/external-data role."""
+    """Require one portable filesystem path per declared graph/external-data role."""
 
     previous = seen.get(path)
     if previous is not None:
         raise ValueError(f"duplicate declared artifact path: {field} aliases {previous}")
+
+    portable_key = _portable_artifact_path_key(path)
+    portable_previous = portable_seen.get(portable_key)
+    if portable_previous is not None:
+        previous_path, previous_field = portable_previous
+        if previous_path != path:
+            raise ValueError(
+                f"portable case alias declared artifact path: {field} aliases {previous_field}"
+            )
+
     seen[path] = field
+    portable_seen[portable_key] = (path, field)
 
 
 def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
     """Reject unsafe/aliased artifact declarations before hashing any payload bytes."""
 
     seen_artifact_paths: dict[Path, str] = {}
+    portable_artifact_paths: dict[str, tuple[Path, str]] = {}
     for expected_index, raw_segment in enumerate(raw_segments):
         if not isinstance(raw_segment, dict):
             raise ValueError(f"segment {expected_index} must be an object")
@@ -233,7 +256,12 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
 
         graph_field = f"segments[{index}].path"
         graph_path = _safe_relative_path(root, raw_segment.get("path"), field=graph_field)
-        _claim_artifact_path(seen_artifact_paths, graph_path, field=graph_field)
+        _claim_artifact_path(
+            seen_artifact_paths,
+            portable_artifact_paths,
+            graph_path,
+            field=graph_field,
+        )
 
         raw_external = raw_segment.get("externalData")
         if not isinstance(raw_external, list):
@@ -251,6 +279,7 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
             )
             _claim_artifact_path(
                 seen_artifact_paths,
+                portable_artifact_paths,
                 external_path,
                 field=location_field,
             )
