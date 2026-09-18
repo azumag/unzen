@@ -43,6 +43,10 @@ REPORT_SCHEMA_VERSION = "1.0.0"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+ASCII_CASE_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
 PATH_RESOLUTION_COMPONENT_ANCHORED = "component-anchored-dirfd"
 PATH_RESOLUTION_FINAL_ONLY = "final-component-only"
 
@@ -558,6 +562,7 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
         raise ValueError(f"{field} must be an array")
     normalized: list[dict[str, object]] = []
     seen: set[str] = set()
+    portable_seen: dict[str, str] = {}
     for index, raw_entry in enumerate(raw):
         prefix = f"{field}[{index}]"
         entry = _require_mapping(raw_entry, field=prefix)
@@ -567,7 +572,15 @@ def _normalized_external_entries(raw: object, *, field: str) -> list[dict[str, o
         )
         if location in seen:
             raise ValueError(f"duplicate external-data location in {field}: {location}")
+        portable_location = location.translate(ASCII_CASE_FOLD)
+        previous_location = portable_seen.get(portable_location)
+        if previous_location is not None:
+            raise ValueError(
+                f"portable case alias external-data location in {field}: "
+                f"{location} aliases {previous_location}"
+            )
         seen.add(location)
+        portable_seen[portable_location] = location
         normalized.append(
             {
                 "location": location,
