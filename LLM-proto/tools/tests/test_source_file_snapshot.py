@@ -41,6 +41,31 @@ class SourceFileSnapshotTests(unittest.TestCase):
         self.assertEqual(size, len(payload))
         self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
 
+    def test_invalid_hash_controls_fail_before_filesystem_access(self) -> None:
+        invalid_controls: tuple[object, ...] = (
+            None,
+            0,
+            1,
+            "",
+            "sha256",
+            (),
+            [],
+            object(),
+        )
+        with patch.object(
+            target,
+            "_pin_regular_file",
+            side_effect=AssertionError("invalid hash controls must fail before filesystem access"),
+        ):
+            for value in invalid_controls:
+                with self.subTest(hash_file=value):
+                    with self.assertRaisesRegex(ValueError, "must be a boolean"):
+                        target.measure_regular_file(
+                            Path("unused.bin"),
+                            hash_file=value,  # type: ignore[arg-type]
+                            label="external data",
+                        )
+
     def test_no_hash_mode_does_not_read_payload(self) -> None:
         payload = b"size-only-external-data"
         with tempfile.TemporaryDirectory() as raw_dir:
