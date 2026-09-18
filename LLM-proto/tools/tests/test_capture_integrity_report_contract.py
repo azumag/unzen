@@ -42,6 +42,17 @@ class CaptureIntegrityReportContractTest(unittest.TestCase):
             "integrity": integrity,
         }
 
+    @staticmethod
+    def _evidence(artifact_integrity: dict[str, object]) -> dict[str, object]:
+        return {
+            "status": "pass",
+            "verificationSha256": "c" * 64,
+            "verification": {
+                "status": "pass",
+                "artifactIntegrity": artifact_integrity,
+            },
+        }
+
     def test_valid_positive_integer_metadata_is_accepted(self) -> None:
         report = self._integrity()
         self.assertIs(capture_module._require_integrity_pass(report), report)
@@ -58,6 +69,18 @@ class CaptureIntegrityReportContractTest(unittest.TestCase):
                     report[field] = value
                     with self.assertRaisesRegex(ValueError, f"invalid {field}"):
                         capture_module._require_integrity_pass(report)
+
+    def test_embedded_boolean_segment_count_is_rejected_even_when_equal_to_one(self) -> None:
+        preflight = self._integrity()
+        preflight["segmentCount"] = 1
+        embedded = dict(preflight)
+        embedded["segmentCount"] = True
+
+        with self.assertRaisesRegex(ValueError, "invalid segmentCount"):
+            capture_module._require_evidence_matches_preflight(
+                self._evidence(embedded),
+                preflight,
+            )
 
     def test_malformed_integrity_report_stops_capture_before_numerical_work(self) -> None:
         malformed = self._integrity()
@@ -93,6 +116,46 @@ class CaptureIntegrityReportContractTest(unittest.TestCase):
                     )
 
             collect.assert_not_called()
+            write.assert_not_called()
+            self.assertFalse(destination.exists())
+
+    def test_malformed_embedded_integrity_stops_publication_after_numerical_work(self) -> None:
+        preflight = self._integrity()
+        preflight["segmentCount"] = 1
+        embedded = dict(preflight)
+        embedded["segmentCount"] = True
+
+        with tempfile.TemporaryDirectory() as raw_dir:
+            destination = Path(raw_dir) / "capture"
+            with (
+                patch.object(capture_module, "ensure_provider_available"),
+                patch.object(capture_module, "sha256_file", return_value="b" * 64),
+                patch.object(capture_module, "prepare_budgeted_multi_split"),
+                patch.object(
+                    capture_module,
+                    "_require_source_graph_snapshot",
+                    return_value=self.MANIFEST_SHA256,
+                ),
+                patch.object(
+                    capture_module,
+                    "verify_artifact_snapshot",
+                    return_value=self._snapshot(preflight),
+                ),
+                patch.object(
+                    capture_module,
+                    "collect_evidence",
+                    return_value=self._evidence(embedded),
+                ) as collect,
+                patch.object(capture_module, "write_evidence") as write,
+            ):
+                with self.assertRaisesRegex(ValueError, "invalid segmentCount"):
+                    capture_module.capture_run(
+                        Path(raw_dir) / "model_q4.onnx",
+                        destination,
+                        [1],
+                    )
+
+            collect.assert_called_once()
             write.assert_not_called()
             self.assertFalse(destination.exists())
 
