@@ -13,10 +13,55 @@ TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-from verify_multi_segment_artifacts import _measure_file  # noqa: E402
+from verify_multi_segment_artifacts import _measure_file, sha256_file  # noqa: E402
 
 
 class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
+    def test_rejects_invalid_chunk_sizes_before_filesystem_open(self) -> None:
+        malformed = (
+            0,
+            -1,
+            True,
+            False,
+            1.0,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            "4",
+            None,
+        )
+
+        for chunk_size in malformed:
+            for api in ("measure", "sha256"):
+                with self.subTest(chunk_size=chunk_size, api=api):
+                    with patch("verify_multi_segment_artifacts.os.open") as open_file:
+                        with self.assertRaisesRegex(
+                            ValueError, "chunk_size must be a positive integer"
+                        ):
+                            if api == "measure":
+                                _measure_file(
+                                    Path("never-opened"), chunk_size=chunk_size  # type: ignore[arg-type]
+                                )
+                            else:
+                                sha256_file(
+                                    Path("never-opened"), chunk_size=chunk_size  # type: ignore[arg-type]
+                                )
+                        open_file.assert_not_called()
+
+    def test_small_positive_chunk_sizes_hash_complete_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "segment.onnx"
+            payload = b"artifact-hash-contract"
+            target.write_bytes(payload)
+            expected_sha = hashlib.sha256(payload).hexdigest()
+
+            for chunk_size in (1, 2, 7, len(payload), len(payload) + 3):
+                with self.subTest(chunk_size=chunk_size):
+                    measured_bytes, measured_sha = _measure_file(target, chunk_size=chunk_size)
+                    self.assertEqual(measured_bytes, len(payload))
+                    self.assertEqual(measured_sha, expected_sha)
+                    self.assertEqual(sha256_file(target, chunk_size=chunk_size), expected_sha)
+
     def test_path_replacement_after_open_keeps_original_descriptor_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
