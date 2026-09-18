@@ -194,8 +194,8 @@ def _read_probe_report_snapshot(
 ) -> dict[str, object]:
     """Read one bounded probe report from a stable non-symlink file snapshot."""
 
-    if max_bytes <= 0:
-        raise ValueError("max_bytes must be positive")
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
     path = path.expanduser().absolute()
     try:
         before = os.lstat(path)
