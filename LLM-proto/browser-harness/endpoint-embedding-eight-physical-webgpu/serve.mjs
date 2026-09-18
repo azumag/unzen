@@ -2,10 +2,8 @@ import { createServer } from 'node:http';
 import { lstat } from 'node:fs/promises';
 import { basename, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  openExistingFileWithinRoot,
-  openExistingNonSymlinkFile,
-} from '../webgpu-2b-split/server-safe-path.mjs';
+import { openExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
+import { openExistingNonSymlinkFile } from '../webgpu-2b-split/server-safe-path.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
