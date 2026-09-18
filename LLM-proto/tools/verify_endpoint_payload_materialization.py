@@ -76,6 +76,12 @@ def _required_int(value: object, *, field: str) -> int:
     return value
 
 
+def _require_positive_buffer_bytes(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("buffer_bytes must be a positive integer")
+    return value
+
+
 def _required_str(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise RuntimeError(f"{field} must be a non-empty string")
@@ -247,6 +253,7 @@ def _expected_pinned_tier_budget(*, stage_kind: str, tier: str) -> dict[str, obj
         "remainingHeadroomBytes": remaining_headroom_bytes,
         "feasible": True,
     }
+
 
 def _expected_pinned_source_payload_chunks(
     *, stage_kind: str, tier: str
@@ -562,8 +569,7 @@ def _sha256_payload_at(
     buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
     expected_stat_signature: tuple[int, int, int, int, int] | None = None,
 ) -> str:
-    if buffer_bytes <= 0:
-        raise ValueError("buffer_bytes must be positive")
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         payload_fd = os.open(name, flags, dir_fd=directory_fd)
@@ -610,8 +616,7 @@ def _sha256_file_and_ranges(
 ) -> tuple[str, list[str]]:
     """Hash the complete file and non-overlapping byte ranges in one stable pass."""
 
-    if buffer_bytes <= 0:
-        raise ValueError("buffer_bytes must be positive")
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     normalized = list(ranges)
     previous_end = 0
     for index, (source_offset, payload_bytes) in enumerate(normalized):
@@ -689,6 +694,7 @@ def verify_materialization_payloads(
 ) -> dict[str, object]:
     """Verify one producer report and payload set against source-backed expectations."""
 
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     chunks = list(expected_chunks)
     if not chunks:
         raise RuntimeError("expected chunk blueprint must not be empty")
@@ -967,6 +973,7 @@ def verify_pinned_probe_materialization(
 ) -> dict[str, object]:
     """Derive pinned expectations locally, then verify source-backed producer evidence."""
 
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     chunks = _chunks_from_probe_report(
         probe_report,
         stage_kind=stage_kind,
