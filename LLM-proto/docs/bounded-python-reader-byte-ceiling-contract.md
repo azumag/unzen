@@ -12,10 +12,10 @@ The following helpers follow this contract and have focused regression coverage 
 
 - `tools/diagnose_multi_segment_budget.py::_read_source_graph_snapshot()`
 - `tools/multi_segment_onnx.py::_read_source_graph_snapshot()`
-
-Issue #1075 tracks aligning the remaining older bounded readers with the same rule:
-
 - `tools/materialize_endpoint_payload_chunks.py::_read_probe_report_snapshot()`
+
+Issue #1075 tracks aligning the remaining older bounded reader with the same rule:
+
 - `tools/verify_endpoint_payload_materialization.py::_load_json_with_sha256()`
 
 This hardening is local input-validation work. It does not change production deployment, browser artifact policy, publication concurrency, or legacy durable deadline semantics.
