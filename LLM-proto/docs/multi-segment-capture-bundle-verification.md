@@ -53,7 +53,7 @@ verifier は少なくとも次を fail-close で確認する。
 7. embedded `verification` の canonical JSON SHA-256 が、evidence envelope と run summary の `verificationSha256` に一致すること。
 8. run summary / evidence envelope / embedded verification の `status` が一致すること。
 9. source graph SHA-256 が run summary と embedded verification で一致すること。
-10. provider、input token IDs、KV heads、head size、`atol`、`rtol` が run summary と evidence envelopeで一致し、provider/token IDs は embedded verification とも一致すること。
+10. runtime parameter を cross-bind する前に、それぞれを型・範囲で検証すること。provider は non-empty string、input token IDs は non-empty array of exact non-negative integers（`bool` は拒否）、KV heads / head size は exact positive integers、`atol` / `rtol` は finite non-negative numbers でなければならない。run summary の `hiddenSize` / `targetBytes` / `preferredMaxBytes` も exact positive integers とし、`targetBytes <= preferredMaxBytes` を要求する。その後で provider、input token IDs、KV heads、head size、`atol`、`rtol` が run summary と evidence envelopeで一致し、provider/token IDs は embedded verification とも一致すること。これにより `True == 1` のような Python equality alias や `Infinity` / `NaN` を一致値として受理しない。
 11. 成功を返す直前に `run-summary.json`、選択済み split manifest、`same-machine-evidence.json` を既存の bounded / descriptor-stable JSON reader で再snapshotし、開始時またはartifact auditで確定した digest と一致すること。
 
 最後の再snapshotにより、multi-gigabyte artifact audit中に summary が差し替えられた場合、artifact snapshot完了後に manifest が別byte列へ更新された場合、または evidence の初回read後に evidence が変更された場合でも、古いin-memory controlを根拠に `status=pass` を返さない。これは成功時点の control byte snapshot consistency を保証するものであり、監査全体を通じて pathname inode を固定するtransactionではない。同じbyte列へ戻ったreplacementは同じdigest identityとして扱う。
