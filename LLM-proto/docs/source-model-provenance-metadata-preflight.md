@@ -13,14 +13,18 @@ Before the first source `_measure_file()` call, the verifier now validates the c
 - `sourceModel.externalData` is an array;
 - every external-data entry is an object;
 - every `location` is non-empty and passes the existing safe-relative-path rules;
+- raw external-data location spelling is canonical before `PurePath` / filesystem normalization: leading/trailing/repeated `/` or `\\` separators, explicit `.` components, empty components, ASCII control characters, and DEL are rejected;
+- external-data locations are unique by portable identity as well as exact spelling: ASCII case aliases and `/` versus `\\` separator aliases are rejected before source filesystem identity checks;
 - the resolved source graph path is reserved for the graph role and cannot also be declared as external data;
-- external-data locations are globally unique by resolved filesystem path, so syntactic aliases such as `weights.bin` and `./weights.bin` cannot name the same payload twice;
+- external-data locations are globally unique by resolved filesystem path, so filesystem aliases such as symlinked names cannot name the same payload twice;
 - every `bytes` field is a non-negative integer (booleans and coercible strings are rejected);
 - every external-data entry has a canonical lowercase `sha256` digest.
 
+The lexical and portable-identity checks intentionally match the persisted capture-source audit boundary. A numerical evidence producer therefore cannot accept a source external-data spelling that the later capture-source verifier rejects solely because of canonical path grammar or common Windows path identity. Portable case folding is ASCII-only; non-ASCII text is not locale-folded.
+
 After metadata validation, but still before payload hashing, the verifier stats the source graph and every declared external-data file. Each role must resolve to a regular file with a distinct `(st_dev, st_ino)` filesystem identity. This rejects graph↔external and external↔external hard-link aliases before a large source graph or any earlier external-data payload is streamed through SHA-256.
 
-If any later entry is malformed, aliases the source graph path, aliases an earlier resolved external-data path, or hard-links to an already claimed source provenance object, the verifier fails before hashing the source graph or any earlier external-data payload. This is a fail-fast performance and trust-boundary guarantee; it does not weaken the measured identity checks.
+If any later entry is malformed, has a portable path alias, aliases the source graph path, aliases an earlier resolved external-data path, or hard-links to an already claimed source provenance object, the verifier fails before hashing the source graph or any earlier external-data payload. Portable aliases are rejected before `_source_file_identity()` as well, so an immutable metadata conflict does not trigger source artifact filesystem I/O first. This is a fail-fast performance and trust-boundary guarantee; it does not weaken the measured identity checks.
 
 ## Authoritative measured identity
 
