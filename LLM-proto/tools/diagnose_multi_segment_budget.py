@@ -508,10 +508,12 @@ def diagnose_model(
     target_bytes: int = TARGET_BYTES,
     top_initializers: int = 8,
 ) -> dict[str, object]:
-    if hidden_size <= 0 or target_bytes <= 0:
-        raise ValueError("hidden_size and target_bytes must be positive")
-    if top_initializers < 0:
-        raise ValueError("top_initializers must be non-negative")
+    if isinstance(hidden_size, bool) or not isinstance(hidden_size, int) or hidden_size <= 0:
+        raise ValueError("hidden_size must be a positive integer")
+    if isinstance(target_bytes, bool) or not isinstance(target_bytes, int) or target_bytes <= 0:
+        raise ValueError("target_bytes must be a positive integer")
+    if isinstance(top_initializers, bool) or not isinstance(top_initializers, int) or top_initializers < 0:
+        raise ValueError("top_initializers must be a non-negative integer")
 
     source, graph_snapshot, graph_sha256 = _read_source_graph_snapshot(source_model_path)
     model = onnx.load_model(io.BytesIO(graph_snapshot), load_external_data=False)
