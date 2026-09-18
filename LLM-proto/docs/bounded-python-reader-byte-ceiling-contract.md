@@ -8,11 +8,13 @@ An exact positive-integer boundary remains valid: an input whose byte length is 
 
 ## Current coverage
 
-`tools/diagnose_multi_segment_budget.py::_read_source_graph_snapshot()` follows this contract and has focused regression coverage for malformed limits, fail-before-filesystem behavior, exact-boundary acceptance, over-limit rejection, and the existing snapshot mutation checks.
+The following helpers follow this contract and have focused regression coverage for malformed limits, fail-before-filesystem behavior, exact-boundary acceptance, over-limit rejection, and their existing snapshot mutation checks:
+
+- `tools/diagnose_multi_segment_budget.py::_read_source_graph_snapshot()`
+- `tools/multi_segment_onnx.py::_read_source_graph_snapshot()`
 
 Issue #1075 tracks aligning the remaining older bounded readers with the same rule:
 
-- `tools/multi_segment_onnx.py::_read_source_graph_snapshot()`
 - `tools/materialize_endpoint_payload_chunks.py::_read_probe_report_snapshot()`
 - `tools/verify_endpoint_payload_materialization.py::_load_json_with_sha256()`
 
