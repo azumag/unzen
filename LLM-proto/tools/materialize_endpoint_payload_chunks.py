@@ -62,6 +62,12 @@ def _required_int(value: object, *, field: str) -> int:
     return value
 
 
+def _require_positive_buffer_bytes(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("buffer_bytes must be a positive integer")
+    return value
+
+
 def _required_str(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise RuntimeError(f"{field} must be a non-empty string")
@@ -314,8 +320,7 @@ def _sha256_stream(
     buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES,
     expected_stat_signature: tuple[int, int, int, int, int] | None = None,
 ) -> str:
-    if buffer_bytes <= 0:
-        raise ValueError("buffer_bytes must be positive")
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     before_signature = _file_stat_signature(os.fstat(stream.fileno()))
     if expected_stat_signature is not None:
         _require_stable_source_signature(
@@ -338,6 +343,7 @@ def _sha256_stream(
 
 
 def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     with path.open("rb") as stream:
         return _sha256_stream(stream, source_path=path, buffer_bytes=buffer_bytes)
 
@@ -616,8 +622,7 @@ def _hash_source_and_materialize_ranges(
 ) -> tuple[str, list[tuple[str, tuple[int, int, int, int, int]]]]:
     """Hash the complete source while materializing ordered ranges in one sequential pass."""
 
-    if buffer_bytes <= 0:
-        raise ValueError("buffer_bytes must be positive")
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     if len(destinations) != len(chunks):
         raise ValueError("destination count must match chunk count")
 
@@ -746,6 +751,7 @@ def materialize_source_payload_chunks(
 ) -> dict[str, object]:
     """Copy validated source ranges from one stable source snapshot."""
 
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     normalized, source_location, coverage_start, coverage_end = validate_source_payload_chunks(chunks)
     if not source_path.is_file():
         raise FileNotFoundError(f"source external-data file not found: {source_path}")
@@ -932,6 +938,7 @@ def materialize_pinned_probe_payload_chunks(
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     """Materialize one validated pinned probe selection and bind its provenance."""
 
+    buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     chunks = chunks_from_probe_report(report, stage_kind=stage_kind, tier=tier)
     source_identity = source_identity_from_probe_report(report)
     provenance = materialization_provenance_from_probe_report(
