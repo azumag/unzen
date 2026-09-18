@@ -383,6 +383,15 @@ def split_model(
     external_data_mode: str = "symlink",
     hash_external_data: bool = True,
 ) -> dict[str, object]:
+    if isinstance(split_layer, bool) or not isinstance(split_layer, int) or split_layer <= 0:
+        raise ValueError("split_layer must be a positive integer")
+    if isinstance(hidden_size, bool) or not isinstance(hidden_size, int) or hidden_size <= 0:
+        raise ValueError("hidden_size must be a positive integer")
+    if external_data_mode not in ("symlink", "copy", "none"):
+        raise ValueError(f"unsupported external data mode: {external_data_mode}")
+    if not isinstance(hash_external_data, bool):
+        raise ValueError("hash_external_data must be a boolean")
+
     source_graph_bytes, source_graph_sha256 = read_regular_file_snapshot(
         source_model_path,
         max_bytes=DEFAULT_SOURCE_GRAPH_MAX_BYTES,
