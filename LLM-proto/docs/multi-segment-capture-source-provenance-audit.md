@@ -36,7 +36,11 @@ A passing result requires:
 
 all to be the same canonical SHA-256 digest.
 
-It also requires the split manifest and numerical verification to contain the exact same source external-data set. Each location must be a safe, canonical lexical relative path, unique, have a non-negative byte count, and have a canonical lowercase SHA-256 digest. Explicit `.` path segments, repeated separators, and trailing separators are not canonical: aliases such as `weights.bin` / `./weights.bin`, `dir/weights.bin` / `dir/./weights.bin`, or `dir/weights.bin` / `dir//weights.bin` are rejected rather than normalized into separate provenance identities. The numerical verification must state `allExternalDataHashed=true`.
+It also requires the split manifest and numerical verification to contain the exact same source external-data set. Each location must be a safe, canonical lexical relative path, unique, have a non-negative byte count, and have a canonical lowercase SHA-256 digest. Explicit `.` path segments, repeated separators, and trailing separators are not canonical: aliases such as `weights.bin` / `./weights.bin`, `dir/weights.bin` / `dir/./weights.bin`, or `dir/weights.bin` / `dir//weights.bin` are rejected rather than normalized into separate provenance identities.
+
+Portable identity is checked independently of the host filesystem. Exact duplicates keep their existing diagnostic, while ASCII case-only aliases such as `weights/Chunk.bin` / `weights/chunk.bin` and slash/backslash aliases such as `weights/chunk.bin` / `weights\\chunk.bin` fail closed as the same portable source role. Non-ASCII text is not locale-folded; ordinary distinct Unicode locations remain valid. This keeps the offline manifest/evidence cross-bind aligned with the full source verifier and the numerical provenance producer.
+
+The numerical verification must state `allExternalDataHashed=true`.
 
 The output remains `decisionStatus=diagnostic-only`.
 

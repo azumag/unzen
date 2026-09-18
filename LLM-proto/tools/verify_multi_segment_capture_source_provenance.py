@@ -34,6 +34,10 @@ DEFAULT_JSON_MAX_BYTES = 16 * 1024 * 1024
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+ASCII_CASE_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
 
 
 def _identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -210,15 +214,36 @@ def _source_external_identity(
     if not isinstance(raw, list):
         raise ValueError(f"{field} must be an array")
     result: dict[str, tuple[int, str]] = {}
+    portable_case_seen: dict[str, str] = {}
+    portable_separator_seen: dict[str, str] = {}
     for index, entry_raw in enumerate(raw):
         entry = _mapping(entry_raw, field=f"{field}[{index}]")
         prefix = f"{field}[{index}]"
         location = _safe_relative(entry.get("location"), field=f"{prefix}.location")
         if location in result:
             raise ValueError(f"{field} contains duplicate location: {location}")
+
+        portable_case_location = location.translate(ASCII_CASE_FOLD)
+        previous_case_location = portable_case_seen.get(portable_case_location)
+        if previous_case_location is not None:
+            raise ValueError(
+                f"{field} contains portable case alias: "
+                f"{location} aliases {previous_case_location}"
+            )
+
+        portable_separator_location = portable_case_location.replace("\\", "/")
+        previous_separator_location = portable_separator_seen.get(portable_separator_location)
+        if previous_separator_location is not None:
+            raise ValueError(
+                f"{field} contains portable separator alias: "
+                f"{location} aliases {previous_separator_location}"
+            )
+
         byte_size = _non_negative_int(entry.get("bytes"), field=f"{prefix}.bytes")
         digest = _canonical_sha256(entry.get("sha256"), field=f"{prefix}.sha256")
         result[location] = (byte_size, digest)
+        portable_case_seen[portable_case_location] = location
+        portable_separator_seen[portable_separator_location] = location
     return result
 
 
