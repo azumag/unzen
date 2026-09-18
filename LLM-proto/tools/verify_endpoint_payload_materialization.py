@@ -127,6 +127,7 @@ def _load_json_with_sha256(
         raise RuntimeError(f"report exceeds {max_bytes} bytes: {path}")
 
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
