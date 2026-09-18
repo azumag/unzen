@@ -569,7 +569,7 @@ def _measure_source_external_file(
             f"external data must resolve to a regular file: {requested}"
         )
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(source, flags)
