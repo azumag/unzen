@@ -67,6 +67,34 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                 r"unsafe sourceModel\.externalData\[1\]\.location",
             ),
             (
+                "repeated separator",
+                lambda manifest: manifest["sourceModel"]["externalData"][1].__setitem__(
+                    "location", "weights//outside.bin"
+                ),
+                r"unsafe sourceModel\.externalData\[1\]\.location",
+            ),
+            (
+                "explicit dot component",
+                lambda manifest: manifest["sourceModel"]["externalData"][1].__setitem__(
+                    "location", "weights/./outside.bin"
+                ),
+                r"unsafe sourceModel\.externalData\[1\]\.location",
+            ),
+            (
+                "trailing separator",
+                lambda manifest: manifest["sourceModel"]["externalData"][1].__setitem__(
+                    "location", "weights/"
+                ),
+                r"unsafe sourceModel\.externalData\[1\]\.location",
+            ),
+            (
+                "control character",
+                lambda manifest: manifest["sourceModel"]["externalData"][1].__setitem__(
+                    "location", "weights\x1f.bin"
+                ),
+                r"unsafe sourceModel\.externalData\[1\]\.location",
+            ),
+            (
                 "duplicate location",
                 lambda manifest: manifest["sourceModel"]["externalData"][1].__setitem__(
                     "location",
@@ -103,10 +131,16 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
 
     def test_resolved_external_path_alias_fails_before_any_payload_measurement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source, manifest = self._fixture(Path(tmp))
+            root = Path(tmp)
+            source, manifest = self._fixture(root)
             first = manifest["sourceModel"]["externalData"][0]
             second = manifest["sourceModel"]["externalData"][1]
-            second["location"] = f"./{first['location']}"
+            alias = root / "alias.bin"
+            try:
+                alias.symlink_to(str(first["location"]))
+            except OSError as error:
+                self.skipTest(f"symlinks unavailable in test filesystem: {error}")
+            second["location"] = alias.name
             second["bytes"] = first["bytes"]
             second["sha256"] = first["sha256"]
 
@@ -116,6 +150,46 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                     r"duplicate source external-data location: .* aliases .*",
                 ):
                     verify_source_model_identity(source, manifest)
+            measure.assert_not_called()
+
+    def test_portable_case_alias_fails_before_source_filesystem_io(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, manifest = self._fixture(Path(tmp))
+            first = manifest["sourceModel"]["externalData"][0]
+            second = manifest["sourceModel"]["externalData"][1]
+            first["location"] = "weights/Chunk.bin"
+            second["location"] = "weights/chunk.bin"
+
+            with (
+                patch("verify_multi_segment_onnx._source_file_identity") as identity,
+                patch("verify_multi_segment_onnx._measure_file") as measure,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"portable case alias source external-data location",
+                ):
+                    verify_source_model_identity(source, manifest)
+            identity.assert_not_called()
+            measure.assert_not_called()
+
+    def test_portable_separator_alias_fails_before_source_filesystem_io(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source, manifest = self._fixture(Path(tmp))
+            first = manifest["sourceModel"]["externalData"][0]
+            second = manifest["sourceModel"]["externalData"][1]
+            first["location"] = "weights/chunk.bin"
+            second["location"] = r"weights\chunk.bin"
+
+            with (
+                patch("verify_multi_segment_onnx._source_file_identity") as identity,
+                patch("verify_multi_segment_onnx._measure_file") as measure,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"portable separator alias source external-data location",
+                ):
+                    verify_source_model_identity(source, manifest)
+            identity.assert_not_called()
             measure.assert_not_called()
 
     def test_source_graph_path_alias_fails_before_any_payload_measurement(self) -> None:
@@ -174,6 +248,23 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                 ):
                     verify_source_model_identity(source, manifest)
             measure.assert_not_called()
+
+    def test_valid_nested_location_preserves_source_identity_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, manifest = self._fixture(root)
+            entry = manifest["sourceModel"]["externalData"][0]
+            original = root / str(entry["location"])
+            nested_dir = root / "weights"
+            nested_dir.mkdir()
+            nested = nested_dir / original.name
+            original.replace(nested)
+            entry["location"] = f"weights/{nested.name}"
+
+            report = verify_source_model_identity(source, manifest)
+
+            self.assertEqual(report["externalData"], manifest["sourceModel"]["externalData"])
+            self.assertIs(report["allExternalDataHashed"], True)
 
     def test_valid_metadata_preserves_source_identity_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
