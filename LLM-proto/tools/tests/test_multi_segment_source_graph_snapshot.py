@@ -24,6 +24,49 @@ class SourceGraphSnapshotTests(unittest.TestCase):
         self.assertEqual(raw, payload)
         self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
 
+    def test_invalid_max_bytes_is_rejected_before_path_expansion(self) -> None:
+        class ExpansionMustNotRun:
+            def expanduser(self):
+                raise AssertionError("path expansion reached")
+
+        invalid_limits = (
+            True,
+            False,
+            1.0,
+            1.5,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            0,
+            -1,
+        )
+        for limit in invalid_limits:
+            with self.subTest(max_bytes=limit):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    target._read_source_graph_snapshot(
+                        ExpansionMustNotRun(),  # type: ignore[arg-type]
+                        max_bytes=limit,  # type: ignore[arg-type]
+                    )
+
+    def test_exact_max_bytes_is_accepted_and_smaller_limit_is_rejected(self) -> None:
+        payload = b"exact-limit"
+        with tempfile.TemporaryDirectory() as raw_dir:
+            path = Path(raw_dir) / "model.onnx"
+            path.write_bytes(payload)
+
+            raw, digest = target._read_source_graph_snapshot(
+                path,
+                max_bytes=len(payload),
+            )
+            self.assertEqual(raw, payload)
+            self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+
+            with self.assertRaisesRegex(RuntimeError, "exceeds"):
+                target._read_source_graph_snapshot(
+                    path,
+                    max_bytes=len(payload) - 1,
+                )
+
     def test_stable_symlink_keeps_existing_path_semantics(self) -> None:
         if not hasattr(os, "symlink"):
             self.skipTest("symlink is unavailable")
