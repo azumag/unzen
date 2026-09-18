@@ -94,6 +94,33 @@ class ArtifactPathAliasPreflightTest(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["segmentCount"], 2)
 
+    def test_rejects_backslash_graph_path_before_any_artifact_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["segments"][0]["path"] = "nested\\segment0.onnx"
+            self._save(manifest_path, manifest)
+
+            with patch.object(verifier, "_measure_file", wraps=verifier._measure_file) as measure:
+                with self.assertRaisesRegex(ValueError, r"unsafe segments\[0\]\.path"):
+                    verify_artifact_integrity(manifest_path)
+            measure.assert_not_called()
+
+    def test_rejects_backslash_external_path_before_any_artifact_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["segments"][1]["externalData"][0]["location"] = "nested\\segment1.onnx_data"
+            self._save(manifest_path, manifest)
+
+            with patch.object(verifier, "_measure_file", wraps=verifier._measure_file) as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"unsafe segments\[1\]\.externalData\[0\]\.location",
+                ):
+                    verify_artifact_integrity(manifest_path)
+            measure.assert_not_called()
+
     def test_rejects_graph_path_reused_by_later_segment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = self._fixture(Path(tmp))
