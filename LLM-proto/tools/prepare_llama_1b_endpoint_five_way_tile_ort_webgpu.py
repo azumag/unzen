@@ -44,14 +44,24 @@ def _copy_source_range(source_fd: int, *, source_offset: int, length: int, desti
         raise ValueError("length must be a positive integer")
     digest = hashlib.sha256()
     cursor = 0
-    with destination.open("xb") as dst:
-        while cursor < length:
-            chunk = os.pread(source_fd, min(8 * 1024 * 1024, length - cursor), source_offset + cursor)
-            if not chunk:
-                raise RuntimeError("unexpected EOF while materializing 5-way physical payload")
-            dst.write(chunk)
-            digest.update(chunk)
-            cursor += len(chunk)
+    destination_created = False
+    try:
+        with destination.open("xb") as dst:
+            destination_created = True
+            while cursor < length:
+                chunk = os.pread(source_fd, min(8 * 1024 * 1024, length - cursor), source_offset + cursor)
+                if not chunk:
+                    raise RuntimeError("unexpected EOF while materializing 5-way physical payload")
+                dst.write(chunk)
+                digest.update(chunk)
+                cursor += len(chunk)
+    except Exception:
+        if destination_created:
+            try:
+                destination.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
     return digest.hexdigest()
 
 
