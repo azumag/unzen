@@ -75,28 +75,34 @@ export async function readBoundedUtf8FileHandle(
     throw new Error(`${field} exceeds ${maxBytes} bytes`);
   }
 
-  const chunks = [];
+  const data = Buffer.allocUnsafe(initialInfo.size);
   let totalBytes = 0;
-  let position = 0;
-  while (true) {
-    const remaining = maxBytes - totalBytes;
-    const readSize = Math.min(chunkBytes, remaining + 1);
-    const chunk = Buffer.allocUnsafe(readSize);
-    const { bytesRead } = await handle.read(chunk, 0, readSize, position);
+  while (totalBytes < initialInfo.size) {
+    const readSize = Math.min(chunkBytes, initialInfo.size - totalBytes);
+    const { bytesRead } = await handle.read(data, totalBytes, readSize, totalBytes);
     if (bytesRead === 0) break;
     totalBytes += bytesRead;
-    if (totalBytes > maxBytes) {
-      throw new Error(`${field} exceeds ${maxBytes} bytes`);
-    }
-    chunks.push(chunk.subarray(0, bytesRead));
-    position += bytesRead;
   }
 
+  const growthProbe = Buffer.allocUnsafe(1);
+  const { bytesRead: growthBytesRead } = await handle.read(
+    growthProbe,
+    0,
+    growthProbe.byteLength,
+    initialInfo.size,
+  );
   const finalInfo = await handle.stat();
-  if (finalInfo.size !== initialInfo.size || totalBytes !== initialInfo.size) {
+  if (finalInfo.size > maxBytes) {
+    throw new Error(`${field} exceeds ${maxBytes} bytes`);
+  }
+  if (
+    finalInfo.size !== initialInfo.size
+    || totalBytes !== initialInfo.size
+    || growthBytesRead !== 0
+  ) {
     throw new Error(`${field} changed while reading`);
   }
-  return Buffer.concat(chunks, totalBytes).toString('utf8');
+  return data.toString('utf8');
 }
 
 export async function resolveExistingFileWithinRoot(root, relativePath) {
