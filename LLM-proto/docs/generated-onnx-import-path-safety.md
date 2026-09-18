@@ -8,6 +8,8 @@ Accepted paths must be relative, forward-slash separated artifact identities. Ab
 
 The runtime import boundary also mirrors the Windows alias rules used by the Python split producer and independent verifiers. Every path component is rejected when it ends in `.` or a space, has a reserved DOS device stem (`CON`, `PRN`, `AUX`, `NUL`), or matches `COM`/`LPT` ports 1-9 including the Windows-recognized superscript variants `¹`, `²`, and `³`. Device stems remain reserved when an extension is present, so names such as `CON.onnx` and `COM1.bin` are invalid.
 
+Path identity is validated across the complete generated manifest, not only inside one segment. A graph or external-data path may not be reused by another segment, including graph-vs-external-data collisions. The importer also computes an ASCII case-folded identity for every generated component and rejects case-only aliases such as `weights/Chunk.bin` and `weights/chunk.bin`, because these are distinct on a case-sensitive POSIX filesystem but collide on common Windows filesystems.
+
 This keeps artifact identity platform-independent between POSIX producers/verifiers and Windows consumers. Ordinary relative paths such as `graphs/segment0.onnx` and `weights/chunk-0001.bin` remain valid.
 
 ## Segment geometry numeric domain
