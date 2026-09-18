@@ -6,6 +6,6 @@ The lower-level `_copy_source_range()` helper treats `source_offset` and `length
 
 This preserves the existing valid behavior: source offset `0` is allowed, positive ranges copy and hash exactly the requested bytes, and a source that ends before the requested range still fails with the existing unexpected-EOF error. The helper does not independently establish the identity of `source_fd`; `prepare()` continues to obtain that descriptor from the pinned-source verification boundary.
 
-Destination publication is failure-atomic at this helper boundary. The destination is created exclusively with `"xb"`; if copying fails after that successful creation, the helper makes a best-effort removal of the newly-created partial path and then re-raises the original exception. A destination that already existed before the open attempt is never removed or replaced. Cleanup errors are deliberately not allowed to mask the original copy failure.
+On a copy failure after exclusive destination creation, the helper makes a best-effort removal of the newly-created partial path and then re-raises the original exception. A destination that already existed before the `"xb"` open attempt is never removed or replaced. If cleanup itself fails, the original copy failure remains authoritative and the partial path may remain for operator/tool cleanup rather than being hidden by a secondary cleanup error.
 
 This is host-side diagnostic hardening only. It does not select the five-way layout, alter manifest/cache/runtime contracts, or add physical WebGPU evidence.
