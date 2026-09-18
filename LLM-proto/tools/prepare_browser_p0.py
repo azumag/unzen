@@ -333,6 +333,11 @@ def prepare_browser_p0(
     require_tier: str = "preferred",
     hash_source_external_data: bool = True,
 ) -> dict[str, object]:
+    if require_tier not in TIER_LIMITS:
+        raise ValueError(f"unsupported required tier: {require_tier}")
+    if not isinstance(hash_source_external_data, bool):
+        raise ValueError("hash_source_external_data must be a boolean")
+
     source_graph_sha256 = verify_pinned_source_graph(source_model_path)
     manifest = prepare_real_split(
         source_model_path,
