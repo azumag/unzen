@@ -349,15 +349,30 @@ def _external_locations(model: onnx.ModelProto) -> tuple[str, ...]:
     return tuple(sorted(locations))
 
 
+def _preflight_external_data_locations(locations: Sequence[str]) -> tuple[str, ...]:
+    validated: list[str] = []
+    for location in locations:
+        if not isinstance(location, str) or not location:
+            raise ValueError(f"unsafe external data location: {location!r}")
+        path = Path(location)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"unsafe external data location: {location}")
+        validated.append(location)
+    return tuple(validated)
+
+
 def materialize_external_data(
     source_model_path: Path,
     output_dir: Path,
     locations: Sequence[str],
     mode: str,
 ) -> None:
+    if mode not in ("none", "copy", "symlink"):
+        raise ValueError(f"unsupported external data mode: {mode}")
+    validated_locations = _preflight_external_data_locations(locations)
     if mode == "none":
         return
-    for location in locations:
+    for location in validated_locations:
         source = source_model_path.parent / location
         if not source.exists():
             raise FileNotFoundError(f"external data file not found: {source}")
@@ -367,11 +382,9 @@ def materialize_external_data(
             destination.unlink()
         if mode == "copy":
             shutil.copy2(source, destination)
-        elif mode == "symlink":
+        else:
             relative = os.path.relpath(source.resolve(), destination.parent.resolve())
             destination.symlink_to(relative)
-        else:
-            raise ValueError(f"unsupported external data mode: {mode}")
 
 
 def split_model(
