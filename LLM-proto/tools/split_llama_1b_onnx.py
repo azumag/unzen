@@ -372,11 +372,15 @@ def materialize_external_data(
     validated_locations = _preflight_external_data_locations(locations)
     if mode == "none":
         return
+
+    materialization_plan: list[tuple[Path, Path]] = []
     for location in validated_locations:
         source = source_model_path.parent / location
         if not source.exists():
             raise FileNotFoundError(f"external data file not found: {source}")
-        destination = output_dir / location
+        materialization_plan.append((source, output_dir / location))
+
+    for source, destination in materialization_plan:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.exists() or destination.is_symlink():
             destination.unlink()
