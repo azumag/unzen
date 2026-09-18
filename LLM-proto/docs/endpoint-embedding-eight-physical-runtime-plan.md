@@ -71,7 +71,7 @@ PORT=8797 \
 node browser-harness/endpoint-embedding-eight-physical-webgpu/serve.mjs
 ```
 
-The server validates that the supplied report is a `status=pass`, `decisionStatus=diagnostic-only`, actual-file integrity preflight before it listens. It also requires the pinned zero-offset graph as a separate non-symlink regular file. The browser then:
+The server validates that the supplied report is a `status=pass`, `decisionStatus=diagnostic-only`, actual-file integrity preflight before it listens. It also requires the pinned zero-offset graph as a separate non-symlink regular file. The preflight JSON is capped at 16 MiB on both sides of the HTTP boundary: the host reads the accepted descriptor incrementally without `FileHandle.readFile()`, and the browser passes `/data/preflight.json` through the shared bounded-response reader before JSON parsing. The browser then:
 
 1. loads the validated preflight report and derives the eight-entry browser plan;
 2. re-hashes the actual 260-byte graph served to the browser;

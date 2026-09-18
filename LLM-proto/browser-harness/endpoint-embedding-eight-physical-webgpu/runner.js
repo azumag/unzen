@@ -6,6 +6,7 @@ import { readResponseBytesBounded } from '../webgpu-2b-split/artifact-cache.js';
 const statusEl = document.querySelector('#status');
 const reportEl = document.querySelector('#report');
 const FLOAT32_BYTES = 4;
+const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;
 
 function setStatus(value) {
   statusEl.textContent = value;
@@ -167,7 +168,11 @@ async function main() {
   if (!preflightResponse.ok) {
     throw new Error(`preflight report fetch failed: ${preflightResponse.status}`);
   }
-  const preflight = await preflightResponse.json();
+  const preflightBytes = await readResponseBytesBounded(preflightResponse, {
+    maxBytes: MAX_PREFLIGHT_REPORT_BYTES,
+    url: './data/preflight.json',
+  });
+  const preflight = JSON.parse(new TextDecoder().decode(preflightBytes));
   const plan = buildEndpointEmbeddingEightPhysicalBrowserPlan(preflight);
 
   setStatus('loading and verifying pinned zero-offset graph');

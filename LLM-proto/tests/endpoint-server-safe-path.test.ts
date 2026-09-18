@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   openExistingFileWithinRoot,
   openExistingNonSymlinkFile,
+  readBoundedUtf8FileHandle,
   resolveExistingFileWithinRoot,
   safePathWithPathApi,
 } from '../browser-harness/webgpu-2b-split/server-safe-path.mjs';
@@ -64,6 +65,66 @@ describe('endpoint diagnostic server path containment', () => {
       try {
         expect(info.isFile()).toBe(true);
         expect(await handle.readFile('utf8')).toBe('{"status":"pass"}\n');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('reads descriptor-bound UTF-8 text without exceeding the configured byte ceiling', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, '{"ok":1}\n', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: info.size,
+          field: 'report',
+          chunkBytes: 3,
+        })).resolves.toBe('{"ok":1}\n');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an already oversized descriptor-bound text file before reading it', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, '123456789', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: 8,
+          field: 'report',
+        })).rejects.toThrow('report exceeds 8 bytes');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects descriptor-bound text that grows past the ceiling after open', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, '12345678', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await appendFile(file, '9', 'utf8');
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: 8,
+          field: 'report',
+          chunkBytes: 8,
+        })).rejects.toThrow('report exceeds 8 bytes');
       } finally {
         await handle.close();
       }
