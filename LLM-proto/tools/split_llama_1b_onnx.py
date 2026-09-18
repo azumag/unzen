@@ -378,6 +378,8 @@ def materialize_external_data(
         source = source_model_path.parent / location
         if not source.exists():
             raise FileNotFoundError(f"external data file not found: {source}")
+        if not source.is_file():
+            raise OSError(f"external data source is not a regular file: {source}")
         materialization_plan.append((source, output_dir / location))
 
     for source, destination in materialization_plan:
