@@ -11,7 +11,9 @@ function serverSource() {
 describe('8-physical endpoint preflight descriptor binding', () => {
   it('reads the preflight JSON only from the accepted FileHandle', () => {
     const server = serverSource();
-    expect(server).toContain('openExistingNonSymlinkFile,');
+    expect(server).toContain(
+      "import { openExistingNonSymlinkFile } from '../webgpu-2b-split/server-safe-path.mjs';",
+    );
     expect(server).toContain(
       'const { handle, info: before } = await openNonSymlinkFileForField(path, field);',
     );
