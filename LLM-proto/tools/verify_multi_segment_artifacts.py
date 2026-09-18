@@ -142,6 +142,12 @@ def _unsafe_windows_component(part: str) -> bool:
 
 def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     value = _non_empty_string(raw, field=field)
+    raw_parts = value.split("/")
+    if (
+        any(part in {"", "."} for part in raw_parts)
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        raise ValueError(f"unsafe {field}: {value}")
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
     if (
