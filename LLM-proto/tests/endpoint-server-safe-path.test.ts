@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -93,6 +93,25 @@ describe('endpoint diagnostic server path containment', () => {
     }
   });
 
+  it('returns an empty string for a stable zero-length descriptor-bound file', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'empty.txt');
+    try {
+      await writeFile(file, '', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: 0,
+          field: 'empty',
+        })).resolves.toBe('');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('rejects an already oversized descriptor-bound text file before reading it', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
     const file = join(workspace, 'report.json');
@@ -125,6 +144,27 @@ describe('endpoint diagnostic server path containment', () => {
           field: 'report',
           chunkBytes: 8,
         })).rejects.toThrow('report exceeds 8 bytes');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects descriptor-bound text that shrinks after open', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, '12345678', 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await truncate(file, 4);
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: 8,
+          field: 'report',
+          chunkBytes: 3,
+        })).rejects.toThrow('report changed while reading');
       } finally {
         await handle.close();
       }
