@@ -93,6 +93,51 @@ describe('endpoint diagnostic server path containment', () => {
     }
   });
 
+  it('preserves valid multibyte UTF-8 text', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    const text = '{"message":"雪"}\n';
+    try {
+      await writeFile(file, text, 'utf8');
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: info.size,
+          field: 'report',
+          chunkBytes: 2,
+        })).resolves.toBe(text);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed UTF-8 instead of replacement-decoding descriptor bytes', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
+    const file = join(workspace, 'report.json');
+    try {
+      await writeFile(file, Buffer.from([
+        0x7b, 0x22, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x22, 0x3a, 0x22,
+        0xc3, 0x28,
+        0x22, 0x7d,
+      ]));
+      const { handle, info } = await openExistingNonSymlinkFile(file);
+      try {
+        await expect(readBoundedUtf8FileHandle(handle, info, {
+          maxBytes: info.size,
+          field: 'report',
+          chunkBytes: 3,
+        })).rejects.toThrow('report is not valid UTF-8');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('returns an empty string for a stable zero-length descriptor-bound file', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'unzen-safe-path-'));
     const file = join(workspace, 'empty.txt');
