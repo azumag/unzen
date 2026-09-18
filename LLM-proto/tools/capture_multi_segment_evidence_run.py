@@ -269,6 +269,7 @@ def _require_evidence_matches_preflight(
         raise ValueError(
             "same-machine evidence verification is missing artifactIntegrity"
         )
+    artifact_integrity = _require_integrity_pass(artifact_integrity)
 
     for field in (
         "manifestSha256",
