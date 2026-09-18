@@ -132,7 +132,7 @@ def _read_previous_manifest_snapshot(final_manifest: Path) -> bytes | None:
     ):
         return None
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(final_manifest, flags)
@@ -185,7 +185,7 @@ def _read_staged_manifest_snapshot(
             "staged split-manifest.json exceeds the publication metadata size limit"
         )
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(staged_manifest, flags)
