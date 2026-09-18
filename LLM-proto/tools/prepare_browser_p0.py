@@ -68,7 +68,7 @@ def sha256_file(path: Path) -> str:
         raise RuntimeError(f"P0 source graph must be a regular file: {requested}")
     expected = _file_stat_signature(before)
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(resolved, flags)
