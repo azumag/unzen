@@ -46,6 +46,10 @@ MANIFEST_KIND = "unzen-budgeted-multi-segment-onnx"
 ARTIFACT_LAYOUT = "per-segment-external-data"
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+ASCII_CASE_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
 
 
 def _unsafe_windows_component(part: str) -> bool:
@@ -67,6 +71,31 @@ def _canonical_sha256(raw: object, *, field: str) -> str:
     value = _non_empty_string(raw, field=field)
     if not SHA256_RE.fullmatch(value):
         raise ValueError(f"{field} must be a canonical lowercase SHA-256 digest")
+    return value
+
+
+def _source_external_location(raw: object, *, field: str) -> str:
+    """Validate canonical cross-platform spelling before filesystem normalization."""
+
+    value = _non_empty_string(raw, field=field)
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ValueError(f"unsafe {field} in split manifest: {value}")
+    lexical_parts = re.split(r"[\\/]", value)
+    if any(part in {"", "."} for part in lexical_parts):
+        raise ValueError(f"unsafe {field} in split manifest: {value}")
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    if (
+        posix.is_absolute()
+        or windows.is_absolute()
+        or bool(windows.drive)
+        or bool(windows.root)
+        or any(":" in part for part in windows.parts)
+        or any(_unsafe_windows_component(part) for part in windows.parts)
+        or ".." in posix.parts
+        or ".." in windows.parts
+    ):
+        raise ValueError(f"unsafe {field} in split manifest: {value}")
     return value
 
 
@@ -185,14 +214,37 @@ def _preflight_source_model_identity(
     external_contract: list[tuple[str, Path, int, str]] = []
     source_graph_path = full_model_path.resolve()
     seen_paths: dict[Path, str] = {source_graph_path: "source graph"}
+    seen_locations: set[str] = set()
+    portable_case_seen: dict[str, str] = {}
+    portable_separator_seen: dict[str, str] = {}
     for index, raw_entry in enumerate(raw_external):
         if not isinstance(raw_entry, dict):
             raise ValueError(f"sourceModel.externalData[{index}] must be an object")
         field_prefix = f"sourceModel.externalData[{index}]"
-        location = _non_empty_string(
+        location = _source_external_location(
             raw_entry.get("location"),
             field=f"{field_prefix}.location",
         )
+        if location in seen_locations:
+            raise ValueError(
+                "duplicate source external-data location: "
+                f"{location} aliases {location}"
+            )
+        portable_case_location = location.translate(ASCII_CASE_FOLD)
+        previous_case_location = portable_case_seen.get(portable_case_location)
+        if previous_case_location is not None:
+            raise ValueError(
+                "portable case alias source external-data location: "
+                f"{location} aliases {previous_case_location}"
+            )
+        portable_separator_location = portable_case_location.replace("\\", "/")
+        previous_separator_location = portable_separator_seen.get(portable_separator_location)
+        if previous_separator_location is not None:
+            raise ValueError(
+                "portable separator alias source external-data location: "
+                f"{location} aliases {previous_separator_location}"
+            )
+
         external_path = _safe_relative_path(
             full_model_path.parent,
             location,
@@ -209,7 +261,6 @@ def _preflight_source_model_identity(
                 "duplicate source external-data location: "
                 f"{location} aliases {previous_location}"
             )
-        seen_paths[external_path] = location
         expected_bytes = _non_negative_int(
             raw_entry.get("bytes"),
             field=f"{field_prefix}.bytes",
@@ -220,6 +271,11 @@ def _preflight_source_model_identity(
                 f"{field_prefix}.sha256 is required for numerical evidence binding"
             )
         expected_sha = _canonical_sha256(raw_sha, field=f"{field_prefix}.sha256")
+
+        seen_locations.add(location)
+        portable_case_seen[portable_case_location] = location
+        portable_separator_seen[portable_separator_location] = location
+        seen_paths[external_path] = location
         external_contract.append((location, external_path, expected_bytes, expected_sha))
 
     return expected_graph_sha, tuple(external_contract)
