@@ -52,7 +52,7 @@ class VerifyEndpointPayloadBufferContractTest(unittest.TestCase):
     def test_source_hash_rejects_invalid_buffer_before_range_or_file_io(self) -> None:
         for value in INVALID_BUFFER_BYTES:
             with self.subTest(buffer_bytes=value):
-                ranges = mock.Mock()
+                ranges = mock.MagicMock()
                 with mock.patch.object(
                     Path,
                     "open",
@@ -72,7 +72,7 @@ class VerifyEndpointPayloadBufferContractTest(unittest.TestCase):
     def test_verifier_rejects_invalid_buffer_before_blueprint_or_filesystem_work(self) -> None:
         for value in INVALID_BUFFER_BYTES:
             with self.subTest(buffer_bytes=value):
-                expected_chunks = mock.Mock()
+                expected_chunks = mock.MagicMock()
                 with (
                     mock.patch.object(
                         verifier,
