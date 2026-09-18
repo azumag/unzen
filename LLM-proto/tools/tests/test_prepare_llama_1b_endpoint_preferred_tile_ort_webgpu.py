@@ -71,6 +71,30 @@ class WebGpuPreparationGraphSnapshotTest(unittest.TestCase):
                 hashlib.sha256(payload[:4]).hexdigest(),
             )
 
+    def test_measure_regular_file_requests_binary_mode_and_hashes_exact_bytes(self) -> None:
+        payload = b"generated\r\ngraph\x1a-bytes\r\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.onnx"
+            path.write_bytes(payload)
+            fake_binary = 1 << 29
+            real_open = os.open
+            observed_binary = False
+
+            def open_without_fake_binary(target, flags, *args, **kwargs):
+                nonlocal observed_binary
+                observed_binary = bool(flags & fake_binary)
+                return real_open(target, flags & ~fake_binary, *args, **kwargs)
+
+            with (
+                mock.patch.object(probe.os, "O_BINARY", fake_binary, create=True),
+                mock.patch.object(probe.os, "open", side_effect=open_without_fake_binary),
+            ):
+                measured_bytes, digest = probe._measure_regular_file(path)
+
+            self.assertTrue(observed_binary)
+            self.assertEqual(measured_bytes, len(payload))
+            self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+
     def test_measure_regular_file_rejects_replacement_between_check_and_open(self) -> None:
         original = b"original-graph"
         replacement = b"replacement-graph"
