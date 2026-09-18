@@ -8,6 +8,7 @@ import {
   readBoundedUtf8FileHandle,
 } from '../webgpu-2b-split/server-safe-path.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
+import { ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES } from './preflight-budget.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
@@ -15,7 +16,6 @@ const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : null;
 const PREFLIGHT_REPORT = process.env.PREFLIGHT_REPORT ? resolve(process.env.PREFLIGHT_REPORT) : null;
 const GRAPH_PATH = process.env.GRAPH_PATH ? resolve(process.env.GRAPH_PATH) : null;
 const PORT = Number(process.env.PORT ?? 8797);
-const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -65,7 +65,7 @@ async function readNonSymlinkJson(path, field) {
   const { handle, info: before } = await openNonSymlinkFileForField(path, field);
   try {
     const text = await readBoundedUtf8FileHandle(handle, before, {
-      maxBytes: MAX_PREFLIGHT_REPORT_BYTES,
+      maxBytes: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES,
       field,
     });
     return JSON.parse(text);

@@ -1,12 +1,12 @@
 import { buildEndpointEmbeddingEightPhysicalBrowserPlan } from './contract.js';
 import { compareFloat32Bytes } from './comparison.js';
+import { ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES } from './preflight-budget.js';
 import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from '../webgpu-2b-split/artifact-budget.js';
 import { readResponseBytesBounded } from '../webgpu-2b-split/artifact-cache.js';
 
 const statusEl = document.querySelector('#status');
 const reportEl = document.querySelector('#report');
 const FLOAT32_BYTES = 4;
-const MAX_PREFLIGHT_REPORT_BYTES = 16 * 1024 * 1024;
 
 function setStatus(value) {
   statusEl.textContent = value;
@@ -169,7 +169,7 @@ async function main() {
     throw new Error(`preflight report fetch failed: ${preflightResponse.status}`);
   }
   const preflightBytes = await readResponseBytesBounded(preflightResponse, {
-    maxBytes: MAX_PREFLIGHT_REPORT_BYTES,
+    maxBytes: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES,
     url: './data/preflight.json',
   });
   const preflight = JSON.parse(new TextDecoder().decode(preflightBytes));
