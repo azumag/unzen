@@ -16,7 +16,7 @@ import verify_multi_segment_capture_bundle as bundle_module  # noqa: E402
 
 
 class PersistedCaptureLexicalPathGrammarTest(unittest.TestCase):
-    MALFORMED = (
+    MALFORMED_COMMON = (
         "dir//entry.json",
         "dir/./entry.json",
         "dir/",
@@ -25,10 +25,11 @@ class PersistedCaptureLexicalPathGrammarTest(unittest.TestCase):
         "dir/\x1fentry.json",
         "dir/\x7fentry.json",
     )
+    SNAPSHOT_ONLY_MALFORMED = ("dir\\entry.json",)
 
     def test_bundle_paths_reject_malformed_text_before_resolution(self) -> None:
         root = Path("capture-root")
-        for value in self.MALFORMED:
+        for value in self.MALFORMED_COMMON:
             with self.subTest(value=repr(value)):
                 with mock.patch.object(
                     Path,
@@ -44,7 +45,7 @@ class PersistedCaptureLexicalPathGrammarTest(unittest.TestCase):
 
     def test_snapshot_paths_reject_malformed_text_before_resolution(self) -> None:
         root = Path("artifact-root")
-        for value in self.MALFORMED:
+        for value in self.MALFORMED_COMMON + self.SNAPSHOT_ONLY_MALFORMED:
             with self.subTest(value=repr(value)):
                 with mock.patch.object(
                     Path,
