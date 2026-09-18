@@ -28,6 +28,13 @@ are hard links to the same file object therefore fail before the underlying
 integrity verifier runs, while a race introduced after the early preflight still
 fails closed at the measured-snapshot boundary.
 
+Regular-file descriptors used for the manifest and artifact payload bytes request
+`O_BINARY` when the platform exposes it. On Windows this keeps descriptor byte
+counts and SHA-256 tied to the exact on-disk bytes instead of CRT text-mode
+newline/control-character translation. POSIX behavior is unchanged because the
+flag contributes zero there. Directory-anchor and intermediate-directory opens
+remain directory descriptors and do not request `O_BINARY`.
+
 On platforms that expose `dir_fd`, `O_DIRECTORY`, `O_NOFOLLOW`, and
 `follow_symlinks=False` for the required filesystem calls, the manifest
 directory is held open as an anchor for the whole verification. Every declared
