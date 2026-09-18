@@ -366,6 +366,8 @@ def _safe_path(root: Path, raw: object, *, field: str) -> tuple[str, Path, tuple
     value = _text(raw, field=field)
     if _contains_ascii_control(value):
         raise ValueError(f"unsafe {field}: {value!r}")
+    if "\\" in value:
+        raise ValueError(f"unsafe {field}: {value}")
     lexical_parts = re.split(r"[\\/]", value)
     if any(part in {"", "."} for part in lexical_parts):
         raise ValueError(f"unsafe {field}: {value}")
