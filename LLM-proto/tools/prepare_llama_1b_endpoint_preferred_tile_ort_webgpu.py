@@ -156,12 +156,16 @@ def _open_pinned_source(path: Path) -> tuple[int, tuple[int, int, int, int, int]
         raise RuntimeError(
             f"pinned source external-data size mismatch: expected {PINNED_EXTERNAL_DATA_BYTES}, got {snap.st_size}"
         )
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(path, flags)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise RuntimeError(f"pinned source external data could not be opened safely: {path}: {error}") from error
     try:
         opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError("pinned source external data must remain a regular file")
         if _identity(opened) != _identity(snap):
             raise RuntimeError("pinned source changed while being opened")
         digest = hashlib.sha256()
