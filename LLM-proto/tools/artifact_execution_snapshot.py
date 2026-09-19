@@ -176,8 +176,12 @@ def _link_verified_artifact_file(
     field = str(entry.get("field"))
     expected = _accepted_identity(entry)
     expected_object = expected[0], expected[1]
-    _assert_accepted_artifact_path(entry)
     destination_path.parent.mkdir(parents=True, exist_ok=True)
+    # Parent creation is the last setup operation before the hard link. Keep the
+    # ctime-inclusive accepted identity check immediately beside os.link(), since
+    # the link itself changes nlink/ctime and those fields cannot be compared to
+    # the pre-link snapshot afterwards.
+    _assert_accepted_artifact_path(entry)
     try:
         os.link(source_path, destination_path, follow_symlinks=False)
     except OSError as error:
