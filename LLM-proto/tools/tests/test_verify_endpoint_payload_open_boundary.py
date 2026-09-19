@@ -42,7 +42,9 @@ class VerifyEndpointPayloadOpenBoundaryTest(unittest.TestCase):
             ) -> int:
                 if os.fspath(path) == payload.name and dir_fd == directory_fd:
                     observed_flags.append(flags)
-                    self.assertTrue(flags & getattr(os, "O_NONBLOCK", 0))
+                    nonblock = getattr(os, "O_NONBLOCK", 0)
+                    if nonblock:
+                        self.assertTrue(flags & nonblock)
                     self.assertTrue(flags & fake_binary)
                     cloexec = getattr(os, "O_CLOEXEC", 0)
                     nofollow = getattr(os, "O_NOFOLLOW", 0)
