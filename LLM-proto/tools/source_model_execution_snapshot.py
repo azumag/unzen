@@ -11,6 +11,7 @@ cycle.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
@@ -19,6 +20,12 @@ import stat
 import tempfile
 from typing import Iterator, Sequence
 
+from execution_snapshot_internal_paths import (
+    InternalParentIdentity,
+    assert_parent_chain,
+    prepared_destination,
+    unlink_pinned_destination,
+)
 from verify_multi_segment_artifacts import SHA256_RE, _measure_file
 
 
@@ -32,6 +39,15 @@ ASCII_CASE_FOLD = str.maketrans(
 SourceExternalContract = tuple[str, Path, Path, int, str]
 SourceFingerprint = tuple[int, int, int, int, int, int, int]
 SnapshotWorkspaceIdentity = tuple[int, int]
+SourceSnapshotLinkContext = tuple[
+    Path,
+    SnapshotWorkspaceIdentity,
+    list[tuple[InternalParentIdentity, ...]],
+]
+_SOURCE_SNAPSHOT_LINK_CONTEXT: ContextVar[SourceSnapshotLinkContext | None] = ContextVar(
+    "source_snapshot_link_context",
+    default=None,
+)
 
 
 def _unsafe_windows_component(part: str) -> bool:
@@ -317,6 +333,27 @@ def _assert_source_path_identity(
         raise RuntimeError(f"{label} changed before reference execution: {requested_path}")
 
 
+def _assert_source_link_identity(
+    source_path: Path,
+    expected_identity: tuple[int, int],
+    *,
+    label: str,
+) -> None:
+    try:
+        metadata = os.stat(source_path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(
+            f"{label} changed while execution snapshot was being pinned: {source_path}"
+        ) from error
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != expected_identity
+    ):
+        raise RuntimeError(
+            f"{label} changed while execution snapshot was being pinned: {source_path}"
+        )
+
+
 def _link_verified_snapshot_file(
     source_path: Path,
     destination_path: Path,
@@ -324,24 +361,77 @@ def _link_verified_snapshot_file(
     *,
     label: str,
 ) -> None:
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    link_context = _SOURCE_SNAPSHOT_LINK_CONTEXT.get()
+    if link_context is None:
+        raise AssertionError("source execution snapshot link context is missing")
+    snapshot_root, snapshot_root_identity, parent_records = link_context
     try:
-        os.link(source_path, destination_path, follow_symlinks=False)
-    except OSError as error:
-        raise RuntimeError(
-            f"cannot create hard-link execution snapshot for {label}: {source_path}; "
-            "source graph and external data must support hard links on the snapshot filesystem; "
-            "refusing to duplicate large payload bytes"
-        ) from error
-    try:
-        metadata = os.stat(destination_path, follow_symlinks=False)
-    except OSError as error:
-        raise RuntimeError(f"execution snapshot disappeared for {label}: {destination_path}") from error
+        relative = destination_path.relative_to(snapshot_root)
+    except ValueError as error:
+        raise AssertionError("source execution snapshot destination escapes workspace") from error
     if (
-        not stat.S_ISREG(metadata.st_mode)
-        or (metadata.st_dev, metadata.st_ino) != expected_identity
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
     ):
-        raise RuntimeError(f"{label} changed while execution snapshot was being pinned: {source_path}")
+        raise AssertionError("source execution snapshot destination is malformed")
+
+    with prepared_destination(
+        snapshot_root,
+        tuple(relative.parts),
+        snapshot_root_identity,
+        label="source execution snapshot",
+    ) as (destination, parent_fd, leaf_name, parent_chain):
+        parent_records.append(parent_chain)
+        _assert_source_link_identity(source_path, expected_identity, label=label)
+        try:
+            if parent_fd is not None:
+                os.link(
+                    source_path,
+                    leaf_name,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            else:
+                os.link(source_path, destination, follow_symlinks=False)
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot create hard-link execution snapshot for {label}: {source_path}; "
+                "source graph and external data must support hard links on the snapshot filesystem; "
+                "refusing to duplicate large payload bytes"
+            ) from error
+
+        try:
+            assert_parent_chain(
+                snapshot_root,
+                snapshot_root_identity,
+                parent_chain,
+                label="source execution snapshot",
+            )
+            if parent_fd is not None:
+                metadata = os.stat(
+                    leaf_name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            else:
+                metadata = os.stat(destination, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or (metadata.st_dev, metadata.st_ino) != expected_identity
+            ):
+                raise RuntimeError(
+                    f"{label} changed while execution snapshot was being pinned: {source_path}"
+                )
+            assert_parent_chain(
+                snapshot_root,
+                snapshot_root_identity,
+                parent_chain,
+                label="source execution snapshot",
+            )
+        except Exception:
+            unlink_pinned_destination(destination, parent_fd, leaf_name)
+            raise
 
 
 def _source_execution_fingerprint(path: Path, *, label: str) -> SourceFingerprint:
@@ -408,6 +498,20 @@ def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     return metadata.st_dev, metadata.st_ino
 
 
+def _assert_recorded_internal_parents(
+    parent_records: Sequence[tuple[InternalParentIdentity, ...]],
+    snapshot_root: Path,
+    snapshot_root_identity: SnapshotWorkspaceIdentity,
+) -> None:
+    for parent_chain in parent_records:
+        assert_parent_chain(
+            snapshot_root,
+            snapshot_root_identity,
+            parent_chain,
+            label="source execution snapshot",
+        )
+
+
 def _remove_verified_snapshot_root(
     snapshot_root: Path,
     expected_identity: SnapshotWorkspaceIdentity,
@@ -448,6 +552,10 @@ def verified_source_execution_snapshot(
             f"cannot create source execution snapshot beside full model: {full_model_path}"
         ) from error
 
+    parent_records: list[tuple[InternalParentIdentity, ...]] = []
+    context_token = _SOURCE_SNAPSHOT_LINK_CONTEXT.set(
+        (snapshot_root, snapshot_root_identity, parent_records)
+    )
     try:
         snapshot_graph = snapshot_root / full_model_path.name
         _link_verified_snapshot_file(
@@ -480,6 +588,11 @@ def verified_source_execution_snapshot(
                 )
             )
 
+        _assert_recorded_internal_parents(
+            parent_records,
+            snapshot_root,
+            snapshot_root_identity,
+        )
         _assert_source_path_identity(
             full_model_path,
             expected_graph_resolved,
@@ -510,11 +623,29 @@ def verified_source_execution_snapshot(
             expected_graph_resolved=snapshot_graph.resolve(),
             external_contract=tuple(snapshot_external_contract),
         )
+        _assert_recorded_internal_parents(
+            parent_records,
+            snapshot_root,
+            snapshot_root_identity,
+        )
         _assert_source_execution_fingerprints(snapshot_fingerprints)
         yield source_identity, snapshot_graph
+        _assert_recorded_internal_parents(
+            parent_records,
+            snapshot_root,
+            snapshot_root_identity,
+        )
         _assert_source_execution_fingerprints(snapshot_fingerprints)
     finally:
-        _remove_verified_snapshot_root(snapshot_root, snapshot_root_identity)
+        try:
+            _assert_recorded_internal_parents(
+                parent_records,
+                snapshot_root,
+                snapshot_root_identity,
+            )
+            _remove_verified_snapshot_root(snapshot_root, snapshot_root_identity)
+        finally:
+            _SOURCE_SNAPSHOT_LINK_CONTEXT.reset(context_token)
 
 
 def verify_source_model_identity(
