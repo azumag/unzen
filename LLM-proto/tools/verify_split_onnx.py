@@ -24,6 +24,9 @@ import numpy as np
 import onnxruntime as ort
 
 from direct_verifier_runtime import preflight_direct_verifier_parameters
+from legacy_two_segment_artifact_execution_snapshot import (
+    verified_legacy_two_segment_execution_snapshot,
+)
 from source_model_execution_snapshot import verified_source_execution_snapshot
 
 
@@ -299,26 +302,32 @@ def verify_split(
         del full_session
         gc.collect()
 
-    segment0_session = ort.InferenceSession(str(segment0_path), providers=providers)
-    segment0_feeds = build_feeds(segment0_session, token_ids, kv_heads=kv_heads, head_size=head_size)
-    boundary_values = segment0_session.run(boundary_names, segment0_feeds)
-    boundary = dict(zip(boundary_names, boundary_values, strict=True))
-    del segment0_feeds
-    del segment0_session
-    gc.collect()
+    with verified_legacy_two_segment_execution_snapshot(
+        manifest_path,
+        manifest,
+        segment0_path,
+        segment1_path,
+    ) as (execution_segment0_path, execution_segment1_path):
+        segment0_session = ort.InferenceSession(str(execution_segment0_path), providers=providers)
+        segment0_feeds = build_feeds(segment0_session, token_ids, kv_heads=kv_heads, head_size=head_size)
+        boundary_values = segment0_session.run(boundary_names, segment0_feeds)
+        boundary = dict(zip(boundary_names, boundary_values, strict=True))
+        del segment0_feeds
+        del segment0_session
+        gc.collect()
 
-    segment1_session = ort.InferenceSession(str(segment1_path), providers=providers)
-    segment1_feeds = build_feeds(
-        segment1_session,
-        token_ids,
-        boundary=boundary,
-        kv_heads=kv_heads,
-        head_size=head_size,
-    )
-    split_logits = segment1_session.run([logits_name], segment1_feeds)[0]
-    del segment1_feeds
-    del segment1_session
-    gc.collect()
+        segment1_session = ort.InferenceSession(str(execution_segment1_path), providers=providers)
+        segment1_feeds = build_feeds(
+            segment1_session,
+            token_ids,
+            boundary=boundary,
+            kv_heads=kv_heads,
+            head_size=head_size,
+        )
+        split_logits = segment1_session.run([logits_name], segment1_feeds)[0]
+        del segment1_feeds
+        del segment1_session
+        gc.collect()
 
     comparison = compare_logits(full_logits, split_logits, atol, rtol)
     report: dict[str, object] = {
