@@ -139,6 +139,7 @@ def _measure_file(
     *,
     chunk_size: int = 1024 * 1024,
     missing_message: str | None = None,
+    expected_resolved: Path | None = None,
 ) -> tuple[int, str]:
     """Measure one descriptor whose regular-file pathname identity stays stable."""
 
@@ -151,6 +152,8 @@ def _measure_file(
         if missing_message is not None:
             raise FileNotFoundError(missing_message) from None
         raise
+    if expected_resolved is not None and resolved != expected_resolved:
+        raise RuntimeError(f"artifact changed while being measured: {path}")
 
     try:
         fd = os.open(resolved, _readonly_nonblocking_flags())
@@ -216,7 +219,14 @@ def _unsafe_windows_component(part: str) -> bool:
     )
 
 
-def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
+def _safe_relative_path_identity(
+    root: Path,
+    raw: object,
+    *,
+    field: str,
+) -> tuple[Path, Path]:
+    """Return the lexical in-root candidate and the target proven during containment."""
+
     value = _non_empty_string(raw, field=field)
     raw_parts = value.split("/")
     if (
@@ -239,10 +249,18 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     ):
         raise ValueError(f"unsafe {field}: {value}")
     resolved_root = root.resolve()
-    resolved = (root / Path(value)).resolve()
+    candidate = (root / Path(value)).absolute()
+    resolved = candidate.resolve()
     if resolved != resolved_root and resolved_root not in resolved.parents:
         raise ValueError(f"{field} escapes split manifest directory: {value}")
-    return resolved
+    return candidate, resolved
+
+
+def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
+    """Return the declared lexical path after proving its current target is in root."""
+
+    candidate, _ = _safe_relative_path_identity(root, raw, field=field)
+    return candidate
 
 
 def _canonical_sha256(raw: object, *, field: str) -> str:
@@ -338,11 +356,15 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
             )
 
         graph_field = f"segments[{index}].path"
-        graph_path = _safe_relative_path(root, raw_segment.get("path"), field=graph_field)
+        _, graph_resolved = _safe_relative_path_identity(
+            root,
+            raw_segment.get("path"),
+            field=graph_field,
+        )
         _claim_artifact_path(
             seen_artifact_paths,
             portable_artifact_paths,
-            graph_path,
+            graph_resolved,
             field=graph_field,
         )
 
@@ -355,7 +377,7 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
                     f"segments[{index}].externalData[{external_index}] must be an object"
                 )
             location_field = f"segments[{index}].externalData[{external_index}].location"
-            external_path = _safe_relative_path(
+            _, external_resolved = _safe_relative_path_identity(
                 root,
                 raw_entry.get("location"),
                 field=location_field,
@@ -363,7 +385,7 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
             _claim_artifact_path(
                 seen_artifact_paths,
                 portable_artifact_paths,
-                external_path,
+                external_resolved,
                 field=location_field,
             )
 
@@ -497,13 +519,18 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
 
         graph_field = f"segments[{index}].path"
         graph_location = _non_empty_string(raw_segment.get("path"), field=graph_field)
-        graph_path = _safe_relative_path(root, graph_location, field=graph_field)
+        graph_path, graph_resolved = _safe_relative_path_identity(
+            root,
+            graph_location,
+            field=graph_field,
+        )
         expected_graph_sha = _canonical_sha256(
             raw_segment.get("sha256"), field=f"segments[{index}].sha256"
         )
         graph_bytes, observed_graph_sha = _measure_file(
             graph_path,
             missing_message=f"segment graph not found: {graph_path}",
+            expected_resolved=graph_resolved,
         )
         if observed_graph_sha != expected_graph_sha:
             raise ValueError(
@@ -524,12 +551,17 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             field_prefix = f"segments[{index}].externalData[{external_index}]"
             location_field = f"{field_prefix}.location"
             location = _non_empty_string(raw_entry.get("location"), field=location_field)
-            external_path = _safe_relative_path(root, location, field=location_field)
+            external_path, external_resolved = _safe_relative_path_identity(
+                root,
+                location,
+                field=location_field,
+            )
 
             expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             observed_bytes, observed_sha = _measure_file(
                 external_path,
                 missing_message=f"segment external data not found: {external_path}",
+                expected_resolved=external_resolved,
             )
             if observed_bytes != expected_bytes:
                 raise ValueError(
