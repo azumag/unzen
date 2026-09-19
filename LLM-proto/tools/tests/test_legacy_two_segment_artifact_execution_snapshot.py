@@ -95,6 +95,36 @@ class LegacyTwoSegmentArtifactExecutionSnapshotTest(unittest.TestCase):
 
             self.assertFalse(execution_root.exists())
 
+    def test_manifest_bytes_are_measured_from_pinned_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path, segment0, segment1, _, _, manifest = self._fixture(root)
+            real_measure = snapshot._measure_file
+            measured: list[Path] = []
+
+            def record_measure(path: Path, **kwargs: object) -> tuple[int, str]:
+                measured.append(path)
+                return real_measure(path, **kwargs)
+
+            with mock.patch.object(snapshot, "_measure_file", side_effect=record_measure):
+                with snapshot.verified_legacy_two_segment_execution_snapshot(
+                    manifest_path,
+                    manifest,
+                    segment0,
+                    segment1,
+                ):
+                    pass
+
+            self.assertEqual(len(measured), 4)
+            self.assertTrue(
+                all(
+                    path.parent.name.startswith(".unzen-legacy-two-segment-execution-")
+                    for path in measured
+                )
+            )
+            self.assertNotIn(segment0, measured)
+            self.assertNotIn(segment1, measured)
+
     def test_cli_segment_path_must_match_manifest_declaration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -197,6 +227,39 @@ class LegacyTwoSegmentArtifactExecutionSnapshotTest(unittest.TestCase):
                         segment1,
                     ):
                         self.fail("mutated segment must not be yielded")
+
+            self.assertTrue(mutated)
+
+    def test_mutation_after_pin_is_hashed_from_execution_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path, segment0, segment1, _, _, manifest = self._fixture(root)
+            real_measure = snapshot._measure_file
+            mutated = False
+
+            def mutate_before_measure(path: Path, **kwargs: object) -> tuple[int, str]:
+                nonlocal mutated
+                if path.name == segment0.name and not mutated:
+                    segment0.write_bytes(b"X" * segment0.stat().st_size)
+                    mutated = True
+                return real_measure(path, **kwargs)
+
+            with mock.patch.object(
+                snapshot,
+                "_measure_file",
+                side_effect=mutate_before_measure,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "legacy split artifact SHA-256 mismatch for segments\\[0\\]\\.path",
+                ):
+                    with snapshot.verified_legacy_two_segment_execution_snapshot(
+                        manifest_path,
+                        manifest,
+                        segment0,
+                        segment1,
+                    ):
+                        self.fail("mutated pinned bytes must not be yielded")
 
             self.assertTrue(mutated)
 
