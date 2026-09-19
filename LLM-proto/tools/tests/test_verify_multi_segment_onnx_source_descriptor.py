@@ -44,6 +44,62 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
             ):
                 verify_source_model_identity(source, manifest)
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "requires symlink support")
+    def test_stable_source_graph_symlink_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_payload = b"source-graph"
+            target = root / "source-target.onnx"
+            target.write_bytes(graph_payload)
+            source = root / "model.onnx"
+            source.symlink_to(target.name)
+            manifest = self._manifest(graph_payload)
+
+            report = verify_source_model_identity(source, manifest)
+
+            self.assertEqual(report["path"], str(source))
+            self.assertEqual(report["graphBytes"], len(graph_payload))
+            self.assertEqual(
+                report["graphSha256"],
+                hashlib.sha256(graph_payload).hexdigest(),
+            )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "requires symlink support")
+    def test_source_graph_symlink_retarget_before_measure_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_payload = b"same-bytes"
+            first = root / "first.onnx"
+            second = root / "second.onnx"
+            first.write_bytes(graph_payload)
+            second.write_bytes(graph_payload)
+            source = root / "model.onnx"
+            source.symlink_to(first.name)
+            manifest = self._manifest(graph_payload)
+            real_measure = numerical_verifier._measure_file
+            retargeted = False
+
+            def retarget_before_measure(path: Path, **kwargs: object) -> tuple[int, str]:
+                nonlocal retargeted
+                if not retargeted and Path(path) == source:
+                    source.unlink()
+                    source.symlink_to(second.name)
+                    retargeted = True
+                return real_measure(path, **kwargs)
+
+            with mock.patch.object(
+                numerical_verifier,
+                "_measure_file",
+                side_effect=retarget_before_measure,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "artifact changed while being measured",
+                ):
+                    verify_source_model_identity(source, manifest)
+
+            self.assertTrue(retargeted)
+
     def test_missing_source_external_data_preserves_domain_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
