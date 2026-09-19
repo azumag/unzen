@@ -574,6 +574,7 @@ def _sha256_payload_at(
 ) -> str:
     buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         payload_fd = os.open(name, flags, dir_fd=directory_fd)
     except FileNotFoundError as error:
