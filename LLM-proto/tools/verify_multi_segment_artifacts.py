@@ -239,10 +239,13 @@ def _safe_relative_path(root: Path, raw: object, *, field: str) -> Path:
     ):
         raise ValueError(f"unsafe {field}: {value}")
     resolved_root = root.resolve()
-    resolved = (root / Path(value)).resolve()
+    candidate = (root / Path(value)).absolute()
+    resolved = candidate.resolve()
     if resolved != resolved_root and resolved_root not in resolved.parents:
         raise ValueError(f"{field} escapes split manifest directory: {value}")
-    return resolved
+    # Use resolution only to prove containment. Preserve the manifest-declared
+    # lexical pathname so _measure_file() can bind and recheck that identity.
+    return candidate
 
 
 def _canonical_sha256(raw: object, *, field: str) -> str:
@@ -342,7 +345,7 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
         _claim_artifact_path(
             seen_artifact_paths,
             portable_artifact_paths,
-            graph_path,
+            graph_path.resolve(),
             field=graph_field,
         )
 
@@ -363,7 +366,7 @@ def _preflight_artifact_paths(raw_segments: list[object], root: Path) -> None:
             _claim_artifact_path(
                 seen_artifact_paths,
                 portable_artifact_paths,
-                external_path,
+                external_path.resolve(),
                 field=location_field,
             )
 
