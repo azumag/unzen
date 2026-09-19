@@ -14,8 +14,8 @@ TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import source_model_execution_snapshot as source_snapshot  # noqa: E402
 import verify_multi_segment_artifacts as artifact_verifier  # noqa: E402
-import verify_multi_segment_onnx as numerical_verifier  # noqa: E402
 from verify_multi_segment_onnx import verify_source_model_identity  # noqa: E402
 
 
@@ -76,7 +76,7 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
             source = root / "model.onnx"
             source.symlink_to(first.name)
             manifest = self._manifest(graph_payload)
-            real_measure = numerical_verifier._measure_file
+            real_measure = source_snapshot._measure_file
             retargeted = False
 
             def retarget_before_measure(path: Path, **kwargs: object) -> tuple[int, str]:
@@ -88,7 +88,7 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
                 return real_measure(path, **kwargs)
 
             with mock.patch.object(
-                numerical_verifier,
+                source_snapshot,
                 "_measure_file",
                 side_effect=retarget_before_measure,
             ):
@@ -182,7 +182,7 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
                     }
                 ],
             )
-            real_measure = numerical_verifier._measure_file
+            real_measure = source_snapshot._measure_file
             calls = 0
 
             def retarget_before_measure(path: Path, **kwargs: object) -> tuple[int, str]:
@@ -194,7 +194,7 @@ class VerifyMultiSegmentOnnxSourceDescriptorTest(unittest.TestCase):
                 return real_measure(path, **kwargs)
 
             with mock.patch.object(
-                numerical_verifier,
+                source_snapshot,
                 "_measure_file",
                 side_effect=retarget_before_measure,
             ):
