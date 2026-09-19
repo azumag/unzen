@@ -90,12 +90,12 @@ def _assert_prelink_fingerprint(
     *,
     label: str,
 ) -> None:
-    """Require the exact post-hash metadata immediately before hard-linking.
+    """Require the exact identity preflight metadata immediately before linking.
 
-    ``os.link()`` itself changes ``st_nlink`` and normally ``st_ctime_ns``, so
-    those fields can only be compared before the link.  Carrying the full
-    post-hash fingerprint to this boundary closes the gap where a same-size
-    in-place write restores ``mtime_ns`` after hashing but before pinning.
+    The manifest byte proof is intentionally performed from the hard-linked
+    execution tree after pinning. This full fingerprint still prevents a
+    lexical retarget or metadata-visible in-place mutation from changing which
+    object is pinned between path preflight and ``os.link()``.
     """
 
     try:
@@ -206,26 +206,7 @@ def _artifact_entries(
         if expected_bytes_raw is not None:
             expected_bytes = _non_negative_int(expected_bytes_raw, field=f"{field}.bytes")
 
-        before_measure = _preflight_fingerprint(resolved, label=field)
-        observed_bytes, observed_sha = _measure_file(
-            requested,
-            missing_message=f"legacy split artifact not found: {requested}",
-            expected_resolved=resolved,
-        )
-        after_measure = _preflight_fingerprint(resolved, label=field)
-        if after_measure != before_measure:
-            raise RuntimeError(f"{field} changed during legacy artifact preflight: {requested}")
-        if observed_sha != expected_sha:
-            raise ValueError(
-                f"legacy split artifact SHA-256 mismatch for {field}: "
-                f"expected={expected_sha}, observed={observed_sha}"
-            )
-        if expected_bytes is not None and observed_bytes != expected_bytes:
-            raise ValueError(
-                f"legacy split artifact size mismatch for {field}: "
-                f"expected={expected_bytes}, observed={observed_bytes}"
-            )
-
+        prelink_fingerprint = _preflight_fingerprint(resolved, label=field)
         identity = _regular_identity(resolved, label=field)
         object_key = identity[0], identity[1]
         previous_object = seen_objects.get(object_key)
@@ -243,7 +224,9 @@ def _artifact_entries(
             "requested": requested,
             "resolved": resolved,
             "identity": identity,
-            "prelinkFingerprint": after_measure,
+            "prelinkFingerprint": prelink_fingerprint,
+            "expectedSha256": expected_sha,
+            "expectedBytes": expected_bytes,
         }
         entries.append(entry)
         return entry
@@ -362,6 +345,59 @@ def _assert_fingerprints(
             raise RuntimeError(f"{field} changed during legacy split execution: {path}")
 
 
+def _verify_pinned_artifacts(
+    entries: Sequence[dict[str, object]],
+    snapshot_root: Path,
+) -> None:
+    """Bind manifest byte declarations to the exact hard-linked ORT inputs."""
+
+    for entry in entries:
+        field = str(entry["field"])
+        relative = entry["relative"]
+        expected_sha = entry["expectedSha256"]
+        expected_bytes = entry["expectedBytes"]
+        if (
+            not isinstance(relative, str)
+            or not isinstance(expected_sha, str)
+            or (expected_bytes is not None and not isinstance(expected_bytes, int))
+        ):
+            raise AssertionError("internal legacy artifact measurement entry is malformed")
+        path = snapshot_root / Path(relative)
+        resolved = path.resolve(strict=True)
+        observed_bytes, observed_sha = _measure_file(
+            path,
+            missing_message=f"pinned legacy split artifact not found: {path}",
+            expected_resolved=resolved,
+        )
+        if observed_sha != expected_sha:
+            raise ValueError(
+                f"legacy split artifact SHA-256 mismatch for {field}: "
+                f"expected={expected_sha}, observed={observed_sha}"
+            )
+        if expected_bytes is not None and observed_bytes != expected_bytes:
+            raise ValueError(
+                f"legacy split artifact size mismatch for {field}: "
+                f"expected={expected_bytes}, observed={observed_bytes}"
+            )
+
+
+def _assert_original_paths(
+    entries: Sequence[dict[str, object]],
+) -> None:
+    for entry in entries:
+        field = str(entry["field"])
+        requested = entry["requested"]
+        resolved = entry["resolved"]
+        expected = entry["identity"]
+        if (
+            not isinstance(requested, Path)
+            or not isinstance(resolved, Path)
+            or not isinstance(expected, tuple)
+        ):
+            raise AssertionError("internal legacy artifact path entry is malformed")
+        _assert_requested_identity(requested, resolved, expected, label=field)
+
+
 @contextmanager
 def verified_legacy_two_segment_execution_snapshot(
     manifest_path: Path,
@@ -399,6 +435,10 @@ def verified_legacy_two_segment_execution_snapshot(
             destinations[str(entry["field"])] = destination
 
         fingerprints = _capture_fingerprints(entries, snapshot_root)
+        _verify_pinned_artifacts(entries, snapshot_root)
+        _assert_fingerprints(fingerprints)
+        _assert_original_paths(entries)
+
         graph0 = destinations["segments[0].path"]
         graph1 = destinations["segments[1].path"]
         yield graph0, graph1
