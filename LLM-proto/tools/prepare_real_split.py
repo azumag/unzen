@@ -133,6 +133,7 @@ def _open_repack_destination(output_path: Path) -> BinaryIO:
     """Open without truncation, validate the inode, then truncate through the fd."""
 
     flags = os.O_WRONLY | os.O_CREAT
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     if hasattr(os, "O_BINARY"):
         flags |= os.O_BINARY
     if hasattr(os, "O_NOFOLLOW"):
