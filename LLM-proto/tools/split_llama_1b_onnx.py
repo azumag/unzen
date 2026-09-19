@@ -73,49 +73,58 @@ def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
 
 
 def check_model_for_runtime(model_path: Path) -> None:
-    """Validate a split graph while tolerating the known ORT default-domain op.
+    """Validate one stable split-graph snapshot for the target runtime.
 
     ONNX Runtime accepts ``SimplifiedLayerNormalization`` in the default
     domain for the pinned SmolLM2 export, while ``onnx.checker`` only knows
-    standard ONNX schemas.  For checker purposes only, remap that allowlisted
-    node to the already-imported ``com.microsoft`` custom domain.  The saved
-    graph is never mutated, and any other checker error remains fatal.
+    standard ONNX schemas.  The serialized graph is first read from one
+    fail-fast regular-file snapshot, then parsed from immutable bytes.  The
+    checker always receives a temporary graph next to the source so relative
+    external-data locations keep their existing meaning.
+
+    For checker purposes only, allowlisted runtime nodes are remapped to the
+    already-imported ``com.microsoft`` custom domain.  The saved graph is never
+    mutated, and any other checker error remains fatal.
     """
 
-    model = onnx.load_model(str(model_path), load_external_data=False)
+    with open_regular_file_snapshot(model_path, label="split graph") as (stream, _):
+        graph_bytes = stream.read()
+    model = onnx.load_model(io.BytesIO(graph_bytes), load_external_data=False)
     runtime_custom_nodes = [
         node
         for node in model.graph.node
         if node.domain == "" and node.op_type in KNOWN_DEFAULT_DOMAIN_RUNTIME_OPS
     ]
-    if not runtime_custom_nodes:
-        # Preserve path-based checking for normal graphs (including large
-        # external-data models) and let the checker raise its original error.
-        onnx.checker.check_model(str(model_path), full_check=False)
-        return
 
-    for node in runtime_custom_nodes:
-        node.domain = "com.microsoft"
-    if not any(opset.domain == "com.microsoft" for opset in model.opset_import):
-        opset = model.opset_import.add()
-        opset.domain = "com.microsoft"
-        opset.version = 1
-    # ``check_custom_domain`` defaults to False, so the remapped runtime ops
-    # are intentionally skipped while all standard ONNX nodes are checked.
-    # Check a temporary file next to the graph rather than the in-memory
-    # ModelProto: path-based checking resolves external-data locations relative
-    # to the serialized graph's directory.
     descriptor, checker_name = tempfile.mkstemp(
         dir=model_path.parent,
         prefix=f".{model_path.stem}-checker-",
         suffix=".onnx",
     )
-    os.close(descriptor)
     checker_path = Path(checker_name)
     try:
-        onnx.save_model(model, str(checker_path))
+        if runtime_custom_nodes:
+            os.close(descriptor)
+            descriptor = -1
+            for node in runtime_custom_nodes:
+                node.domain = "com.microsoft"
+            if not any(opset.domain == "com.microsoft" for opset in model.opset_import):
+                opset = model.opset_import.add()
+                opset.domain = "com.microsoft"
+                opset.version = 1
+            # ``check_custom_domain`` defaults to False, so the remapped runtime
+            # ops are intentionally skipped while all standard ONNX nodes are checked.
+            onnx.save_model(model, str(checker_path))
+        else:
+            checker_stream = os.fdopen(descriptor, "wb")
+            descriptor = -1
+            with checker_stream:
+                checker_stream.write(graph_bytes)
+
         onnx.checker.check_model(str(checker_path), full_check=False)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         checker_path.unlink(missing_ok=True)
 
 
