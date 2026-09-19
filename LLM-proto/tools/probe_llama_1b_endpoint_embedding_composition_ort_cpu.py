@@ -93,6 +93,31 @@ def _sha256_fd(fd: int, size: int) -> str:
     return h.hexdigest()
 
 
+def _open_pinned_source_external_data(path: Path) -> tuple[int, os.stat_result]:
+    try:
+        snap=path.lstat()
+    except OSError as error:
+        raise RuntimeError(f"source external data is not readable: {path}: {error}") from error
+    if stat.S_ISLNK(snap.st_mode) or not stat.S_ISREG(snap.st_mode):
+        raise RuntimeError(f"source external data must be a regular non-symlink file: {path}")
+    flags=os.O_RDONLY | getattr(os,"O_BINARY",0) | getattr(os,"O_CLOEXEC",0)
+    flags |= getattr(os,"O_NOFOLLOW",0) | getattr(os,"O_NONBLOCK",0)
+    try:
+        fd=os.open(path,flags)
+    except OSError as error:
+        raise RuntimeError(f"source external data could not be opened safely: {path}: {error}") from error
+    try:
+        opened=os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise RuntimeError(f"source external data must remain a regular file: {path}")
+        if _identity(opened)!=_identity(snap):
+            raise RuntimeError("source external data changed while opening")
+        return fd,opened
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def _external_map(t: TensorProto) -> dict[str,str]:
     return {e.key:e.value for e in t.external_data}
 
@@ -170,11 +195,9 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
     if not isinstance(tiles,list) or len(tiles)!=8 or not isinstance(physical,list) or len(physical)!=4: raise RuntimeError("4-way/8-tile geometry drift")
 
     source_path,source_offset,source_length=_source_embedding_contract(source_model,layout)
-    snap=source_path.stat(); flags=os.O_RDONLY | (getattr(os,'O_NOFOLLOW',0)); source_fd=os.open(source_path,flags)
+    source_fd,opened=_open_pinned_source_external_data(source_path)
     payload_fds: dict[int,tuple[int,Path,tuple[int,int,int,int,int]]]={}
     try:
-        opened=os.fstat(source_fd)
-        if _identity(opened)!=_identity(snap): raise RuntimeError("source external data changed while opening")
         source_sha=_sha256_fd(source_fd,opened.st_size)
         expected_source=layout["pinnedSourceExternalDataIdentity"]
         if source_sha != expected_source.get("sha256") or opened.st_size != expected_source.get("bytes"):
@@ -221,7 +244,8 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
         exact=bool(np.array_equal(actual,reference)); diff=np.abs(actual-reference); max_abs=float(np.max(diff,initial=0.0))
         if not exact: raise RuntimeError(f"complete tiled embedding diverged from full-weight Gather: maxAbsDiff={max_abs}")
         for fd,path,pinned in payload_fds.values(): tile_probe._assert_payload_path_identity(path,pinned_identity=pinned)
-        if _identity(os.fstat(source_fd)) != _identity(opened) or _identity(source_path.stat()) != _identity(opened): raise RuntimeError("source external-data snapshot changed during execution")
+        current_source=source_path.lstat()
+        if not stat.S_ISREG(current_source.st_mode) or _identity(os.fstat(source_fd)) != _identity(opened) or _identity(current_source) != _identity(opened): raise RuntimeError("source external-data snapshot changed during execution")
 
         return {"schemaVersion":REPORT_SCHEMA_VERSION,"kind":REPORT_KIND,"status":"pass","decisionStatus":"diagnostic-only","sourceGraphSha256":layout.get("sourceGraphSha256"),"pinnedSourceExternalDataIdentity":expected_source,"embeddingInitializer":{"name":EMBEDDING_INITIALIZER,"rows":VOCAB_ROWS,"hiddenSize":HIDDEN_SIZE,"sourceOffset":source_offset,"byteLength":source_length},"onnxruntime":{"version":ort.__version__,"provider":"CPUExecutionProvider"},"environment":{"pythonVersion":platform.python_version(),"numpyVersion":np.__version__,"onnxVersion":onnx.__version__,"system":platform.system(),"machine":platform.machine()},"tokenIds":TOKEN_IDS,"reference":{"sessionCreateMs":ref_create,"runMs":ref_run},"tileRuns":tile_runs,"comparison":{"exactEqual":exact,"maxAbsDiff":max_abs,"shape":list(actual.shape)},"conclusion":"The pinned full tied-weight embedding Gather and a routed 8-way vocabulary-tile composition backed by four preferred physical payloads produced byte-exact embeddings for token IDs spanning every tile under pinned CPU ORT. This remains diagnostic-only and does not select the candidate layout or prove decoder/KV/checkpoint full-model staged equivalence."}
     finally:
