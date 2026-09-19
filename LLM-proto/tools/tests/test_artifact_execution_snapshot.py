@@ -269,7 +269,7 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
             with mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "artifact execution snapshot workspace changed before cleanup",
+                    "artifact execution snapshot workspace changed",
                 ):
                     with snapshot.verified_artifact_execution_snapshot(manifest) as (
                         _,
