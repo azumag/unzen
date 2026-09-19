@@ -102,7 +102,11 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
             real_link = snapshot._link_verified_artifact_file
             replaced = False
 
-            def replace_then_link(entry: dict[str, object], destination: Path) -> None:
+            def replace_then_link(
+                entry: dict[str, object],
+                destination: Path,
+                expected_root_identity: snapshot.SnapshotWorkspaceIdentity | None = None,
+            ) -> None:
                 nonlocal replaced
                 if entry.get("field") == "segments[0].path" and not replaced:
                     replacement = root / "replacement.onnx"
@@ -110,7 +114,7 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
                     graph.unlink()
                     replacement.rename(graph)
                     replaced = True
-                real_link(entry, destination)
+                real_link(entry, destination, expected_root_identity)
 
             with (
                 mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary),
@@ -141,7 +145,11 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
             real_link = snapshot._link_verified_artifact_file
             replaced = False
 
-            def replace_then_link(entry: dict[str, object], destination: Path) -> None:
+            def replace_then_link(
+                entry: dict[str, object],
+                destination: Path,
+                expected_root_identity: snapshot.SnapshotWorkspaceIdentity | None = None,
+            ) -> None:
                 nonlocal replaced
                 if str(entry.get("field")).endswith("externalData[0].location") and not replaced:
                     replacement = root / "replacement.bin"
@@ -149,7 +157,7 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
                     external.unlink()
                     replacement.rename(external)
                     replaced = True
-                real_link(entry, destination)
+                real_link(entry, destination, expected_root_identity)
 
             with (
                 mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary),
@@ -167,6 +175,56 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
                         self.fail("snapshot should not be yielded")
 
             self.assertTrue(replaced)
+
+    @unittest.skipUnless(
+        snapshot._internal_component_walk_supported(),
+        "requires dir_fd/O_NOFOLLOW component walking",
+    )
+    def test_workspace_replacement_before_manifest_copy_writes_nothing_to_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph = root / "segment0.onnx"
+            external = root / "segment0.onnx_data"
+            graph.write_bytes(b"graph")
+            external.write_bytes(b"external")
+            boundary = self._boundary(graph, external)
+            manifest = root / "split-manifest.json"
+            real_workspace_identity = snapshot._snapshot_workspace_identity
+            replaced = False
+            moved_snapshot: Path | None = None
+            replacement_root: Path | None = None
+
+            def replace_after_first_identity(path: Path) -> snapshot.SnapshotWorkspaceIdentity:
+                nonlocal replaced, moved_snapshot, replacement_root
+                observed = real_workspace_identity(path)
+                if not replaced and path.name.startswith(".unzen-artifact-execution-"):
+                    moved_snapshot = root / "moved-before-manifest-copy"
+                    path.rename(moved_snapshot)
+                    path.mkdir()
+                    replacement_root = path
+                    replaced = True
+                return observed
+
+            with (
+                mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary),
+                mock.patch.object(
+                    snapshot,
+                    "_snapshot_workspace_identity",
+                    side_effect=replace_after_first_identity,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "workspace changed"):
+                    with snapshot.verified_artifact_execution_snapshot(manifest):
+                        self.fail("snapshot should not be yielded")
+
+            self.assertTrue(replaced)
+            assert moved_snapshot is not None
+            assert replacement_root is not None
+            self.assertTrue(moved_snapshot.exists())
+            self.assertTrue(replacement_root.exists())
+            self.assertFalse((replacement_root / manifest.name).exists())
+            self.assertFalse((replacement_root / graph.name).exists())
+            self.assertFalse((replacement_root / external.name).exists())
 
     @unittest.skipUnless(
         snapshot._internal_component_walk_supported(),

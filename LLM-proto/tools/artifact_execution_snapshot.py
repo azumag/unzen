@@ -199,6 +199,15 @@ def _snapshot_open_flags() -> int:
     return flags
 
 
+def _snapshot_create_flags() -> int:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
+
+
 def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     try:
         metadata = os.stat(path, follow_symlinks=False)
@@ -399,9 +408,54 @@ def _unlink_pinned_destination(
         pass
 
 
+def _write_snapshot_manifest(
+    snapshot_root: Path,
+    expected_root_identity: SnapshotWorkspaceIdentity,
+    manifest_name: str,
+    manifest_bytes: bytes,
+) -> Path:
+    with _prepared_snapshot_destination(
+        snapshot_root,
+        (manifest_name,),
+        expected_root_identity,
+    ) as (destination, parent_fd, leaf_name, parent_chain):
+        if parent_chain:
+            raise AssertionError("snapshot manifest must live at the workspace root")
+        fd: int | None = None
+        try:
+            if parent_fd is not None:
+                fd = os.open(
+                    leaf_name,
+                    _snapshot_create_flags(),
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+            else:
+                fd = os.open(destination, _snapshot_create_flags(), 0o600)
+            offset = 0
+            while offset < len(manifest_bytes):
+                written = os.write(fd, manifest_bytes[offset:])
+                if written <= 0:
+                    raise OSError("snapshot manifest write made no progress")
+                offset += written
+        except Exception:
+            _unlink_pinned_destination(destination, parent_fd, leaf_name)
+            raise
+        finally:
+            if fd is not None:
+                os.close(fd)
+        _assert_internal_parent_chain(
+            snapshot_root,
+            expected_root_identity,
+            parent_chain,
+        )
+        return destination
+
+
 def _link_verified_artifact_file(
     entry: dict[str, object],
     destination_path: Path,
+    expected_root_identity: SnapshotWorkspaceIdentity | None = None,
 ) -> None:
     source_path = _entry_path(entry)
     field = str(entry.get("field"))
@@ -411,7 +465,8 @@ def _link_verified_artifact_file(
     snapshot_root = destination_path
     for _ in relative_parts:
         snapshot_root = snapshot_root.parent
-    expected_root_identity = _snapshot_workspace_identity(snapshot_root)
+    if expected_root_identity is None:
+        expected_root_identity = _snapshot_workspace_identity(snapshot_root)
 
     with _prepared_snapshot_destination(
         snapshot_root,
@@ -575,14 +630,22 @@ def verified_artifact_execution_snapshot(
         ) from error
 
     try:
-        snapshot_manifest = snapshot_root / manifest_path.name
-        snapshot_manifest.write_bytes(manifest_bytes)
+        snapshot_manifest = _write_snapshot_manifest(
+            snapshot_root,
+            snapshot_root_identity,
+            manifest_path.name,
+            manifest_bytes,
+        )
 
         for entry in entries:
             relative = entry.get("path")
             if not isinstance(relative, str) or not relative:
                 raise AssertionError("internal artifact relative path must be a non-empty string")
-            _link_verified_artifact_file(entry, snapshot_root / Path(relative))
+            _link_verified_artifact_file(
+                entry,
+                snapshot_root / Path(relative),
+                snapshot_root_identity,
+            )
 
         _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         for entry in entries:
