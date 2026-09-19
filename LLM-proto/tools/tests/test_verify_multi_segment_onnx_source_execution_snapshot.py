@@ -154,7 +154,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 RuntimeError,
-                "source execution snapshot workspace changed before cleanup",
+                "source execution snapshot workspace changed",
             ):
                 with verifier._verified_source_execution_snapshot(source, manifest) as (
                     _,
