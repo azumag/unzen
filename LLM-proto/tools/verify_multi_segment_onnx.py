@@ -396,6 +396,68 @@ def _link_verified_snapshot_file(
         raise RuntimeError(f"{label} changed while execution snapshot was being pinned: {source_path}")
 
 
+def _source_execution_fingerprint(
+    path: Path,
+    *,
+    label: str,
+) -> tuple[int, int, int, int, int, int, int]:
+    """Capture metadata that exposes in-place mutation of one pinned source inode."""
+
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(f"{label} changed during reference execution: {path}") from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(f"{label} changed during reference execution: {path}")
+    return (
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _capture_source_execution_fingerprints(
+    graph_path: Path,
+    external_contract: Sequence[tuple[str, Path, Path, int, str]],
+) -> tuple[tuple[str, Path, tuple[int, int, int, int, int, int, int]], ...]:
+    """Capture the pinned generation before hashing and reference execution."""
+
+    captured: list[tuple[str, Path, tuple[int, int, int, int, int, int, int]]] = [
+        (
+            "source graph",
+            graph_path,
+            _source_execution_fingerprint(graph_path, label="source graph"),
+        )
+    ]
+    for location, external_path, _, _, _ in external_contract:
+        label = f"source external data {location}"
+        captured.append(
+            (
+                label,
+                external_path,
+                _source_execution_fingerprint(external_path, label=label),
+            )
+        )
+    return tuple(captured)
+
+
+def _assert_source_execution_fingerprints(
+    captured: Sequence[
+        tuple[str, Path, tuple[int, int, int, int, int, int, int]]
+    ],
+) -> None:
+    """Fail closed if a pinned inode changed after provenance measurement."""
+
+    for label, path, expected in captured:
+        observed = _source_execution_fingerprint(path, label=label)
+        if observed != expected:
+            raise RuntimeError(f"{label} changed during reference execution: {path}")
+
+
 @contextmanager
 def _verified_source_execution_snapshot(
     full_model_path: Path,
@@ -473,6 +535,10 @@ def _verified_source_execution_snapshot(
                 label=f"source external data {location}",
             )
 
+        snapshot_fingerprints = _capture_source_execution_fingerprints(
+            snapshot_graph,
+            tuple(snapshot_external_contract),
+        )
         source_identity = _measure_source_model_identity(
             report_path=full_model_path,
             graph_path=snapshot_graph,
@@ -480,9 +546,11 @@ def _verified_source_execution_snapshot(
             expected_graph_resolved=snapshot_graph.resolve(),
             external_contract=tuple(snapshot_external_contract),
         )
+        _assert_source_execution_fingerprints(snapshot_fingerprints)
         yield source_identity, snapshot_graph
+        _assert_source_execution_fingerprints(snapshot_fingerprints)
     finally:
-        shutil.rmtree(snapshot_root, ignore_errors=True)
+        shutil.rmtree(snapshot_root)
 
 
 def verify_source_model_identity(
