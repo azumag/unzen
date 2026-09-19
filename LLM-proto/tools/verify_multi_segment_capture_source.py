@@ -318,7 +318,7 @@ def _stable_identity(
     if not stat.S_ISREG(before.st_mode):
         raise ValueError(f"{field} must be a regular file: {source}")
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(source, flags)
@@ -531,7 +531,7 @@ def _stable_identity_at(
             raise ValueError(f"{field} must not be a symlink: {'/'.join(parts)}")
         if not stat.S_ISREG(before.st_mode):
             raise ValueError(f"{field} must be a regular file: {'/'.join(parts)}")
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
         flags |= getattr(os, "O_NONBLOCK", 0)
         try:
             fd = os.open(final, flags, dir_fd=current_fd)
