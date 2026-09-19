@@ -22,6 +22,8 @@ import stat
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
+from source_file_snapshot import open_regular_file_snapshot
+
 
 REPORT_KIND = "unzen-endpoint-source-payload-materialization-verification"
 REPORT_SCHEMA_VERSION = "1.1.0"
@@ -633,8 +635,10 @@ def _sha256_file_and_ranges(
     current_range = 0
     position = 0
 
-    with path.open("rb") as stream:
-        before_signature = _file_stat_signature(os.fstat(stream.fileno()))
+    with open_regular_file_snapshot(
+        path, label="source external-data file"
+    ) as (stream, opened_source):
+        before_signature = _file_stat_signature(opened_source)
         if expected_stat_signature is not None:
             _require_stable_file_signature(
                 before_signature, expected_stat_signature, path=path
