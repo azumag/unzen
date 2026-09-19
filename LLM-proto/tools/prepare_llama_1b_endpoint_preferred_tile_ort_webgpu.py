@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import tempfile
 
 import onnx
 from onnx import TensorProto, helper
@@ -44,13 +45,28 @@ def _identity(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
     return (snapshot.st_dev, snapshot.st_ino, snapshot.st_size, snapshot.st_mtime_ns, snapshot.st_ctime_ns)
 
 
-def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple[int, str]:
-    """Measure one stable non-symlink regular-file descriptor snapshot."""
+def _measure_regular_file(
+    path: Path,
+    *,
+    byte_limit: int | None = None,
+    check_onnx: bool = False,
+) -> tuple[int, str]:
+    """Measure one stable non-symlink regular-file descriptor snapshot.
+
+    When ``check_onnx`` is true, the ONNX checker validates an exclusive
+    same-directory copy made from the exact bytes hashed by this snapshot. This
+    keeps relative external-data paths meaningful while preventing checker
+    validation and manifest metadata from referring to different graph bytes.
+    """
 
     if byte_limit is not None and (
         not isinstance(byte_limit, int) or isinstance(byte_limit, bool) or byte_limit < 0
     ):
         raise ValueError("byte_limit must be None or a non-negative integer")
+    if not isinstance(check_onnx, bool):
+        raise ValueError("check_onnx must be a boolean")
+    if check_onnx and byte_limit is not None:
+        raise ValueError("check_onnx requires a full-file snapshot")
     path = path.expanduser().absolute()
     try:
         before = os.lstat(path)
@@ -68,6 +84,7 @@ def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple
         raise RuntimeError(f"file could not be opened safely: {path}: {error}") from error
 
     digest = hashlib.sha256()
+    checker_chunks: list[bytes] | None = [] if check_onnx else None
     observed = 0
     try:
         opened = os.fstat(fd)
@@ -81,6 +98,8 @@ def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple
             if not block:
                 raise RuntimeError(f"unexpected EOF while hashing {path}")
             digest.update(block)
+            if checker_chunks is not None:
+                checker_chunks.append(block)
             observed += len(block)
         if byte_limit is None:
             extra = os.read(fd, 1)
@@ -98,6 +117,26 @@ def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple
         raise RuntimeError(f"file path disappeared after hashing: {path}: {error}") from error
     if stat.S_ISLNK(after_path.st_mode) or _identity(after_path) != _identity(opened):
         raise RuntimeError(f"file path changed while being hashed: {path}")
+
+    if checker_chunks is not None:
+        descriptor, checker_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.stem}-checker-",
+            suffix=".onnx",
+        )
+        checker_path = Path(checker_name)
+        try:
+            checker_stream = os.fdopen(descriptor, "wb")
+            descriptor = -1
+            with checker_stream:
+                for block in checker_chunks:
+                    checker_stream.write(block)
+            onnx.checker.check_model(str(checker_path), full_check=True)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            checker_path.unlink(missing_ok=True)
+
     return observed, digest.hexdigest()
 
 
@@ -285,8 +324,7 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
                 file_name = f"tile-{tile_index}-{mode}.onnx"
                 graph_path = output_dir / file_name
                 onnx.save(build_probe_model(mode=mode, rows=rows, hidden_size=hidden_size, offset=offset, length=length), graph_path)
-                onnx.checker.check_model(str(graph_path), full_check=True)
-                graph_bytes, graph_sha256 = _measure_regular_file(graph_path)
+                graph_bytes, graph_sha256 = _measure_regular_file(graph_path, check_onnx=True)
                 graphs[mode] = {
                     "file": file_name,
                     "bytes": graph_bytes,
