@@ -99,12 +99,14 @@ def _source_external_location(raw: object, *, field: str) -> str:
     return value
 
 
-def _safe_relative_path(
+def _safe_relative_path_identity(
     root: Path,
     raw: object,
     *,
     field: str = "segment path",
-) -> Path:
+) -> tuple[Path, Path]:
+    """Return a lexical candidate and the in-root target resolved during preflight."""
+
     value = _non_empty_string(raw, field=field)
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
@@ -120,9 +122,22 @@ def _safe_relative_path(
     ):
         raise ValueError(f"unsafe {field} in split manifest: {value}")
     resolved_root = root.resolve()
-    resolved = (root / Path(value)).resolve()
+    candidate = (root / Path(value)).absolute()
+    resolved = candidate.resolve()
     if resolved != resolved_root and resolved_root not in resolved.parents:
         raise ValueError(f"{field} escapes split manifest directory: {value}")
+    return candidate, resolved
+
+
+def _safe_relative_path(
+    root: Path,
+    raw: object,
+    *,
+    field: str = "segment path",
+) -> Path:
+    """Preserve the existing resolved-path contract for segment validation callers."""
+
+    _, resolved = _safe_relative_path_identity(root, raw, field=field)
     return resolved
 
 
@@ -166,7 +181,7 @@ def _source_file_identity(
 
 def _preflight_source_file_identities(
     full_model_path: Path,
-    external_contract: Sequence[tuple[str, Path, int, str]],
+    external_contract: Sequence[tuple[str, Path, Path, int, str]],
 ) -> None:
     """Reject source provenance roles that alias one filesystem object."""
 
@@ -178,11 +193,11 @@ def _preflight_source_file_identities(
     )
     seen[graph_identity] = "source graph"
 
-    for location, external_path, _, _ in external_contract:
+    for location, _, external_resolved, _, _ in external_contract:
         identity = _source_file_identity(
-            external_path,
+            external_resolved,
             field=f"source external data {location}",
-            missing_message=f"source external data not found: {external_path}",
+            missing_message=f"source external data not found: {external_resolved}",
         )
         previous = seen.get(identity)
         if previous is not None:
@@ -196,7 +211,7 @@ def _preflight_source_file_identities(
 def _preflight_source_model_identity(
     full_model_path: Path,
     manifest: dict[str, object],
-) -> tuple[str, tuple[tuple[str, Path, int, str], ...]]:
+) -> tuple[str, tuple[tuple[str, Path, Path, int, str], ...]]:
     """Validate all source provenance metadata before streaming source payloads."""
 
     raw_source = manifest.get("sourceModel")
@@ -211,7 +226,7 @@ def _preflight_source_model_identity(
     if not isinstance(raw_external, list):
         raise ValueError("sourceModel.externalData must be an array")
 
-    external_contract: list[tuple[str, Path, int, str]] = []
+    external_contract: list[tuple[str, Path, Path, int, str]] = []
     source_graph_path = full_model_path.resolve()
     seen_paths: dict[Path, str] = {source_graph_path: "source graph"}
     seen_locations: set[str] = set()
@@ -245,12 +260,12 @@ def _preflight_source_model_identity(
                 f"{location} aliases {previous_separator_location}"
             )
 
-        external_path = _safe_relative_path(
+        external_path, external_resolved = _safe_relative_path_identity(
             full_model_path.parent,
             location,
             field=f"{field_prefix}.location",
         )
-        previous_location = seen_paths.get(external_path)
+        previous_location = seen_paths.get(external_resolved)
         if previous_location is not None:
             if previous_location == "source graph":
                 raise ValueError(
@@ -275,8 +290,10 @@ def _preflight_source_model_identity(
         seen_locations.add(location)
         portable_case_seen[portable_case_location] = location
         portable_separator_seen[portable_separator_location] = location
-        seen_paths[external_path] = location
-        external_contract.append((location, external_path, expected_bytes, expected_sha))
+        seen_paths[external_resolved] = location
+        external_contract.append(
+            (location, external_path, external_resolved, expected_bytes, expected_sha)
+        )
 
     return expected_graph_sha, tuple(external_contract)
 
@@ -303,10 +320,17 @@ def verify_source_model_identity(
         )
 
     external_reports: list[dict[str, object]] = []
-    for location, external_path, expected_bytes, expected_sha in external_contract:
+    for (
+        location,
+        external_path,
+        external_resolved,
+        expected_bytes,
+        expected_sha,
+    ) in external_contract:
         observed_bytes, observed_sha = _measure_file(
             external_path,
             missing_message=f"source external data not found: {external_path}",
+            expected_resolved=external_resolved,
         )
         if observed_bytes != expected_bytes:
             raise ValueError(
