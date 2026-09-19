@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO, Iterator
 
 
 def _stat_signature(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -70,6 +72,34 @@ def _verify_path_identity(
         raise RuntimeError(f"{label} requested path changed while being measured: {requested}") from error
     if requested_after != resolved:
         raise RuntimeError(f"{label} requested path changed while being measured: {requested}")
+
+
+@contextmanager
+def open_regular_file_snapshot(
+    path: Path,
+    *,
+    label: str,
+) -> Iterator[tuple[BinaryIO, os.stat_result]]:
+    """Yield one fail-fast regular-file stream pinned to a stable requested path.
+
+    The requested path is rechecked before yielding, so callers can safely create
+    destination artifacts only after the descriptor and requested pathname are both
+    bound to the pre-open regular-file identity.  A second descriptor/path check on
+    normal context exit detects mutation or retargeting during the operation.
+    """
+
+    requested, resolved, opened, fd = _pin_regular_file(path, label=label)
+    try:
+        _verify_path_identity(requested, resolved, opened, label=label)
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            yield stream, opened
+
+        after_fd = os.fstat(fd)
+        if _stat_signature(after_fd) != _stat_signature(opened):
+            raise RuntimeError(f"{label} changed while being read: {requested}")
+        _verify_path_identity(requested, resolved, opened, label=label)
+    finally:
+        os.close(fd)
 
 
 def read_regular_file_snapshot(
