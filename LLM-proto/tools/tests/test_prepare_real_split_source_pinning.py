@@ -72,12 +72,12 @@ class RepackSourceIdentityPinningTest(unittest.TestCase):
             open_destination = repack_module._open_repack_destination
             retargeted = False
 
-            def retarget_then_open(path: Path):
+            def retarget_then_open(path: Path, *, parent_fd: int | None = None):
                 nonlocal retargeted
                 source_link.unlink()
                 source_link.symlink_to(replacement_target)
                 retargeted = True
-                return open_destination(path)
+                return open_destination(path, parent_fd=parent_fd)
 
             with patch.object(
                 repack_module,
