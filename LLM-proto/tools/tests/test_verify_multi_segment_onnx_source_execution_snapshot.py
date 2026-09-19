@@ -79,6 +79,68 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
 
             self.assertFalse(snapshot_root.exists())
 
+    @unittest.skipUnless(
+        hasattr(os, "link") and hasattr(os, "symlink"),
+        "requires hard-link and symlink support",
+    )
+    def test_parent_symlink_retarget_after_workspace_creation_does_not_redirect_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_parent = root / "original"
+            alternate_parent = root / "alternate"
+            original_parent.mkdir()
+            alternate_parent.mkdir()
+            parent_link = root / "source-dir"
+            try:
+                parent_link.symlink_to(original_parent, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks unavailable in test filesystem: {error}")
+
+            payload = b"same-bytes"
+            original_source = original_parent / "model.onnx"
+            original_source.write_bytes(payload)
+            alternate_source = alternate_parent / "model.onnx"
+            alternate_source.write_bytes(payload)
+            source = parent_link / "model.onnx"
+            manifest = self._manifest(payload)
+            real_link = source_snapshot._link_verified_snapshot_file
+            retargeted = False
+
+            def retarget_parent_then_link(
+                source_path: Path,
+                destination_path: Path,
+                expected_identity: tuple[int, int],
+                *,
+                label: str,
+            ) -> None:
+                nonlocal retargeted
+                if label == "source graph" and not retargeted:
+                    parent_link.unlink()
+                    parent_link.symlink_to(alternate_parent, target_is_directory=True)
+                    retargeted = True
+                real_link(
+                    source_path,
+                    destination_path,
+                    expected_identity,
+                    label=label,
+                )
+
+            with mock.patch.object(
+                source_snapshot,
+                "_link_verified_snapshot_file",
+                side_effect=retarget_parent_then_link,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "source graph changed before reference execution",
+                ):
+                    with verifier._verified_source_execution_snapshot(source, manifest):
+                        self.fail("snapshot should not be yielded")
+
+            self.assertTrue(retargeted)
+            self.assertEqual(list(original_parent.glob(".unzen-source-execution-*")), [])
+            self.assertEqual(list(alternate_parent.glob(".unzen-source-execution-*")), [])
+
     @unittest.skipUnless(hasattr(os, "link"), "requires hard-link support")
     def test_same_byte_graph_replacement_before_snapshot_link_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
