@@ -30,6 +30,10 @@ If any later entry is malformed, has a portable path alias, aliases the source g
 
 After metadata and filesystem-object preflight succeed, descriptor-pinned `_measure_file()` calls remain authoritative for content provenance. The verifier still streams the source graph and every external-data file and compares the observed size/digest with the preflighted metadata. Missing files, in-place mutation, byte-size mismatches, and SHA-256 mismatches continue to fail closed.
 
+For source external data, preflight now preserves both identities needed by the measurement boundary: the manifest-declared lexical pathname and the containment-resolved target proven while validating that declaration. `_measure_file()` receives the lexical path together with `expected_resolved`, so a symlink or other path component that is retargeted between containment and descriptor open fails closed even when the replacement file has identical bytes and SHA-256. The descriptor-pinned final path recheck also rejects retargeting after open. Stable in-root symlinks remain supported because their declared path continues to resolve to the same preflighted target.
+
+Resolved-path and hard-link alias checks remain unchanged in meaning: they still compare the resolved/object identity rather than treating different lexical spellings as distinct provenance roles. The emitted `sourceModel` report also remains unchanged and continues to preserve the original manifest `location` string.
+
 The filesystem-object check is intentionally a cheap preflight rather than a new publication or snapshot-isolation contract. It preserves the existing path/symlink policy and does not replace the measured SHA-256/byte checks.
 
 The emitted `sourceModel` verification report is unchanged for valid manifests: it records graph byte size/digest, each original external-data location/byte size/digest, and `allExternalDataHashed: true`.
