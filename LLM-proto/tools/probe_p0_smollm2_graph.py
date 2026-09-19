@@ -4,12 +4,23 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from pathlib import Path
 
 import onnx
 
-from split_llama_1b_onnx import discover_split_plan
+from source_file_snapshot import read_regular_file_snapshot
+from split_llama_1b_onnx import DEFAULT_SOURCE_GRAPH_MAX_BYTES, discover_split_plan
+
+
+def _load_model_snapshot(path: Path) -> onnx.ModelProto:
+    raw, _ = read_regular_file_snapshot(
+        path,
+        max_bytes=DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+        label="P0 model graph",
+    )
+    return onnx.load_model(io.BytesIO(raw), load_external_data=False)
 
 
 def main() -> int:
@@ -17,7 +28,7 @@ def main() -> int:
     parser.add_argument("model", type=Path)
     args = parser.parse_args()
 
-    model = onnx.load_model(str(args.model), load_external_data=False)
+    model = _load_model_snapshot(args.model)
     plan = discover_split_plan(model, split_layer=15)
     payload = {
         "splitLayer": plan.split_layer,
