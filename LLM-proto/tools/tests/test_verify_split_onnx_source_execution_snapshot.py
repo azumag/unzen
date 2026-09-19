@@ -60,9 +60,55 @@ class VerifySplitOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 self.assertEqual(snapshot_graph.read_bytes(), b"graph-bytes")
                 self.assertEqual((snapshot_graph.parent / external.name).read_bytes(), b"weight-bytes")
                 self.assertEqual(report["graphSha256"], _sha256(real_graph))
-                self.assertEqual(report["externalData"][0]["sha256"], _sha256(external))
+                external_report = report["externalData"]
+                self.assertIsInstance(external_report, list)
+                self.assertEqual(external_report[0]["sha256"], _sha256(external))  # type: ignore[index]
 
             self.assertFalse(snapshot_graph.parent.exists())
+
+    def test_snapshot_rejects_same_byte_graph_symlink_retarget_while_pinning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_a = root / "graph-a.onnx"
+            graph_b = root / "graph-b.onnx"
+            requested_graph = root / "model.onnx"
+            external = root / "weights.bin"
+            graph_a.write_bytes(b"same-graph")
+            graph_b.write_bytes(b"same-graph")
+            external.write_bytes(b"weights")
+            requested_graph.symlink_to(graph_a.name)
+            manifest = _manifest(graph_a, external)
+            real_link = snapshot_boundary._link_verified_snapshot_file
+            retargeted = False
+
+            def retargeting_link(
+                source_path: Path,
+                destination_path: Path,
+                expected_identity: tuple[int, int],
+                *,
+                label: str,
+            ) -> None:
+                nonlocal retargeted
+                real_link(source_path, destination_path, expected_identity, label=label)
+                if label == "source graph" and not retargeted:
+                    retargeted = True
+                    requested_graph.unlink()
+                    requested_graph.symlink_to(graph_b.name)
+
+            with patch.object(
+                snapshot_boundary,
+                "_link_verified_snapshot_file",
+                side_effect=retargeting_link,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "source graph changed before reference execution",
+                ):
+                    with snapshot_boundary.verified_source_execution_snapshot(
+                        requested_graph,
+                        manifest,
+                    ):
+                        self.fail("retargeted source must not be yielded")
 
     def test_snapshot_rejects_in_place_graph_mutation_during_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,6 +128,25 @@ class VerifySplitOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                     snapshot_graph,
                 ):
                     snapshot_graph.write_bytes(b"graph-after!")
+
+    def test_snapshot_rejects_in_place_external_mutation_during_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph = root / "model.onnx"
+            external = root / "weights.bin"
+            graph.write_bytes(b"graph")
+            external.write_bytes(b"weights-before")
+            manifest = _manifest(graph, external)
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "source external data weights.bin changed during reference execution",
+            ):
+                with snapshot_boundary.verified_source_execution_snapshot(graph, manifest) as (
+                    _report,
+                    snapshot_graph,
+                ):
+                    (snapshot_graph.parent / external.name).write_bytes(b"weights-after!")
 
     def test_legacy_verifier_opens_reference_from_snapshot_path(self) -> None:
         snapshot_path = Path("snapshot/model.onnx")
