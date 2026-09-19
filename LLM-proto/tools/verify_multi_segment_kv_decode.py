@@ -22,10 +22,12 @@ import numpy as np
 import onnxruntime as ort
 
 from direct_verifier_runtime import non_negative_int, preflight_direct_verifier_parameters
+from source_model_execution_snapshot import (
+    verified_source_execution_snapshot as _verified_source_execution_snapshot,
+)
 from verify_multi_segment_artifacts import _read_stable_manifest, verify_artifact_integrity
 from verify_multi_segment_onnx import (
     _boundary_report,
-    _verified_source_execution_snapshot,
     validate_multi_segment_manifest,
 )
 from verify_split_onnx import _last_token_argmax, build_feeds, compare_logits, parse_token_ids
