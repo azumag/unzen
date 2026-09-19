@@ -84,6 +84,12 @@ class VerifyMultiSegmentDeclaredArtifactPathIdentityTest(unittest.TestCase):
         except (OSError, NotImplementedError) as error:
             raise unittest.SkipTest(f"symlink creation unavailable: {error}") from error
 
+    @staticmethod
+    def _retarget(link: Path, target: Path) -> None:
+        next_link = link.with_name(f"{link.name}.next")
+        next_link.symlink_to(target.name)
+        os.replace(next_link, link)
+
     def test_stable_declared_graph_symlink_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -103,6 +109,38 @@ class VerifyMultiSegmentDeclaredArtifactPathIdentityTest(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["segments"][0]["path"], link.name)
             self.assertEqual(report["segments"][0]["graphSha256"], self._sha(payload))
+
+    def test_declared_graph_symlink_retarget_before_measure_open_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = b"same-bytes-before-measure-open"
+            original = root / "graph-original.onnx"
+            replacement = root / "graph-replacement.onnx"
+            original.write_bytes(payload)
+            replacement.write_bytes(payload)
+            link = root / "segment0.onnx"
+            self._symlink(link, original)
+            manifest_path = self._manifest(
+                root,
+                graph_location=link.name,
+                graph_payload=payload,
+            )
+            original_measure = verifier._measure_file
+            retargeted = False
+
+            def retarget_before_measure(path, *args, **kwargs):
+                nonlocal retargeted
+                if Path(path) == link.absolute() and not retargeted:
+                    self._retarget(link, replacement)
+                    retargeted = True
+                return original_measure(path, *args, **kwargs)
+
+            with patch.object(verifier, "_measure_file", side_effect=retarget_before_measure):
+                with self.assertRaisesRegex(RuntimeError, "artifact changed while being measured"):
+                    verifier.verify_artifact_integrity(manifest_path)
+
+            self.assertTrue(retargeted)
+            self.assertEqual(link.resolve(), replacement.resolve())
 
     def test_declared_graph_symlink_retarget_after_open_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,9 +164,7 @@ class VerifyMultiSegmentDeclaredArtifactPathIdentityTest(unittest.TestCase):
                 nonlocal retargeted
                 fd = original_open(path, flags, *args, **kwargs)
                 if Path(path) == original and not retargeted:
-                    next_link = root / "segment0.next"
-                    next_link.symlink_to(replacement.name)
-                    os.replace(next_link, link)
+                    self._retarget(link, replacement)
                     retargeted = True
                 return fd
 
