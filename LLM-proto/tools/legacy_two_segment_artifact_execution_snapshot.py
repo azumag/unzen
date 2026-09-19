@@ -30,7 +30,7 @@ from verify_multi_segment_artifacts import (
 MANIFEST_SCHEMA_VERSION = "1.0.0"
 MANIFEST_KIND = "unzen-real-two-segment-onnx"
 ARTIFACT_LAYOUT = "per-segment-external-data"
-ArtifactIdentity = tuple[int, int, int, int, int]
+ArtifactIdentity = tuple[int, int, int, int]
 ArtifactFingerprint = tuple[int, int, int, int, int, int, int]
 SnapshotWorkspaceIdentity = tuple[int, int]
 
@@ -47,7 +47,6 @@ def _regular_identity(path: Path, *, label: str) -> ArtifactIdentity:
         metadata.st_ino,
         metadata.st_size,
         metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
     )
 
 
