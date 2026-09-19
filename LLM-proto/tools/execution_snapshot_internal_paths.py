@@ -21,9 +21,22 @@ SnapshotWorkspaceIdentity = tuple[int, int]
 InternalParentIdentity = tuple[tuple[str, ...], int, int]
 
 
+def nofollow_hardlink_supported() -> bool:
+    """Return whether ``os.link`` supports an explicit no-follow source contract."""
+
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
+    return os.link in supports_follow_symlinks
+
+
+def nofollow_stat_supported() -> bool:
+    """Return whether ``os.stat`` supports explicit no-follow metadata reads."""
+
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
+    return os.stat in supports_follow_symlinks
+
+
 def component_walk_supported() -> bool:
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     return (
         hasattr(os, "O_DIRECTORY")
         and hasattr(os, "O_NOFOLLOW")
@@ -32,8 +45,8 @@ def component_walk_supported() -> bool:
         and os.link in supports_dir_fd
         and os.stat in supports_dir_fd
         and os.unlink in supports_dir_fd
-        and os.link in supports_follow_symlinks
-        and os.stat in supports_follow_symlinks
+        and nofollow_hardlink_supported()
+        and nofollow_stat_supported()
     )
 
 
@@ -46,10 +59,10 @@ def _open_flags() -> int:
 
 def workspace_identity(path: Path, *, label: str) -> SnapshotWorkspaceIdentity:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(f"{label} workspace changed: {path}") from error
-    if not stat.S_ISDIR(metadata.st_mode):
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise RuntimeError(f"{label} workspace changed: {path}")
     return metadata.st_dev, metadata.st_ino
 
@@ -73,6 +86,19 @@ def _assert_root_identity(
 ) -> None:
     if workspace_identity(snapshot_root, label=label) != expected_root_identity:
         raise RuntimeError(f"{label} workspace changed: {snapshot_root}")
+
+
+def _assert_portable_fallback_capabilities(*, label: str) -> None:
+    missing: list[str] = []
+    if not nofollow_hardlink_supported():
+        missing.append("os.link(..., follow_symlinks=False)")
+    if not nofollow_stat_supported():
+        missing.append("os.stat(..., follow_symlinks=False)")
+    if missing:
+        raise RuntimeError(
+            f"{label} cannot use pathname fallback safely on this platform; "
+            "missing no-follow filesystem capability: " + ", ".join(missing)
+        )
 
 
 @contextmanager
@@ -135,6 +161,7 @@ def prepared_destination(
         return
 
     _assert_root_identity(snapshot_root, expected_root_identity, label=label)
+    _assert_portable_fallback_capabilities(label=label)
     current = snapshot_root
     parents: list[InternalParentIdentity] = []
     for component in relative_parts[:-1]:
@@ -208,6 +235,7 @@ def assert_parent_chain(
         return
 
     _assert_root_identity(snapshot_root, expected_root_identity, label=label)
+    _assert_portable_fallback_capabilities(label=label)
     for parts, expected_dev, expected_ino in parents:
         path = snapshot_root.joinpath(*parts)
         try:
