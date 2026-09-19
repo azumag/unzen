@@ -215,7 +215,9 @@ def _write_f32(path: Path, array: np.ndarray) -> dict[str, object]:
 
 
 def _graph_info(path: Path) -> dict[str, object]:
-    graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(path)
+    graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(
+        path, check_onnx=True
+    )
     return {
         "file": path.name,
         "bytes": graph_bytes,
@@ -384,7 +386,6 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
             ),
             final_norm_graph_path,
         )
-        onnx.checker.check_model(str(final_norm_graph_path), full_check=True)
         created.append(final_norm_graph_path)
         final_norm_graph = _graph_info(final_norm_graph_path)
 
@@ -436,7 +437,6 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
                 ),
                 graph_path,
             )
-            onnx.checker.check_model(str(graph_path), full_check=True)
             created.append(graph_path)
             manifest_tiles.append(
                 {
