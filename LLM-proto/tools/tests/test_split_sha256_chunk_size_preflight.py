@@ -118,7 +118,7 @@ class SplitSha256ChunkSizePreflightTest(unittest.TestCase):
                 return fd
 
             with mock.patch.object(snapshots.os, "open", side_effect=open_then_replace):
-                with self.assertRaisesRegex(RuntimeError, "path changed while being measured"):
+                with self.assertRaisesRegex(RuntimeError, "changed between path check and open"):
                     splitter.sha256_file(path, chunk_size=3)
 
             self.assertTrue(replaced)
