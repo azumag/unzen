@@ -48,10 +48,10 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
                                 )
                         open_file.assert_not_called()
 
-    def test_small_positive_chunk_sizes_hash_complete_payload(self) -> None:
+    def test_small_positive_chunk_sizes_hash_complete_raw_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "segment.onnx"
-            payload = b"artifact-hash-contract"
+            payload = b"line-one\r\nline-two\x1a\x00artifact-hash-contract"
             target.write_bytes(payload)
             expected_sha = hashlib.sha256(payload).hexdigest()
 
@@ -62,7 +62,7 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
                     self.assertEqual(measured_sha, expected_sha)
                     self.assertEqual(sha256_file(target, chunk_size=chunk_size), expected_sha)
 
-    def test_path_replacement_after_open_keeps_original_descriptor_identity(self) -> None:
+    def test_path_replacement_after_open_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target = root / "segment.onnx"
@@ -84,12 +84,11 @@ class VerifyMultiSegmentArtifactDescriptorPinningTest(unittest.TestCase):
                 return fd
 
             with patch("verify_multi_segment_artifacts.os.open", replace_after_open):
-                measured_bytes, measured_sha = _measure_file(target, chunk_size=4)
+                with self.assertRaisesRegex(RuntimeError, "artifact changed while being measured"):
+                    _measure_file(target, chunk_size=4)
 
             self.assertTrue(replaced)
             self.assertEqual(target.read_bytes(), replacement_payload)
-            self.assertEqual(measured_bytes, len(original_payload))
-            self.assertEqual(measured_sha, hashlib.sha256(original_payload).hexdigest())
 
     def test_in_place_mutation_while_hashing_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
