@@ -50,12 +50,13 @@ class DownstreamEndpointGraphMetadataSnapshotTest(unittest.TestCase):
         self.assertEqual(variants, embedding.EXPECTED_GRAPH_VARIANTS)
         self.assertEqual(measure.call_count, len(embedding.EXPECTED_GRAPH_VARIANTS))
 
-    def test_five_way_generated_graph_metadata_uses_measurement_pair(self) -> None:
+    def test_five_way_generated_graph_metadata_uses_snapshot_bound_checker(self) -> None:
         source = inspect.getsource(five_way.prepare)
         self.assertIn(
-            "graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(graph_path)",
+            "graph_path, check_onnx=True",
             source,
         )
+        self.assertNotIn("onnx.checker.check_model(str(graph_path)", source)
         self.assertNotIn("graph_path.stat().st_size", source)
         self.assertNotIn("preferred_webgpu._sha256_file(graph_path)", source)
 
