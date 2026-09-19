@@ -195,6 +195,20 @@ def _internal_component_walk_supported() -> bool:
     )
 
 
+def _pathname_hard_link_supported() -> bool:
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
+    return os.link in supports_follow_symlinks
+
+
+def _require_pathname_hard_link_support() -> None:
+    if _pathname_hard_link_supported():
+        return
+    raise RuntimeError(
+        "artifact execution snapshot pathname fallback requires "
+        "os.link(..., follow_symlinks=False); refusing to use implicit symlink-follow semantics"
+    )
+
+
 def _snapshot_open_flags() -> int:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
@@ -213,12 +227,12 @@ def _snapshot_create_flags() -> int:
 
 def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(
             f"artifact execution snapshot workspace changed before cleanup: {path}"
         ) from error
-    if not stat.S_ISDIR(metadata.st_mode):
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise RuntimeError(
             f"artifact execution snapshot workspace changed before cleanup: {path}"
         )
@@ -487,8 +501,9 @@ def _link_verified_artifact_file(
                     follow_symlinks=False,
                 )
             else:
+                _require_pathname_hard_link_support()
                 os.link(source_path, destination, follow_symlinks=False)
-        except OSError as error:
+        except (OSError, NotImplementedError) as error:
             raise RuntimeError(
                 f"cannot create hard-link execution snapshot for {field}: {source_path}; "
                 "generated graphs and external data must support hard links on the snapshot filesystem; "
@@ -504,7 +519,7 @@ def _link_verified_artifact_file(
             if parent_fd is not None:
                 linked = os.stat(leaf_name, dir_fd=parent_fd, follow_symlinks=False)
             else:
-                linked = os.stat(destination, follow_symlinks=False)
+                linked = os.lstat(destination)
             current = os.lstat(source_path)
             if (
                 not stat.S_ISREG(linked.st_mode)
@@ -531,7 +546,7 @@ def _link_verified_artifact_file(
 
 def _artifact_execution_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(f"{label} changed during numerical execution: {path}") from error
     if not stat.S_ISREG(metadata.st_mode):
@@ -614,6 +629,9 @@ def verified_artifact_execution_snapshot(
     manifest_path: Path,
 ) -> Iterator[tuple[dict[str, object], Path]]:
     """Yield the verified report and a manifest rooted in a pinned hard-link tree."""
+
+    if not _internal_component_walk_supported():
+        _require_pathname_hard_link_support()
 
     manifest_path = manifest_path.expanduser().absolute()
     report, manifest_bytes, entries = _verify_execution_boundary(manifest_path)
