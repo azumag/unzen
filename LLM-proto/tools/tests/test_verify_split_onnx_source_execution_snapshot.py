@@ -148,14 +148,25 @@ class VerifySplitOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 ):
                     (snapshot_graph.parent / external.name).write_bytes(b"weights-after!")
 
-    def test_legacy_verifier_opens_reference_from_snapshot_path(self) -> None:
+    def test_legacy_verifier_opens_reference_and_segments_from_snapshot_paths(self) -> None:
         snapshot_path = Path("snapshot/model.onnx")
+        snapshot_segment0 = Path("artifact-snapshot/segment0.onnx")
+        snapshot_segment1 = Path("artifact-snapshot/segment1.onnx")
         full_logits = np.asarray([[[0.25, 0.75]]], dtype=np.float32)
         opened: list[str] = []
 
         @contextmanager
         def source_snapshot(_path: Path, _manifest: dict[str, object]):
             yield ({"graphSha256": "0" * 64}, snapshot_path)
+
+        @contextmanager
+        def artifact_snapshot(
+            _manifest_path: Path,
+            _manifest: dict[str, object],
+            _segment0: Path,
+            _segment1: Path,
+        ):
+            yield snapshot_segment0, snapshot_segment1
 
         class FakeSession:
             def __init__(self, path: str, *, providers: list[str]):
@@ -182,6 +193,11 @@ class VerifySplitOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 "verified_source_execution_snapshot",
                 side_effect=source_snapshot,
             ),
+            patch.object(
+                verifier,
+                "verified_legacy_two_segment_execution_snapshot",
+                side_effect=artifact_snapshot,
+            ),
             patch.object(verifier.ort, "InferenceSession", side_effect=FakeSession),
         ):
             report = verifier.verify_split(
@@ -196,7 +212,7 @@ class VerifySplitOnnxSourceExecutionSnapshotTest(unittest.TestCase):
 
         self.assertEqual(
             opened,
-            [str(snapshot_path), "segment0.onnx", "segment1.onnx"],
+            [str(snapshot_path), str(snapshot_segment0), str(snapshot_segment1)],
         )
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["kind"], "unzen-real-two-segment-same-machine-verification")
