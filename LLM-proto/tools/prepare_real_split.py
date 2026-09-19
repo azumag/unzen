@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -336,7 +337,8 @@ def repack_segment_external_data(
         model_stream,
         _,
     ):
-        model = onnx.load_model(model_stream, load_external_data=False)
+        model_bytes = model_stream.read()
+    model = onnx.load_model(io.BytesIO(model_bytes), load_external_data=False)
     external = [
         initializer
         for initializer in model.graph.initializer
