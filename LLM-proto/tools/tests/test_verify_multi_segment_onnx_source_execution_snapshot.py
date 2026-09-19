@@ -272,11 +272,12 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
 
             self.assertTrue(replaced)
 
-    def test_verify_multi_split_opens_full_ort_session_from_snapshot_path(self) -> None:
+    def test_verify_multi_split_opens_full_and_split_ort_sessions_from_snapshot_paths(self) -> None:
         manifest = {"sourceModel": {}}
         manifest_bytes = json.dumps(manifest).encode("utf-8")
-        snapshot_path = Path("snapshot") / "model.onnx"
-        segment_path = Path("segment0.onnx")
+        source_snapshot_path = Path("source-snapshot") / "model.onnx"
+        artifact_manifest_path = Path("artifact-snapshot") / "split-manifest.json"
+        segment_path = artifact_manifest_path.parent / "segment0.onnx"
         opened_paths: list[str] = []
 
         class FakeSession:
@@ -287,7 +288,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 return [np.asarray([[[0.1, 0.9]]], dtype=np.float32)]
 
         @contextmanager
-        def fake_snapshot(
+        def fake_source_snapshot(
             full_model_path: Path,
             raw_manifest: dict[str, object],
         ):
@@ -299,12 +300,19 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 "graphSha256": "0" * 64,
                 "externalData": [],
                 "allExternalDataHashed": True,
-            }, snapshot_path
+            }, source_snapshot_path
 
         manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
-        artifact_integrity = {
-            "manifestSha256": manifest_sha,
-        }
+        artifact_integrity = {"manifestSha256": manifest_sha}
+
+        @contextmanager
+        def fake_artifact_snapshot(requested_manifest: Path):
+            self.assertEqual(requested_manifest, Path("manifest.json"))
+            yield {
+                "manifestSha256": manifest_sha,
+                "integrity": artifact_integrity,
+            }, artifact_manifest_path
+
         contract = {
             "segments": (
                 {
@@ -323,15 +331,16 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
         with (
             mock.patch.object(
                 verifier,
-                "verify_artifact_snapshot",
-                return_value={
-                    "manifestSha256": manifest_sha,
-                    "integrity": artifact_integrity,
-                },
+                "_verified_artifact_execution_snapshot",
+                side_effect=fake_artifact_snapshot,
             ),
             mock.patch.object(verifier, "_read_stable_manifest", return_value=manifest_bytes),
             mock.patch.object(verifier, "validate_multi_segment_manifest", return_value=contract),
-            mock.patch.object(verifier, "_verified_source_execution_snapshot", side_effect=fake_snapshot),
+            mock.patch.object(
+                verifier,
+                "_verified_source_execution_snapshot",
+                side_effect=fake_source_snapshot,
+            ),
             mock.patch.object(verifier.ort, "InferenceSession", side_effect=FakeSession),
             mock.patch.object(verifier, "build_feeds", return_value={}),
         ):
@@ -341,7 +350,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 [1],
             )
 
-        self.assertEqual(opened_paths, [str(snapshot_path), str(segment_path)])
+        self.assertEqual(opened_paths, [str(source_snapshot_path), str(segment_path)])
         self.assertEqual(report["status"], "pass")
 
 
