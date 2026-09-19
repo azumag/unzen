@@ -4,7 +4,7 @@ The same-machine numerical verifiers record SHA-256 evidence for the full source
 
 ## Snapshot boundary
 
-`verify_multi_segment_onnx.py` provides a shared temporary execution snapshot beside the requested `--full-model` before a reference `InferenceSession` is constructed. Both the single-step logits verifier and the prompt + cached KV-decode verifier use this boundary; the KV verifier keeps one snapshot-backed full-model session alive across both prompt prefill and the subsequent cached decode step.
+`tools/source_model_execution_snapshot.py` provides a dependency-neutral temporary execution snapshot beside the requested `--full-model` before a reference `InferenceSession` is constructed. The budgeted multi-segment logits verifier, the prompt + cached KV-decode verifier, and the legacy two-segment verifier all use the same hard-link/fingerprint strategy. The KV verifier keeps one snapshot-backed full-model session alive across both prompt prefill and the subsequent cached decode step; the legacy verifier keeps the snapshot alive for its complete full-model reference session, then releases it before loading the split segments so sequential session loading is preserved.
 
 1. Manifest metadata and source containment are validated first.
 2. The graph and every declared external-data file are assigned a `(st_dev, st_ino)` identity before payload hashing.
@@ -24,6 +24,12 @@ The temporary directory is created beside `--full-model` so the common graph/ext
 
 The snapshot preserves the manifest's lexical external-data locations. ONNX Runtime therefore observes the same relative-location contract as the original source model.
 
+## Legacy two-segment verifier
+
+`tools/verify_split_onnx.py` now validates the legacy `unzen-real-two-segment-onnx` manifest's `sourceModel.sha256` and every declared external-data byte count/digest before it creates the reference ORT session. The reference session is opened from the verified snapshot path, not the original `--full-model` pathname. The snapshot is destroyed after the reference run and before `segment0` is opened, so provider selection, tolerances, boundary routing, report schema, and the existing sequential full-model -> segment0 -> segment1 loading contract do not change.
+
+A source provenance/snapshot failure occurs before any ORT session is created. Same-byte pathname retargets, different-inode replacements, and in-place graph/external-data mutation while the reference session can observe the pinned files therefore fail closed instead of producing numerical evidence for a generation different from the one recorded in the split manifest.
+
 ## Scope
 
-This boundary protects the full-model reference loads in both `verify_multi_segment_onnx.py` and `verify_multi_segment_kv_decode.py`. It does not change provider selection, numerical tolerances, either report schema, KV cache ownership, segment execution order, or browser artifact semantics. Other full-model consumers must opt into the same snapshot boundary separately rather than assuming that provenance verification alone pins a later pathname open.
+This boundary protects the full-model reference loads in `verify_multi_segment_onnx.py`, `verify_multi_segment_kv_decode.py`, and `verify_split_onnx.py`. It does not change provider selection, numerical tolerances, report schemas, KV cache ownership, segment execution order, or browser artifact semantics. Other full-model consumers must opt into the same snapshot boundary separately rather than assuming that provenance verification alone pins a later pathname open.
