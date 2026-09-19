@@ -79,9 +79,8 @@ def _open_pinned_payload(
             f"physical payload {path.name} size mismatch: expected {expected_bytes}, got {path_snapshot.st_size}"
         )
 
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
     except OSError as exc:
