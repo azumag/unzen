@@ -71,6 +71,42 @@ class WebGpuPreparationGraphSnapshotTest(unittest.TestCase):
                 hashlib.sha256(payload[:4]).hexdigest(),
             )
 
+    def test_measure_regular_file_checker_uses_exact_same_directory_snapshot_copy(self) -> None:
+        payload = b"serialized-generated-graph"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.onnx"
+            path.write_bytes(payload)
+
+            def inspect_checker(checker_path: str, *, full_check: bool) -> None:
+                checker = Path(checker_path)
+                self.assertEqual(checker.parent, path.parent)
+                self.assertNotEqual(checker, path)
+                self.assertEqual(checker.read_bytes(), payload)
+                self.assertTrue(full_check)
+
+            with mock.patch.object(
+                probe.onnx.checker,
+                "check_model",
+                side_effect=inspect_checker,
+            ) as checker:
+                measured_bytes, digest = probe._measure_regular_file(path, check_onnx=True)
+
+            checker.assert_called_once()
+            self.assertEqual(measured_bytes, len(payload))
+            self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+            self.assertEqual(list(path.parent.glob(".graph-checker-*.onnx")), [])
+
+    def test_measure_regular_file_checker_requires_full_snapshot_before_file_io(self) -> None:
+        path = Path("graph.onnx")
+        with mock.patch.object(
+            probe.os,
+            "lstat",
+            side_effect=AssertionError("filesystem must not be touched"),
+        ) as lstat:
+            with self.assertRaisesRegex(ValueError, "full-file snapshot"):
+                probe._measure_regular_file(path, byte_limit=1, check_onnx=True)
+        lstat.assert_not_called()
+
     def test_measure_regular_file_requests_binary_mode_and_hashes_exact_bytes(self) -> None:
         payload = b"generated\r\ngraph\x1a-bytes\r\n"
         with tempfile.TemporaryDirectory() as directory:
