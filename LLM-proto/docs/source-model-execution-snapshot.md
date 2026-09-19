@@ -1,17 +1,17 @@
 # Source-model execution snapshot
 
-The same-machine numerical verifier records SHA-256 evidence for the full source ONNX graph and every `sourceModel.externalData` entry before it compares the full model with the generated segments. That evidence is only meaningful if ONNX Runtime executes the same filesystem generation that was accepted by the provenance preflight.
+The same-machine numerical verifiers record SHA-256 evidence for the full source ONNX graph and every `sourceModel.externalData` entry before they compare the full model with generated segments. That evidence is only meaningful if ONNX Runtime executes the same filesystem generation that was accepted by provenance preflight.
 
 ## Snapshot boundary
 
-`verify_multi_segment_onnx.py` now creates a temporary execution snapshot beside the requested `--full-model` before the reference `InferenceSession` is constructed.
+`verify_multi_segment_onnx.py` provides a shared temporary execution snapshot beside the requested `--full-model` before a reference `InferenceSession` is constructed. Both the single-step logits verifier and the prompt + cached KV-decode verifier use this boundary; the KV verifier keeps one snapshot-backed full-model session alive across both prompt prefill and the subsequent cached decode step.
 
 1. Manifest metadata and source containment are validated first.
 2. The graph and every declared external-data file are assigned a `(st_dev, st_ino)` identity before payload hashing.
 3. The temporary tree is populated with hard links to exactly those accepted identities, preserving every external-data relative location.
 4. The original requested paths are checked again after the links are created. A symlink/path retarget or same-byte replacement with a different inode fails closed.
 5. A metadata generation fingerprint (`mode`, device/inode, link count, size, mtime and ctime) is captured for every pinned file. SHA-256/byte-count provenance is then measured from the pinned temporary tree and the fingerprints are checked again.
-6. ONNX Runtime opens the temporary graph, not the original pathname. The tree stays alive through reference inference.
+6. ONNX Runtime opens the temporary graph, not the original pathname. The tree stays alive through the complete reference inference phase. For KV verification that means both prompt prefill and cached decode run through the same pinned full-model session.
 7. The same fingerprints are checked after reference inference and before cleanup. This catches an in-place write to the shared hard-link inode even when pathname identity never changed. The temporary tree is then removed; cleanup errors are not silently ignored.
 
 A path change after the hard links have been pinned cannot redirect the reference session to another inode. Stable symlinked source inputs continue to work because the resolved regular-file identity, rather than the symlink object, is what is pinned. Hard links do share writable inode contents, so the before/after generation fingerprint is required in addition to pathname pinning; evidence is rejected if the pinned generation changes while ONNX Runtime can observe it.
@@ -26,4 +26,4 @@ The snapshot preserves the manifest's lexical external-data locations. ONNX Runt
 
 ## Scope
 
-This boundary protects the same-machine full-model reference load in `verify_multi_segment_onnx.py`. It does not change provider selection, numerical tolerances, report schema, segment execution order, or browser artifact semantics. Other full-model consumers must opt into the same snapshot boundary separately rather than assuming that provenance verification alone pins a later pathname open.
+This boundary protects the full-model reference loads in both `verify_multi_segment_onnx.py` and `verify_multi_segment_kv_decode.py`. It does not change provider selection, numerical tolerances, either report schema, KV cache ownership, segment execution order, or browser artifact semantics. Other full-model consumers must opt into the same snapshot boundary separately rather than assuming that provenance verification alone pins a later pathname open.
