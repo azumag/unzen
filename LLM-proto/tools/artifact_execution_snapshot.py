@@ -41,6 +41,7 @@ from verify_multi_segment_artifacts import verify_artifact_integrity
 
 ArtifactFingerprint = tuple[int, int, int, int, int, int, int]
 SnapshotWorkspaceIdentity = tuple[int, int]
+InternalParentIdentity = tuple[tuple[str, ...], int, int]
 
 
 def _verify_execution_boundary(
@@ -152,6 +153,16 @@ def _entry_path(entry: dict[str, object]) -> Path:
     return raw
 
 
+def _entry_relative_parts(entry: dict[str, object]) -> tuple[str, ...]:
+    raw = entry.get("path")
+    if not isinstance(raw, str) or not raw:
+        raise AssertionError("internal artifact relative path must be a non-empty string")
+    relative = Path(raw)
+    if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise AssertionError("internal artifact relative path must stay beneath the snapshot root")
+    return tuple(relative.parts)
+
+
 def _assert_accepted_artifact_path(entry: dict[str, object]) -> None:
     path = _entry_path(entry)
     field = str(entry.get("field"))
@@ -168,6 +179,226 @@ def _assert_accepted_artifact_path(entry: dict[str, object]) -> None:
         raise RuntimeError(f"{field} changed after artifact-snapshot preflight: {path}")
 
 
+def _internal_component_walk_supported() -> bool:
+    supports_dir_fd = getattr(os, "supports_dir_fd", set())
+    return (
+        hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and os.open in supports_dir_fd
+        and os.mkdir in supports_dir_fd
+        and os.link in supports_dir_fd
+        and os.stat in supports_dir_fd
+        and os.unlink in supports_dir_fd
+    )
+
+
+def _snapshot_open_flags() -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
+
+
+def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(
+            f"artifact execution snapshot workspace changed before cleanup: {path}"
+        ) from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError(
+            f"artifact execution snapshot workspace changed before cleanup: {path}"
+        )
+    return metadata.st_dev, metadata.st_ino
+
+
+def _record_parent_identity(
+    parts: tuple[str, ...],
+    metadata: os.stat_result,
+) -> InternalParentIdentity:
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError(
+            "artifact execution snapshot internal parent is not a directory: "
+            + "/".join(parts)
+        )
+    return parts, metadata.st_dev, metadata.st_ino
+
+
+def _assert_snapshot_root_identity(
+    snapshot_root: Path,
+    expected_root_identity: SnapshotWorkspaceIdentity,
+) -> None:
+    observed = _snapshot_workspace_identity(snapshot_root)
+    if observed != expected_root_identity:
+        raise RuntimeError(
+            f"artifact execution snapshot workspace changed during pinning: {snapshot_root}"
+        )
+
+
+@contextmanager
+def _prepared_snapshot_destination(
+    snapshot_root: Path,
+    relative_parts: tuple[str, ...],
+    expected_root_identity: SnapshotWorkspaceIdentity,
+) -> Iterator[tuple[Path, int | None, str, tuple[InternalParentIdentity, ...]]]:
+    destination = snapshot_root.joinpath(*relative_parts)
+    leaf_name = relative_parts[-1]
+
+    if _internal_component_walk_supported():
+        opened: list[int] = []
+        try:
+            root_fd = os.open(snapshot_root, _snapshot_open_flags())
+            opened.append(root_fd)
+            root_metadata = os.fstat(root_fd)
+            if (
+                not stat.S_ISDIR(root_metadata.st_mode)
+                or (root_metadata.st_dev, root_metadata.st_ino) != expected_root_identity
+            ):
+                raise RuntimeError(
+                    f"artifact execution snapshot workspace changed during pinning: {snapshot_root}"
+                )
+
+            current_fd = root_fd
+            current_parts: list[str] = []
+            parents: list[InternalParentIdentity] = []
+            for component in relative_parts[:-1]:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                except FileExistsError:
+                    pass
+                child_fd = os.open(component, _snapshot_open_flags(), dir_fd=current_fd)
+                opened.append(child_fd)
+                current_parts.append(component)
+                parents.append(
+                    _record_parent_identity(tuple(current_parts), os.fstat(child_fd))
+                )
+                current_fd = child_fd
+
+            yield destination, current_fd, leaf_name, tuple(parents)
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot prepare component-anchored artifact execution path: {destination}"
+            ) from error
+        finally:
+            for fd in reversed(opened):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        return
+
+    _assert_snapshot_root_identity(snapshot_root, expected_root_identity)
+    current = snapshot_root
+    parents: list[InternalParentIdentity] = []
+    for component in relative_parts[:-1]:
+        current = current / component
+        try:
+            current.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        try:
+            metadata = os.lstat(current)
+        except OSError as error:
+            raise RuntimeError(
+                f"artifact execution snapshot internal parent changed during pinning: {current}"
+            ) from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError(
+                f"artifact execution snapshot internal parent changed during pinning: {current}"
+            )
+        parents.append(
+            _record_parent_identity(tuple(relative_parts[: len(parents) + 1]), metadata)
+        )
+    _assert_snapshot_root_identity(snapshot_root, expected_root_identity)
+    yield destination, None, leaf_name, tuple(parents)
+
+
+def _assert_internal_parent_chain(
+    snapshot_root: Path,
+    expected_root_identity: SnapshotWorkspaceIdentity,
+    parents: Sequence[InternalParentIdentity],
+) -> None:
+    if not parents:
+        _assert_snapshot_root_identity(snapshot_root, expected_root_identity)
+        return
+
+    if _internal_component_walk_supported():
+        opened: list[int] = []
+        try:
+            root_fd = os.open(snapshot_root, _snapshot_open_flags())
+            opened.append(root_fd)
+            root_metadata = os.fstat(root_fd)
+            if (
+                not stat.S_ISDIR(root_metadata.st_mode)
+                or (root_metadata.st_dev, root_metadata.st_ino) != expected_root_identity
+            ):
+                raise RuntimeError(
+                    f"artifact execution snapshot workspace changed during pinning: {snapshot_root}"
+                )
+            current_fd = root_fd
+            previous_parts: tuple[str, ...] = ()
+            for parts, expected_dev, expected_ino in parents:
+                if len(parts) != len(previous_parts) + 1 or parts[:-1] != previous_parts:
+                    raise AssertionError("internal artifact parent chain is malformed")
+                child_fd = os.open(parts[-1], _snapshot_open_flags(), dir_fd=current_fd)
+                opened.append(child_fd)
+                metadata = os.fstat(child_fd)
+                if (
+                    not stat.S_ISDIR(metadata.st_mode)
+                    or (metadata.st_dev, metadata.st_ino) != (expected_dev, expected_ino)
+                ):
+                    raise RuntimeError(
+                        "artifact execution snapshot internal parent changed during pinning: "
+                        + "/".join(parts)
+                    )
+                current_fd = child_fd
+                previous_parts = parts
+        except OSError as error:
+            raise RuntimeError(
+                "artifact execution snapshot internal parent changed during pinning"
+            ) from error
+        finally:
+            for fd in reversed(opened):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        return
+
+    _assert_snapshot_root_identity(snapshot_root, expected_root_identity)
+    for parts, expected_dev, expected_ino in parents:
+        path = snapshot_root.joinpath(*parts)
+        try:
+            metadata = os.lstat(path)
+        except OSError as error:
+            raise RuntimeError(
+                f"artifact execution snapshot internal parent changed during pinning: {path}"
+            ) from error
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != (expected_dev, expected_ino)
+        ):
+            raise RuntimeError(
+                f"artifact execution snapshot internal parent changed during pinning: {path}"
+            )
+
+
+def _unlink_pinned_destination(
+    destination: Path,
+    parent_fd: int | None,
+    leaf_name: str,
+) -> None:
+    try:
+        if parent_fd is not None:
+            os.unlink(leaf_name, dir_fd=parent_fd)
+        else:
+            destination.unlink()
+    except OSError:
+        pass
+
+
 def _link_verified_artifact_file(
     entry: dict[str, object],
     destination_path: Path,
@@ -176,41 +407,68 @@ def _link_verified_artifact_file(
     field = str(entry.get("field"))
     expected = _accepted_identity(entry)
     expected_object = expected[0], expected[1]
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    # Parent creation is the last setup operation before the hard link. Keep the
-    # ctime-inclusive accepted identity check immediately beside os.link(), since
-    # the link itself changes nlink/ctime and those fields cannot be compared to
-    # the pre-link snapshot afterwards.
-    _assert_accepted_artifact_path(entry)
-    try:
-        os.link(source_path, destination_path, follow_symlinks=False)
-    except OSError as error:
-        raise RuntimeError(
-            f"cannot create hard-link execution snapshot for {field}: {source_path}; "
-            "generated graphs and external data must support hard links on the snapshot filesystem; "
-            "refusing to duplicate large payload bytes"
-        ) from error
+    relative_parts = _entry_relative_parts(entry)
+    snapshot_root = destination_path
+    for _ in relative_parts:
+        snapshot_root = snapshot_root.parent
+    expected_root_identity = _snapshot_workspace_identity(snapshot_root)
 
-    try:
-        linked = os.stat(destination_path, follow_symlinks=False)
-        current = os.lstat(source_path)
-    except OSError as error:
-        raise RuntimeError(
-            f"artifact changed while execution snapshot was being pinned: {field} ({source_path})"
-        ) from error
-    if (
-        not stat.S_ISREG(linked.st_mode)
-        or not stat.S_ISREG(current.st_mode)
-        or (linked.st_dev, linked.st_ino) != expected_object
-        or (current.st_dev, current.st_ino) != expected_object
-        or linked.st_size != expected[2]
-        or linked.st_mtime_ns != expected[3]
-        or current.st_size != expected[2]
-        or current.st_mtime_ns != expected[3]
-    ):
-        raise RuntimeError(
-            f"artifact changed while execution snapshot was being pinned: {field} ({source_path})"
-        )
+    with _prepared_snapshot_destination(
+        snapshot_root,
+        relative_parts,
+        expected_root_identity,
+    ) as (destination, parent_fd, leaf_name, parent_chain):
+        entry["_snapshotParentIdentities"] = parent_chain
+        _assert_accepted_artifact_path(entry)
+        try:
+            if parent_fd is not None:
+                os.link(
+                    source_path,
+                    leaf_name,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            else:
+                os.link(source_path, destination, follow_symlinks=False)
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot create hard-link execution snapshot for {field}: {source_path}; "
+                "generated graphs and external data must support hard links on the snapshot filesystem; "
+                "refusing to duplicate large payload bytes"
+            ) from error
+
+        try:
+            _assert_internal_parent_chain(
+                snapshot_root,
+                expected_root_identity,
+                parent_chain,
+            )
+            if parent_fd is not None:
+                linked = os.stat(leaf_name, dir_fd=parent_fd, follow_symlinks=False)
+            else:
+                linked = os.stat(destination, follow_symlinks=False)
+            current = os.lstat(source_path)
+            if (
+                not stat.S_ISREG(linked.st_mode)
+                or not stat.S_ISREG(current.st_mode)
+                or (linked.st_dev, linked.st_ino) != expected_object
+                or (current.st_dev, current.st_ino) != expected_object
+                or linked.st_size != expected[2]
+                or linked.st_mtime_ns != expected[3]
+                or current.st_size != expected[2]
+                or current.st_mtime_ns != expected[3]
+            ):
+                raise RuntimeError(
+                    f"artifact changed while execution snapshot was being pinned: {field} ({source_path})"
+                )
+            _assert_internal_parent_chain(
+                snapshot_root,
+                expected_root_identity,
+                parent_chain,
+            )
+        except Exception:
+            _unlink_pinned_destination(destination, parent_fd, leaf_name)
+            raise
 
 
 def _artifact_execution_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
@@ -255,18 +513,30 @@ def _assert_execution_fingerprints(
             raise RuntimeError(f"{label} changed during numerical execution: {path}")
 
 
-def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
-    try:
-        metadata = os.stat(path, follow_symlinks=False)
-    except OSError as error:
-        raise RuntimeError(
-            f"artifact execution snapshot workspace changed before cleanup: {path}"
-        ) from error
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise RuntimeError(
-            f"artifact execution snapshot workspace changed before cleanup: {path}"
-        )
-    return metadata.st_dev, metadata.st_ino
+def _assert_recorded_internal_parents(
+    entries: Sequence[dict[str, object]],
+    snapshot_root: Path,
+    expected_root_identity: SnapshotWorkspaceIdentity,
+) -> None:
+    for entry in entries:
+        raw = entry.get("_snapshotParentIdentities")
+        if raw is None:
+            continue
+        if not isinstance(raw, tuple):
+            raise AssertionError("internal artifact snapshot parent identities are malformed")
+        chain: list[InternalParentIdentity] = []
+        for item in raw:
+            if (
+                not isinstance(item, tuple)
+                or len(item) != 3
+                or not isinstance(item[0], tuple)
+                or not all(isinstance(part, str) for part in item[0])
+                or not isinstance(item[1], int)
+                or not isinstance(item[2], int)
+            ):
+                raise AssertionError("internal artifact snapshot parent identity is malformed")
+            chain.append((item[0], item[1], item[2]))
+        _assert_internal_parent_chain(snapshot_root, expected_root_identity, tuple(chain))
 
 
 def _remove_verified_snapshot_root(
@@ -314,6 +584,7 @@ def verified_artifact_execution_snapshot(
                 raise AssertionError("internal artifact relative path must be a non-empty string")
             _link_verified_artifact_file(entry, snapshot_root / Path(relative))
 
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         for entry in entries:
             source_path = _entry_path(entry)
             expected = _accepted_identity(entry)
@@ -336,6 +607,8 @@ def verified_artifact_execution_snapshot(
 
         fingerprints = _capture_execution_fingerprints(entries, snapshot_root)
         yield report, snapshot_manifest
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         _assert_execution_fingerprints(fingerprints)
     finally:
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         _remove_verified_snapshot_root(snapshot_root, snapshot_root_identity)

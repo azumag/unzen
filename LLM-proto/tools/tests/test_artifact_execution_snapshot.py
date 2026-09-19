@@ -43,13 +43,15 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
         self,
         graph: Path,
         external: Path,
+        *,
+        external_relative: str | None = None,
     ) -> tuple[dict[str, object], bytes, tuple[dict[str, object], ...]]:
         entries = (
             self._entry(graph, field="segments[0].path", relative=graph.name),
             self._entry(
                 external,
                 field="segments[0].externalData[0].location",
-                relative=external.name,
+                relative=external_relative or external.name,
             ),
         )
         report = {
@@ -166,6 +168,62 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
 
             self.assertTrue(replaced)
 
+    @unittest.skipUnless(
+        snapshot._internal_component_walk_supported(),
+        "requires dir_fd/O_NOFOLLOW component walking",
+    )
+    def test_nested_parent_substitution_before_link_is_rolled_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph = root / "segment0.onnx"
+            external = root / "segment0.onnx_data"
+            graph.write_bytes(b"graph")
+            external.write_bytes(b"external")
+            boundary = self._boundary(
+                graph,
+                external,
+                external_relative="weights/shards/segment0.onnx_data",
+            )
+            manifest = root / "split-manifest.json"
+            outside = root / "outside"
+            outside.mkdir()
+            detached = root / "detached-internal-parent"
+            real_assert = snapshot._assert_accepted_artifact_path
+            substituted = False
+
+            def substitute_parent(entry: dict[str, object]) -> None:
+                nonlocal substituted
+                if (
+                    str(entry.get("field")).endswith("externalData[0].location")
+                    and not substituted
+                ):
+                    execution_roots = list(root.glob(".unzen-artifact-execution-*"))
+                    self.assertEqual(len(execution_roots), 1)
+                    internal_parent = execution_roots[0] / "weights" / "shards"
+                    internal_parent.rename(detached)
+                    internal_parent.symlink_to(outside, target_is_directory=True)
+                    substituted = True
+                real_assert(entry)
+
+            with (
+                mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary),
+                mock.patch.object(
+                    snapshot,
+                    "_assert_accepted_artifact_path",
+                    side_effect=substitute_parent,
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "internal parent changed during pinning",
+                ):
+                    with snapshot.verified_artifact_execution_snapshot(manifest):
+                        self.fail("snapshot should not be yielded")
+
+            self.assertTrue(substituted)
+            self.assertFalse((detached / external.name).exists())
+            self.assertFalse((outside / external.name).exists())
+
     def test_in_place_graph_mutation_during_execution_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -211,7 +269,7 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
             with mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "artifact execution snapshot workspace changed before cleanup",
+                    "artifact execution snapshot workspace changed",
                 ):
                     with snapshot.verified_artifact_execution_snapshot(manifest) as (
                         _,

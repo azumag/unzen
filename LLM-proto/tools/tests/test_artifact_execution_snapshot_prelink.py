@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Iterator
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,27 +43,44 @@ class ArtifactExecutionSnapshotPrelinkTest(unittest.TestCase):
                 ),
                 "parentIdentities": (),
             }
-            destination = root / "execution" / "nested" / "segment0.onnx"
-            real_mkdir = Path.mkdir
+            execution_root = root / "execution"
+            execution_root.mkdir()
+            destination = execution_root / "nested" / "segment0.onnx"
+            real_prepare = snapshot._prepared_snapshot_destination
             mutated = False
 
-            def mutate_during_parent_setup(
-                path: Path,
-                mode: int = 0o777,
-                parents: bool = False,
-                exist_ok: bool = False,
-            ) -> None:
+            @contextmanager
+            def mutate_after_parent_setup(
+                snapshot_root: Path,
+                relative_parts: tuple[str, ...],
+                expected_root_identity: snapshot.SnapshotWorkspaceIdentity,
+            ) -> Iterator[
+                tuple[
+                    Path,
+                    int | None,
+                    str,
+                    tuple[snapshot.InternalParentIdentity, ...],
+                ]
+            ]:
                 nonlocal mutated
-                real_mkdir(path, mode=mode, parents=parents, exist_ok=exist_ok)
-                if path == destination.parent and not mutated:
+                with real_prepare(
+                    snapshot_root,
+                    relative_parts,
+                    expected_root_identity,
+                ) as prepared:
                     source.write_bytes(b"graph-b")
                     os.utime(
                         source,
                         ns=(accepted.st_atime_ns, accepted.st_mtime_ns),
                     )
                     mutated = True
+                    yield prepared
 
-            with mock.patch.object(Path, "mkdir", new=mutate_during_parent_setup):
+            with mock.patch.object(
+                snapshot,
+                "_prepared_snapshot_destination",
+                new=mutate_after_parent_setup,
+            ):
                 with self.assertRaisesRegex(
                     RuntimeError,
                     "changed after artifact-snapshot preflight",
