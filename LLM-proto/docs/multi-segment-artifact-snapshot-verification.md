@@ -15,6 +15,21 @@ python tools/verify_multi_segment_artifact_snapshot.py \
   > /absolute/path/to/llama-1b-budget-split/artifact-snapshot-verification.json
 ```
 
+## Numerical verifier integration
+
+`tools/verify_multi_segment_onnx.py` and
+`tools/verify_multi_segment_kv_decode.py` use this stable snapshot gate before
+creating any ONNX Runtime session. They continue to expose the nested normal
+integrity result as `artifactIntegrity`, so existing numerical report consumers
+do not need a schema migration. The manifest bytes parsed by each verifier are
+re-read through the stable manifest reader and must match this gate's
+`manifestSha256`.
+
+This is a stronger pre-ORT gate, not complete execution-generation pinning:
+segment sessions still open their graph paths after the snapshot audit returns.
+A later path replacement therefore remains a separate execution-binding problem
+and must not be described as solved by this contract.
+
 The wrapper is stdlib-only and does not create an ONNX Runtime session. It first
 reads the manifest as a bounded, non-symlink regular file, records its SHA-256
 and filesystem identity, and resolves every declared segment graph and
