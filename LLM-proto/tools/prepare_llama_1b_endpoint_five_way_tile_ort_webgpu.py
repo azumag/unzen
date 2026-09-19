@@ -25,6 +25,7 @@ import stat
 import onnx
 from onnx import TensorProto, helper
 
+from generated_graph_snapshot import validate_and_measure_generated_graph
 import prepare_llama_1b_endpoint_preferred_tile_ort_webgpu as preferred_webgpu
 import probe_llama_1b_endpoint_layout_candidates as layout_probe
 
@@ -234,8 +235,7 @@ def prepare(source_model: Path, source_external_data: Path, output_dir: Path) ->
             file_name = f"tile-{SELECTED_TILE_INDEX}-{mode}.onnx"
             graph_path = output_dir / file_name
             onnx.save(build_probe_model(mode=mode, hidden_size=hidden_size, tile_rows=tile_rows, slices=manifest_slices), graph_path)
-            onnx.checker.check_model(str(graph_path), full_check=True)
-            graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(graph_path)
+            graph_bytes, graph_sha256 = validate_and_measure_generated_graph(graph_path)
             graphs[mode] = {
                 "file": file_name,
                 "bytes": graph_bytes,
