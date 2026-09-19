@@ -17,6 +17,7 @@ TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import source_model_execution_snapshot as source_snapshot  # noqa: E402
 import verify_multi_segment_onnx as verifier  # noqa: E402
 
 
@@ -86,7 +87,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
             source = root / "model.onnx"
             source.write_bytes(payload)
             manifest = self._manifest(payload)
-            real_link = verifier._link_verified_snapshot_file
+            real_link = source_snapshot._link_verified_snapshot_file
             replaced = False
 
             def replace_then_link(
@@ -111,7 +112,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 )
 
             with mock.patch.object(
-                verifier,
+                source_snapshot,
                 "_link_verified_snapshot_file",
                 side_effect=replace_then_link,
             ):
@@ -139,7 +140,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 external_name=external.name,
                 external_payload=external_payload,
             )
-            real_link = verifier._link_verified_snapshot_file
+            real_link = source_snapshot._link_verified_snapshot_file
             replaced = False
 
             def replace_then_link(
@@ -164,7 +165,7 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 )
 
             with mock.patch.object(
-                verifier,
+                source_snapshot,
                 "_link_verified_snapshot_file",
                 side_effect=replace_then_link,
             ):

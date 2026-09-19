@@ -14,6 +14,7 @@ TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import source_model_execution_snapshot as source_snapshot  # noqa: E402
 from verify_multi_segment_onnx import verify_source_model_identity  # noqa: E402
 
 
@@ -124,7 +125,7 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
                 source, base_manifest = self._fixture(Path(tmp))
                 manifest = deepcopy(base_manifest)
                 mutate(manifest)
-                with patch("verify_multi_segment_onnx._measure_file") as measure:
+                with patch.object(source_snapshot, "_measure_file") as measure:
                     with self.assertRaisesRegex(ValueError, message):
                         verify_source_model_identity(source, manifest)
                 measure.assert_not_called()
@@ -144,7 +145,7 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
             second["bytes"] = first["bytes"]
             second["sha256"] = first["sha256"]
 
-            with patch("verify_multi_segment_onnx._measure_file") as measure:
+            with patch.object(source_snapshot, "_measure_file") as measure:
                 with self.assertRaisesRegex(
                     ValueError,
                     r"duplicate source external-data location: .* aliases .*",
@@ -161,8 +162,8 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
             second["location"] = "weights/chunk.bin"
 
             with (
-                patch("verify_multi_segment_onnx._source_file_identity") as identity,
-                patch("verify_multi_segment_onnx._measure_file") as measure,
+                patch.object(source_snapshot, "_source_file_identity") as identity,
+                patch.object(source_snapshot, "_measure_file") as measure,
             ):
                 with self.assertRaisesRegex(
                     ValueError,
@@ -181,8 +182,8 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
             second["location"] = r"weights\chunk.bin"
 
             with (
-                patch("verify_multi_segment_onnx._source_file_identity") as identity,
-                patch("verify_multi_segment_onnx._measure_file") as measure,
+                patch.object(source_snapshot, "_source_file_identity") as identity,
+                patch.object(source_snapshot, "_measure_file") as measure,
             ):
                 with self.assertRaisesRegex(
                     ValueError,
@@ -201,7 +202,7 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
             external["bytes"] = len(graph_payload)
             external["sha256"] = hashlib.sha256(graph_payload).hexdigest()
 
-            with patch("verify_multi_segment_onnx._measure_file") as measure:
+            with patch.object(source_snapshot, "_measure_file") as measure:
                 with self.assertRaisesRegex(
                     ValueError,
                     r"source external-data location aliases source graph path: model\.onnx",
@@ -220,7 +221,7 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
             external["bytes"] = len(graph_payload)
             external["sha256"] = hashlib.sha256(graph_payload).hexdigest()
 
-            with patch("verify_multi_segment_onnx._measure_file") as measure:
+            with patch.object(source_snapshot, "_measure_file") as measure:
                 with self.assertRaisesRegex(
                     ValueError,
                     r"source provenance hard-link alias: model\.onnx_data\.0 aliases source graph",
@@ -241,7 +242,7 @@ class VerifySourceModelMetadataPreflightTest(unittest.TestCase):
             second["bytes"] = len(first_payload)
             second["sha256"] = hashlib.sha256(first_payload).hexdigest()
 
-            with patch("verify_multi_segment_onnx._measure_file") as measure:
+            with patch.object(source_snapshot, "_measure_file") as measure:
                 with self.assertRaisesRegex(
                     ValueError,
                     r"source provenance hard-link alias: model\.onnx_data\.1 aliases model\.onnx_data\.0",
