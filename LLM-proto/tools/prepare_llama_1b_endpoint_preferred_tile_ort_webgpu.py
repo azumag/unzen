@@ -60,6 +60,7 @@ def _measure_regular_file(path: Path, *, byte_limit: int | None = None) -> tuple
         raise RuntimeError(f"file must be a regular non-symlink file: {path}")
 
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
