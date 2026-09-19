@@ -347,8 +347,16 @@ def _sha256_stream(
 
 def sha256_file(path: Path, *, buffer_bytes: int = DEFAULT_COPY_BUFFER_BYTES) -> str:
     buffer_bytes = _require_positive_buffer_bytes(buffer_bytes)
-    with path.open("rb") as stream:
-        return _sha256_stream(stream, source_path=path, buffer_bytes=buffer_bytes)
+    with open_regular_file_snapshot(path, label="diagnostic hash source file") as (
+        stream,
+        opened,
+    ):
+        return _sha256_stream(
+            stream,
+            source_path=path,
+            buffer_bytes=buffer_bytes,
+            expected_stat_signature=_file_stat_signature(opened),
+        )
 
 
 def _canonical_json_sha256(value: object) -> str:
