@@ -2,7 +2,8 @@
 """Dependency-neutral helpers for execution-snapshot destination paths.
 
 These helpers keep nested destination parent traversal anchored to directory
-handles where the host supports ``dir_fd`` + ``O_NOFOLLOW``.  Callers retain
+handles where the host supports ``dir_fd`` + ``O_NOFOLLOW`` and the
+``follow_symlinks=False`` forms used by the anchored operations. Callers retain
 file-specific provenance checks; this module owns only workspace/parent path
 identity and rollback mechanics.
 """
@@ -22,6 +23,7 @@ InternalParentIdentity = tuple[tuple[str, ...], int, int]
 
 def component_walk_supported() -> bool:
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     return (
         hasattr(os, "O_DIRECTORY")
         and hasattr(os, "O_NOFOLLOW")
@@ -30,6 +32,8 @@ def component_walk_supported() -> bool:
         and os.link in supports_dir_fd
         and os.stat in supports_dir_fd
         and os.unlink in supports_dir_fd
+        and os.link in supports_follow_symlinks
+        and os.stat in supports_follow_symlinks
     )
 
 
