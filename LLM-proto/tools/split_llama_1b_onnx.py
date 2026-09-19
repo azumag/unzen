@@ -27,7 +27,11 @@ from typing import Iterable, Sequence
 import onnx
 from onnx import TensorProto, helper
 
-from source_file_snapshot import measure_regular_file, read_regular_file_snapshot
+from source_file_snapshot import (
+    measure_regular_file,
+    open_regular_file_snapshot,
+    read_regular_file_snapshot,
+)
 
 
 PRESENT_OUTPUT_RE = re.compile(r"(?:^|/)present\.(\d+)\.(key|value)$")
@@ -59,7 +63,7 @@ def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
     if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
         raise ValueError("chunk_size must be a positive integer")
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open_regular_file_snapshot(path, label="generated segment graph") as (stream, _):
         while True:
             chunk = stream.read(chunk_size)
             if not chunk:
