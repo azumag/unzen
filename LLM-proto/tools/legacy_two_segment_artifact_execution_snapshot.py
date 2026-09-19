@@ -301,6 +301,7 @@ def _link_verified_file(entry: dict[str, object], snapshot_root: Path) -> Path:
     expected = entry["identity"]
     prelink_fingerprint = entry["prelinkFingerprint"]
     relative = entry["relative"]
+    snapshot_root_identity = entry.get("_snapshotRootIdentity")
     if (
         not isinstance(requested, Path)
         or not isinstance(resolved, Path)
@@ -309,11 +310,13 @@ def _link_verified_file(entry: dict[str, object], snapshot_root: Path) -> Path:
         or len(prelink_fingerprint) != 7
         or not all(isinstance(value, int) for value in prelink_fingerprint)
         or not isinstance(relative, str)
+        or not isinstance(snapshot_root_identity, tuple)
+        or len(snapshot_root_identity) != 2
+        or not all(isinstance(value, int) for value in snapshot_root_identity)
     ):
         raise AssertionError("internal legacy artifact entry is malformed")
 
     relative_parts = _entry_relative_parts(entry)
-    snapshot_root_identity = _snapshot_workspace_identity(snapshot_root)
     with prepared_destination(
         snapshot_root,
         relative_parts,
@@ -522,6 +525,7 @@ def verified_legacy_two_segment_execution_snapshot(
     try:
         destinations: dict[str, Path] = {}
         for entry in entries:
+            entry["_snapshotRootIdentity"] = snapshot_root_identity
             destination = _link_verified_file(entry, snapshot_root)
             destinations[str(entry["field"])] = destination
 
