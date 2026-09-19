@@ -181,6 +181,7 @@ def _assert_accepted_artifact_path(entry: dict[str, object]) -> None:
 
 def _internal_component_walk_supported() -> bool:
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     return (
         hasattr(os, "O_DIRECTORY")
         and hasattr(os, "O_NOFOLLOW")
@@ -189,6 +190,8 @@ def _internal_component_walk_supported() -> bool:
         and os.link in supports_dir_fd
         and os.stat in supports_dir_fd
         and os.unlink in supports_dir_fd
+        and os.link in supports_follow_symlinks
+        and os.stat in supports_follow_symlinks
     )
 
 
