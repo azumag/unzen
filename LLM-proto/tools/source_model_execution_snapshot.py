@@ -408,13 +408,14 @@ def verified_source_execution_snapshot(
         external_contract,
     )
     try:
+        snapshot_parent = full_model_path.parent.resolve(strict=True)
         snapshot_root = Path(
             tempfile.mkdtemp(
                 prefix=".unzen-source-execution-",
-                dir=full_model_path.parent,
+                dir=snapshot_parent,
             )
-        )
-    except OSError as error:
+        ).resolve(strict=True)
+    except (OSError, RuntimeError) as error:
         raise RuntimeError(
             f"cannot create source execution snapshot beside full model: {full_model_path}"
         ) from error
