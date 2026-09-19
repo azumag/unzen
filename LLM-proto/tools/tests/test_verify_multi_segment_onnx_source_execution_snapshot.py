@@ -142,6 +142,38 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
             self.assertEqual(list(alternate_parent.glob(".unzen-source-execution-*")), [])
 
     @unittest.skipUnless(hasattr(os, "link"), "requires hard-link support")
+    def test_workspace_replacement_before_cleanup_is_not_recursively_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = b"graph"
+            source = root / "model.onnx"
+            source.write_bytes(payload)
+            manifest = self._manifest(payload)
+            moved_snapshot: Path | None = None
+            replacement_marker: Path | None = None
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "source execution snapshot workspace changed before cleanup",
+            ):
+                with verifier._verified_source_execution_snapshot(source, manifest) as (
+                    _,
+                    snapshot_graph,
+                ):
+                    snapshot_root = snapshot_graph.parent
+                    moved_snapshot = root / "moved-snapshot"
+                    snapshot_root.rename(moved_snapshot)
+                    snapshot_root.mkdir()
+                    replacement_marker = snapshot_root / "keep-me.txt"
+                    replacement_marker.write_text("replacement", encoding="utf-8")
+
+            assert moved_snapshot is not None
+            assert replacement_marker is not None
+            self.assertTrue(moved_snapshot.exists())
+            self.assertTrue(replacement_marker.exists())
+            self.assertEqual(replacement_marker.read_text(encoding="utf-8"), "replacement")
+
+    @unittest.skipUnless(hasattr(os, "link"), "requires hard-link support")
     def test_same_byte_graph_replacement_before_snapshot_link_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
