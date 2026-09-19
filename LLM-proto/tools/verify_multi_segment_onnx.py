@@ -196,7 +196,7 @@ def _preflight_source_file_identities(
 def _preflight_source_model_identity(
     full_model_path: Path,
     manifest: dict[str, object],
-) -> tuple[str, tuple[tuple[str, Path, Path, int, str], ...]]:
+) -> tuple[str, Path, tuple[tuple[str, Path, Path, int, str], ...]]:
     """Validate all source provenance metadata before streaming source payloads."""
 
     raw_source = manifest.get("sourceModel")
@@ -281,7 +281,7 @@ def _preflight_source_model_identity(
             (location, external_path, external_resolved, expected_bytes, expected_sha)
         )
 
-    return expected_graph_sha, tuple(external_contract)
+    return expected_graph_sha, source_graph_path, tuple(external_contract)
 
 
 def verify_source_model_identity(
@@ -290,14 +290,17 @@ def verify_source_model_identity(
 ) -> dict[str, object]:
     """Bind the full-model reference to the source identity recorded at split time."""
 
-    expected_graph_sha, external_contract = _preflight_source_model_identity(
-        full_model_path,
-        manifest,
+    expected_graph_sha, expected_graph_resolved, external_contract = (
+        _preflight_source_model_identity(
+            full_model_path,
+            manifest,
+        )
     )
     _preflight_source_file_identities(full_model_path, external_contract)
     graph_bytes, observed_graph_sha = _measure_file(
         full_model_path,
         missing_message=f"full model not found: {full_model_path}",
+        expected_resolved=expected_graph_resolved,
     )
     if observed_graph_sha != expected_graph_sha:
         raise ValueError(
