@@ -25,8 +25,8 @@ from direct_verifier_runtime import non_negative_int, preflight_direct_verifier_
 from verify_multi_segment_artifacts import _read_stable_manifest, verify_artifact_integrity
 from verify_multi_segment_onnx import (
     _boundary_report,
+    _verified_source_execution_snapshot,
     validate_multi_segment_manifest,
-    verify_source_model_identity,
 )
 from verify_split_onnx import _last_token_argmax, build_feeds, compare_logits, parse_token_ids
 
@@ -323,34 +323,39 @@ def verify_multi_segment_kv_decode(
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("split manifest must contain a JSON object")
-    source_identity = verify_source_model_identity(full_model_path, manifest)
     contract = validate_multi_segment_manifest(manifest, manifest_path.parent)
     segments = contract["segments"]
     boundaries = contract["boundaries"]
     logits_name = str(contract["logitsOutput"])
 
-    full_session = ort.InferenceSession(str(full_model_path), providers=[provider])
-    full_prompt_logits, full_prompt_present, _ = _run_full_step(
-        full_session,
-        token_ids=prompt_token_ids,
-        logits_name=logits_name,
-        past_cache=None,
-        past_length=0,
-        kv_heads=kv_heads,
-        head_size=head_size,
-    )
-    full_decode_past = {_present_to_past(name): value for name, value in full_prompt_present.items()}
-    full_decode_logits, full_decode_present, full_consumed = _run_full_step(
-        full_session,
-        token_ids=[next_token_id],
-        logits_name=logits_name,
-        past_cache=full_decode_past,
-        past_length=len(prompt_token_ids),
-        kv_heads=kv_heads,
-        head_size=head_size,
-    )
-    del full_session
-    gc.collect()
+    with _verified_source_execution_snapshot(full_model_path, manifest) as (
+        source_identity,
+        execution_model_path,
+    ):
+        full_session = ort.InferenceSession(str(execution_model_path), providers=[provider])
+        full_prompt_logits, full_prompt_present, _ = _run_full_step(
+            full_session,
+            token_ids=prompt_token_ids,
+            logits_name=logits_name,
+            past_cache=None,
+            past_length=0,
+            kv_heads=kv_heads,
+            head_size=head_size,
+        )
+        full_decode_past = {
+            _present_to_past(name): value for name, value in full_prompt_present.items()
+        }
+        full_decode_logits, full_decode_present, full_consumed = _run_full_step(
+            full_session,
+            token_ids=[next_token_id],
+            logits_name=logits_name,
+            past_cache=full_decode_past,
+            past_length=len(prompt_token_ids),
+            kv_heads=kv_heads,
+            head_size=head_size,
+        )
+        del full_session
+        gc.collect()
 
     split_prompt_logits, split_prompt_present, prompt_boundaries, _ = _run_split_step(
         segments,
