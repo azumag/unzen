@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import unittest
@@ -148,6 +149,56 @@ class LegacyTwoSegmentArtifactExecutionSnapshotTest(unittest.TestCase):
                         self.fail("replaced segment must not be yielded")
 
             self.assertTrue(replaced)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX ctime mutation semantics")
+    def test_same_size_in_place_graph_mutation_with_restored_mtime_before_pin_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path, segment0, segment1, _, _, manifest = self._fixture(root)
+            real_link = snapshot._link_verified_file
+            mutated = False
+
+            def mutate_then_link(entry: dict[str, object], snapshot_root: Path) -> Path:
+                nonlocal mutated
+                if entry.get("field") == "segments[0].path" and not mutated:
+                    accepted = entry.get("prelinkFingerprint")
+                    self.assertIsInstance(accepted, tuple)
+                    self.assertEqual(len(accepted), 7)  # type: ignore[arg-type]
+                    before = segment0.stat()
+                    original = segment0.read_bytes()
+                    segment0.write_bytes(b"X" * len(original))
+                    os.utime(
+                        segment0,
+                        ns=(before.st_atime_ns, before.st_mtime_ns),
+                    )
+                    original_mode = stat.S_IMODE(before.st_mode)
+                    os.chmod(segment0, original_mode ^ stat.S_IXUSR)
+                    os.chmod(segment0, original_mode)
+                    current = segment0.stat()
+                    self.assertEqual(current.st_size, accepted[4])  # type: ignore[index]
+                    self.assertEqual(current.st_mtime_ns, accepted[5])  # type: ignore[index]
+                    self.assertNotEqual(current.st_ctime_ns, accepted[6])  # type: ignore[index]
+                    mutated = True
+                return real_link(entry, snapshot_root)
+
+            with mock.patch.object(
+                snapshot,
+                "_link_verified_file",
+                side_effect=mutate_then_link,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "changed after legacy artifact preflight",
+                ):
+                    with snapshot.verified_legacy_two_segment_execution_snapshot(
+                        manifest_path,
+                        manifest,
+                        segment0,
+                        segment1,
+                    ):
+                        self.fail("mutated segment must not be yielded")
+
+            self.assertTrue(mutated)
 
     def test_in_place_external_mutation_during_execution_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

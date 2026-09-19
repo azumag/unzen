@@ -83,6 +83,31 @@ def _assert_requested_identity(
         raise RuntimeError(f"{label} changed after legacy artifact preflight: {requested}")
 
 
+def _assert_prelink_fingerprint(
+    requested: Path,
+    resolved: Path,
+    expected: ArtifactFingerprint,
+    *,
+    label: str,
+) -> None:
+    """Require the exact post-hash metadata immediately before hard-linking.
+
+    ``os.link()`` itself changes ``st_nlink`` and normally ``st_ctime_ns``, so
+    those fields can only be compared before the link.  Carrying the full
+    post-hash fingerprint to this boundary closes the gap where a same-size
+    in-place write restores ``mtime_ns`` after hashing but before pinning.
+    """
+
+    try:
+        observed_resolved = requested.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError(f"{label} changed after legacy artifact preflight: {requested}") from error
+    if observed_resolved != resolved:
+        raise RuntimeError(f"{label} changed after legacy artifact preflight: {requested}")
+    if _preflight_fingerprint(resolved, label=label) != expected:
+        raise RuntimeError(f"{label} changed after legacy artifact preflight: {requested}")
+
+
 def _artifact_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
     try:
         metadata = os.stat(path, follow_symlinks=False)
@@ -218,6 +243,7 @@ def _artifact_entries(
             "requested": requested,
             "resolved": resolved,
             "identity": identity,
+            "prelinkFingerprint": after_measure,
         }
         entries.append(entry)
         return entry
@@ -274,16 +300,25 @@ def _link_verified_file(entry: dict[str, object], snapshot_root: Path) -> Path:
     requested = entry["requested"]
     resolved = entry["resolved"]
     expected = entry["identity"]
+    prelink_fingerprint = entry["prelinkFingerprint"]
     relative = entry["relative"]
     if (
         not isinstance(requested, Path)
         or not isinstance(resolved, Path)
         or not isinstance(expected, tuple)
+        or not isinstance(prelink_fingerprint, tuple)
+        or len(prelink_fingerprint) != 7
+        or not all(isinstance(value, int) for value in prelink_fingerprint)
         or not isinstance(relative, str)
     ):
         raise AssertionError("internal legacy artifact entry is malformed")
 
-    _assert_requested_identity(requested, resolved, expected, label=field)
+    _assert_prelink_fingerprint(
+        requested,
+        resolved,
+        prelink_fingerprint,
+        label=field,
+    )
     destination = snapshot_root / Path(relative)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
