@@ -24,6 +24,7 @@ import numpy as np
 import onnxruntime as ort
 
 from direct_verifier_runtime import preflight_direct_verifier_parameters
+from source_model_execution_snapshot import verified_source_execution_snapshot
 
 
 def _manifest_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
@@ -287,12 +288,16 @@ def verify_split(
     logits_name = manifest["logitsOutput"]
     providers = [provider]
 
-    full_session = ort.InferenceSession(str(full_model_path), providers=providers)
-    full_feeds = build_feeds(full_session, token_ids, kv_heads=kv_heads, head_size=head_size)
-    full_logits = full_session.run([logits_name], full_feeds)[0]
-    del full_feeds
-    del full_session
-    gc.collect()
+    with verified_source_execution_snapshot(full_model_path, manifest) as (
+        _source_identity,
+        execution_model_path,
+    ):
+        full_session = ort.InferenceSession(str(execution_model_path), providers=providers)
+        full_feeds = build_feeds(full_session, token_ids, kv_heads=kv_heads, head_size=head_size)
+        full_logits = full_session.run([logits_name], full_feeds)[0]
+        del full_feeds
+        del full_session
+        gc.collect()
 
     segment0_session = ort.InferenceSession(str(segment0_path), providers=providers)
     segment0_feeds = build_feeds(segment0_session, token_ids, kv_heads=kv_heads, head_size=head_size)

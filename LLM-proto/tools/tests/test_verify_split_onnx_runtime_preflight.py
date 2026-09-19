@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 import sys
 import unittest
@@ -93,12 +94,21 @@ class VerifySplitOnnxRuntimePreflightTest(unittest.TestCase):
                 consumed += 1
                 yield token
 
+        @contextmanager
+        def source_snapshot(_path: Path, _manifest: dict[str, object]):
+            yield ({}, Path("snapshot-full.onnx"))
+
         manifest = {
             "boundary": {"tensors": []},
             "logitsOutput": "logits",
         }
         with (
             patch.object(verifier, "_load_manifest_snapshot", return_value=manifest),
+            patch.object(
+                verifier,
+                "verified_source_execution_snapshot",
+                side_effect=source_snapshot,
+            ),
             patch.object(
                 verifier.ort,
                 "InferenceSession",
