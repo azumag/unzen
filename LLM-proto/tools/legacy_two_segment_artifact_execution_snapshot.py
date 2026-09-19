@@ -50,6 +50,24 @@ def _regular_identity(path: Path, *, label: str) -> ArtifactIdentity:
     )
 
 
+def _preflight_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(f"{label} changed during legacy artifact preflight: {path}") from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(f"{label} changed during legacy artifact preflight: {path}")
+    return (
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
 def _assert_requested_identity(
     requested: Path,
     resolved: Path,
@@ -163,11 +181,15 @@ def _artifact_entries(
         if expected_bytes_raw is not None:
             expected_bytes = _non_negative_int(expected_bytes_raw, field=f"{field}.bytes")
 
+        before_measure = _preflight_fingerprint(resolved, label=field)
         observed_bytes, observed_sha = _measure_file(
             requested,
             missing_message=f"legacy split artifact not found: {requested}",
             expected_resolved=resolved,
         )
+        after_measure = _preflight_fingerprint(resolved, label=field)
+        if after_measure != before_measure:
+            raise RuntimeError(f"{field} changed during legacy artifact preflight: {requested}")
         if observed_sha != expected_sha:
             raise ValueError(
                 f"legacy split artifact SHA-256 mismatch for {field}: "
