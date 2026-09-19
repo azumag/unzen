@@ -21,11 +21,13 @@ from typing import Mapping, Sequence
 import numpy as np
 import onnxruntime as ort
 
+from artifact_execution_snapshot import (
+    verified_artifact_execution_snapshot as _verified_artifact_execution_snapshot,
+)
 from direct_verifier_runtime import non_negative_int, preflight_direct_verifier_parameters
 from source_model_execution_snapshot import (
     verified_source_execution_snapshot as _verified_source_execution_snapshot,
 )
-from verify_multi_segment_artifact_snapshot import verify_artifact_snapshot
 from verify_multi_segment_artifacts import _read_stable_manifest
 from verify_multi_segment_onnx import (
     _boundary_report,
@@ -318,137 +320,140 @@ def verify_multi_segment_kv_decode(
     )
     next_token_id = non_negative_int(next_token_id, field="nextTokenId")
 
-    artifact_snapshot = verify_artifact_snapshot(manifest_path)
-    artifact_integrity = artifact_snapshot.get("integrity")
-    if not isinstance(artifact_integrity, dict):
-        raise RuntimeError("stable artifact snapshot did not return an integrity report")
-    expected_manifest_sha = artifact_snapshot.get("manifestSha256")
-    if not isinstance(expected_manifest_sha, str):
-        raise RuntimeError("stable artifact snapshot did not return a manifest SHA-256")
-    manifest_bytes = _read_stable_manifest(manifest_path)
-    observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
-    if observed_manifest_sha != expected_manifest_sha:
-        raise RuntimeError("split manifest changed after artifact-snapshot preflight")
-    manifest = json.loads(manifest_bytes.decode("utf-8"))
-    if not isinstance(manifest, dict):
-        raise ValueError("split manifest must contain a JSON object")
-    contract = validate_multi_segment_manifest(manifest, manifest_path.parent)
-    segments = contract["segments"]
-    boundaries = contract["boundaries"]
-    logits_name = str(contract["logitsOutput"])
-
-    with _verified_source_execution_snapshot(full_model_path, manifest) as (
-        source_identity,
-        execution_model_path,
+    with _verified_artifact_execution_snapshot(manifest_path) as (
+        artifact_snapshot,
+        execution_manifest_path,
     ):
-        full_session = ort.InferenceSession(str(execution_model_path), providers=[provider])
-        full_prompt_logits, full_prompt_present, _ = _run_full_step(
-            full_session,
+        artifact_integrity = artifact_snapshot.get("integrity")
+        if not isinstance(artifact_integrity, dict):
+            raise RuntimeError("stable artifact snapshot did not return an integrity report")
+        expected_manifest_sha = artifact_snapshot.get("manifestSha256")
+        if not isinstance(expected_manifest_sha, str):
+            raise RuntimeError("stable artifact snapshot did not return a manifest SHA-256")
+        manifest_bytes = _read_stable_manifest(execution_manifest_path)
+        observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+        if observed_manifest_sha != expected_manifest_sha:
+            raise RuntimeError("split manifest changed after artifact-snapshot preflight")
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("split manifest must contain a JSON object")
+        contract = validate_multi_segment_manifest(manifest, execution_manifest_path.parent)
+        segments = contract["segments"]
+        boundaries = contract["boundaries"]
+        logits_name = str(contract["logitsOutput"])
+
+        with _verified_source_execution_snapshot(full_model_path, manifest) as (
+            source_identity,
+            execution_model_path,
+        ):
+            full_session = ort.InferenceSession(str(execution_model_path), providers=[provider])
+            full_prompt_logits, full_prompt_present, _ = _run_full_step(
+                full_session,
+                token_ids=prompt_token_ids,
+                logits_name=logits_name,
+                past_cache=None,
+                past_length=0,
+                kv_heads=kv_heads,
+                head_size=head_size,
+            )
+            full_decode_past = {
+                _present_to_past(name): value for name, value in full_prompt_present.items()
+            }
+            full_decode_logits, full_decode_present, full_consumed = _run_full_step(
+                full_session,
+                token_ids=[next_token_id],
+                logits_name=logits_name,
+                past_cache=full_decode_past,
+                past_length=len(prompt_token_ids),
+                kv_heads=kv_heads,
+                head_size=head_size,
+            )
+            del full_session
+            gc.collect()
+
+        split_prompt_logits, split_prompt_present, prompt_boundaries, _ = _run_split_step(
+            segments,
+            boundaries,
             token_ids=prompt_token_ids,
             logits_name=logits_name,
-            past_cache=None,
+            prior_present=None,
             past_length=0,
+            provider=provider,
             kv_heads=kv_heads,
             head_size=head_size,
         )
-        full_decode_past = {
-            _present_to_past(name): value for name, value in full_prompt_present.items()
-        }
-        full_decode_logits, full_decode_present, full_consumed = _run_full_step(
-            full_session,
+        split_decode_logits, split_decode_present, decode_boundaries, split_consumed = _run_split_step(
+            segments,
+            boundaries,
             token_ids=[next_token_id],
             logits_name=logits_name,
-            past_cache=full_decode_past,
+            prior_present=split_prompt_present,
             past_length=len(prompt_token_ids),
+            provider=provider,
             kv_heads=kv_heads,
             head_size=head_size,
         )
-        del full_session
-        gc.collect()
 
-    split_prompt_logits, split_prompt_present, prompt_boundaries, _ = _run_split_step(
-        segments,
-        boundaries,
-        token_ids=prompt_token_ids,
-        logits_name=logits_name,
-        prior_present=None,
-        past_length=0,
-        provider=provider,
-        kv_heads=kv_heads,
-        head_size=head_size,
-    )
-    split_decode_logits, split_decode_present, decode_boundaries, split_consumed = _run_split_step(
-        segments,
-        boundaries,
-        token_ids=[next_token_id],
-        logits_name=logits_name,
-        prior_present=split_prompt_present,
-        past_length=len(prompt_token_ids),
-        provider=provider,
-        kv_heads=kv_heads,
-        head_size=head_size,
-    )
+        prompt_logits_comparison = compare_logits(full_prompt_logits, split_prompt_logits, atol, rtol)
+        decode_logits_comparison = compare_logits(full_decode_logits, split_decode_logits, atol, rtol)
+        prompt_kv_comparison = _tensor_map_comparison(
+            full_prompt_present, split_prompt_present, atol=atol, rtol=rtol
+        )
+        decode_kv_comparison = _tensor_map_comparison(
+            full_decode_present, split_decode_present, atol=atol, rtol=rtol
+        )
+        full_prompt_top1 = _last_token_argmax(full_prompt_logits)
+        split_prompt_top1 = _last_token_argmax(split_prompt_logits)
+        full_decode_top1 = _last_token_argmax(full_decode_logits)
+        split_decode_top1 = _last_token_argmax(split_decode_logits)
 
-    prompt_logits_comparison = compare_logits(full_prompt_logits, split_prompt_logits, atol, rtol)
-    decode_logits_comparison = compare_logits(full_decode_logits, split_decode_logits, atol, rtol)
-    prompt_kv_comparison = _tensor_map_comparison(
-        full_prompt_present, split_prompt_present, atol=atol, rtol=rtol
-    )
-    decode_kv_comparison = _tensor_map_comparison(
-        full_decode_present, split_decode_present, atol=atol, rtol=rtol
-    )
-    full_prompt_top1 = _last_token_argmax(full_prompt_logits)
-    split_prompt_top1 = _last_token_argmax(split_prompt_logits)
-    full_decode_top1 = _last_token_argmax(full_decode_logits)
-    split_decode_top1 = _last_token_argmax(split_decode_logits)
+        status = "pass" if all(
+            [
+                prompt_logits_comparison["matches"],
+                decode_logits_comparison["matches"],
+                prompt_kv_comparison["matches"],
+                decode_kv_comparison["matches"],
+                full_prompt_top1 == split_prompt_top1,
+                full_decode_top1 == split_decode_top1,
+                full_consumed > 0,
+                split_consumed > 0,
+            ]
+        ) else "fail"
 
-    status = "pass" if all(
-        [
-            prompt_logits_comparison["matches"],
-            decode_logits_comparison["matches"],
-            prompt_kv_comparison["matches"],
-            decode_kv_comparison["matches"],
-            full_prompt_top1 == split_prompt_top1,
-            full_decode_top1 == split_decode_top1,
-            full_consumed > 0,
-            split_consumed > 0,
-        ]
-    ) else "fail"
-
-    return {
-        "schemaVersion": "1.0.0",
-        "kind": "unzen-budgeted-multi-segment-kv-decode-verification",
-        "decisionStatus": "diagnostic-only",
-        "provider": provider,
-        "promptTokenIds": list(prompt_token_ids),
-        "nextTokenId": next_token_id,
-        "segmentCount": len(segments),
-        "cutLayers": [int(segment["endLayer"]) for segment in segments[:-1]],
-        "artifactIntegrity": artifact_integrity,
-        "sourceModel": source_identity,
-        "kvCacheOwnership": "segment-local",
-        "coordinatorRelaysKvCache": False,
-        "prompt": {
-            "logitsComparison": prompt_logits_comparison,
-            "kvComparison": prompt_kv_comparison,
-            "boundaries": prompt_boundaries,
-            "boundaryBytes": sum(int(item["bytes"]) for item in prompt_boundaries),
-            "fullTop1TokenId": full_prompt_top1,
-            "splitTop1TokenId": split_prompt_top1,
-        },
-        "decode": {
-            "logitsComparison": decode_logits_comparison,
-            "kvComparison": decode_kv_comparison,
-            "boundaries": decode_boundaries,
-            "boundaryBytes": sum(int(item["bytes"]) for item in decode_boundaries),
-            "fullPastCacheBytesConsumed": full_consumed,
-            "splitPastCacheBytesConsumed": split_consumed,
-            "fullTop1TokenId": full_decode_top1,
-            "splitTop1TokenId": split_decode_top1,
-        },
-        "sequentialSegmentSessionLoading": True,
-        "status": status,
-    }
+        return {
+            "schemaVersion": "1.0.0",
+            "kind": "unzen-budgeted-multi-segment-kv-decode-verification",
+            "decisionStatus": "diagnostic-only",
+            "provider": provider,
+            "promptTokenIds": list(prompt_token_ids),
+            "nextTokenId": next_token_id,
+            "segmentCount": len(segments),
+            "cutLayers": [int(segment["endLayer"]) for segment in segments[:-1]],
+            "artifactIntegrity": artifact_integrity,
+            "sourceModel": source_identity,
+            "kvCacheOwnership": "segment-local",
+            "coordinatorRelaysKvCache": False,
+            "prompt": {
+                "logitsComparison": prompt_logits_comparison,
+                "kvComparison": prompt_kv_comparison,
+                "boundaries": prompt_boundaries,
+                "boundaryBytes": sum(int(item["bytes"]) for item in prompt_boundaries),
+                "fullTop1TokenId": full_prompt_top1,
+                "splitTop1TokenId": split_prompt_top1,
+            },
+            "decode": {
+                "logitsComparison": decode_logits_comparison,
+                "kvComparison": decode_kv_comparison,
+                "boundaries": decode_boundaries,
+                "boundaryBytes": sum(int(item["bytes"]) for item in decode_boundaries),
+                "fullPastCacheBytesConsumed": full_consumed,
+                "splitPastCacheBytesConsumed": split_consumed,
+                "fullTop1TokenId": full_decode_top1,
+                "splitTop1TokenId": split_decode_top1,
+            },
+            "sequentialSegmentSessionLoading": True,
+            "status": status,
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:
