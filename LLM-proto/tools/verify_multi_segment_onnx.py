@@ -26,12 +26,14 @@ from typing import Sequence
 import numpy as np
 import onnxruntime as ort
 
+from artifact_execution_snapshot import (
+    verified_artifact_execution_snapshot as _verified_artifact_execution_snapshot,
+)
 from direct_verifier_runtime import preflight_direct_verifier_parameters
 from source_model_execution_snapshot import (
     verified_source_execution_snapshot as _verified_source_execution_snapshot,
     verify_source_model_identity,
 )
-from verify_multi_segment_artifact_snapshot import verify_artifact_snapshot
 from verify_multi_segment_artifacts import _read_stable_manifest
 from verify_split_onnx import (
     _last_token_argmax,
@@ -307,104 +309,107 @@ def verify_multi_split(
         rtol=rtol,
     )
 
-    artifact_snapshot = verify_artifact_snapshot(manifest_path)
-    artifact_integrity = artifact_snapshot.get("integrity")
-    if not isinstance(artifact_integrity, dict):
-        raise RuntimeError("stable artifact snapshot did not return an integrity report")
-    expected_manifest_sha = artifact_snapshot.get("manifestSha256")
-    if not isinstance(expected_manifest_sha, str):
-        raise RuntimeError("stable artifact snapshot did not return a manifest SHA-256")
-    manifest_bytes = _read_stable_manifest(manifest_path)
-    observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
-    if observed_manifest_sha != expected_manifest_sha:
-        raise RuntimeError(
-            "split manifest changed after artifact-snapshot preflight: "
-            f"preflight={expected_manifest_sha}, observed={observed_manifest_sha}"
-        )
-    manifest = json.loads(manifest_bytes.decode("utf-8"))
-    if not isinstance(manifest, dict):
-        raise ValueError("split manifest must contain a JSON object")
-    contract = validate_multi_segment_manifest(manifest, manifest_path.parent)
-    segments = contract["segments"]
-    boundaries = contract["boundaries"]
-    logits_name = str(contract["logitsOutput"])
-    providers = [provider]
-
-    with _verified_source_execution_snapshot(full_model_path, manifest) as (
-        source_identity,
-        execution_model_path,
+    with _verified_artifact_execution_snapshot(manifest_path) as (
+        artifact_snapshot,
+        execution_manifest_path,
     ):
-        full_session = ort.InferenceSession(str(execution_model_path), providers=providers)
-        full_feeds = build_feeds(
-            full_session,
-            token_ids,
-            kv_heads=kv_heads,
-            head_size=head_size,
-        )
-        full_logits = full_session.run([logits_name], full_feeds)[0]
-        del full_feeds
-        del full_session
-        gc.collect()
-
-    boundary_values: dict[str, np.ndarray] = {}
-    boundary_reports: list[dict[str, object]] = []
-    split_logits: np.ndarray | None = None
-
-    for index, segment in enumerate(segments):
-        session = ort.InferenceSession(str(segment["path"]), providers=providers)
-        feeds = build_feeds(
-            session,
-            token_ids,
-            boundary=boundary_values,
-            kv_heads=kv_heads,
-            head_size=head_size,
-        )
-        if index < len(boundaries):
-            boundary = boundaries[index]
-            names = boundary["names"]
-            values = session.run(list(names), feeds)
-            boundary_values = dict(zip(names, values, strict=True))
-            boundary_reports.append(
-                _boundary_report(
-                    after_layer=int(boundary["afterLayer"]),
-                    before_layer=int(boundary["beforeLayer"]),
-                    names=names,
-                    values=values,
-                )
+        artifact_integrity = artifact_snapshot.get("integrity")
+        if not isinstance(artifact_integrity, dict):
+            raise RuntimeError("stable artifact snapshot did not return an integrity report")
+        expected_manifest_sha = artifact_snapshot.get("manifestSha256")
+        if not isinstance(expected_manifest_sha, str):
+            raise RuntimeError("stable artifact snapshot did not return a manifest SHA-256")
+        manifest_bytes = _read_stable_manifest(execution_manifest_path)
+        observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+        if observed_manifest_sha != expected_manifest_sha:
+            raise RuntimeError(
+                "split manifest changed after artifact-snapshot preflight: "
+                f"preflight={expected_manifest_sha}, observed={observed_manifest_sha}"
             )
-        else:
-            split_logits = session.run([logits_name], feeds)[0]
-        del feeds
-        del session
-        gc.collect()
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("split manifest must contain a JSON object")
+        contract = validate_multi_segment_manifest(manifest, execution_manifest_path.parent)
+        segments = contract["segments"]
+        boundaries = contract["boundaries"]
+        logits_name = str(contract["logitsOutput"])
+        providers = [provider]
 
-    if split_logits is None:
-        raise AssertionError("final segment did not produce logits")
+        with _verified_source_execution_snapshot(full_model_path, manifest) as (
+            source_identity,
+            execution_model_path,
+        ):
+            full_session = ort.InferenceSession(str(execution_model_path), providers=providers)
+            full_feeds = build_feeds(
+                full_session,
+                token_ids,
+                kv_heads=kv_heads,
+                head_size=head_size,
+            )
+            full_logits = full_session.run([logits_name], full_feeds)[0]
+            del full_feeds
+            del full_session
+            gc.collect()
 
-    comparison = compare_logits(full_logits, split_logits, atol, rtol)
-    report: dict[str, object] = {
-        "schemaVersion": "1.1.0",
-        "kind": "unzen-budgeted-multi-segment-same-machine-verification",
-        "provider": provider,
-        "inputTokenIds": list(token_ids),
-        "segmentCount": len(segments),
-        "cutLayers": [int(segment["endLayer"]) for segment in segments[:-1]],
-        "artifactIntegrity": artifact_integrity,
-        "sourceModel": source_identity,
-        "boundaries": boundary_reports,
-        "boundaryBytes": sum(int(boundary["bytes"]) for boundary in boundary_reports),
-        "comparison": comparison,
-        "fullTop1TokenId": _last_token_argmax(full_logits),
-        "splitTop1TokenId": _last_token_argmax(split_logits),
-        "sequentialSessionLoading": True,
-    }
-    report["status"] = (
-        "pass"
-        if comparison["matches"]
-        and report["fullTop1TokenId"] == report["splitTop1TokenId"]
-        else "fail"
-    )
-    return report
+        boundary_values: dict[str, np.ndarray] = {}
+        boundary_reports: list[dict[str, object]] = []
+        split_logits: np.ndarray | None = None
+
+        for index, segment in enumerate(segments):
+            session = ort.InferenceSession(str(segment["path"]), providers=providers)
+            feeds = build_feeds(
+                session,
+                token_ids,
+                boundary=boundary_values,
+                kv_heads=kv_heads,
+                head_size=head_size,
+            )
+            if index < len(boundaries):
+                boundary = boundaries[index]
+                names = boundary["names"]
+                values = session.run(list(names), feeds)
+                boundary_values = dict(zip(names, values, strict=True))
+                boundary_reports.append(
+                    _boundary_report(
+                        after_layer=int(boundary["afterLayer"]),
+                        before_layer=int(boundary["beforeLayer"]),
+                        names=names,
+                        values=values,
+                    )
+                )
+            else:
+                split_logits = session.run([logits_name], feeds)[0]
+            del feeds
+            del session
+            gc.collect()
+
+        if split_logits is None:
+            raise AssertionError("final segment did not produce logits")
+
+        comparison = compare_logits(full_logits, split_logits, atol, rtol)
+        report: dict[str, object] = {
+            "schemaVersion": "1.1.0",
+            "kind": "unzen-budgeted-multi-segment-same-machine-verification",
+            "provider": provider,
+            "inputTokenIds": list(token_ids),
+            "segmentCount": len(segments),
+            "cutLayers": [int(segment["endLayer"]) for segment in segments[:-1]],
+            "artifactIntegrity": artifact_integrity,
+            "sourceModel": source_identity,
+            "boundaries": boundary_reports,
+            "boundaryBytes": sum(int(boundary["bytes"]) for boundary in boundary_reports),
+            "comparison": comparison,
+            "fullTop1TokenId": _last_token_argmax(full_logits),
+            "splitTop1TokenId": _last_token_argmax(split_logits),
+            "sequentialSessionLoading": True,
+        }
+        report["status"] = (
+            "pass"
+            if comparison["matches"]
+            and report["fullTop1TokenId"] == report["splitTop1TokenId"]
+            else "fail"
+        )
+        return report
 
 
 def build_parser() -> argparse.ArgumentParser:

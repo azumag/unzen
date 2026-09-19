@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import sys
@@ -56,6 +57,20 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
         }
         return logits, cache
 
+    @staticmethod
+    def _artifact_snapshot_context(
+        execution_manifest: Path,
+        manifest_sha: str,
+    ):
+        @contextmanager
+        def artifact_snapshot(requested_manifest: Path):
+            yield {
+                "manifestSha256": manifest_sha,
+                "integrity": {"manifestSha256": manifest_sha},
+            }, execution_manifest
+
+        return artifact_snapshot
+
     def test_kv_reference_prompt_and_decode_share_snapshot_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -64,6 +79,7 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
             source.write_bytes(graph_payload)
             manifest_bytes = self._manifest_bytes(graph_payload)
             manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+            execution_manifest = root / "artifact-snapshot" / "split-manifest.json"
             logits, cache = self._reference_values()
             opened_paths: list[Path] = []
             full_session = object()
@@ -76,11 +92,8 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     verifier,
-                    "verify_artifact_snapshot",
-                    return_value={
-                        "manifestSha256": manifest_sha,
-                        "integrity": {"manifestSha256": manifest_sha},
-                    },
+                    "_verified_artifact_execution_snapshot",
+                    side_effect=self._artifact_snapshot_context(execution_manifest, manifest_sha),
                 ),
                 mock.patch.object(
                     verifier,
@@ -140,6 +153,7 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
             source.write_bytes(graph_payload)
             manifest_bytes = self._manifest_bytes(graph_payload)
             manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+            execution_manifest = root / "artifact-snapshot" / "split-manifest.json"
             logits, cache = self._reference_values()
 
             def open_and_mutate(path: str, *, providers: list[str]) -> object:
@@ -151,11 +165,8 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     verifier,
-                    "verify_artifact_snapshot",
-                    return_value={
-                        "manifestSha256": manifest_sha,
-                        "integrity": {"manifestSha256": manifest_sha},
-                    },
+                    "_verified_artifact_execution_snapshot",
+                    side_effect=self._artifact_snapshot_context(execution_manifest, manifest_sha),
                 ),
                 mock.patch.object(
                     verifier,

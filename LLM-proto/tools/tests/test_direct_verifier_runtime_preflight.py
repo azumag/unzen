@@ -26,7 +26,7 @@ class DirectVerifierRuntimePreflightTest(unittest.TestCase):
         token_ids = overrides.pop("token_ids", [1, 2])
         kwargs.update(overrides)
         with (
-            patch.object(logits_verifier, "verify_artifact_snapshot") as artifact_check,
+            patch.object(logits_verifier, "_verified_artifact_execution_snapshot") as artifact_check,
             patch.object(logits_verifier.ort, "InferenceSession") as session,
         ):
             with self.assertRaises(ValueError):
@@ -51,7 +51,7 @@ class DirectVerifierRuntimePreflightTest(unittest.TestCase):
         next_token_id = overrides.pop("next_token_id", 3)
         kwargs.update(overrides)
         with (
-            patch.object(kv_verifier, "verify_artifact_snapshot") as artifact_check,
+            patch.object(kv_verifier, "_verified_artifact_execution_snapshot") as artifact_check,
             patch.object(kv_verifier.ort, "InferenceSession") as session,
         ):
             with self.assertRaises(ValueError):
@@ -121,7 +121,7 @@ class DirectVerifierRuntimePreflightTest(unittest.TestCase):
                 with (
                     patch.object(
                         module,
-                        "verify_artifact_snapshot",
+                        "_verified_artifact_execution_snapshot",
                         side_effect=RuntimeError("artifact preflight reached"),
                     ) as artifact_check,
                     patch.object(module.ort, "InferenceSession") as session,
