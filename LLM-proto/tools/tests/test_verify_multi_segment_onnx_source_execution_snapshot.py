@@ -301,8 +301,9 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
                 "allExternalDataHashed": True,
             }, snapshot_path
 
+        manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
         artifact_integrity = {
-            "manifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "manifestSha256": manifest_sha,
         }
         contract = {
             "segments": (
@@ -320,7 +321,14 @@ class VerifyMultiSegmentOnnxSourceExecutionSnapshotTest(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(verifier, "verify_artifact_integrity", return_value=artifact_integrity),
+            mock.patch.object(
+                verifier,
+                "verify_artifact_snapshot",
+                return_value={
+                    "manifestSha256": manifest_sha,
+                    "integrity": artifact_integrity,
+                },
+            ),
             mock.patch.object(verifier, "_read_stable_manifest", return_value=manifest_bytes),
             mock.patch.object(verifier, "validate_multi_segment_manifest", return_value=contract),
             mock.patch.object(verifier, "_verified_source_execution_snapshot", side_effect=fake_snapshot),
