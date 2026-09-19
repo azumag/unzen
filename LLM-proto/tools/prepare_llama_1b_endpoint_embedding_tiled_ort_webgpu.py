@@ -76,8 +76,8 @@ def _write_graph_variants(
 
     Unit tests pin the exact serialized graph bytes without materializing a
     250.5 MiB payload. Real preparation sets ``verify_external_data=True`` only
-    after payload-0000.bin has been materialized; then ONNX's path-based checker
-    validates the graph together with the actual external-data range.
+    after payload-0000.bin has been materialized; the snapshot-bound checker
+    then validates the exact graph bytes together with the external-data range.
     """
     result: dict[str, dict[str, object]] = {}
     if verify_external_data:
@@ -95,9 +95,9 @@ def _write_graph_variants(
             length=TILE_BYTES,
         )
         onnx.save(model, path)
-        if verify_external_data:
-            onnx.checker.check_model(str(path), full_check=True)
-        graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(path)
+        graph_bytes, graph_sha256 = preferred_webgpu._measure_regular_file(
+            path, check_onnx=verify_external_data
+        )
         info = {
             "file": path.name,
             "artifactByteOffset": offset,
