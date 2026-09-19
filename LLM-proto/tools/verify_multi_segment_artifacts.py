@@ -45,20 +45,68 @@ def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int
 
 
 def _readonly_nonblocking_flags() -> int:
-    """Return portable read-only flags that avoid blocking on POSIX special files."""
+    """Return portable flags for raw, nonblocking, no-follow regular-file reads."""
 
-    return os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+    return flags | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _resolved_regular_path(path: Path, *, label: str) -> tuple[Path, Path, os.stat_result]:
+    """Resolve one requested path and capture the regular-file identity to be opened."""
+
+    requested = path.expanduser().absolute()
+    try:
+        resolved = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise FileNotFoundError(f"{label} not found: {path}") from error
+    try:
+        before_path = os.lstat(resolved)
+    except OSError as error:
+        raise FileNotFoundError(f"{label} not found: {path}") from error
+    if not stat.S_ISREG(before_path.st_mode):
+        raise ValueError(f"{label} must be a regular file: {path}")
+    return requested, resolved, before_path
+
+
+def _verify_path_identity(
+    requested: Path,
+    resolved: Path,
+    opened: os.stat_result,
+    *,
+    label: str,
+    path: Path,
+    action: str,
+) -> None:
+    """Require the requested pathname to still resolve to the opened file identity."""
+
+    try:
+        after_path = os.lstat(resolved)
+    except OSError as error:
+        raise RuntimeError(f"{label} changed while being {action}: {path}") from error
+    if stat.S_ISLNK(after_path.st_mode) or _stat_fingerprint(after_path) != _stat_fingerprint(opened):
+        raise RuntimeError(f"{label} changed while being {action}: {path}")
+    try:
+        requested_after = requested.resolve(strict=True)
+    except (FileNotFoundError, OSError) as error:
+        raise RuntimeError(f"{label} changed while being {action}: {path}") from error
+    if requested_after != resolved:
+        raise RuntimeError(f"{label} changed while being {action}: {path}")
 
 
 def _read_stable_manifest(path: Path) -> bytes:
-    """Read manifest bytes from one regular-file descriptor and detect mutation."""
+    """Read manifest bytes while binding the descriptor to one stable path identity."""
 
     try:
-        fd = os.open(path, _readonly_nonblocking_flags())
+        requested, resolved, before_path = _resolved_regular_path(path, label="split manifest")
     except FileNotFoundError:
         raise FileNotFoundError(f"split manifest not found: {path}") from None
-    except IsADirectoryError:
-        raise ValueError(f"split manifest must be a regular file: {path}") from None
+
+    try:
+        fd = os.open(resolved, _readonly_nonblocking_flags())
+    except FileNotFoundError:
+        raise RuntimeError(f"split manifest changed while being read: {path}") from None
+    except (IsADirectoryError, OSError) as error:
+        raise RuntimeError(f"split manifest could not be opened safely: {path}: {error}") from error
 
     try:
         with os.fdopen(fd, "rb") as handle:
@@ -66,10 +114,20 @@ def _read_stable_manifest(path: Path) -> bytes:
             before = os.fstat(handle.fileno())
             if not stat.S_ISREG(before.st_mode):
                 raise ValueError(f"split manifest must be a regular file: {path}")
+            if _stat_fingerprint(before) != _stat_fingerprint(before_path):
+                raise RuntimeError(f"split manifest changed while being read: {path}")
             payload = handle.read()
             after = os.fstat(handle.fileno())
             if _stat_fingerprint(after) != _stat_fingerprint(before):
                 raise RuntimeError(f"split manifest changed while being read: {path}")
+            _verify_path_identity(
+                requested,
+                resolved,
+                before,
+                label="split manifest",
+                path=path,
+                action="read",
+            )
             return payload
     finally:
         if fd >= 0:
@@ -82,19 +140,24 @@ def _measure_file(
     chunk_size: int = 1024 * 1024,
     missing_message: str | None = None,
 ) -> tuple[int, str]:
-    """Measure one nonblocking regular-file descriptor and fail closed on mutation."""
+    """Measure one descriptor whose regular-file pathname identity stays stable."""
 
     if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
         raise ValueError("chunk_size must be a positive integer")
 
     try:
-        fd = os.open(path, _readonly_nonblocking_flags())
+        requested, resolved, before_path = _resolved_regular_path(path, label="artifact")
     except FileNotFoundError:
         if missing_message is not None:
             raise FileNotFoundError(missing_message) from None
         raise
-    except IsADirectoryError:
-        raise ValueError(f"artifact must be a regular file: {path}") from None
+
+    try:
+        fd = os.open(resolved, _readonly_nonblocking_flags())
+    except FileNotFoundError:
+        raise RuntimeError(f"artifact changed while being measured: {path}") from None
+    except (IsADirectoryError, OSError) as error:
+        raise RuntimeError(f"artifact could not be opened safely: {path}: {error}") from error
 
     digest = hashlib.sha256()
     try:
@@ -103,11 +166,21 @@ def _measure_file(
             before = os.fstat(handle.fileno())
             if not stat.S_ISREG(before.st_mode):
                 raise ValueError(f"artifact must be a regular file: {path}")
+            if _stat_fingerprint(before) != _stat_fingerprint(before_path):
+                raise RuntimeError(f"artifact changed while being measured: {path}")
             while chunk := handle.read(chunk_size):
                 digest.update(chunk)
             after = os.fstat(handle.fileno())
             if _stat_fingerprint(after) != _stat_fingerprint(before):
                 raise RuntimeError(f"artifact changed while being measured: {path}")
+            _verify_path_identity(
+                requested,
+                resolved,
+                before,
+                label="artifact",
+                path=path,
+                action="measured",
+            )
             return before.st_size, digest.hexdigest()
     finally:
         if fd >= 0:

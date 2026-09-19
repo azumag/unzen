@@ -104,7 +104,7 @@ class VerifyMultiSegmentOnnxRuntimeContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"sourceModel\.sha256"):
                 verify_source_model_identity(source, manifest)
 
-    def test_source_graph_path_replacement_does_not_mix_file_identities(self) -> None:
+    def test_source_graph_path_replacement_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "model.onnx"
@@ -131,12 +131,11 @@ class VerifyMultiSegmentOnnxRuntimeContractTest(unittest.TestCase):
                 return fd
 
             with patch("verify_multi_segment_artifacts.os.open", replace_after_open):
-                report = verify_source_model_identity(source, manifest)
+                with self.assertRaisesRegex(RuntimeError, "artifact changed while being measured"):
+                    verify_source_model_identity(source, manifest)
 
             self.assertTrue(replaced)
             self.assertEqual(source.read_bytes(), replacement_payload)
-            self.assertEqual(report["graphBytes"], len(original_payload))
-            self.assertEqual(report["graphSha256"], hashlib.sha256(original_payload).hexdigest())
 
     def test_source_graph_in_place_mutation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
