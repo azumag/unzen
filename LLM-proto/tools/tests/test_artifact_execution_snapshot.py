@@ -182,7 +182,7 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
             boundary = self._boundary(
                 graph,
                 external,
-                external_relative="weights/segment0.onnx_data",
+                external_relative="weights/shards/segment0.onnx_data",
             )
             manifest = root / "split-manifest.json"
             outside = root / "outside"
@@ -199,7 +199,7 @@ class ArtifactExecutionSnapshotTest(unittest.TestCase):
                 ):
                     execution_roots = list(root.glob(".unzen-artifact-execution-*"))
                     self.assertEqual(len(execution_roots), 1)
-                    internal_parent = execution_roots[0] / "weights"
+                    internal_parent = execution_roots[0] / "weights" / "shards"
                     internal_parent.rename(detached)
                     internal_parent.symlink_to(outside, target_is_directory=True)
                     substituted = True
