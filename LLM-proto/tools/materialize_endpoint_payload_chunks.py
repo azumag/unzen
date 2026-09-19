@@ -19,6 +19,8 @@ from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Callable, Iterable
 
+from source_file_snapshot import open_regular_file_snapshot
+
 
 REPORT_KIND = "unzen-endpoint-source-payload-materialization"
 REPORT_SCHEMA_VERSION = "1.1.0"
@@ -769,8 +771,10 @@ def materialize_source_payload_chunks(
     materialized: list[dict[str, object]] = []
     created_destinations: dict[Path, tuple[int, int, int, int, int]] = {}
     total_payload_bytes = 0
-    with source_path.open("rb") as source:
-        source_stat_signature = _file_stat_signature(os.fstat(source.fileno()))
+    with open_regular_file_snapshot(
+        source_path, label="source external-data file"
+    ) as (source, opened_source):
+        source_stat_signature = _file_stat_signature(opened_source)
         _require_stable_source_signature(
             _file_stat_signature(source_path.stat()),
             source_stat_signature,
