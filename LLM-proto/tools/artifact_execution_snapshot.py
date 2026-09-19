@@ -518,7 +518,6 @@ def _assert_recorded_internal_parents(
     snapshot_root: Path,
     expected_root_identity: SnapshotWorkspaceIdentity,
 ) -> None:
-    seen: set[tuple[tuple[str, ...], int, int]] = set()
     for entry in entries:
         raw = entry.get("_snapshotParentIdentities")
         if raw is None:
@@ -536,17 +535,8 @@ def _assert_recorded_internal_parents(
                 or not isinstance(item[2], int)
             ):
                 raise AssertionError("internal artifact snapshot parent identity is malformed")
-            typed = item[0], item[1], item[2]
-            chain.append(typed)
-            seen.add(typed)
+            chain.append((item[0], item[1], item[2]))
         _assert_internal_parent_chain(snapshot_root, expected_root_identity, tuple(chain))
-
-    for parts, expected_dev, expected_ino in seen:
-        _assert_internal_parent_chain(
-            snapshot_root,
-            expected_root_identity,
-            ((parts, expected_dev, expected_ino),),
-        )
 
 
 def _remove_verified_snapshot_root(
