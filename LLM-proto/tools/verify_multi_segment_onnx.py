@@ -6,11 +6,11 @@ sessions are created and released one at a time so a 1B-class full model and all
 browser shards are never resident simultaneously. Each intermediate boundary is
 relayed by the exact tensor names recorded in ``split-manifest.json``.
 
-Before creating any ONNX Runtime session, the verifier also repeats the
-stdlib-only artifact-integrity preflight and binds the resulting manifest,
-source-model, graph, and external-data identities into the numerical report.
-Source external-data digests are mandatory for numerical evidence; manifests
-created with ``--skip-source-external-digest`` are intentionally rejected.
+Before creating any ONNX Runtime session, the verifier also repeats the stable
+artifact-snapshot preflight and binds the resulting manifest, source-model,
+graph, and external-data identities into the numerical report. Source
+external-data digests are mandatory for numerical evidence; manifests created
+with ``--skip-source-external-digest`` are intentionally rejected.
 """
 
 from __future__ import annotations
@@ -31,10 +31,8 @@ from source_model_execution_snapshot import (
     verified_source_execution_snapshot as _verified_source_execution_snapshot,
     verify_source_model_identity,
 )
-from verify_multi_segment_artifacts import (
-    _read_stable_manifest,
-    verify_artifact_integrity,
-)
+from verify_multi_segment_artifact_snapshot import verify_artifact_snapshot
+from verify_multi_segment_artifacts import _read_stable_manifest
 from verify_split_onnx import (
     _last_token_argmax,
     build_feeds,
@@ -309,13 +307,19 @@ def verify_multi_split(
         rtol=rtol,
     )
 
-    artifact_integrity = verify_artifact_integrity(manifest_path)
+    artifact_snapshot = verify_artifact_snapshot(manifest_path)
+    artifact_integrity = artifact_snapshot.get("integrity")
+    if not isinstance(artifact_integrity, dict):
+        raise RuntimeError("stable artifact snapshot did not return an integrity report")
+    expected_manifest_sha = artifact_snapshot.get("manifestSha256")
+    if not isinstance(expected_manifest_sha, str):
+        raise RuntimeError("stable artifact snapshot did not return a manifest SHA-256")
     manifest_bytes = _read_stable_manifest(manifest_path)
     observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
-    if observed_manifest_sha != artifact_integrity["manifestSha256"]:
+    if observed_manifest_sha != expected_manifest_sha:
         raise RuntimeError(
-            "split manifest changed after artifact-integrity preflight: "
-            f"preflight={artifact_integrity['manifestSha256']}, observed={observed_manifest_sha}"
+            "split manifest changed after artifact-snapshot preflight: "
+            f"preflight={expected_manifest_sha}, observed={observed_manifest_sha}"
         )
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):

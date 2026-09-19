@@ -25,7 +25,8 @@ from direct_verifier_runtime import non_negative_int, preflight_direct_verifier_
 from source_model_execution_snapshot import (
     verified_source_execution_snapshot as _verified_source_execution_snapshot,
 )
-from verify_multi_segment_artifacts import _read_stable_manifest, verify_artifact_integrity
+from verify_multi_segment_artifact_snapshot import verify_artifact_snapshot
+from verify_multi_segment_artifacts import _read_stable_manifest
 from verify_multi_segment_onnx import (
     _boundary_report,
     validate_multi_segment_manifest,
@@ -317,11 +318,17 @@ def verify_multi_segment_kv_decode(
     )
     next_token_id = non_negative_int(next_token_id, field="nextTokenId")
 
-    artifact_integrity = verify_artifact_integrity(manifest_path)
+    artifact_snapshot = verify_artifact_snapshot(manifest_path)
+    artifact_integrity = artifact_snapshot.get("integrity")
+    if not isinstance(artifact_integrity, dict):
+        raise RuntimeError("stable artifact snapshot did not return an integrity report")
+    expected_manifest_sha = artifact_snapshot.get("manifestSha256")
+    if not isinstance(expected_manifest_sha, str):
+        raise RuntimeError("stable artifact snapshot did not return a manifest SHA-256")
     manifest_bytes = _read_stable_manifest(manifest_path)
     observed_manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
-    if observed_manifest_sha != artifact_integrity["manifestSha256"]:
-        raise RuntimeError("split manifest changed after artifact-integrity preflight")
+    if observed_manifest_sha != expected_manifest_sha:
+        raise RuntimeError("split manifest changed after artifact-snapshot preflight")
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("split manifest must contain a JSON object")

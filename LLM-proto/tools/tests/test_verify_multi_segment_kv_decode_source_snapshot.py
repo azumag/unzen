@@ -76,8 +76,11 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     verifier,
-                    "verify_artifact_integrity",
-                    return_value={"manifestSha256": manifest_sha},
+                    "verify_artifact_snapshot",
+                    return_value={
+                        "manifestSha256": manifest_sha,
+                        "integrity": {"manifestSha256": manifest_sha},
+                    },
                 ),
                 mock.patch.object(
                     verifier,
@@ -148,8 +151,11 @@ class VerifyMultiSegmentKvDecodeSourceSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     verifier,
-                    "verify_artifact_integrity",
-                    return_value={"manifestSha256": manifest_sha},
+                    "verify_artifact_snapshot",
+                    return_value={
+                        "manifestSha256": manifest_sha,
+                        "integrity": {"manifestSha256": manifest_sha},
+                    },
                 ),
                 mock.patch.object(
                     verifier,

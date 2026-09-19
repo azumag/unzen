@@ -21,7 +21,11 @@ class NumericalVerifierManifestSnapshotTest(unittest.TestCase):
     def _replace_with_fifo_after_preflight(self, manifest_path: Path) -> dict[str, object]:
         manifest_path.unlink()
         os.mkfifo(manifest_path)
-        return {"manifestSha256": "0" * 64}
+        integrity = {"manifestSha256": "0" * 64}
+        return {
+            "manifestSha256": "0" * 64,
+            "integrity": integrity,
+        }
 
     def test_logits_verifier_rejects_non_regular_post_preflight_manifest_before_ort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -34,7 +38,7 @@ class NumericalVerifierManifestSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     logits_verifier,
-                    "verify_artifact_integrity",
+                    "verify_artifact_snapshot",
                     side_effect=self._replace_with_fifo_after_preflight,
                 ),
                 mock.patch.object(logits_verifier.ort, "InferenceSession") as session,
@@ -55,7 +59,7 @@ class NumericalVerifierManifestSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     kv_verifier,
-                    "verify_artifact_integrity",
+                    "verify_artifact_snapshot",
                     side_effect=self._replace_with_fifo_after_preflight,
                 ),
                 mock.patch.object(kv_verifier.ort, "InferenceSession") as session,
