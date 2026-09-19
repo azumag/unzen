@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 import unittest
@@ -16,18 +15,12 @@ import verify_multi_segment_kv_decode as kv_verifier  # noqa: E402
 import verify_multi_segment_onnx as logits_verifier  # noqa: E402
 
 
-@unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO regression requires os.mkfifo")
 class NumericalVerifierManifestSnapshotTest(unittest.TestCase):
-    def _replace_with_fifo_after_preflight(self, manifest_path: Path) -> dict[str, object]:
-        manifest_path.unlink()
-        os.mkfifo(manifest_path)
-        integrity = {"manifestSha256": "0" * 64}
-        return {
-            "manifestSha256": "0" * 64,
-            "integrity": integrity,
-        }
+    @staticmethod
+    def _reject_non_regular_manifest(manifest_path: Path):
+        raise ValueError(f"split manifest must be a regular file: {manifest_path}")
 
-    def test_logits_verifier_rejects_non_regular_post_preflight_manifest_before_ort(self) -> None:
+    def test_logits_verifier_rejects_manifest_snapshot_failure_before_ort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "model.onnx"
@@ -38,17 +31,18 @@ class NumericalVerifierManifestSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     logits_verifier,
-                    "verify_artifact_snapshot",
-                    side_effect=self._replace_with_fifo_after_preflight,
-                ),
+                    "_verified_artifact_execution_snapshot",
+                    side_effect=self._reject_non_regular_manifest,
+                ) as snapshot,
                 mock.patch.object(logits_verifier.ort, "InferenceSession") as session,
             ):
                 with self.assertRaisesRegex(ValueError, "regular file"):
                     logits_verifier.verify_multi_split(source, manifest, [1])
 
+            snapshot.assert_called_once_with(manifest)
             session.assert_not_called()
 
-    def test_kv_verifier_rejects_non_regular_post_preflight_manifest_before_ort(self) -> None:
+    def test_kv_verifier_rejects_manifest_snapshot_failure_before_ort(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "model.onnx"
@@ -59,14 +53,15 @@ class NumericalVerifierManifestSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     kv_verifier,
-                    "verify_artifact_snapshot",
-                    side_effect=self._replace_with_fifo_after_preflight,
-                ),
+                    "_verified_artifact_execution_snapshot",
+                    side_effect=self._reject_non_regular_manifest,
+                ) as snapshot,
                 mock.patch.object(kv_verifier.ort, "InferenceSession") as session,
             ):
                 with self.assertRaisesRegex(ValueError, "regular file"):
                     kv_verifier.verify_multi_segment_kv_decode(source, manifest, [1], 2)
 
+            snapshot.assert_called_once_with(manifest)
             session.assert_not_called()
 
 
