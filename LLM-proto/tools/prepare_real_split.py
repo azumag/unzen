@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -21,6 +22,7 @@ from typing import BinaryIO
 import onnx
 from onnx import TensorProto
 
+from source_file_snapshot import open_regular_file_snapshot
 from split_llama_1b_onnx import check_model_for_runtime, sha256_file, split_model
 
 
@@ -331,7 +333,12 @@ def repack_segment_external_data(
     source_model_dir: Path,
     output_data_name: str,
 ) -> dict[str, object] | None:
-    model = onnx.load_model(str(model_path), load_external_data=False)
+    with open_regular_file_snapshot(model_path, label="segment graph") as (
+        model_stream,
+        _,
+    ):
+        model_bytes = model_stream.read()
+    model = onnx.load_model(io.BytesIO(model_bytes), load_external_data=False)
     external = [
         initializer
         for initializer in model.graph.initializer
