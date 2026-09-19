@@ -129,7 +129,74 @@ def _validate_output_destination(output_path: Path, output_root: Path) -> None:
         raise ValueError(f"output external-data path must not be a symlink: {output_path}")
 
 
-def _open_repack_destination(output_path: Path) -> BinaryIO:
+def _destination_component_walk_supported() -> bool:
+    """Return whether a destination parent can be pinned with dir-fd traversal."""
+
+    return (
+        os.open in getattr(os, "supports_dir_fd", set())
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    )
+
+
+def _directory_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return (metadata.st_dev, metadata.st_ino)
+
+
+def _open_repack_destination_parent(output_path: Path, output_root: Path) -> int | None:
+    """Pin the canonical destination parent below the output root when supported."""
+
+    if not _destination_component_walk_supported():
+        return None
+
+    root = output_root.expanduser().absolute().resolve()
+    parent = output_path.parent.expanduser().absolute().resolve()
+    try:
+        relative_parent = parent.relative_to(root)
+    except ValueError as error:
+        raise ValueError(
+            "output external-data parent escapes model directory: "
+            f"output={output_path}, root={root}"
+        ) from error
+
+    before_root = os.lstat(root)
+    if stat.S_ISLNK(before_root.st_mode) or not stat.S_ISDIR(before_root.st_mode):
+        raise ValueError(f"output external-data root must be a directory: {root}")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    current_fd = os.open(root, directory_flags)
+    try:
+        opened_root = os.fstat(current_fd)
+        if (
+            not stat.S_ISDIR(opened_root.st_mode)
+            or _directory_identity(opened_root) != _directory_identity(before_root)
+        ):
+            raise RuntimeError(
+                f"output external-data root changed between path check and open: {root}"
+            )
+
+        for component in relative_parent.parts:
+            next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+            try:
+                opened_parent = os.fstat(next_fd)
+                if not stat.S_ISDIR(opened_parent.st_mode):
+                    raise ValueError(
+                        "output external-data parent component must be a directory: "
+                        f"{component}"
+                    )
+            except Exception:
+                os.close(next_fd)
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def _open_repack_destination(output_path: Path, *, parent_fd: int | None = None) -> BinaryIO:
     """Open without truncation, validate the inode, then truncate through the fd."""
 
     flags = os.O_WRONLY | os.O_CREAT
@@ -138,7 +205,10 @@ def _open_repack_destination(output_path: Path) -> BinaryIO:
         flags |= os.O_BINARY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    descriptor = os.open(output_path, flags, 0o666)
+    if parent_fd is None:
+        descriptor = os.open(output_path, flags, 0o666)
+    else:
+        descriptor = os.open(output_path.name, flags, 0o666, dir_fd=parent_fd)
     try:
         snapshot = os.fstat(descriptor)
         if not stat.S_ISREG(snapshot.st_mode):
@@ -327,7 +397,12 @@ def repack_segment_external_data(
     source_snapshots: dict[str, tuple[int, int, int, int, int, int, int]] = {}
     source_keys: dict[Path, str] = {}
     destination_snapshot: tuple[int, int, int, int, int, int, int] | None = None
+    destination_parent_fd: int | None = None
     try:
+        destination_parent_fd = _open_repack_destination_parent(
+            output_data_path,
+            model_path.parent,
+        )
         # Open and size-check every source before the destination exists or is
         # truncated. Missing/unreadable/truncated/special-file inputs therefore
         # fail without leaving a misleading partial repack artifact behind.
@@ -358,7 +433,10 @@ def repack_segment_external_data(
                     f"length={length}, fileBytes={file_size}"
                 )
 
-        with _open_repack_destination(output_data_path) as destination:
+        with _open_repack_destination(
+            output_data_path,
+            parent_fd=destination_parent_fd,
+        ) as destination:
             for initializer, location, source_path, source_offset, length in prepared:
                 key = (location, source_offset, length)
                 destination_offset = range_offsets.get(key)
@@ -387,6 +465,8 @@ def repack_segment_external_data(
     finally:
         for source in open_sources.values():
             source.close()
+        if destination_parent_fd is not None:
+            os.close(destination_parent_fd)
 
     if destination_snapshot is None:
         raise RuntimeError("repack destination snapshot was not captured")
