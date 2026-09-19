@@ -19,6 +19,12 @@ import stat
 import tempfile
 from typing import Iterator, Sequence
 
+from execution_snapshot_internal_paths import (
+    InternalParentIdentity,
+    assert_parent_chain,
+    prepared_destination,
+    unlink_pinned_destination,
+)
 from verify_multi_segment_artifacts import (
     _canonical_sha256,
     _measure_file,
@@ -278,6 +284,16 @@ def _artifact_entries(
     return tuple(entries)
 
 
+def _entry_relative_parts(entry: dict[str, object]) -> tuple[str, ...]:
+    relative = entry.get("relative")
+    if not isinstance(relative, str) or not relative:
+        raise AssertionError("internal legacy artifact relative path is malformed")
+    path = Path(relative)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise AssertionError("internal legacy artifact relative path is malformed")
+    return tuple(path.parts)
+
+
 def _link_verified_file(entry: dict[str, object], snapshot_root: Path) -> Path:
     field = str(entry["field"])
     requested = entry["requested"]
@@ -296,30 +312,105 @@ def _link_verified_file(entry: dict[str, object], snapshot_root: Path) -> Path:
     ):
         raise AssertionError("internal legacy artifact entry is malformed")
 
-    _assert_prelink_fingerprint(
-        requested,
-        resolved,
-        prelink_fingerprint,
-        label=field,
-    )
-    destination = snapshot_root / Path(relative)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.link(resolved, destination, follow_symlinks=False)
-    except OSError as error:
-        raise RuntimeError(
-            f"cannot create hard-link execution snapshot for {field}: {resolved}; "
-            "legacy segment graphs and external data must support hard links on the snapshot filesystem; "
-            "refusing to duplicate large payload bytes"
-        ) from error
-
-    linked = _regular_identity(destination, label=field)
-    if linked != expected:
-        raise RuntimeError(
-            f"{field} changed while legacy execution snapshot was being pinned: {resolved}"
+    relative_parts = _entry_relative_parts(entry)
+    snapshot_root_identity = _snapshot_workspace_identity(snapshot_root)
+    with prepared_destination(
+        snapshot_root,
+        relative_parts,
+        snapshot_root_identity,
+        label="legacy artifact execution snapshot",
+    ) as (destination, parent_fd, leaf_name, parent_chain):
+        entry["_snapshotParentIdentities"] = parent_chain
+        _assert_prelink_fingerprint(
+            requested,
+            resolved,
+            prelink_fingerprint,
+            label=field,
         )
-    _assert_requested_identity(requested, resolved, expected, label=field)
-    return destination
+        try:
+            if parent_fd is not None:
+                os.link(
+                    resolved,
+                    leaf_name,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            else:
+                os.link(resolved, destination, follow_symlinks=False)
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot create hard-link execution snapshot for {field}: {resolved}; "
+                "legacy segment graphs and external data must support hard links on the snapshot filesystem; "
+                "refusing to duplicate large payload bytes"
+            ) from error
+
+        try:
+            assert_parent_chain(
+                snapshot_root,
+                snapshot_root_identity,
+                parent_chain,
+                label="legacy artifact execution snapshot",
+            )
+            if parent_fd is not None:
+                linked_metadata = os.stat(
+                    leaf_name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                linked = (
+                    linked_metadata.st_dev,
+                    linked_metadata.st_ino,
+                    linked_metadata.st_size,
+                    linked_metadata.st_mtime_ns,
+                )
+            else:
+                linked = _regular_identity(destination, label=field)
+            if linked != expected:
+                raise RuntimeError(
+                    f"{field} changed while legacy execution snapshot was being pinned: {resolved}"
+                )
+            _assert_requested_identity(requested, resolved, expected, label=field)
+            assert_parent_chain(
+                snapshot_root,
+                snapshot_root_identity,
+                parent_chain,
+                label="legacy artifact execution snapshot",
+            )
+        except Exception:
+            unlink_pinned_destination(destination, parent_fd, leaf_name)
+            raise
+        return destination
+
+
+def _assert_recorded_internal_parents(
+    entries: Sequence[dict[str, object]],
+    snapshot_root: Path,
+    snapshot_root_identity: SnapshotWorkspaceIdentity,
+) -> None:
+    for entry in entries:
+        raw = entry.get("_snapshotParentIdentities")
+        if raw is None:
+            continue
+        if not isinstance(raw, tuple):
+            raise AssertionError("internal legacy snapshot parent identities are malformed")
+        chain: list[InternalParentIdentity] = []
+        for item in raw:
+            if (
+                not isinstance(item, tuple)
+                or len(item) != 3
+                or not isinstance(item[0], tuple)
+                or not all(isinstance(part, str) for part in item[0])
+                or not isinstance(item[1], int)
+                or not isinstance(item[2], int)
+            ):
+                raise AssertionError("internal legacy snapshot parent identity is malformed")
+            chain.append((item[0], item[1], item[2]))
+        assert_parent_chain(
+            snapshot_root,
+            snapshot_root_identity,
+            tuple(chain),
+            label="legacy artifact execution snapshot",
+        )
 
 
 def _capture_fingerprints(
@@ -434,14 +525,18 @@ def verified_legacy_two_segment_execution_snapshot(
             destination = _link_verified_file(entry, snapshot_root)
             destinations[str(entry["field"])] = destination
 
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         fingerprints = _capture_fingerprints(entries, snapshot_root)
         _verify_pinned_artifacts(entries, snapshot_root)
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         _assert_fingerprints(fingerprints)
         _assert_original_paths(entries)
 
         graph0 = destinations["segments[0].path"]
         graph1 = destinations["segments[1].path"]
         yield graph0, graph1
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         _assert_fingerprints(fingerprints)
     finally:
+        _assert_recorded_internal_parents(entries, snapshot_root, snapshot_root_identity)
         _remove_verified_snapshot_root(snapshot_root, snapshot_root_identity)

@@ -289,7 +289,7 @@ class LegacyTwoSegmentArtifactExecutionSnapshotTest(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 RuntimeError,
-                "legacy artifact execution snapshot workspace changed before cleanup",
+                "legacy artifact execution snapshot workspace changed",
             ):
                 with snapshot.verified_legacy_two_segment_execution_snapshot(
                     manifest_path,
