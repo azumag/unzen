@@ -31,6 +31,7 @@ ASCII_CASE_FOLD = str.maketrans(
 
 SourceExternalContract = tuple[str, Path, Path, int, str]
 SourceFingerprint = tuple[int, int, int, int, int, int, int]
+SnapshotWorkspaceIdentity = tuple[int, int]
 
 
 def _unsafe_windows_component(part: str) -> bool:
@@ -393,6 +394,32 @@ def _assert_source_execution_fingerprints(
             raise RuntimeError(f"{label} changed during reference execution: {path}")
 
 
+def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(
+            f"source execution snapshot workspace changed before cleanup: {path}"
+        ) from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError(
+            f"source execution snapshot workspace changed before cleanup: {path}"
+        )
+    return metadata.st_dev, metadata.st_ino
+
+
+def _remove_verified_snapshot_root(
+    snapshot_root: Path,
+    expected_identity: SnapshotWorkspaceIdentity,
+) -> None:
+    observed_identity = _snapshot_workspace_identity(snapshot_root)
+    if observed_identity != expected_identity:
+        raise RuntimeError(
+            f"source execution snapshot workspace changed before cleanup: {snapshot_root}"
+        )
+    shutil.rmtree(snapshot_root)
+
+
 @contextmanager
 def verified_source_execution_snapshot(
     full_model_path: Path,
@@ -415,6 +442,7 @@ def verified_source_execution_snapshot(
                 dir=snapshot_parent,
             )
         ).resolve(strict=True)
+        snapshot_root_identity = _snapshot_workspace_identity(snapshot_root)
     except (OSError, RuntimeError) as error:
         raise RuntimeError(
             f"cannot create source execution snapshot beside full model: {full_model_path}"
@@ -486,7 +514,7 @@ def verified_source_execution_snapshot(
         yield source_identity, snapshot_graph
         _assert_source_execution_fingerprints(snapshot_fingerprints)
     finally:
-        shutil.rmtree(snapshot_root)
+        _remove_verified_snapshot_root(snapshot_root, snapshot_root_identity)
 
 
 def verify_source_model_identity(
