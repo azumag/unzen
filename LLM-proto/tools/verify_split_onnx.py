@@ -23,6 +23,8 @@ from typing import Sequence
 import numpy as np
 import onnxruntime as ort
 
+from direct_verifier_runtime import preflight_direct_verifier_parameters
+
 
 def _manifest_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
     """Filesystem identity/metadata that must remain stable for one manifest read."""
@@ -262,6 +264,24 @@ def verify_split(
     atol: float = 1e-4,
     rtol: float = 1e-4,
 ) -> dict[str, object]:
+    (
+        normalized_token_ids,
+        provider,
+        kv_heads,
+        head_size,
+        atol,
+        rtol,
+    ) = preflight_direct_verifier_parameters(
+        token_ids,
+        token_field="inputTokenIds",
+        provider=provider,
+        kv_heads=kv_heads,
+        head_size=head_size,
+        atol=atol,
+        rtol=rtol,
+    )
+    token_ids = normalized_token_ids
+
     manifest = _load_manifest_snapshot(manifest_path)
     boundary_names = [item["name"] for item in manifest["boundary"]["tensors"]]
     logits_name = manifest["logitsOutput"]
