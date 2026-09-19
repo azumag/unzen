@@ -16,13 +16,17 @@ created with ``--skip-source-external-digest`` are intentionally rejected.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import gc
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import shutil
 import stat
-from typing import Sequence
+import tempfile
+from typing import Iterator, Sequence
 
 import numpy as np
 import onnxruntime as ort
@@ -167,8 +171,8 @@ def _source_file_identity(
 def _preflight_source_file_identities(
     full_model_path: Path,
     external_contract: Sequence[tuple[str, Path, Path, int, str]],
-) -> None:
-    """Reject source provenance roles that alias one filesystem object."""
+) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+    """Reject provenance aliases and return the identities accepted by preflight."""
 
     seen: dict[tuple[int, int], str] = {}
     graph_identity = _source_file_identity(
@@ -177,6 +181,7 @@ def _preflight_source_file_identities(
         missing_message=f"full model not found: {full_model_path}",
     )
     seen[graph_identity] = "source graph"
+    external_identities: list[tuple[int, int]] = []
 
     for location, _, external_resolved, _, _ in external_contract:
         identity = _source_file_identity(
@@ -191,6 +196,9 @@ def _preflight_source_file_identities(
                 f"{location} aliases {previous}"
             )
         seen[identity] = location
+        external_identities.append(identity)
+
+    return graph_identity, tuple(external_identities)
 
 
 def _preflight_source_model_identity(
@@ -284,22 +292,17 @@ def _preflight_source_model_identity(
     return expected_graph_sha, source_graph_path, tuple(external_contract)
 
 
-def verify_source_model_identity(
-    full_model_path: Path,
-    manifest: dict[str, object],
+def _measure_source_model_identity(
+    *,
+    report_path: Path,
+    graph_path: Path,
+    expected_graph_sha: str,
+    expected_graph_resolved: Path,
+    external_contract: Sequence[tuple[str, Path, Path, int, str]],
 ) -> dict[str, object]:
-    """Bind the full-model reference to the source identity recorded at split time."""
-
-    expected_graph_sha, expected_graph_resolved, external_contract = (
-        _preflight_source_model_identity(
-            full_model_path,
-            manifest,
-        )
-    )
-    _preflight_source_file_identities(full_model_path, external_contract)
     graph_bytes, observed_graph_sha = _measure_file(
-        full_model_path,
-        missing_message=f"full model not found: {full_model_path}",
+        graph_path,
+        missing_message=f"full model not found: {report_path}",
         expected_resolved=expected_graph_resolved,
     )
     if observed_graph_sha != expected_graph_sha:
@@ -325,7 +328,6 @@ def verify_source_model_identity(
                 f"source external-data SHA-256 mismatch for {location}: "
                 f"expected={expected_sha}, observed={observed_sha}"
             )
-
         external_reports.append(
             {
                 "location": location,
@@ -335,12 +337,242 @@ def verify_source_model_identity(
         )
 
     return {
-        "path": str(full_model_path),
+        "path": str(report_path),
         "graphBytes": graph_bytes,
         "graphSha256": observed_graph_sha,
         "externalData": external_reports,
         "allExternalDataHashed": True,
     }
+
+
+def _assert_source_path_identity(
+    requested_path: Path,
+    resolved_path: Path,
+    expected_identity: tuple[int, int],
+    *,
+    label: str,
+) -> None:
+    """Require a requested source pathname to still name the preflight inode."""
+
+    try:
+        observed_resolved = requested_path.resolve(strict=True)
+        metadata = os.stat(resolved_path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(f"{label} changed before reference execution: {requested_path}") from error
+    if (
+        observed_resolved != resolved_path
+        or not stat.S_ISREG(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != expected_identity
+    ):
+        raise RuntimeError(f"{label} changed before reference execution: {requested_path}")
+
+
+def _link_verified_snapshot_file(
+    source_path: Path,
+    destination_path: Path,
+    expected_identity: tuple[int, int],
+    *,
+    label: str,
+) -> None:
+    """Pin one accepted source inode into the execution snapshot without copying bytes."""
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(source_path, destination_path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot create hard-link execution snapshot for {label}: {source_path}; "
+            "source graph and external data must support hard links on the snapshot filesystem; "
+            "refusing to duplicate large payload bytes"
+        ) from error
+    try:
+        metadata = os.stat(destination_path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(f"execution snapshot disappeared for {label}: {destination_path}") from error
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != expected_identity
+    ):
+        raise RuntimeError(f"{label} changed while execution snapshot was being pinned: {source_path}")
+
+
+def _source_execution_fingerprint(
+    path: Path,
+    *,
+    label: str,
+) -> tuple[int, int, int, int, int, int, int]:
+    """Capture metadata that exposes in-place mutation of one pinned source inode."""
+
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise RuntimeError(f"{label} changed during reference execution: {path}") from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(f"{label} changed during reference execution: {path}")
+    return (
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _capture_source_execution_fingerprints(
+    graph_path: Path,
+    external_contract: Sequence[tuple[str, Path, Path, int, str]],
+) -> tuple[tuple[str, Path, tuple[int, int, int, int, int, int, int]], ...]:
+    """Capture the pinned generation before hashing and reference execution."""
+
+    captured: list[tuple[str, Path, tuple[int, int, int, int, int, int, int]]] = [
+        (
+            "source graph",
+            graph_path,
+            _source_execution_fingerprint(graph_path, label="source graph"),
+        )
+    ]
+    for location, external_path, _, _, _ in external_contract:
+        label = f"source external data {location}"
+        captured.append(
+            (
+                label,
+                external_path,
+                _source_execution_fingerprint(external_path, label=label),
+            )
+        )
+    return tuple(captured)
+
+
+def _assert_source_execution_fingerprints(
+    captured: Sequence[
+        tuple[str, Path, tuple[int, int, int, int, int, int, int]]
+    ],
+) -> None:
+    """Fail closed if a pinned inode changed after provenance measurement."""
+
+    for label, path, expected in captured:
+        observed = _source_execution_fingerprint(path, label=label)
+        if observed != expected:
+            raise RuntimeError(f"{label} changed during reference execution: {path}")
+
+
+@contextmanager
+def _verified_source_execution_snapshot(
+    full_model_path: Path,
+    manifest: dict[str, object],
+) -> Iterator[tuple[dict[str, object], Path]]:
+    """Yield a hard-link-pinned source generation for ORT reference execution."""
+
+    expected_graph_sha, expected_graph_resolved, external_contract = (
+        _preflight_source_model_identity(full_model_path, manifest)
+    )
+    graph_identity, external_identities = _preflight_source_file_identities(
+        full_model_path,
+        external_contract,
+    )
+    try:
+        snapshot_root = Path(
+            tempfile.mkdtemp(
+                prefix=".unzen-source-execution-",
+                dir=full_model_path.parent,
+            )
+        )
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot create source execution snapshot beside full model: {full_model_path}"
+        ) from error
+
+    try:
+        snapshot_graph = snapshot_root / full_model_path.name
+        _link_verified_snapshot_file(
+            expected_graph_resolved,
+            snapshot_graph,
+            graph_identity,
+            label="source graph",
+        )
+        snapshot_external_contract: list[tuple[str, Path, Path, int, str]] = []
+        for contract_entry, expected_identity in zip(
+            external_contract,
+            external_identities,
+            strict=True,
+        ):
+            location, external_path, external_resolved, expected_bytes, expected_sha = contract_entry
+            snapshot_external = snapshot_root / Path(location)
+            _link_verified_snapshot_file(
+                external_resolved,
+                snapshot_external,
+                expected_identity,
+                label=f"source external data {location}",
+            )
+            snapshot_external_contract.append(
+                (
+                    location,
+                    snapshot_external,
+                    snapshot_external.resolve(),
+                    expected_bytes,
+                    expected_sha,
+                )
+            )
+
+        _assert_source_path_identity(
+            full_model_path,
+            expected_graph_resolved,
+            graph_identity,
+            label="source graph",
+        )
+        for contract_entry, expected_identity in zip(
+            external_contract,
+            external_identities,
+            strict=True,
+        ):
+            location, external_path, external_resolved, _, _ = contract_entry
+            _assert_source_path_identity(
+                external_path,
+                external_resolved,
+                expected_identity,
+                label=f"source external data {location}",
+            )
+
+        snapshot_fingerprints = _capture_source_execution_fingerprints(
+            snapshot_graph,
+            tuple(snapshot_external_contract),
+        )
+        source_identity = _measure_source_model_identity(
+            report_path=full_model_path,
+            graph_path=snapshot_graph,
+            expected_graph_sha=expected_graph_sha,
+            expected_graph_resolved=snapshot_graph.resolve(),
+            external_contract=tuple(snapshot_external_contract),
+        )
+        _assert_source_execution_fingerprints(snapshot_fingerprints)
+        yield source_identity, snapshot_graph
+        _assert_source_execution_fingerprints(snapshot_fingerprints)
+    finally:
+        shutil.rmtree(snapshot_root)
+
+
+def verify_source_model_identity(
+    full_model_path: Path,
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    """Bind the full-model reference to the source identity recorded at split time."""
+
+    expected_graph_sha, expected_graph_resolved, external_contract = (
+        _preflight_source_model_identity(
+            full_model_path,
+            manifest,
+        )
+    )
+    _preflight_source_file_identities(full_model_path, external_contract)
+    return _measure_source_model_identity(
+        report_path=full_model_path,
+        graph_path=full_model_path,
+        expected_graph_sha=expected_graph_sha,
+        expected_graph_resolved=expected_graph_resolved,
+        external_contract=external_contract,
+    )
 
 
 def validate_multi_segment_manifest(
@@ -553,24 +785,27 @@ def verify_multi_split(
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("split manifest must contain a JSON object")
-    source_identity = verify_source_model_identity(full_model_path, manifest)
     contract = validate_multi_segment_manifest(manifest, manifest_path.parent)
     segments = contract["segments"]
     boundaries = contract["boundaries"]
     logits_name = str(contract["logitsOutput"])
     providers = [provider]
 
-    full_session = ort.InferenceSession(str(full_model_path), providers=providers)
-    full_feeds = build_feeds(
-        full_session,
-        token_ids,
-        kv_heads=kv_heads,
-        head_size=head_size,
-    )
-    full_logits = full_session.run([logits_name], full_feeds)[0]
-    del full_feeds
-    del full_session
-    gc.collect()
+    with _verified_source_execution_snapshot(full_model_path, manifest) as (
+        source_identity,
+        execution_model_path,
+    ):
+        full_session = ort.InferenceSession(str(execution_model_path), providers=providers)
+        full_feeds = build_feeds(
+            full_session,
+            token_ids,
+            kv_heads=kv_heads,
+            head_size=head_size,
+        )
+        full_logits = full_session.run([logits_name], full_feeds)[0]
+        del full_feeds
+        del full_session
+        gc.collect()
 
     boundary_values: dict[str, np.ndarray] = {}
     boundary_reports: list[dict[str, object]] = []
