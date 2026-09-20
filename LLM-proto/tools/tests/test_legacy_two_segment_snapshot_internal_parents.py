@@ -102,6 +102,11 @@ class LegacyTwoSegmentInternalParentSnapshotTest(unittest.TestCase):
             with (
                 mock.patch.object(internal_paths, "component_walk_supported", return_value=False),
                 mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+                mock.patch.object(
+                    internal_paths,
+                    "generation_bound_cleanup_supported",
+                    return_value=True,
+                ),
                 mock.patch.object(snapshot.os, "stat", side_effect=reject_pathname_nofollow_stat),
             ):
                 with snapshot.verified_legacy_two_segment_execution_snapshot(
