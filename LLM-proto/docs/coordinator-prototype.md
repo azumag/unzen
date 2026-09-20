@@ -70,6 +70,12 @@ reported. When `lostWorkerId` is omitted, `lostAfterAssignmentIndex` retains the
 index-only selector used by older fixtures. This keeps an explicit worker ID
 from silently turning into evidence for a different worker's loss.
 
+When `lostAfterAssignmentIndex` is supplied by a caller it must be a
+non-negative safe integer. Malformed explicit values are rejected before worker
+registration, dispatch, or simulated transport connections. Omitting the index
+is distinct from passing a negative sentinel: with `lostWorkerId` present and no
+index, the selector searches from the first assignment.
+
 ## Cloudflare Workers Prototype Handoff
 
 If this harness passes and the report stays inside the latency and churn

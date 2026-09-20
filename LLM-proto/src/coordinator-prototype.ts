@@ -125,6 +125,7 @@ export function createDefaultCoordinatorPrototypeManifest(): CoordinatorPrototyp
 export function runCoordinatorPrototype(
   manifest: CoordinatorPrototypeManifest,
 ): CoordinatorPrototypeReport {
+  validateWorkerLossSelector(manifest);
   const coordinatorUrl = manifest.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
   const cdnUrl = manifest.cdnUrl ?? DEFAULT_CDN_URL;
   const eligibility = computeWorkerEligibility(manifest);
@@ -222,6 +223,16 @@ export function buildCoordinatorPrototypeSegments(totalSegments: number): Segmen
     estimatedMemoryMB: 1_800,
   });
   return segmentConfigsFromManifest(manifest);
+}
+
+function validateWorkerLossSelector(manifest: CoordinatorPrototypeManifest): void {
+  const lostAfterAssignmentIndex = manifest.lostAfterAssignmentIndex;
+  if (
+    lostAfterAssignmentIndex !== undefined &&
+    (!Number.isSafeInteger(lostAfterAssignmentIndex) || lostAfterAssignmentIndex < 0)
+  ) {
+    throw new Error('lostAfterAssignmentIndex must be a non-negative safe integer');
+  }
 }
 
 function prototypeWorker(
