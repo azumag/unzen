@@ -4,11 +4,11 @@ The multi-segment artifact-snapshot verifier and capture-source verifier share o
 
 The read-only predicate intentionally requires only the operations used by those verifiers:
 
-- `os.open` and `os.stat` exist and support `dir_fd`;
+- `os.open` and `os.stat` are callable and support `dir_fd`;
 - `os.stat` supports `follow_symlinks=False`;
 - `O_DIRECTORY` and `O_NOFOLLOW` are available.
 
-If a reduced Python host does not expose `os.open` or `os.stat` at all, the predicate reports the component-walk path as unsupported instead of raising while probing capabilities. Callers then retain their existing fail-closed fallback behavior.
+If a reduced Python host does not expose `os.open` or `os.stat`, or exposes a non-callable placeholder for either attribute, the predicate reports the component-walk path as unsupported instead of raising while probing capabilities. Callers then retain their existing fail-closed fallback behavior.
 
 It deliberately does **not** require `mkdir`, `link`, or `unlink`. Those are write-path requirements owned by the stricter execution-snapshot capability checks in `execution_snapshot_internal_paths.py`.
 
