@@ -345,7 +345,11 @@ export class AdaptiveChunkDispatcher {
       const coldLoad = missingArtifacts !== undefined
         ? missingArtifacts.length > 0
         : !cacheHit && !selected.rollingConsecutive;
-      const checkpointTransferBytes = nextSegment === 0 ? 0 : this.checkpointBytes;
+      // A rolling consecutive chunk stays on the same worker, so its hidden
+      // state does not cross the Coordinator relay boundary between assignments.
+      const checkpointTransferBytes = nextSegment === 0 || selected.rollingConsecutive
+        ? 0
+        : this.checkpointBytes;
       const checkpointTransferMs = checkpointTransferBytes === 0
         ? 0
         : this.estimateCheckpointTransferMs(selected.worker.telemetry);
