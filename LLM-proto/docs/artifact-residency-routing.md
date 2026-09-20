@@ -75,6 +75,15 @@ The adaptive dispatcher:
    commits the logical segment as resident;
 6. reports exact total, already-resident and downloaded artifact bytes.
 
+For manifest-backed runs, `coldLoad` is derived from the same pre-assignment
+missing-artifact snapshot used to request components and report downloaded bytes.
+Any missing bundle means `coldLoad=true`, even when the worker receives a
+`rollingConsecutive` assignment. Worker continuity therefore cannot turn a real
+artifact fetch into warm-cache evidence. Conversely, `coldLoad=false` means the
+assignment fetched zero manifest-backed artifact bytes. The legacy dispatcher
+path without an `ArtifactResidencyLedger` keeps its older simulator meaning,
+where a rolling consecutive assignment suppresses the generic cold-load flag.
+
 Heartbeat validation is atomic. A missing identity, duplicate index, non-canonical
 SHA-256, or digest from another revision rejects the complete update and leaves
 the previous worker residency snapshot unchanged. The legacy dispatcher path
@@ -151,6 +160,9 @@ work under #167.
 - Unknown cache indexes reject the whole heartbeat update atomically.
 - A logical segment becomes resident only after all of its component locators
   pass the transport allowlist.
+- In a manifest-backed assignment, `coldLoad=false` implies that
+  `missingSegmentIndexes` is empty and `downloadedArtifactBytes=0`; a rolling
+  consecutive assignment does not override this artifact-cache fact.
 - A durable checkpoint must match the request and exact completed span boundary.
 - A durable checkpoint payload must pass `CheckpointStore` structural validation
   before it can mutate the resume store.
