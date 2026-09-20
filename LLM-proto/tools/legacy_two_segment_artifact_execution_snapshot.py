@@ -21,8 +21,8 @@ from typing import Iterator, Sequence
 
 from execution_snapshot_internal_paths import (
     InternalParentIdentity,
+    assert_execution_snapshot_runtime_supported,
     assert_parent_chain,
-    lstat_supported,
     prepared_destination,
     unlink_pinned_destination,
 )
@@ -502,10 +502,9 @@ def verified_legacy_two_segment_execution_snapshot(
 ) -> Iterator[tuple[Path, Path]]:
     """Yield manifest-bound hard-link paths for the two legacy ORT sessions."""
 
-    if not lstat_supported():
-        raise RuntimeError(
-            "legacy artifact execution snapshot requires os.lstat for no-follow pathname metadata"
-        )
+    assert_execution_snapshot_runtime_supported(
+        label="legacy artifact execution snapshot"
+    )
 
     manifest_path = manifest_path.expanduser().absolute()
     entries = _artifact_entries(
