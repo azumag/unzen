@@ -21,8 +21,9 @@ class ExecutionSnapshotSharedCleanupTest(unittest.TestCase):
     def test_matching_workspace_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "snapshot"
-            root.mkdir()
-            (root / "sentinel.txt").write_text("owned", encoding="utf-8")
+            nested = root / "nested"
+            nested.mkdir(parents=True)
+            (nested / "sentinel.txt").write_text("owned", encoding="utf-8")
             identity = internal_paths.workspace_identity(root, label="test snapshot")
 
             internal_paths.remove_verified_workspace(
@@ -58,6 +59,60 @@ class ExecutionSnapshotSharedCleanupTest(unittest.TestCase):
 
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
             self.assertTrue(original.is_dir())
+
+    def test_replacement_after_root_open_survives_recursive_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "snapshot"
+            nested = root / "nested"
+            nested.mkdir(parents=True)
+            (nested / "owned.txt").write_text("owned", encoding="utf-8")
+            identity = internal_paths.workspace_identity(root, label="test snapshot")
+            original = base / "original"
+            replacement_sentinel = root / "replacement.txt"
+            shared_remove = internal_paths._remove_open_directory_contents
+            swapped = False
+
+            def swap_then_remove(
+                directory_fd: int,
+                *,
+                label: str,
+                workspace_path: Path,
+            ) -> None:
+                nonlocal swapped
+                if not swapped:
+                    swapped = True
+                    root.rename(original)
+                    root.mkdir()
+                    replacement_sentinel.write_text("keep", encoding="utf-8")
+                shared_remove(
+                    directory_fd,
+                    label=label,
+                    workspace_path=workspace_path,
+                )
+
+            with mock.patch.object(
+                internal_paths,
+                "_remove_open_directory_contents",
+                side_effect=swap_then_remove,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"test snapshot workspace changed before cleanup:",
+                ):
+                    internal_paths.remove_verified_workspace(
+                        root,
+                        identity,
+                        label="test snapshot",
+                    )
+
+            self.assertTrue(swapped)
+            self.assertEqual(
+                replacement_sentinel.read_text(encoding="utf-8"),
+                "keep",
+            )
+            self.assertTrue(original.is_dir())
+            self.assertEqual(list(original.iterdir()), [])
 
     def test_path_specific_wrappers_delegate_with_stable_labels(self) -> None:
         root = Path("snapshot")
