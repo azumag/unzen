@@ -21,6 +21,7 @@ import stat
 import tempfile
 from typing import Iterator, Sequence
 
+import execution_snapshot_internal_paths as execution_snapshot_paths
 from verify_multi_segment_artifact_snapshot import (
     PATH_RESOLUTION_COMPONENT_ANCHORED,
     PATH_RESOLUTION_FINAL_ONLY,
@@ -180,24 +181,11 @@ def _assert_accepted_artifact_path(entry: dict[str, object]) -> None:
 
 
 def _internal_component_walk_supported() -> bool:
-    supports_dir_fd = getattr(os, "supports_dir_fd", set())
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    return (
-        hasattr(os, "O_DIRECTORY")
-        and hasattr(os, "O_NOFOLLOW")
-        and os.open in supports_dir_fd
-        and os.mkdir in supports_dir_fd
-        and os.link in supports_dir_fd
-        and os.stat in supports_dir_fd
-        and os.unlink in supports_dir_fd
-        and os.link in supports_follow_symlinks
-        and os.stat in supports_follow_symlinks
-    )
+    return execution_snapshot_paths.component_walk_supported()
 
 
 def _pathname_hard_link_supported() -> bool:
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    return os.link in supports_follow_symlinks
+    return execution_snapshot_paths.nofollow_hardlink_supported()
 
 
 def _require_pathname_hard_link_support() -> None:
