@@ -12,8 +12,6 @@ replacement or in-place mutation.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import hashlib
-import json
 import os
 from pathlib import Path
 import shutil
@@ -23,21 +21,9 @@ from typing import Iterator, Sequence
 
 import execution_snapshot_internal_paths as execution_snapshot_paths
 from verify_multi_segment_artifact_snapshot import (
-    PATH_RESOLUTION_COMPONENT_ANCHORED,
-    PATH_RESOLUTION_FINAL_ONLY,
-    REPORT_KIND,
-    REPORT_SCHEMA_VERSION,
-    _assert_directory_anchor,
-    _assert_distinct_file_identities,
-    _component_walk_supported,
-    _declared_files,
     _identity,
-    _measure_all,
-    _open_directory_anchor,
-    _preflight_distinct_file_identities,
-    _read_manifest,
+    _verify_artifact_snapshot_stable,
 )
-from verify_multi_segment_artifacts import verify_artifact_integrity
 
 
 ArtifactFingerprint = tuple[int, int, int, int, int, int, int]
@@ -48,92 +34,9 @@ InternalParentIdentity = tuple[tuple[str, ...], int, int]
 def _verify_execution_boundary(
     manifest_path: Path,
 ) -> tuple[dict[str, object], bytes, tuple[dict[str, object], ...]]:
-    """Run the stable artifact verification and retain accepted file identities."""
+    """Run the shared stable verification and retain accepted file identities."""
 
-    manifest_path = manifest_path.expanduser().absolute()
-    root = manifest_path.parent.resolve()
-    root_fd: int | None = None
-    root_opened: os.stat_result | None = None
-    path_resolution_mode = PATH_RESOLUTION_FINAL_ONLY
-    if _component_walk_supported():
-        root_fd, root_opened = _open_directory_anchor(root)
-        path_resolution_mode = PATH_RESOLUTION_COMPONENT_ANCHORED
-
-    try:
-        manifest_bytes, manifest_identity = _read_manifest(manifest_path, root_fd=root_fd)
-        try:
-            manifest = json.loads(manifest_bytes.decode("utf-8", errors="strict"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("split manifest must contain valid UTF-8 JSON") from error
-        if not isinstance(manifest, dict):
-            raise ValueError("split manifest must contain a JSON object")
-
-        manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
-        declared = _declared_files(manifest, root)
-        _preflight_distinct_file_identities(declared, root_fd=root_fd)
-        before = _measure_all(declared, root_fd=root_fd)
-        _assert_distinct_file_identities(before)
-
-        integrity_manifest = root / manifest_path.name if root_fd is not None else manifest_path
-        integrity = verify_artifact_integrity(integrity_manifest)
-        if integrity.get("status") != "pass":
-            raise RuntimeError("underlying artifact integrity verification did not pass")
-        if integrity.get("manifestSha256") != manifest_sha:
-            raise ValueError("underlying verifier observed a different manifest snapshot")
-        if root_opened is not None:
-            _assert_directory_anchor(root, root_opened)
-
-        after_bytes, after_identity = _read_manifest(manifest_path, root_fd=root_fd)
-        if (
-            after_identity != manifest_identity
-            or hashlib.sha256(after_bytes).hexdigest() != manifest_sha
-        ):
-            raise ValueError("split manifest changed across artifact integrity verification")
-
-        after = _measure_all(declared, root_fd=root_fd)
-        for old, new in zip(before, after, strict=True):
-            if old["parentIdentities"] != new["parentIdentities"]:
-                raise ValueError(
-                    "declared artifact parent directory changed across artifact integrity verification: "
-                    f"{old['field']} ({old['path']})"
-                )
-            if (
-                old["identity"] != new["identity"]
-                or old["bytes"] != new["bytes"]
-                or old["sha256"] != new["sha256"]
-            ):
-                raise ValueError(
-                    "declared artifact changed across artifact integrity verification: "
-                    f"{old['field']} ({old['path']})"
-                )
-        if root_opened is not None:
-            _assert_directory_anchor(root, root_opened)
-
-        public = [
-            {
-                "field": item["field"],
-                "path": item["path"],
-                "bytes": item["bytes"],
-                "sha256": item["sha256"],
-            }
-            for item in before
-        ]
-        report = {
-            "schemaVersion": REPORT_SCHEMA_VERSION,
-            "kind": REPORT_KIND,
-            "status": "pass",
-            "decisionStatus": "diagnostic-only",
-            "pathResolutionMode": path_resolution_mode,
-            "manifestSha256": manifest_sha,
-            "segmentCount": integrity.get("segmentCount"),
-            "artifactFileCount": len(public),
-            "artifacts": public,
-            "integrity": integrity,
-        }
-        return report, manifest_bytes, tuple(before)
-    finally:
-        if root_fd is not None:
-            os.close(root_fd)
+    return _verify_artifact_snapshot_stable(manifest_path)
 
 
 def _accepted_identity(entry: dict[str, object]) -> tuple[int, int, int, int, int]:
