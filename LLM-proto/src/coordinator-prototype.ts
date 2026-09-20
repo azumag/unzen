@@ -319,7 +319,9 @@ function buildRetryResumeImpact(
       assignment.workerId === requestedLostWorker && index >= lostAssignmentIndex
     )
     : undefined;
-  const lostAssignment = matchingLostAssignment ?? assignments[lostAssignmentIndex];
+  const lostAssignment = requestedLostWorker
+    ? matchingLostAssignment
+    : assignments[lostAssignmentIndex];
 
   if (!lostAssignment) {
     return {
