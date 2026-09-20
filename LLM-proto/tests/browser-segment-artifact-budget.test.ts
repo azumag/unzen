@@ -4,6 +4,7 @@ import {
   BROWSER_SEGMENT_NORMAL_MAX_BYTES,
   BROWSER_SEGMENT_PREFERRED_MAX_BYTES,
   BROWSER_SEGMENT_TARGET_BYTES,
+  evaluateBrowserSegmentArtifact,
   evaluateBrowserSegmentArtifactBytes,
 } from '../src/browser-segment-artifact-budget.js';
 
@@ -21,6 +22,59 @@ describe('browser segment artifact budget', () => {
       tier: 'rejected',
       usable: false,
     });
+  });
+
+  it('evaluates SegmentArtifact.byteSize through the same browser policy', () => {
+    expect(evaluateBrowserSegmentArtifact({ byteSize: BROWSER_SEGMENT_TARGET_BYTES })).toMatchObject({
+      byteSize: BROWSER_SEGMENT_TARGET_BYTES,
+      tier: 'preferred',
+      usable: true,
+    });
+    expect(evaluateBrowserSegmentArtifact({
+      byteSize: BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES + 1,
+    })).toMatchObject({
+      tier: 'rejected',
+      usable: false,
+    });
+  });
+
+  it('captures SegmentArtifact.byteSize once before validation and classification', () => {
+    let reads = 0;
+    const artifact = {
+      get byteSize() {
+        reads += 1;
+        return reads === 1
+          ? BROWSER_SEGMENT_TARGET_BYTES
+          : BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES + 1;
+      },
+    };
+
+    expect(evaluateBrowserSegmentArtifact(artifact)).toMatchObject({
+      byteSize: BROWSER_SEGMENT_TARGET_BYTES,
+      tier: 'preferred',
+      usable: true,
+    });
+    expect(reads).toBe(1);
+  });
+
+  it.each([
+    null,
+    undefined,
+    1,
+    'artifact',
+    true,
+    [],
+    Symbol('artifact'),
+  ])('rejects non-object SegmentArtifact runtime input %p before property access', (artifact) => {
+    expect(() => evaluateBrowserSegmentArtifact(artifact as never)).toThrow(
+      'segment artifact must be an object',
+    );
+  });
+
+  it('delegates malformed artifact byteSize values to the canonical numeric gate', () => {
+    expect(() => evaluateBrowserSegmentArtifact({ byteSize: Symbol('bytes') as never })).toThrow(
+      'segment artifact byte size must be a positive safe integer',
+    );
   });
 
   it('returns a frozen policy snapshot that cast-based mutation cannot rewrite', () => {
