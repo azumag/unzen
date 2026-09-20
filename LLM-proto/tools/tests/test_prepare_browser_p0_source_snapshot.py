@@ -13,6 +13,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import prepare_browser_p0 as p0_module  # noqa: E402
+import source_file_snapshot as snapshot_module  # noqa: E402
 
 
 class BrowserP0SourceSnapshotTest(unittest.TestCase):
@@ -60,8 +61,8 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
                 return real_open(path, flags & ~fake_binary_flag, *args, **kwargs)
 
             with (
-                mock.patch.object(p0_module.os, "O_BINARY", fake_binary_flag, create=True),
-                mock.patch.object(p0_module.os, "open", side_effect=capturing_open),
+                mock.patch.object(snapshot_module.os, "O_BINARY", fake_binary_flag, create=True),
+                mock.patch.object(snapshot_module.os, "open", side_effect=capturing_open),
             ):
                 digest = p0_module.sha256_file(source)
 
@@ -94,7 +95,7 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
             source.write_bytes(b"original")
             replacement.write_bytes(b"replacement")
             resolved = source.resolve()
-            real_open = p0_module.os.open
+            real_open = snapshot_module.os.open
             swapped = False
 
             def swap_then_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
@@ -106,7 +107,7 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
                     swapped = True
                 return real_open(path, flags, *args, **kwargs)
 
-            with mock.patch.object(p0_module.os, "open", side_effect=swap_then_open):
+            with mock.patch.object(snapshot_module.os, "open", side_effect=swap_then_open):
                 with self.assertRaisesRegex(RuntimeError, "changed between path check and open"):
                     p0_module.sha256_file(source)
             self.assertTrue(swapped)
@@ -124,7 +125,7 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "model.onnx"
             source.write_bytes(b"a" * (2 * 1024 * 1024))
-            real_read = p0_module.os.read
+            real_read = snapshot_module.os.read
             mutated = False
 
             def read_then_mutate(fd: int, count: int) -> bytes:
@@ -139,7 +140,7 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
                     mutated = True
                 return block
 
-            with mock.patch.object(p0_module.os, "read", side_effect=read_then_mutate):
+            with mock.patch.object(snapshot_module.os, "read", side_effect=read_then_mutate):
                 with self.assertRaisesRegex(RuntimeError, "changed while being hashed"):
                     p0_module.sha256_file(source)
             self.assertTrue(mutated)
