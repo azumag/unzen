@@ -5,7 +5,7 @@ These helpers keep nested destination parent traversal anchored to directory
 handles where the host supports ``dir_fd`` + ``O_NOFOLLOW`` and the
 ``follow_symlinks=False`` forms used by the anchored operations. Callers retain
 file-specific provenance checks; this module owns only workspace/parent path
-identity and rollback mechanics.
+identity, verified workspace cleanup, and rollback mechanics.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import shutil
 import stat
 from typing import Iterator, Sequence
 
@@ -147,6 +148,27 @@ def workspace_identity(path: Path, *, label: str) -> SnapshotWorkspaceIdentity:
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise RuntimeError(f"{label} workspace changed: {path}")
     return metadata.st_dev, metadata.st_ino
+
+
+def remove_verified_workspace(
+    path: Path,
+    expected_identity: SnapshotWorkspaceIdentity,
+    *,
+    label: str,
+) -> None:
+    """Remove a snapshot tree only while its captured directory still owns ``path``."""
+
+    try:
+        metadata = os.lstat(path)
+    except OSError as error:
+        raise RuntimeError(f"{label} workspace changed before cleanup: {path}") from error
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != expected_identity
+    ):
+        raise RuntimeError(f"{label} workspace changed before cleanup: {path}")
+    shutil.rmtree(path)
 
 
 def _record_parent_identity(

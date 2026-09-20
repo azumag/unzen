@@ -14,7 +14,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
-import shutil
 import stat
 import tempfile
 from typing import Iterator, Sequence
@@ -24,6 +23,7 @@ from execution_snapshot_internal_paths import (
     assert_execution_snapshot_runtime_supported,
     assert_parent_chain,
     prepared_destination,
+    remove_verified_workspace,
     unlink_pinned_destination,
 )
 from verify_multi_segment_artifacts import (
@@ -151,11 +151,11 @@ def _remove_verified_snapshot_root(
     snapshot_root: Path,
     expected_identity: SnapshotWorkspaceIdentity,
 ) -> None:
-    if _snapshot_workspace_identity(snapshot_root) != expected_identity:
-        raise RuntimeError(
-            f"legacy artifact execution snapshot workspace changed before cleanup: {snapshot_root}"
-        )
-    shutil.rmtree(snapshot_root)
+    remove_verified_workspace(
+        snapshot_root,
+        expected_identity,
+        label="legacy artifact execution snapshot",
+    )
 
 
 def _validate_manifest_header(manifest: dict[str, object]) -> None:

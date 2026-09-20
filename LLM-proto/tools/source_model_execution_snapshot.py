@@ -15,7 +15,6 @@ from contextvars import ContextVar
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
-import shutil
 import stat
 import tempfile
 from typing import Iterator, Sequence
@@ -25,6 +24,7 @@ from execution_snapshot_internal_paths import (
     assert_execution_snapshot_runtime_supported,
     assert_parent_chain,
     prepared_destination,
+    remove_verified_workspace,
     unlink_pinned_destination,
 )
 from verify_multi_segment_artifacts import SHA256_RE, _measure_file
@@ -517,12 +517,11 @@ def _remove_verified_snapshot_root(
     snapshot_root: Path,
     expected_identity: SnapshotWorkspaceIdentity,
 ) -> None:
-    observed_identity = _snapshot_workspace_identity(snapshot_root)
-    if observed_identity != expected_identity:
-        raise RuntimeError(
-            f"source execution snapshot workspace changed before cleanup: {snapshot_root}"
-        )
-    shutil.rmtree(snapshot_root)
+    remove_verified_workspace(
+        snapshot_root,
+        expected_identity,
+        label="source execution snapshot",
+    )
 
 
 @contextmanager
