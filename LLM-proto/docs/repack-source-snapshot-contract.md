@@ -13,9 +13,11 @@ A FIFO/device/symlink substitution between path resolution and open therefore ca
 
 The source descriptor remains intentionally pinned after open. Retargeting the original source symlink later does not switch the bytes being copied; this preserves the existing source-pinning contract and its regression test.
 
+The read-open flag builder validates the required `O_RDONLY` flag and every optional flag that is present (`O_BINARY`, `O_NONBLOCK`, `O_NOFOLLOW`) before combining them. Optional flags may be absent on the host, but a present non-integer placeholder is rejected with an intentional runtime error before `os.open()` instead of leaking a raw bitwise `TypeError`. The same validated read-flag contract is reused when the repacked output is reopened for measurement.
+
 Stable source files retain the existing per-segment artifact layout, byte-range deduplication, ONNX metadata, and manifest schema.
 
-Regression coverage is in `tools/tests/test_prepare_real_split_source_pinning.py`.
+Regression coverage is in `tools/tests/test_prepare_real_split_source_pinning.py` and `tools/tests/test_prepare_real_split_capabilities.py`.
 
 ## Evidence boundary
 

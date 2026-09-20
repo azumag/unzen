@@ -29,6 +29,58 @@ from split_llama_1b_onnx import check_model_for_runtime, sha256_file, split_mode
 COPY_CHUNK_BYTES = 8 * 1024 * 1024
 WINDOWS_RESERVED_DEVICE_STEMS = {"CON", "PRN", "AUX", "NUL"}
 WINDOWS_RESERVED_PORT_RE = re.compile(r"^(?:COM|LPT)(?:[1-9]|[¹²³])$")
+_MISSING = object()
+_DESTINATION_PARENT_REQUIRED_OPEN_FLAGS = ("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW")
+_DESTINATION_PARENT_OPTIONAL_OPEN_FLAGS = ("O_CLOEXEC", "O_NONBLOCK")
+_DESTINATION_REQUIRED_OPEN_FLAGS = ("O_WRONLY", "O_CREAT")
+_DESTINATION_OPTIONAL_OPEN_FLAGS = ("O_CLOEXEC", "O_NONBLOCK", "O_BINARY", "O_NOFOLLOW")
+_READ_REQUIRED_OPEN_FLAGS = ("O_RDONLY",)
+_READ_OPTIONAL_OPEN_FLAGS = ("O_BINARY", "O_NONBLOCK", "O_NOFOLLOW")
+
+
+def _integer_open_flag(name: str, *, required: bool) -> bool:
+    raw = getattr(os, name, _MISSING)
+    if raw is _MISSING:
+        return not required
+    return type(raw) is int
+
+
+def _open_flags_supported(required: tuple[str, ...], optional: tuple[str, ...]) -> bool:
+    return all(_integer_open_flag(name, required=True) for name in required) and all(
+        _integer_open_flag(name, required=False) for name in optional
+    )
+
+
+def _build_open_flags(
+    required: tuple[str, ...],
+    optional: tuple[str, ...],
+    *,
+    label: str,
+) -> int:
+    """Build one validated os.open flag word without leaking bitwise TypeError."""
+
+    flags = 0
+    for name in required:
+        raw = getattr(os, name, _MISSING)
+        if type(raw) is not int:
+            raise RuntimeError(f"{label} open flag os.{name} must be an integer")
+        flags |= raw
+    for name in optional:
+        raw = getattr(os, name, _MISSING)
+        if raw is _MISSING:
+            continue
+        if type(raw) is not int:
+            raise RuntimeError(f"{label} open flag os.{name} must be an integer")
+        flags |= raw
+    return flags
+
+
+def _capability_contains(name: str, function: object) -> bool:
+    capabilities = getattr(os, name, ())
+    try:
+        return function in capabilities
+    except TypeError:
+        return False
 
 
 def _external_metadata(initializer: TensorProto) -> dict[str, str]:
@@ -134,10 +186,15 @@ def _validate_output_destination(output_path: Path, output_root: Path) -> None:
 def _destination_component_walk_supported() -> bool:
     """Return whether a destination parent can be pinned with dir-fd traversal."""
 
-    return (
-        os.open in getattr(os, "supports_dir_fd", set())
-        and hasattr(os, "O_DIRECTORY")
-        and hasattr(os, "O_NOFOLLOW")
+    open_fn = getattr(os, "open", None)
+    lstat_fn = getattr(os, "lstat", None)
+    fstat_fn = getattr(os, "fstat", None)
+    close_fn = getattr(os, "close", None)
+    if not all(callable(function) for function in (open_fn, lstat_fn, fstat_fn, close_fn)):
+        return False
+    return _capability_contains("supports_dir_fd", open_fn) and _open_flags_supported(
+        _DESTINATION_PARENT_REQUIRED_OPEN_FLAGS,
+        _DESTINATION_PARENT_OPTIONAL_OPEN_FLAGS,
     )
 
 
@@ -165,8 +222,11 @@ def _open_repack_destination_parent(output_path: Path, output_root: Path) -> int
     if stat.S_ISLNK(before_root.st_mode) or not stat.S_ISDIR(before_root.st_mode):
         raise ValueError(f"output external-data root must be a directory: {root}")
 
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    directory_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    directory_flags = _build_open_flags(
+        _DESTINATION_PARENT_REQUIRED_OPEN_FLAGS,
+        _DESTINATION_PARENT_OPTIONAL_OPEN_FLAGS,
+        label="repack destination parent",
+    )
     current_fd = os.open(root, directory_flags)
     try:
         opened_root = os.fstat(current_fd)
@@ -201,12 +261,11 @@ def _open_repack_destination_parent(output_path: Path, output_root: Path) -> int
 def _open_repack_destination(output_path: Path, *, parent_fd: int | None = None) -> BinaryIO:
     """Open without truncation, validate the inode, then truncate through the fd."""
 
-    flags = os.O_WRONLY | os.O_CREAT
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-    if hasattr(os, "O_BINARY"):
-        flags |= os.O_BINARY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = _build_open_flags(
+        _DESTINATION_REQUIRED_OPEN_FLAGS,
+        _DESTINATION_OPTIONAL_OPEN_FLAGS,
+        label="repack destination",
+    )
     if parent_fd is None:
         descriptor = os.open(output_path, flags, 0o666)
     else:
@@ -251,13 +310,11 @@ def _open_repack_source(path: Path) -> tuple[BinaryIO, tuple[int, int, int, int,
         raise ValueError(f"source external-data must be a regular file: {path}")
     expected_snapshot = _file_snapshot(before_path)
 
-    flags = os.O_RDONLY
-    if hasattr(os, "O_BINARY"):
-        flags |= os.O_BINARY
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = _build_open_flags(
+        _READ_REQUIRED_OPEN_FLAGS,
+        _READ_OPTIONAL_OPEN_FLAGS,
+        label="repack source",
+    )
 
     descriptor = os.open(path, flags)
     try:
@@ -289,13 +346,11 @@ def _measure_repacked_output(
     if _file_snapshot(before_path) != expected_snapshot:
         raise RuntimeError(f"repacked external-data pathname changed after repack: {path}")
 
-    flags = os.O_RDONLY
-    if hasattr(os, "O_BINARY"):
-        flags |= os.O_BINARY
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = _build_open_flags(
+        _READ_REQUIRED_OPEN_FLAGS,
+        _READ_OPTIONAL_OPEN_FLAGS,
+        label="repack measurement",
+    )
 
     descriptor = os.open(path, flags)
     try:
