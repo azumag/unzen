@@ -67,6 +67,14 @@ class ReadonlyComponentWalkCapabilityTest(unittest.TestCase):
         with patch.object(readonly_component_walk.os, "stat", None):
             self.assertFalse(readonly_component_walk.component_walk_supported())
 
+    def test_non_callable_open_function_disables_component_walk(self) -> None:
+        with patch.object(readonly_component_walk.os, "open", object()):
+            self.assertFalse(readonly_component_walk.component_walk_supported())
+
+    def test_non_callable_stat_function_disables_component_walk(self) -> None:
+        with patch.object(readonly_component_walk.os, "stat", object()):
+            self.assertFalse(readonly_component_walk.component_walk_supported())
+
     def test_both_verifier_wrappers_delegate_to_shared_predicate(self) -> None:
         with patch.object(
             readonly_component_walk,
