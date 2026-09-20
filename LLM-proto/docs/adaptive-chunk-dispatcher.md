@@ -175,6 +175,13 @@ The simulated harness exposes these report fields:
 | `coldLoad` / `rollingConsecutive` | Long-lived consecutive chunk behavior without worker-to-worker networking |
 | `transport.connections` | Coordinator/CDN allowlist boundary |
 
+The first assignment starts at segment 0 and has no inbound checkpoint, so its
+checkpoint transfer pair is always `checkpointTransferBytes=0` and
+`checkpointTransferMs=0`. Later assignments report the configured checkpoint
+size and derive transfer time from `checkpointBytesPerSecond`; zero throughput
+therefore yields an infinite estimate only when a checkpoint actually has to
+cross a chunk boundary.
+
 ## Relationship To Existing Designs
 
 - `docs/2b-two-worker-prototype.md` remains the fixed first runnable milestone.

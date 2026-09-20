@@ -345,7 +345,10 @@ export class AdaptiveChunkDispatcher {
       const coldLoad = missingArtifacts !== undefined
         ? missingArtifacts.length > 0
         : !cacheHit && !selected.rollingConsecutive;
-      const checkpointTransferMs = this.estimateCheckpointTransferMs(selected.worker.telemetry);
+      const checkpointTransferBytes = nextSegment === 0 ? 0 : this.checkpointBytes;
+      const checkpointTransferMs = checkpointTransferBytes === 0
+        ? 0
+        : this.estimateCheckpointTransferMs(selected.worker.telemetry);
       const coordinatorConnectionUrl =
         `${this.coordinatorUrl}/adaptive/${validatedRequestId}/chunk/${nextSegment}`;
       const artifactConnectionUrls = missingArtifacts !== undefined
@@ -406,7 +409,7 @@ export class AdaptiveChunkDispatcher {
         cacheHit,
         retryCount: 0,
         checkpointTransferMs,
-        checkpointTransferBytes: nextSegment === 0 ? 0 : this.checkpointBytes,
+        checkpointTransferBytes,
         coldLoad,
         rollingConsecutive: selected.rollingConsecutive,
         artifactResidency,
