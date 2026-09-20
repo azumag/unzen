@@ -30,6 +30,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 
+import readonly_component_walk
 from verify_multi_segment_artifacts import sha256_file
 from verify_multi_segment_capture_bundle import verify_capture_bundle
 from verify_multi_segment_capture_source_provenance import (
@@ -238,13 +239,7 @@ def _claim_measured_source_identity(
 
 
 def _component_walk_supported() -> bool:
-    return (
-        os.open in getattr(os, "supports_dir_fd", set())
-        and os.stat in getattr(os, "supports_dir_fd", set())
-        and os.stat in getattr(os, "supports_follow_symlinks", set())
-        and hasattr(os, "O_DIRECTORY")
-        and hasattr(os, "O_NOFOLLOW")
-    )
+    return readonly_component_walk.component_walk_supported()
 
 
 def _open_directory_anchor(root: Path) -> tuple[int, os.stat_result]:
