@@ -8,6 +8,15 @@ import os
 
 _REQUIRED_CALLABLES = ("open", "write", "close")
 _REQUIRED_FLAGS = ("O_WRONLY", "O_CREAT", "O_EXCL")
+_OPTIONAL_FLAGS = ("O_NOFOLLOW", "O_CLOEXEC")
+_MISSING = object()
+
+
+def _integer_flag(name: str, *, required: bool) -> bool:
+    raw = getattr(os, name, _MISSING)
+    if raw is _MISSING:
+        return not required
+    return type(raw) is int
 
 
 def manifest_write_supported() -> bool:
@@ -15,7 +24,18 @@ def manifest_write_supported() -> bool:
 
     if not all(callable(getattr(os, name, None)) for name in _REQUIRED_CALLABLES):
         return False
-    return all(isinstance(getattr(os, name, None), int) for name in _REQUIRED_FLAGS)
+
+    open_fn = getattr(os, "open", None)
+    supports_dir_fd = getattr(os, "supports_dir_fd", ())
+    try:
+        if open_fn not in supports_dir_fd:
+            return False
+    except TypeError:
+        return False
+
+    if not all(_integer_flag(name, required=True) for name in _REQUIRED_FLAGS):
+        return False
+    return all(_integer_flag(name, required=False) for name in _OPTIONAL_FLAGS)
 
 
 def assert_manifest_write_supported(*, label: str) -> None:
@@ -24,6 +44,7 @@ def assert_manifest_write_supported(*, label: str) -> None:
     if manifest_write_supported():
         return
     raise RuntimeError(
-        f"{label} requires os.open/os.write/os.close plus "
-        "O_WRONLY/O_CREAT/O_EXCL to write the pinned split manifest"
+        f"{label} requires descriptor-relative os.open/os.write/os.close plus "
+        "integer O_WRONLY/O_CREAT/O_EXCL and well-formed optional "
+        "O_NOFOLLOW/O_CLOEXEC flags to write the pinned split manifest"
     )
