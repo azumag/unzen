@@ -17,6 +17,8 @@ The command is dependency-neutral and only inspects Python/OS filesystem capabil
 
 `--require generated`, `--require source`, and `--require legacy` can gate one path. The default `--require all` succeeds only if all three paths are usable. A satisfied requirement exits with status `0`; an unsupported requirement still prints the report but exits with status `1`.
 
+Capability predicates treat missing required OS callables as unsupported rather than dereferencing them while probing. In particular, a reduced Python host without `os.link` cannot advertise no-follow hard-link or component-anchored support, and a host without `os.stat` cannot advertise no-follow stat or component-anchored support. The anchored predicate also rejects hosts missing the other operations it directly relies on (`os.open`, `os.mkdir`, `os.unlink`, `os.fstat`, or `os.close`). This keeps the preflight machine-readable and fail-closed instead of leaking `AttributeError` from capability detection.
+
 ## Current fallback contract
 
 When the component-anchored capability set is available, all execution-snapshot paths use `component-anchored` mode. That mode still requires the no-follow stat form because final-component metadata is checked relative to an opened parent directory descriptor.
