@@ -18,6 +18,14 @@ def _integer_flag(name: str, *, required: bool) -> bool:
     return type(raw) is int
 
 
+def _capability_contains(name: str, function: object) -> bool:
+    capabilities = getattr(os, name, ())
+    try:
+        return function in capabilities
+    except TypeError:
+        return False
+
+
 def component_walk_supported() -> bool:
     """Return whether read-only no-follow component traversal is available."""
 
@@ -30,10 +38,8 @@ def component_walk_supported() -> bool:
     if not all(_integer_flag(name, required=False) for name in _OPTIONAL_OPEN_FLAGS):
         return False
 
-    supports_dir_fd = getattr(os, "supports_dir_fd", set())
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     return (
-        open_fn in supports_dir_fd
-        and stat_fn in supports_dir_fd
-        and stat_fn in supports_follow_symlinks
+        _capability_contains("supports_dir_fd", open_fn)
+        and _capability_contains("supports_dir_fd", stat_fn)
+        and _capability_contains("supports_follow_symlinks", stat_fn)
     )
