@@ -9,6 +9,8 @@ The read-only predicate intentionally requires only the operations used by those
 - required open flags `O_RDONLY`, `O_DIRECTORY`, and `O_NOFOLLOW` are present as real integer flag values;
 - optional `O_CLOEXEC` and `O_NONBLOCK` may be absent, but if present they must also be real integer flag values before callers combine them with bitwise `|`.
 
+Capability membership is queried through the Python `os.supports_dir_fd` and `os.supports_follow_symlinks` containers. If a reduced runtime exposes either attribute with a malformed/non-container value such as `None`, the predicate treats the capability as unsupported rather than leaking `TypeError` from a membership test.
+
 If a reduced Python host does not expose `os.open` or `os.stat`, exposes a non-callable placeholder for either attribute, or exposes malformed present `os.O_*` placeholders, the predicate reports the component-walk path as unsupported instead of raising while probing capabilities or later constructing open flags. Genuinely absent optional flags remain supported. Callers then retain their existing fail-closed fallback behavior.
 
 It deliberately does **not** require `mkdir`, `link`, or `unlink`. Those are write-path requirements owned by the stricter execution-snapshot capability checks in `execution_snapshot_internal_paths.py`.
