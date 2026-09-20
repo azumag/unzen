@@ -22,8 +22,8 @@ from typing import Iterator, Sequence
 
 from execution_snapshot_internal_paths import (
     InternalParentIdentity,
+    assert_execution_snapshot_runtime_supported,
     assert_parent_chain,
-    lstat_supported,
     prepared_destination,
     unlink_pinned_destination,
 )
@@ -532,10 +532,7 @@ def verified_source_execution_snapshot(
 ) -> Iterator[tuple[dict[str, object], Path]]:
     """Yield a hard-link-pinned source generation for ORT reference execution."""
 
-    if not lstat_supported():
-        raise RuntimeError(
-            "source execution snapshot requires os.lstat for no-follow pathname metadata"
-        )
+    assert_execution_snapshot_runtime_supported(label="source execution snapshot")
 
     expected_graph_sha, expected_graph_resolved, external_contract = (
         _preflight_source_model_identity(full_model_path, manifest)
