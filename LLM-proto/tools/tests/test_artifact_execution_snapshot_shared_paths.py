@@ -32,7 +32,7 @@ class ArtifactExecutionSnapshotSharedPathTest(unittest.TestCase):
             root / "weights" / "segment.onnx_data",
             7,
             "segment.onnx_data",
-            ((('weights',), 33, 44),),
+            (("weights",), 33, 44),
         )
 
         @contextmanager
@@ -57,7 +57,7 @@ class ArtifactExecutionSnapshotSharedPathTest(unittest.TestCase):
     def test_parent_chain_delegates_to_shared_path_helper(self) -> None:
         root = Path("snapshot-root")
         identity = (11, 22)
-        parents = ((('weights',), 33, 44),)
+        parents = (("weights",), 33, 44),
         with mock.patch.object(
             snapshot.execution_snapshot_paths,
             "assert_parent_chain",
@@ -69,6 +69,23 @@ class ArtifactExecutionSnapshotSharedPathTest(unittest.TestCase):
             parents,
             label="artifact execution snapshot",
         )
+
+    def test_parent_chain_preserves_generated_error_wording(self) -> None:
+        root = Path("snapshot-root")
+        identity = (11, 22)
+        parents = (("weights",), 33, 44),
+        with mock.patch.object(
+            snapshot.execution_snapshot_paths,
+            "assert_parent_chain",
+            side_effect=RuntimeError(
+                "artifact execution snapshot internal parent changed: weights"
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "artifact execution snapshot internal parent changed during pinning: weights",
+            ):
+                snapshot._assert_internal_parent_chain(root, identity, parents)
 
     def test_rollback_unlink_delegates_to_shared_path_helper(self) -> None:
         destination = Path("snapshot-root/weights/segment.onnx_data")
