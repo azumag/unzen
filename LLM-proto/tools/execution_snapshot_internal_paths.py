@@ -24,27 +24,54 @@ InternalParentIdentity = tuple[tuple[str, ...], int, int]
 def nofollow_hardlink_supported() -> bool:
     """Return whether ``os.link`` supports an explicit no-follow source contract."""
 
+    link_fn = getattr(os, "link", None)
+    if not callable(link_fn):
+        return False
     supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    return os.link in supports_follow_symlinks
+    return link_fn in supports_follow_symlinks
 
 
 def nofollow_stat_supported() -> bool:
     """Return whether ``os.stat`` supports explicit no-follow metadata reads."""
 
+    stat_fn = getattr(os, "stat", None)
+    if not callable(stat_fn):
+        return False
     supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    return os.stat in supports_follow_symlinks
+    return stat_fn in supports_follow_symlinks
 
 
 def component_walk_supported() -> bool:
+    open_fn = getattr(os, "open", None)
+    mkdir_fn = getattr(os, "mkdir", None)
+    link_fn = getattr(os, "link", None)
+    stat_fn = getattr(os, "stat", None)
+    unlink_fn = getattr(os, "unlink", None)
+    fstat_fn = getattr(os, "fstat", None)
+    close_fn = getattr(os, "close", None)
+    if not all(
+        callable(function)
+        for function in (
+            open_fn,
+            mkdir_fn,
+            link_fn,
+            stat_fn,
+            unlink_fn,
+            fstat_fn,
+            close_fn,
+        )
+    ):
+        return False
+
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
     return (
         hasattr(os, "O_DIRECTORY")
         and hasattr(os, "O_NOFOLLOW")
-        and os.open in supports_dir_fd
-        and os.mkdir in supports_dir_fd
-        and os.link in supports_dir_fd
-        and os.stat in supports_dir_fd
-        and os.unlink in supports_dir_fd
+        and open_fn in supports_dir_fd
+        and mkdir_fn in supports_dir_fd
+        and link_fn in supports_dir_fd
+        and stat_fn in supports_dir_fd
+        and unlink_fn in supports_dir_fd
         and nofollow_hardlink_supported()
         and nofollow_stat_supported()
     )
