@@ -63,6 +63,13 @@ same worker. Coordinator-owned recovery checkpoint semantics remain unchanged;
 the relay list is intentionally limited to transfers that actually consume
 relay bytes and transfer time.
 
+Worker-loss selection is strict when `lostWorkerId` is supplied. The harness
+selects only an assignment for that worker at or after
+`lostAfterAssignmentIndex`; if no such assignment exists, no simulated loss is
+reported. When `lostWorkerId` is omitted, `lostAfterAssignmentIndex` retains the
+index-only selector used by older fixtures. This keeps an explicit worker ID
+from silently turning into evidence for a different worker's loss.
+
 ## Cloudflare Workers Prototype Handoff
 
 If this harness passes and the report stays inside the latency and churn
