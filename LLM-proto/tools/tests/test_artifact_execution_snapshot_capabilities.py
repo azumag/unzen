@@ -145,8 +145,16 @@ class ArtifactExecutionSnapshotCapabilityTest(unittest.TestCase):
     def test_missing_link_nofollow_fails_before_artifact_verification(self) -> None:
         manifest = Path("split-manifest.json")
         with (
-            mock.patch.object(snapshot, "_internal_component_walk_supported", return_value=False),
-            mock.patch.object(snapshot, "_pathname_hard_link_supported", return_value=False),
+            mock.patch.object(
+                snapshot.execution_snapshot_paths,
+                "component_walk_supported",
+                return_value=False,
+            ),
+            mock.patch.object(
+                snapshot.execution_snapshot_paths,
+                "nofollow_hardlink_supported",
+                return_value=False,
+            ),
             mock.patch.object(snapshot, "_verify_execution_boundary") as verify_boundary,
         ):
             with self.assertRaisesRegex(RuntimeError, r"os\.link\(\.\.\., follow_symlinks=False\)"):

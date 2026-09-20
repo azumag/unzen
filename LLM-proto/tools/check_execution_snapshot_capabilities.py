@@ -15,7 +15,11 @@ import json
 from typing import Sequence
 
 from execution_snapshot_internal_paths import (
+    MODE_COMPONENT_ANCHORED,
+    MODE_PATHNAME_FALLBACK,
+    MODE_UNSUPPORTED,
     component_walk_supported,
+    execution_snapshot_mode,
     lstat_supported,
     nofollow_hardlink_supported,
     nofollow_stat_supported,
@@ -23,18 +27,7 @@ from execution_snapshot_internal_paths import (
 
 
 SCHEMA_VERSION = "1.2.0"
-MODE_COMPONENT_ANCHORED = "component-anchored"
-MODE_PATHNAME_FALLBACK = "pathname-fallback"
-MODE_UNSUPPORTED = "unsupported"
 REQUIREMENTS = ("all", "generated", "source", "legacy")
-
-
-def _mode(*, anchored: bool, fallback: bool) -> str:
-    if anchored:
-        return MODE_COMPONENT_ANCHORED
-    if fallback:
-        return MODE_PATHNAME_FALLBACK
-    return MODE_UNSUPPORTED
 
 
 def _missing_capabilities(
@@ -61,19 +54,18 @@ def capability_report() -> dict[str, object]:
     nofollow_stat = nofollow_stat_supported()
     pathname_lstat = lstat_supported()
 
-    anchored = component_anchored and pathname_lstat
-    pathname_fallback = nofollow_link and pathname_lstat
-
-    source_mode = _mode(anchored=anchored, fallback=pathname_fallback)
-    legacy_mode = _mode(anchored=anchored, fallback=pathname_fallback)
-    generated_mode = _mode(anchored=anchored, fallback=pathname_fallback)
+    mode = execution_snapshot_mode(
+        component_anchored=component_anchored,
+        nofollow_hardlink=nofollow_link,
+        pathname_lstat=pathname_lstat,
+    )
     missing_capabilities = _missing_capabilities(
         component_anchored=component_anchored,
         nofollow_link=nofollow_link,
         pathname_lstat=pathname_lstat,
     )
 
-    def snapshot_path(mode: str) -> dict[str, object]:
+    def snapshot_path() -> dict[str, object]:
         usable = mode != MODE_UNSUPPORTED
         return {
             "usable": usable,
@@ -90,9 +82,9 @@ def capability_report() -> dict[str, object]:
             "pathnameLstat": pathname_lstat,
         },
         "snapshotPaths": {
-            "sourceModel": snapshot_path(source_mode),
-            "legacyTwoSegment": snapshot_path(legacy_mode),
-            "generatedMultiSegment": snapshot_path(generated_mode),
+            "sourceModel": snapshot_path(),
+            "legacyTwoSegment": snapshot_path(),
+            "generatedMultiSegment": snapshot_path(),
         },
     }
 
