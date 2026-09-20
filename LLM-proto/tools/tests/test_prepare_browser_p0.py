@@ -38,6 +38,32 @@ class BrowserP0BudgetTest(unittest.TestCase):
             })
         return {"segments": segments}
 
+    def test_prepared_artifact_size_delegates_to_shared_snapshot_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "segment0.onnx"
+            artifact.write_bytes(b"fixture")
+
+            with patch.object(
+                p0_module,
+                "measure_regular_file",
+                return_value=(321, None),
+            ) as measure:
+                self.assertEqual(
+                    p0_module._prepared_artifact_size(
+                        artifact.name,
+                        root,
+                        field="segment graph path",
+                    ),
+                    321,
+                )
+
+            measure.assert_called_once_with(
+                artifact.resolve(),
+                hash_file=False,
+                label="generated P0 segment graph path",
+            )
+
     def test_preferred_budget_is_encoded_and_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
