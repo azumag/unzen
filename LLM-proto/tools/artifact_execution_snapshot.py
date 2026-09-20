@@ -110,11 +110,50 @@ def _snapshot_create_flags() -> int:
     return flags
 
 
+def _snapshot_root_open_flags() -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
+
+
 def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     return execution_snapshot_paths.workspace_identity(
         path,
         label=_ARTIFACT_SNAPSHOT_LABEL,
     )
+
+
+@contextmanager
+def _opened_verified_snapshot_root(
+    snapshot_root: Path,
+    expected_root_identity: SnapshotWorkspaceIdentity,
+) -> Iterator[int]:
+    """Yield only the originally accepted workspace directory generation."""
+
+    root_fd: int | None = None
+    try:
+        try:
+            root_fd = os.open(snapshot_root, _snapshot_root_open_flags())
+            metadata = os.fstat(root_fd)
+        except OSError as error:
+            raise RuntimeError(
+                f"{_ARTIFACT_SNAPSHOT_LABEL} workspace changed: {snapshot_root}"
+            ) from error
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != expected_root_identity
+        ):
+            raise RuntimeError(
+                f"{_ARTIFACT_SNAPSHOT_LABEL} workspace changed: {snapshot_root}"
+            )
+        yield root_fd
+    finally:
+        if root_fd is not None:
+            try:
+                os.close(root_fd)
+            except OSError:
+                pass
 
 
 @contextmanager
@@ -172,24 +211,19 @@ def _write_snapshot_manifest(
     manifest_name: str,
     manifest_bytes: bytes,
 ) -> Path:
-    with _prepared_snapshot_destination(
-        snapshot_root,
-        (manifest_name,),
-        expected_root_identity,
-    ) as (destination, parent_fd, leaf_name, parent_chain):
-        if parent_chain:
-            raise AssertionError("snapshot manifest must live at the workspace root")
+    if manifest_name in {"", ".", ".."} or Path(manifest_name).name != manifest_name:
+        raise AssertionError("snapshot manifest must be a workspace-root filename")
+
+    destination = snapshot_root / manifest_name
+    with _opened_verified_snapshot_root(snapshot_root, expected_root_identity) as root_fd:
         fd: int | None = None
         try:
-            if parent_fd is not None:
-                fd = os.open(
-                    leaf_name,
-                    _snapshot_create_flags(),
-                    0o600,
-                    dir_fd=parent_fd,
-                )
-            else:
-                fd = os.open(destination, _snapshot_create_flags(), 0o600)
+            fd = os.open(
+                manifest_name,
+                _snapshot_create_flags(),
+                0o600,
+                dir_fd=root_fd,
+            )
             offset = 0
             while offset < len(manifest_bytes):
                 written = os.write(fd, manifest_bytes[offset:])
@@ -197,17 +231,12 @@ def _write_snapshot_manifest(
                     raise OSError("snapshot manifest write made no progress")
                 offset += written
         except Exception:
-            _unlink_pinned_destination(destination, parent_fd, leaf_name)
+            _unlink_pinned_destination(destination, root_fd, manifest_name)
             raise
         finally:
             if fd is not None:
                 os.close(fd)
-        _assert_internal_parent_chain(
-            snapshot_root,
-            expected_root_identity,
-            parent_chain,
-        )
-        return destination
+    return destination
 
 
 def _link_verified_artifact_file(
