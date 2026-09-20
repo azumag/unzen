@@ -75,6 +75,30 @@ class ReadonlyComponentWalkCapabilityTest(unittest.TestCase):
         with patch.object(readonly_component_walk.os, "stat", object()):
             self.assertFalse(readonly_component_walk.component_walk_supported())
 
+    def test_malformed_required_open_flag_disables_component_walk(self) -> None:
+        for name in ("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW"):
+            with (
+                self.subTest(name=name),
+                patch.object(readonly_component_walk.os, name, None, create=True),
+            ):
+                self.assertFalse(readonly_component_walk.component_walk_supported())
+
+    def test_malformed_present_optional_open_flag_disables_component_walk(self) -> None:
+        for name in ("O_CLOEXEC", "O_NONBLOCK"):
+            with (
+                self.subTest(name=name),
+                patch.object(readonly_component_walk.os, name, None, create=True),
+            ):
+                self.assertFalse(readonly_component_walk.component_walk_supported())
+
+    def test_absent_optional_open_flag_remains_supported_by_flag_probe(self) -> None:
+        self.assertTrue(
+            readonly_component_walk._integer_flag(
+                "UNZEN_TEST_ABSENT_OPTIONAL_OPEN_FLAG",
+                required=False,
+            )
+        )
+
     def test_both_verifier_wrappers_delegate_to_shared_predicate(self) -> None:
         with patch.object(
             readonly_component_walk,

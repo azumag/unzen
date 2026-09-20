@@ -6,9 +6,10 @@ The read-only predicate intentionally requires only the operations used by those
 
 - `os.open` and `os.stat` are callable and support `dir_fd`;
 - `os.stat` supports `follow_symlinks=False`;
-- `O_DIRECTORY` and `O_NOFOLLOW` are available.
+- required open flags `O_RDONLY`, `O_DIRECTORY`, and `O_NOFOLLOW` are present as real integer flag values;
+- optional `O_CLOEXEC` and `O_NONBLOCK` may be absent, but if present they must also be real integer flag values before callers combine them with bitwise `|`.
 
-If a reduced Python host does not expose `os.open` or `os.stat`, or exposes a non-callable placeholder for either attribute, the predicate reports the component-walk path as unsupported instead of raising while probing capabilities. Callers then retain their existing fail-closed fallback behavior.
+If a reduced Python host does not expose `os.open` or `os.stat`, exposes a non-callable placeholder for either attribute, or exposes malformed present `os.O_*` placeholders, the predicate reports the component-walk path as unsupported instead of raising while probing capabilities or later constructing open flags. Genuinely absent optional flags remain supported. Callers then retain their existing fail-closed fallback behavior.
 
 It deliberately does **not** require `mkdir`, `link`, or `unlink`. Those are write-path requirements owned by the stricter execution-snapshot capability checks in `execution_snapshot_internal_paths.py`.
 
