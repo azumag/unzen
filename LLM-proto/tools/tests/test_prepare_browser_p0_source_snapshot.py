@@ -16,6 +16,23 @@ import prepare_browser_p0 as p0_module  # noqa: E402
 
 
 class BrowserP0SourceSnapshotTest(unittest.TestCase):
+    def test_delegates_hashing_to_shared_snapshot_boundary(self) -> None:
+        source = Path("model.onnx")
+        digest = "a" * 64
+
+        with mock.patch.object(
+            p0_module,
+            "measure_regular_file",
+            return_value=(123, digest),
+        ) as measure:
+            self.assertEqual(p0_module.sha256_file(source), digest)
+
+        measure.assert_called_once_with(
+            source,
+            hash_file=True,
+            label="P0 source graph",
+        )
+
     def test_hashes_stable_regular_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "model.onnx"
@@ -100,7 +117,7 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
             fifo = Path(tmp) / "model.onnx"
             os.mkfifo(fifo)
 
-            with self.assertRaisesRegex(RuntimeError, "must be a regular file"):
+            with self.assertRaisesRegex(RuntimeError, "must resolve to a regular file"):
                 p0_module.sha256_file(fifo)
 
     def test_rejects_in_place_mutation_while_hashing(self) -> None:
@@ -123,7 +140,7 @@ class BrowserP0SourceSnapshotTest(unittest.TestCase):
                 return block
 
             with mock.patch.object(p0_module.os, "read", side_effect=read_then_mutate):
-                with self.assertRaisesRegex(RuntimeError, "changed while hashing"):
+                with self.assertRaisesRegex(RuntimeError, "changed while being hashed"):
                     p0_module.sha256_file(source)
             self.assertTrue(mutated)
 
