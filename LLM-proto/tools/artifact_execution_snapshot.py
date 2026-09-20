@@ -137,12 +137,21 @@ def _assert_internal_parent_chain(
     expected_root_identity: SnapshotWorkspaceIdentity,
     parents: Sequence[InternalParentIdentity],
 ) -> None:
-    execution_snapshot_paths.assert_parent_chain(
-        snapshot_root,
-        expected_root_identity,
-        parents,
-        label=_ARTIFACT_SNAPSHOT_LABEL,
-    )
+    try:
+        execution_snapshot_paths.assert_parent_chain(
+            snapshot_root,
+            expected_root_identity,
+            parents,
+            label=_ARTIFACT_SNAPSHOT_LABEL,
+        )
+    except RuntimeError as error:
+        marker = f"{_ARTIFACT_SNAPSHOT_LABEL} internal parent changed"
+        message = str(error)
+        if message.startswith(marker):
+            raise RuntimeError(
+                f"{marker} during pinning{message[len(marker):]}"
+            ) from error
+        raise
 
 
 def _unlink_pinned_destination(
