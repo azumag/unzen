@@ -20,6 +20,7 @@ from execution_snapshot_internal_paths import (
     MODE_UNSUPPORTED,
     component_walk_supported,
     execution_snapshot_mode,
+    generation_bound_cleanup_supported,
     lstat_supported,
     nofollow_hardlink_supported,
     nofollow_stat_supported,
@@ -27,7 +28,7 @@ from execution_snapshot_internal_paths import (
 from execution_snapshot_manifest_write import manifest_write_supported
 
 
-SCHEMA_VERSION = "1.3.0"
+SCHEMA_VERSION = "1.4.0"
 REQUIREMENTS = ("all", "generated", "source", "legacy")
 
 
@@ -36,6 +37,7 @@ def _missing_capabilities(
     component_anchored: bool,
     nofollow_link: bool,
     pathname_lstat: bool,
+    generation_bound_cleanup: bool,
 ) -> list[str]:
     """Return capabilities that prevent every safe shared path-pinning mode."""
 
@@ -44,6 +46,8 @@ def _missing_capabilities(
         missing.append("pathnameLstat")
     if not component_anchored and not nofollow_link:
         missing.append("nofollowHardlink")
+    if not generation_bound_cleanup:
+        missing.append("generationBoundCleanup")
     return missing
 
 
@@ -54,6 +58,7 @@ def capability_report() -> dict[str, object]:
     nofollow_link = nofollow_hardlink_supported()
     nofollow_stat = nofollow_stat_supported()
     pathname_lstat = lstat_supported()
+    generation_bound_cleanup = generation_bound_cleanup_supported()
     snapshot_manifest_write = manifest_write_supported()
 
     mode = execution_snapshot_mode(
@@ -65,6 +70,7 @@ def capability_report() -> dict[str, object]:
         component_anchored=component_anchored,
         nofollow_link=nofollow_link,
         pathname_lstat=pathname_lstat,
+        generation_bound_cleanup=generation_bound_cleanup,
     )
 
     def snapshot_path(*, require_manifest_write: bool = False) -> dict[str, object]:
@@ -85,6 +91,7 @@ def capability_report() -> dict[str, object]:
             "nofollowHardlink": nofollow_link,
             "nofollowStat": nofollow_stat,
             "pathnameLstat": pathname_lstat,
+            "generationBoundCleanup": generation_bound_cleanup,
             "snapshotManifestWrite": snapshot_manifest_write,
         },
         "snapshotPaths": {

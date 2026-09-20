@@ -140,11 +140,35 @@ class ExecutionSnapshotRuntimeCapabilityGuardTest(unittest.TestCase):
         verify_boundary.assert_not_called()
         mkdtemp.assert_not_called()
 
+    def test_runtime_guard_rejects_missing_generation_bound_cleanup(self) -> None:
+        with (
+            mock.patch.object(internal_paths, "lstat_supported", return_value=True),
+            mock.patch.object(internal_paths, "component_walk_supported", return_value=True),
+            mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+            mock.patch.object(
+                internal_paths,
+                "generation_bound_cleanup_supported",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"test snapshot requires generation-bound workspace cleanup support",
+            ):
+                internal_paths.assert_execution_snapshot_runtime_supported(
+                    label="test snapshot"
+                )
+
     def test_runtime_guard_allows_anchored_and_safe_fallback_modes(self) -> None:
         with (
             mock.patch.object(internal_paths, "lstat_supported", return_value=True),
             mock.patch.object(internal_paths, "component_walk_supported", return_value=True),
             mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+            mock.patch.object(
+                internal_paths,
+                "generation_bound_cleanup_supported",
+                return_value=True,
+            ),
         ):
             self.assertEqual(
                 internal_paths.assert_execution_snapshot_runtime_supported(label="test snapshot"),
@@ -155,6 +179,11 @@ class ExecutionSnapshotRuntimeCapabilityGuardTest(unittest.TestCase):
             mock.patch.object(internal_paths, "lstat_supported", return_value=True),
             mock.patch.object(internal_paths, "component_walk_supported", return_value=False),
             mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+            mock.patch.object(
+                internal_paths,
+                "generation_bound_cleanup_supported",
+                return_value=True,
+            ),
         ):
             self.assertEqual(
                 internal_paths.assert_execution_snapshot_runtime_supported(label="test snapshot"),

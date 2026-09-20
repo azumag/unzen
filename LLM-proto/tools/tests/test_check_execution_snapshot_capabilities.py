@@ -24,6 +24,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         nofollow_link: bool,
         nofollow_stat: bool,
         pathname_lstat: bool = True,
+        generation_bound_cleanup: bool = True,
         manifest_write: bool = True,
     ) -> dict[str, object]:
         with (
@@ -49,6 +50,11 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             ),
             mock.patch.object(
                 preflight,
+                "generation_bound_cleanup_supported",
+                return_value=generation_bound_cleanup,
+            ),
+            mock.patch.object(
+                preflight,
                 "manifest_write_supported",
                 return_value=manifest_write,
             ),
@@ -62,7 +68,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             nofollow_stat=True,
         )
         self.assertEqual(report["schemaVersion"], preflight.SCHEMA_VERSION)
-        self.assertEqual(preflight.SCHEMA_VERSION, "1.3.0")
+        self.assertEqual(preflight.SCHEMA_VERSION, "1.4.0")
         self.assertEqual(
             report["capabilities"],
             {
@@ -70,6 +76,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 "nofollowHardlink": True,
                 "nofollowStat": True,
                 "pathnameLstat": True,
+                "generationBoundCleanup": True,
                 "snapshotManifestWrite": True,
             },
         )
@@ -138,6 +145,26 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         self.assertTrue(preflight.requirement_satisfied(report, "legacy"))
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
+    def test_missing_generation_bound_cleanup_blocks_every_snapshot_path(self) -> None:
+        report = self._report(
+            anchored=True,
+            nofollow_link=True,
+            nofollow_stat=True,
+            generation_bound_cleanup=False,
+        )
+        self.assertFalse(report["capabilities"]["generationBoundCleanup"])
+        paths = report["snapshotPaths"]
+        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+            self.assertEqual(
+                paths[name],
+                {
+                    "usable": False,
+                    "mode": preflight.MODE_UNSUPPORTED,
+                    "missingCapabilities": ["generationBoundCleanup"],
+                },
+            )
+        self.assertFalse(preflight.requirement_satisfied(report, "all"))
+
     def test_pathname_fallback_with_nofollow_stat_remains_usable(self) -> None:
         report = self._report(
             anchored=False,
@@ -188,6 +215,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 "nofollowHardlink": True,
                 "nofollowStat": True,
                 "pathnameLstat": False,
+                "generationBoundCleanup": True,
                 "snapshotManifestWrite": True,
             },
         )
@@ -209,17 +237,23 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             nofollow_link=False,
             nofollow_stat=False,
             pathname_lstat=False,
+            generation_bound_cleanup=False,
             manifest_write=False,
         )
         paths = report["snapshotPaths"]
         for name in ("sourceModel", "legacyTwoSegment"):
             self.assertEqual(
                 paths[name]["missingCapabilities"],
-                ["pathnameLstat", "nofollowHardlink"],
+                ["pathnameLstat", "nofollowHardlink", "generationBoundCleanup"],
             )
         self.assertEqual(
             paths["generatedMultiSegment"]["missingCapabilities"],
-            ["pathnameLstat", "nofollowHardlink", "snapshotManifestWrite"],
+            [
+                "pathnameLstat",
+                "nofollowHardlink",
+                "generationBoundCleanup",
+                "snapshotManifestWrite",
+            ],
         )
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
@@ -229,6 +263,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_stat_supported", return_value=False),
             mock.patch.object(preflight, "lstat_supported", return_value=True),
+            mock.patch.object(preflight, "generation_bound_cleanup_supported", return_value=True),
             mock.patch.object(preflight, "manifest_write_supported", return_value=True),
         ):
             generated_output = StringIO()
@@ -259,6 +294,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_stat_supported", return_value=False),
             mock.patch.object(preflight, "lstat_supported", return_value=True),
+            mock.patch.object(preflight, "generation_bound_cleanup_supported", return_value=True),
             mock.patch.object(preflight, "manifest_write_supported", return_value=False),
         ):
             generated_output = StringIO()
@@ -282,6 +318,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_stat_supported", return_value=True),
             mock.patch.object(preflight, "lstat_supported", return_value=False),
+            mock.patch.object(preflight, "generation_bound_cleanup_supported", return_value=True),
             mock.patch.object(preflight, "manifest_write_supported", return_value=True),
         ):
             output = StringIO()

@@ -11,9 +11,9 @@ identity, verified workspace cleanup, and rollback mechanics.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import os
 from pathlib import Path
-import shutil
 import stat
 from typing import Iterator, Sequence
 
@@ -50,6 +50,45 @@ def lstat_supported() -> bool:
     """Return whether pathname no-follow metadata reads are available."""
 
     return callable(getattr(os, "lstat", None))
+
+
+def generation_bound_cleanup_supported() -> bool:
+    """Return whether cleanup can stay anchored to opened directory generations."""
+
+    open_fn = getattr(os, "open", None)
+    stat_fn = getattr(os, "stat", None)
+    fstat_fn = getattr(os, "fstat", None)
+    scandir_fn = getattr(os, "scandir", None)
+    unlink_fn = getattr(os, "unlink", None)
+    rmdir_fn = getattr(os, "rmdir", None)
+    close_fn = getattr(os, "close", None)
+    if not all(
+        callable(function)
+        for function in (
+            open_fn,
+            stat_fn,
+            fstat_fn,
+            scandir_fn,
+            unlink_fn,
+            rmdir_fn,
+            close_fn,
+        )
+    ):
+        return False
+
+    supports_dir_fd = getattr(os, "supports_dir_fd", set())
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
+    supports_fd = getattr(os, "supports_fd", set())
+    return (
+        hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and open_fn in supports_dir_fd
+        and stat_fn in supports_dir_fd
+        and unlink_fn in supports_dir_fd
+        and rmdir_fn in supports_dir_fd
+        and stat_fn in supports_follow_symlinks
+        and scandir_fn in supports_fd
+    )
 
 
 def component_walk_supported() -> bool:
@@ -121,16 +160,20 @@ def assert_execution_snapshot_runtime_supported(*, label: str) -> str:
         nofollow_hardlink=nofollow_hardlink,
         pathname_lstat=pathname_lstat,
     )
-    if mode != MODE_UNSUPPORTED:
-        return mode
-    if not pathname_lstat:
+    if mode == MODE_UNSUPPORTED:
+        if not pathname_lstat:
+            raise RuntimeError(
+                f"{label} requires os.lstat for no-follow pathname metadata"
+            )
         raise RuntimeError(
-            f"{label} requires os.lstat for no-follow pathname metadata"
+            f"{label} pathname fallback requires "
+            "os.link(..., follow_symlinks=False); refusing to use implicit symlink-follow semantics"
         )
-    raise RuntimeError(
-        f"{label} pathname fallback requires "
-        "os.link(..., follow_symlinks=False); refusing to use implicit symlink-follow semantics"
-    )
+    if not generation_bound_cleanup_supported():
+        raise RuntimeError(
+            f"{label} requires generation-bound workspace cleanup support"
+        )
+    return mode
 
 
 def _open_flags() -> int:
@@ -150,25 +193,136 @@ def workspace_identity(path: Path, *, label: str) -> SnapshotWorkspaceIdentity:
     return metadata.st_dev, metadata.st_ino
 
 
+def _cleanup_changed(label: str, path: Path) -> RuntimeError:
+    return RuntimeError(f"{label} workspace changed before cleanup: {path}")
+
+
+def _remove_open_directory_contents(
+    directory_fd: int,
+    *,
+    label: str,
+    workspace_path: Path,
+) -> None:
+    """Remove children through an already-open directory generation."""
+
+    try:
+        with os.scandir(directory_fd) as entries:
+            names = [entry.name for entry in entries]
+    except OSError as error:
+        raise _cleanup_changed(label, workspace_path) from error
+
+    for name in names:
+        child_fd: int | None = None
+        try:
+            try:
+                child_fd = os.open(name, _open_flags(), dir_fd=directory_fd)
+            except OSError as error:
+                if error.errno not in (errno.ENOTDIR, errno.ELOOP):
+                    raise _cleanup_changed(label, workspace_path) from error
+                try:
+                    os.unlink(name, dir_fd=directory_fd)
+                except OSError as unlink_error:
+                    raise _cleanup_changed(label, workspace_path) from unlink_error
+                continue
+
+            try:
+                child_metadata = os.fstat(child_fd)
+            except OSError as error:
+                raise _cleanup_changed(label, workspace_path) from error
+            if not stat.S_ISDIR(child_metadata.st_mode):
+                raise _cleanup_changed(label, workspace_path)
+            child_identity = (child_metadata.st_dev, child_metadata.st_ino)
+
+            _remove_open_directory_contents(
+                child_fd,
+                label=label,
+                workspace_path=workspace_path,
+            )
+
+            try:
+                current_metadata = os.stat(
+                    name,
+                    dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+            except OSError as error:
+                raise _cleanup_changed(label, workspace_path) from error
+            if (
+                stat.S_ISLNK(current_metadata.st_mode)
+                or not stat.S_ISDIR(current_metadata.st_mode)
+                or (current_metadata.st_dev, current_metadata.st_ino) != child_identity
+            ):
+                raise _cleanup_changed(label, workspace_path)
+            try:
+                os.rmdir(name, dir_fd=directory_fd)
+            except OSError as error:
+                raise _cleanup_changed(label, workspace_path) from error
+        finally:
+            if child_fd is not None:
+                try:
+                    os.close(child_fd)
+                except OSError:
+                    pass
+
+
 def remove_verified_workspace(
     path: Path,
     expected_identity: SnapshotWorkspaceIdentity,
     *,
     label: str,
 ) -> None:
-    """Remove a snapshot tree only while its captured directory still owns ``path``."""
+    """Remove only the captured workspace generation, never a replacement tree."""
 
+    if not generation_bound_cleanup_supported():
+        raise RuntimeError(f"{label} requires generation-bound workspace cleanup support")
+
+    parent_fd: int | None = None
+    workspace_fd: int | None = None
     try:
-        metadata = os.lstat(path)
-    except OSError as error:
-        raise RuntimeError(f"{label} workspace changed before cleanup: {path}") from error
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISDIR(metadata.st_mode)
-        or (metadata.st_dev, metadata.st_ino) != expected_identity
-    ):
-        raise RuntimeError(f"{label} workspace changed before cleanup: {path}")
-    shutil.rmtree(path)
+        try:
+            parent_fd = os.open(path.parent, _open_flags())
+            workspace_fd = os.open(path.name, _open_flags(), dir_fd=parent_fd)
+            metadata = os.fstat(workspace_fd)
+        except OSError as error:
+            raise _cleanup_changed(label, path) from error
+
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != expected_identity
+        ):
+            raise _cleanup_changed(label, path)
+
+        _remove_open_directory_contents(
+            workspace_fd,
+            label=label,
+            workspace_path=path,
+        )
+
+        try:
+            current_metadata = os.stat(
+                path.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise _cleanup_changed(label, path) from error
+        if (
+            stat.S_ISLNK(current_metadata.st_mode)
+            or not stat.S_ISDIR(current_metadata.st_mode)
+            or (current_metadata.st_dev, current_metadata.st_ino) != expected_identity
+        ):
+            raise _cleanup_changed(label, path)
+        try:
+            os.rmdir(path.name, dir_fd=parent_fd)
+        except OSError as error:
+            raise _cleanup_changed(label, path) from error
+    finally:
+        for fd in (workspace_fd, parent_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def _record_parent_identity(
