@@ -46,6 +46,41 @@ class ExecutionSnapshotInternalPathCapabilityTest(unittest.TestCase):
         ):
             return internal_paths.component_walk_supported()
 
+    def _generation_bound_cleanup_supported(
+        self,
+        *,
+        dir_fd_functions: set[object] | None = None,
+        follow_symlink_functions: set[object] | None = None,
+        fd_functions: set[object] | None = None,
+    ) -> bool:
+        with (
+            mock.patch.object(
+                internal_paths.os,
+                "supports_dir_fd",
+                dir_fd_functions
+                if dir_fd_functions is not None
+                else {os.open, os.stat, os.unlink, os.rmdir},
+                create=True,
+            ),
+            mock.patch.object(
+                internal_paths.os,
+                "supports_follow_symlinks",
+                follow_symlink_functions
+                if follow_symlink_functions is not None
+                else {os.stat},
+                create=True,
+            ),
+            mock.patch.object(
+                internal_paths.os,
+                "supports_fd",
+                fd_functions if fd_functions is not None else {os.scandir},
+                create=True,
+            ),
+            mock.patch.object(internal_paths.os, "O_DIRECTORY", 0, create=True),
+            mock.patch.object(internal_paths.os, "O_NOFOLLOW", 0, create=True),
+        ):
+            return internal_paths.generation_bound_cleanup_supported()
+
     def _fallback_context(
         self,
         *,
@@ -110,6 +145,31 @@ class ExecutionSnapshotInternalPathCapabilityTest(unittest.TestCase):
         for name in ("open", "mkdir", "unlink", "fstat", "close"):
             with self.subTest(name=name), mock.patch.object(internal_paths.os, name, None):
                 self.assertFalse(internal_paths.component_walk_supported())
+
+    def test_full_capability_set_enables_generation_bound_cleanup(self) -> None:
+        self.assertTrue(self._generation_bound_cleanup_supported())
+
+    def test_missing_cleanup_operation_disables_generation_bound_cleanup(self) -> None:
+        for name in ("open", "stat", "fstat", "scandir", "unlink", "rmdir", "close"):
+            with self.subTest(name=name), mock.patch.object(internal_paths.os, name, None):
+                self.assertFalse(internal_paths.generation_bound_cleanup_supported())
+
+    def test_cleanup_requires_descriptor_backed_scandir(self) -> None:
+        self.assertFalse(self._generation_bound_cleanup_supported(fd_functions=set()))
+
+    def test_cleanup_requires_descriptor_relative_rmdir(self) -> None:
+        self.assertFalse(
+            self._generation_bound_cleanup_supported(
+                dir_fd_functions={os.open, os.stat, os.unlink},
+            )
+        )
+
+    def test_cleanup_requires_nofollow_stat(self) -> None:
+        self.assertFalse(
+            self._generation_bound_cleanup_supported(
+                follow_symlink_functions=set(),
+            )
+        )
 
     def test_lstat_capability_tracks_callable_presence(self) -> None:
         self.assertTrue(internal_paths.lstat_supported())
