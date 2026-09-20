@@ -52,6 +52,8 @@ describe('AdaptiveChunkDispatcher', () => {
       selectedChunkLength: 4,
       cacheHit: true,
       retryCount: 0,
+      checkpointTransferMs: 0,
+      checkpointTransferBytes: 0,
       loadReadings: {
         gpuBusyRatio: 0.01,
         cpuBusyRatio: 0.01,
@@ -59,7 +61,6 @@ describe('AdaptiveChunkDispatcher', () => {
     });
     expect(report.assignments[0].scoreInputs.capacityScore).toBeGreaterThan(0);
     expect(report.assignments[0].scoreInputs.cacheScore).toBeGreaterThan(0);
-    expect(report.assignments[0].checkpointTransferMs).toBe(500);
   });
 
   it('lets a long-lived worker continue with a contiguous rolling chunk without a cold reload', () => {
@@ -89,9 +90,17 @@ describe('AdaptiveChunkDispatcher', () => {
       'long-lived',
     ]);
     expect(report.assignments.map((assignment) => assignment.selectedChunkLength)).toEqual([2, 2]);
-    expect(report.assignments[0].coldLoad).toBe(true);
-    expect(report.assignments[1].rollingConsecutive).toBe(true);
-    expect(report.assignments[1].coldLoad).toBe(false);
+    expect(report.assignments[0]).toMatchObject({
+      coldLoad: true,
+      checkpointTransferMs: 0,
+      checkpointTransferBytes: 0,
+    });
+    expect(report.assignments[1]).toMatchObject({
+      rollingConsecutive: true,
+      coldLoad: false,
+      checkpointTransferMs: 500,
+      checkpointTransferBytes: 4 * 1024 * 1024,
+    });
   });
 
   it('throttles a near-budget worker to a smaller chunk and skips an over-budget worker', () => {
