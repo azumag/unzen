@@ -76,6 +76,15 @@ registration, dispatch, or simulated transport connections. Omitting the index
 is distinct from passing a negative sentinel: with `lostWorkerId` present and no
 index, the selector searches from the first assignment.
 
+The worker-loss selector is a runtime trust boundary. `runCoordinatorPrototype()`
+captures `lostWorkerId` and `lostAfterAssignmentIndex` exactly once before worker
+registration or dispatch, validates those captured values, and uses the same
+snapshot later when building `retryResumeImpact`. An explicitly supplied worker
+ID must be a non-empty string; empty, whitespace-only, or non-string values fail
+closed rather than being interpreted as omission. Accessor- or Proxy-backed
+caller objects therefore cannot validate one selector and switch to another
+after dispatch begins.
+
 ## Cloudflare Workers Prototype Handoff
 
 If this harness passes and the report stays inside the latency and churn
