@@ -39,9 +39,10 @@ describe('Coordinator prototype harness', () => {
         }),
       }),
     );
-    expect(report.checkpointRelay.length).toBeGreaterThan(0);
     expect(report.checkpointRelay.every((relay) =>
-      relay.via === 'coordinator' && relay.directWorkerNetworking === false
+      relay.bytes > 0 &&
+      relay.via === 'coordinator' &&
+      relay.directWorkerNetworking === false
     )).toBe(true);
     expect(report.transport.connections.every((connection) =>
       connection.startsWith('https://coordinator.unzen.local') ||
@@ -58,6 +59,91 @@ describe('Coordinator prototype harness', () => {
     expect(report.bottlenecksToIssue).toContain(
       'cloudflare-workers-websocket-durable-state-validation',
     );
+  });
+
+  it('omits checkpoint relay records for rolling same-worker boundaries', () => {
+    const report = runCoordinatorPrototype({
+      requestId: 'rolling-relay-elision',
+      prompt: 'test',
+      segments: buildCoordinatorPrototypeSegments(2),
+      workers: [
+        {
+          id: 'rolling-worker',
+          tier: WorkerTier.TIER_2,
+          lastHeartbeatMs: 0,
+          telemetry: {
+            uptimeMs: 2 * 60 * 60 * 1000,
+            vramFreeMB: 3_600,
+            gpuBusyRatio: 0.024,
+            cpuBusyRatio: 0.01,
+            cacheHits: [],
+            tokensPerSecond: 18,
+            checkpointBytesPerSecond: 0,
+            failureRate: 0,
+            heartbeatJitterMs: 25,
+          },
+        },
+      ],
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.assignments).toHaveLength(2);
+    expect(report.assignments[1]).toMatchObject({
+      workerId: 'rolling-worker',
+      rollingConsecutive: true,
+      checkpointTransferBytes: 0,
+      checkpointTransferMs: 0,
+    });
+    expect(report.checkpointRelay).toEqual([]);
+  });
+
+  it('keeps positive-byte checkpoint relay records for cross-worker boundaries', () => {
+    const telemetry = {
+      uptimeMs: 90_000,
+      vramFreeMB: 3_600,
+      gpuBusyRatio: 0.01,
+      cpuBusyRatio: 0.01,
+      cacheHits: [],
+      tokensPerSecond: 18,
+      checkpointBytesPerSecond: 8 * 1024 * 1024,
+      failureRate: 0,
+      heartbeatJitterMs: 25,
+    };
+    const report = runCoordinatorPrototype({
+      requestId: 'cross-worker-relay',
+      prompt: 'test',
+      segments: buildCoordinatorPrototypeSegments(2),
+      workers: [
+        {
+          id: 'visitor-a',
+          tier: WorkerTier.TIER_3,
+          lastHeartbeatMs: 0,
+          telemetry,
+        },
+        {
+          id: 'visitor-b',
+          tier: WorkerTier.TIER_3,
+          lastHeartbeatMs: 0,
+          telemetry,
+        },
+      ],
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.assignments.map((assignment) => assignment.workerId)).toEqual([
+      'visitor-a',
+      'visitor-b',
+    ]);
+    expect(report.checkpointRelay).toEqual([
+      {
+        fromWorkerId: 'visitor-a',
+        toWorkerId: 'visitor-b',
+        segmentIndex: 0,
+        bytes: 4 * 1024 * 1024,
+        via: 'coordinator',
+        directWorkerNetworking: false,
+      },
+    ]);
   });
 
   it('applies the browser retention gate to Tier 3 assignment eligibility', () => {
