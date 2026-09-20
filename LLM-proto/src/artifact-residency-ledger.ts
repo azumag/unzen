@@ -8,6 +8,7 @@
  * artifact sizes or accepting a cache hit for a different model revision.
  */
 
+import { evaluateBrowserSegmentArtifact } from './browser-segment-artifact-budget.js';
 import { assertValidModelManifest } from './model-manifest-validator.js';
 import type {
   SegmentArtifact,
@@ -62,6 +63,15 @@ export class ArtifactResidencyLedger {
     const validated = capturedArtifacts.map((artifact, arrayIndex) =>
       cloneAndValidateArtifact(artifact, arrayIndex),
     );
+    for (const artifact of validated) {
+      const budget = evaluateBrowserSegmentArtifact(artifact);
+      if (!budget.usable) {
+        throw new Error(
+          `segment ${artifact.index} exceeds browser artifact absolute budget: ` +
+          `${artifact.byteSize} > ${budget.absoluteMaxBytes} bytes`,
+        );
+      }
+    }
     const sorted = [...validated].sort((left, right) => left.index - right.index);
     for (let expectedIndex = 0; expectedIndex < sorted.length; expectedIndex++) {
       const artifact = sorted[expectedIndex];
