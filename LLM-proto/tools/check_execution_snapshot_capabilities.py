@@ -3,9 +3,9 @@
 
 This preflight is intentionally dependency-neutral so operators can reject an
 unsupported evidence host before model downloads or ONNX Runtime/WebGPU work.
-The platform rules remain owned by ``execution_snapshot_internal_paths``; this
-module only presents those existing predicates as a stable machine-readable
-report and CLI gate.
+The platform rules remain owned by ``execution_snapshot_internal_paths`` plus
+the generated-only manifest-write capability boundary; this module presents
+those predicates as a stable machine-readable report and CLI gate.
 """
 
 from __future__ import annotations
@@ -24,9 +24,10 @@ from execution_snapshot_internal_paths import (
     nofollow_hardlink_supported,
     nofollow_stat_supported,
 )
+from execution_snapshot_manifest_write import manifest_write_supported
 
 
-SCHEMA_VERSION = "1.2.0"
+SCHEMA_VERSION = "1.3.0"
 REQUIREMENTS = ("all", "generated", "source", "legacy")
 
 
@@ -36,7 +37,7 @@ def _missing_capabilities(
     nofollow_link: bool,
     pathname_lstat: bool,
 ) -> list[str]:
-    """Return only capabilities that prevent every safe snapshot mode."""
+    """Return capabilities that prevent every safe shared path-pinning mode."""
 
     missing: list[str] = []
     if not pathname_lstat:
@@ -53,6 +54,7 @@ def capability_report() -> dict[str, object]:
     nofollow_link = nofollow_hardlink_supported()
     nofollow_stat = nofollow_stat_supported()
     pathname_lstat = lstat_supported()
+    snapshot_manifest_write = manifest_write_supported()
 
     mode = execution_snapshot_mode(
         component_anchored=component_anchored,
@@ -65,12 +67,15 @@ def capability_report() -> dict[str, object]:
         pathname_lstat=pathname_lstat,
     )
 
-    def snapshot_path() -> dict[str, object]:
-        usable = mode != MODE_UNSUPPORTED
+    def snapshot_path(*, require_manifest_write: bool = False) -> dict[str, object]:
+        missing = list(missing_capabilities)
+        if require_manifest_write and not snapshot_manifest_write:
+            missing.append("snapshotManifestWrite")
+        usable = mode != MODE_UNSUPPORTED and not missing
         return {
             "usable": usable,
-            "mode": mode,
-            "missingCapabilities": [] if usable else list(missing_capabilities),
+            "mode": mode if usable else MODE_UNSUPPORTED,
+            "missingCapabilities": missing,
         }
 
     return {
@@ -80,11 +85,12 @@ def capability_report() -> dict[str, object]:
             "nofollowHardlink": nofollow_link,
             "nofollowStat": nofollow_stat,
             "pathnameLstat": pathname_lstat,
+            "snapshotManifestWrite": snapshot_manifest_write,
         },
         "snapshotPaths": {
             "sourceModel": snapshot_path(),
             "legacyTwoSegment": snapshot_path(),
-            "generatedMultiSegment": snapshot_path(),
+            "generatedMultiSegment": snapshot_path(require_manifest_write=True),
         },
     }
 
