@@ -288,6 +288,12 @@ function buildCheckpointRelay(
   for (let index = 1; index < assignments.length; index++) {
     const previous = assignments[index - 1];
     const current = assignments[index];
+    // A zero-byte rolling boundary keeps the hidden state on the same worker;
+    // it is not an actual Coordinator checkpoint relay and must not inflate
+    // relay counts or transfer-cost evidence.
+    if (current.checkpointTransferBytes === 0) {
+      continue;
+    }
     relays.push({
       fromWorkerId: previous.workerId,
       toWorkerId: current.workerId,
