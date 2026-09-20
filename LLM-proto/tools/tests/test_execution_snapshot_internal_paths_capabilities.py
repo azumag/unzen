@@ -146,6 +146,42 @@ class ExecutionSnapshotInternalPathCapabilityTest(unittest.TestCase):
             with self.subTest(name=name), mock.patch.object(internal_paths.os, name, None):
                 self.assertFalse(internal_paths.component_walk_supported())
 
+    def test_malformed_required_directory_open_flag_disables_anchored_modes(self) -> None:
+        for name in ("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW"):
+            with (
+                self.subTest(name=name),
+                mock.patch.object(internal_paths.os, name, None, create=True),
+            ):
+                self.assertFalse(internal_paths.component_walk_supported())
+                self.assertFalse(internal_paths.generation_bound_cleanup_supported())
+
+    def test_malformed_optional_cloexec_disables_anchored_modes(self) -> None:
+        with mock.patch.object(internal_paths.os, "O_CLOEXEC", None, create=True):
+            self.assertFalse(internal_paths.component_walk_supported())
+            self.assertFalse(internal_paths.generation_bound_cleanup_supported())
+
+    def test_absent_optional_directory_open_flag_remains_supported_by_flag_probe(self) -> None:
+        self.assertTrue(
+            internal_paths._integer_flag(
+                "UNZEN_TEST_ABSENT_OPTIONAL_OPEN_FLAG",
+                required=False,
+            )
+        )
+
+    def test_runtime_rejects_malformed_directory_open_flag_before_traversal(self) -> None:
+        with (
+            mock.patch.object(internal_paths.os, "O_CLOEXEC", None, create=True),
+            mock.patch.object(internal_paths, "lstat_supported", return_value=True),
+            mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "requires generation-bound workspace cleanup support",
+            ):
+                internal_paths.assert_execution_snapshot_runtime_supported(
+                    label="test snapshot",
+                )
+
     def test_full_capability_set_enables_generation_bound_cleanup(self) -> None:
         self.assertTrue(self._generation_bound_cleanup_supported())
 
