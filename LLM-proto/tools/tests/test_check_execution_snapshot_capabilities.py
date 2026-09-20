@@ -56,7 +56,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             nofollow_stat=True,
         )
         self.assertEqual(report["schemaVersion"], preflight.SCHEMA_VERSION)
-        self.assertEqual(preflight.SCHEMA_VERSION, "1.1.0")
+        self.assertEqual(preflight.SCHEMA_VERSION, "1.2.0")
         self.assertEqual(
             report["capabilities"],
             {
@@ -71,7 +71,11 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
                 paths[name],
-                {"usable": True, "mode": preflight.MODE_COMPONENT_ANCHORED},
+                {
+                    "usable": True,
+                    "mode": preflight.MODE_COMPONENT_ANCHORED,
+                    "missingCapabilities": [],
+                },
             )
         self.assertTrue(preflight.requirement_satisfied(report, "all"))
 
@@ -85,7 +89,11 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
                 paths[name],
-                {"usable": True, "mode": preflight.MODE_PATHNAME_FALLBACK},
+                {
+                    "usable": True,
+                    "mode": preflight.MODE_PATHNAME_FALLBACK,
+                    "missingCapabilities": [],
+                },
             )
         self.assertTrue(preflight.requirement_satisfied(report, "generated"))
         self.assertTrue(preflight.requirement_satisfied(report, "source"))
@@ -102,11 +110,15 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
                 paths[name],
-                {"usable": True, "mode": preflight.MODE_PATHNAME_FALLBACK},
+                {
+                    "usable": True,
+                    "mode": preflight.MODE_PATHNAME_FALLBACK,
+                    "missingCapabilities": [],
+                },
             )
         self.assertTrue(preflight.requirement_satisfied(report, "all"))
 
-    def test_host_without_nofollow_hardlinks_is_unsupported(self) -> None:
+    def test_host_without_nofollow_hardlinks_reports_blocker(self) -> None:
         report = self._report(
             anchored=False,
             nofollow_link=False,
@@ -116,11 +128,15 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
                 paths[name],
-                {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
+                {
+                    "usable": False,
+                    "mode": preflight.MODE_UNSUPPORTED,
+                    "missingCapabilities": ["nofollowHardlink"],
+                },
             )
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
-    def test_host_without_lstat_is_unsupported_even_when_anchored_primitives_exist(self) -> None:
+    def test_host_without_lstat_reports_blocker_even_when_anchored_primitives_exist(self) -> None:
         report = self._report(
             anchored=True,
             nofollow_link=True,
@@ -140,7 +156,26 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
                 paths[name],
-                {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
+                {
+                    "usable": False,
+                    "mode": preflight.MODE_UNSUPPORTED,
+                    "missingCapabilities": ["pathnameLstat"],
+                },
+            )
+        self.assertFalse(preflight.requirement_satisfied(report, "all"))
+
+    def test_host_without_lstat_or_fallback_hardlinks_reports_both_blockers(self) -> None:
+        report = self._report(
+            anchored=False,
+            nofollow_link=False,
+            nofollow_stat=False,
+            pathname_lstat=False,
+        )
+        paths = report["snapshotPaths"]
+        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+            self.assertEqual(
+                paths[name]["missingCapabilities"],
+                ["pathnameLstat", "nofollowHardlink"],
             )
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
@@ -165,8 +200,12 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         self.assertEqual(generated_report, source_report)
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
-                generated_report["snapshotPaths"][name]["mode"],
-                preflight.MODE_PATHNAME_FALLBACK,
+                generated_report["snapshotPaths"][name],
+                {
+                    "usable": True,
+                    "mode": preflight.MODE_PATHNAME_FALLBACK,
+                    "missingCapabilities": [],
+                },
             )
 
     def test_cli_missing_lstat_emits_json_and_exits_nonzero(self) -> None:
@@ -186,7 +225,11 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
             self.assertEqual(
                 report["snapshotPaths"][name],
-                {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
+                {
+                    "usable": False,
+                    "mode": preflight.MODE_UNSUPPORTED,
+                    "missingCapabilities": ["pathnameLstat"],
+                },
             )
 
     def test_unknown_requirement_is_rejected(self) -> None:
