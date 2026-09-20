@@ -8,6 +8,30 @@ from pathlib import Path
 from typing import BinaryIO, Iterator
 
 
+_MISSING = object()
+_REQUIRED_READ_OPEN_FLAGS = ("O_RDONLY",)
+_OPTIONAL_READ_OPEN_FLAGS = ("O_BINARY", "O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK")
+
+
+def _read_open_flags(*, label: str) -> int:
+    """Build raw-byte read flags without leaking bitwise errors on reduced hosts."""
+
+    flags = 0
+    for name in _REQUIRED_READ_OPEN_FLAGS:
+        raw = getattr(os, name, _MISSING)
+        if type(raw) is not int:
+            raise RuntimeError(f"{label} open flag os.{name} must be an integer")
+        flags |= raw
+    for name in _OPTIONAL_READ_OPEN_FLAGS:
+        raw = getattr(os, name, _MISSING)
+        if raw is _MISSING:
+            continue
+        if type(raw) is not int:
+            raise RuntimeError(f"{label} open flag os.{name} must be an integer")
+        flags |= raw
+    return flags
+
+
 def _stat_signature(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
     return (
         snapshot.st_dev,
@@ -32,8 +56,7 @@ def _pin_regular_file(path: Path, *, label: str) -> tuple[Path, Path, os.stat_re
     if not stat.S_ISREG(before.st_mode):
         raise RuntimeError(f"{label} must resolve to a regular file: {requested}")
 
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = _read_open_flags(label=label)
     try:
         fd = os.open(resolved, flags)
     except OSError as error:
