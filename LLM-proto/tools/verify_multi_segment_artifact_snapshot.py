@@ -486,7 +486,11 @@ def _preflight_distinct_file_identities(
     _assert_distinct_file_identities(opened_entries)
 
 
-def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
+def _verify_artifact_snapshot_stable(
+    manifest_path: Path,
+) -> tuple[dict[str, object], bytes, tuple[dict[str, object], ...]]:
+    """Verify one stable generation and retain the identities accepted by it."""
+
     manifest_path = manifest_path.expanduser().absolute()
     root = manifest_path.parent.resolve()
     root_fd: int | None = None
@@ -543,7 +547,7 @@ def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
             {"field": item["field"], "path": item["path"], "bytes": item["bytes"], "sha256": item["sha256"]}
             for item in before
         ]
-        return {
+        report = {
             "schemaVersion": REPORT_SCHEMA_VERSION,
             "kind": REPORT_KIND,
             "status": "pass",
@@ -555,9 +559,15 @@ def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
             "artifacts": public,
             "integrity": integrity,
         }
+        return report, manifest_bytes, tuple(before)
     finally:
         if root_fd is not None:
             os.close(root_fd)
+
+
+def verify_artifact_snapshot(manifest_path: Path) -> dict[str, object]:
+    report, _manifest_bytes, _entries = _verify_artifact_snapshot_stable(manifest_path)
+    return report
 
 
 def main() -> int:
