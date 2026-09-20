@@ -25,6 +25,7 @@ from execution_snapshot_internal_paths import (
     prepared_destination,
     remove_verified_workspace,
     unlink_pinned_destination,
+    workspace_identity,
 )
 from verify_multi_segment_artifacts import (
     _canonical_sha256,
@@ -135,16 +136,11 @@ def _artifact_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
 
 def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     try:
-        metadata = os.lstat(path)
-    except OSError as error:
+        return workspace_identity(path, label="legacy artifact execution snapshot")
+    except RuntimeError as error:
         raise RuntimeError(
             f"legacy artifact execution snapshot workspace changed before cleanup: {path}"
         ) from error
-    if not stat.S_ISDIR(metadata.st_mode):
-        raise RuntimeError(
-            f"legacy artifact execution snapshot workspace changed before cleanup: {path}"
-        )
-    return metadata.st_dev, metadata.st_ino
 
 
 def _remove_verified_snapshot_root(
