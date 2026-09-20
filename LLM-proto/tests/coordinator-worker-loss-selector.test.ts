@@ -47,6 +47,7 @@ describe('Coordinator worker-loss selector', () => {
       lostAfterAssignmentIndex: 1,
     });
 
+    expect(report.status).toBe('pass');
     expect(report.assignments.map((assignment) => assignment.workerId)).toEqual([
       'visitor-a',
       'visitor-b',
@@ -65,6 +66,7 @@ describe('Coordinator worker-loss selector', () => {
       lostAfterAssignmentIndex: 1,
     });
 
+    expect(report.status).toBe('pass');
     expect(report.assignments.map((assignment) => assignment.workerId)).toEqual([
       'visitor-a',
       'visitor-b',
