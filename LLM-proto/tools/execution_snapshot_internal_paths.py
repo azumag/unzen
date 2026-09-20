@@ -89,15 +89,10 @@ def _assert_root_identity(
 
 
 def _assert_portable_fallback_capabilities(*, label: str) -> None:
-    missing: list[str] = []
     if not nofollow_hardlink_supported():
-        missing.append("os.link(..., follow_symlinks=False)")
-    if not nofollow_stat_supported():
-        missing.append("os.stat(..., follow_symlinks=False)")
-    if missing:
         raise RuntimeError(
             f"{label} cannot use pathname fallback safely on this platform; "
-            "missing no-follow filesystem capability: " + ", ".join(missing)
+            "missing no-follow filesystem capability: os.link(..., follow_symlinks=False)"
         )
 
 
