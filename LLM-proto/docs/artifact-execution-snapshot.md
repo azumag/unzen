@@ -4,6 +4,8 @@ The direct same-machine numerical verifiers must not treat a successful artifact
 
 `tools/artifact_execution_snapshot.py` closes that gap for both `verify_multi_segment_onnx.py` and `verify_multi_segment_kv_decode.py`.
 
+Workspace identity, nested destination traversal, parent-chain validation, and rollback unlink mechanics are owned by the dependency-neutral `tools/execution_snapshot_internal_paths.py` boundary and are shared with the source-model and legacy two-segment execution snapshots. The generated multi-segment helper keeps thin private adapters for existing test seams, while manifest writing plus generated-artifact identity/fingerprint checks remain local to `artifact_execution_snapshot.py`. This keeps the security-sensitive path traversal policy single-sourced without changing the generated snapshot evidence schema or hard-link-only payload policy.
+
 ## Execution boundary
 
 Before any source-model or split-segment `InferenceSession` is created, the helper performs a fresh stable artifact verification. It retains the accepted file identity for every declared segment graph and external-data file instead of discarding that internal information after producing the public integrity report.
@@ -33,4 +35,4 @@ When the complete anchored capability set is unavailable, pathname-only metadata
 
 Hard links pin file object identity but do not make an inode immutable. That is why the post-execution generation fingerprint is mandatory. A detected in-place mutation invalidates the numerical run even if ONNX Runtime itself completed successfully.
 
-Related: #1213, #1210, #1206, #1202, #1200, #1192, #1191, #1189, #167.
+Related: #1239, #1213, #1210, #1206, #1202, #1200, #1192, #1191, #1189, #167.
