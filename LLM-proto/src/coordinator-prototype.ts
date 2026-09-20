@@ -117,7 +117,7 @@ export function createDefaultCoordinatorPrototypeManifest(): CoordinatorPrototyp
         heartbeatJitterMs: 180,
       }),
     ],
-    lostWorkerId: 'tier1-signage-a',
+    lostWorkerId: 'tier2-obs-a',
     lostAfterAssignmentIndex: 1,
   };
 }
@@ -319,7 +319,9 @@ function buildRetryResumeImpact(
       assignment.workerId === requestedLostWorker && index >= lostAssignmentIndex
     )
     : undefined;
-  const lostAssignment = matchingLostAssignment ?? assignments[lostAssignmentIndex];
+  const lostAssignment = requestedLostWorker
+    ? matchingLostAssignment
+    : assignments[lostAssignmentIndex];
 
   if (!lostAssignment) {
     return {
