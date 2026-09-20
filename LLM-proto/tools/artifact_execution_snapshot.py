@@ -521,13 +521,9 @@ def verified_artifact_execution_snapshot(
 ) -> Iterator[tuple[dict[str, object], Path]]:
     """Yield the verified report and a manifest rooted in a pinned hard-link tree."""
 
-    if not execution_snapshot_paths.lstat_supported():
-        raise RuntimeError(
-            "artifact execution snapshot requires os.lstat for no-follow pathname metadata"
-        )
-
-    if not _internal_component_walk_supported():
-        _require_pathname_hard_link_support()
+    execution_snapshot_paths.assert_execution_snapshot_runtime_supported(
+        label="artifact execution snapshot"
+    )
 
     manifest_path = manifest_path.expanduser().absolute()
     report, manifest_bytes, entries = _verify_execution_boundary(manifest_path)
