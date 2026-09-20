@@ -73,6 +73,11 @@ export interface CoordinatorPrototypeReport {
   readonly failureReason?: string;
 }
 
+interface WorkerLossSelectorSnapshot {
+  readonly lostWorkerId?: WorkerId;
+  readonly lostAfterAssignmentIndex?: number;
+}
+
 const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
 
@@ -125,7 +130,7 @@ export function createDefaultCoordinatorPrototypeManifest(): CoordinatorPrototyp
 export function runCoordinatorPrototype(
   manifest: CoordinatorPrototypeManifest,
 ): CoordinatorPrototypeReport {
-  validateWorkerLossSelector(manifest);
+  const workerLossSelector = snapshotWorkerLossSelector(manifest);
   const coordinatorUrl = manifest.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
   const cdnUrl = manifest.cdnUrl ?? DEFAULT_CDN_URL;
   const eligibility = computeWorkerEligibility(manifest);
@@ -172,7 +177,7 @@ export function runCoordinatorPrototype(
     assignedBy: 'AdaptiveChunkDispatcher' as const,
   }));
   const checkpointRelay = buildCheckpointRelay(assignments);
-  const retryResumeImpact = buildRetryResumeImpact(manifest, assignments);
+  const retryResumeImpact = buildRetryResumeImpact(workerLossSelector, assignments);
   const directWorkerNetworking = dispatcherReport.transport.connections.some(
     (connection) => connection.startsWith('worker://'),
   );
@@ -225,14 +230,29 @@ export function buildCoordinatorPrototypeSegments(totalSegments: number): Segmen
   return segmentConfigsFromManifest(manifest);
 }
 
-function validateWorkerLossSelector(manifest: CoordinatorPrototypeManifest): void {
+function snapshotWorkerLossSelector(
+  manifest: CoordinatorPrototypeManifest,
+): WorkerLossSelectorSnapshot {
+  // Capture caller-owned selector properties exactly once before dispatch. This
+  // binds validation and retry/resume reporting to the same values even when a
+  // runtime caller crosses the TypeScript boundary with accessors or a Proxy.
+  const lostWorkerIdInput = manifest.lostWorkerId;
   const lostAfterAssignmentIndex = manifest.lostAfterAssignmentIndex;
+
+  const lostWorkerId = lostWorkerIdInput === undefined
+    ? undefined
+    : workerId(lostWorkerIdInput);
   if (
     lostAfterAssignmentIndex !== undefined &&
     (!Number.isSafeInteger(lostAfterAssignmentIndex) || lostAfterAssignmentIndex < 0)
   ) {
     throw new Error('lostAfterAssignmentIndex must be a non-negative safe integer');
   }
+
+  return Object.freeze({
+    lostWorkerId,
+    lostAfterAssignmentIndex,
+  });
 }
 
 function prototypeWorker(
@@ -318,13 +338,13 @@ function buildCheckpointRelay(
 }
 
 function buildRetryResumeImpact(
-  manifest: CoordinatorPrototypeManifest,
+  selector: WorkerLossSelectorSnapshot,
   assignments: readonly (AdaptiveChunkAssignmentReport & {
     readonly assignedBy: 'AdaptiveChunkDispatcher';
   })[],
 ): CoordinatorPrototypeReport['retryResumeImpact'] {
-  const requestedLostWorker = manifest.lostWorkerId ? workerId(manifest.lostWorkerId) : undefined;
-  const lostAssignmentIndex = manifest.lostAfterAssignmentIndex ?? -1;
+  const requestedLostWorker = selector.lostWorkerId;
+  const lostAssignmentIndex = selector.lostAfterAssignmentIndex ?? -1;
   const matchingLostAssignment = requestedLostWorker
     ? assignments.find((assignment, index) =>
       assignment.workerId === requestedLostWorker && index >= lostAssignmentIndex
