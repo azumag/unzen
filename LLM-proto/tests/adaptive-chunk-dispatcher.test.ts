@@ -98,8 +98,8 @@ describe('AdaptiveChunkDispatcher', () => {
     expect(report.assignments[1]).toMatchObject({
       rollingConsecutive: true,
       coldLoad: false,
-      checkpointTransferMs: 500,
-      checkpointTransferBytes: 4 * 1024 * 1024,
+      checkpointTransferMs: 0,
+      checkpointTransferBytes: 0,
     });
   });
 

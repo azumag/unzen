@@ -177,10 +177,13 @@ The simulated harness exposes these report fields:
 
 The first assignment starts at segment 0 and has no inbound checkpoint, so its
 checkpoint transfer pair is always `checkpointTransferBytes=0` and
-`checkpointTransferMs=0`. Later assignments report the configured checkpoint
-size and derive transfer time from `checkpointBytesPerSecond`; zero throughput
-therefore yields an infinite estimate only when a checkpoint actually has to
-cross a chunk boundary.
+`checkpointTransferMs=0`. A rolling consecutive assignment on the same worker
+also reports `0/0`: the next chunk does not require the checkpoint to be relayed
+back to that same worker, while Coordinator-owned recovery checkpoint semantics
+remain unchanged. A later non-rolling assignment reports the configured
+checkpoint size and derives transfer time from `checkpointBytesPerSecond`;
+zero throughput therefore yields an infinite estimate only when an actual
+cross-assignment checkpoint transfer is required.
 
 ## Relationship To Existing Designs
 
