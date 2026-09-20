@@ -238,7 +238,7 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
     expect(Number.isFinite(report.assignments[0].scoreInputs.total)).toBe(true);
   });
 
-  it('accepts finite boundary values and preserves scheduling semantics', () => {
+  it('accepts finite boundary values and reports no initial checkpoint transfer', () => {
     const dispatcher = new AdaptiveChunkDispatcher({
       segments: makeSegments(1),
       loadBudgetRatio: 1,
@@ -261,7 +261,10 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
 
     const report = dispatcher.run('valid-boundaries');
     expect(report.assignments).toHaveLength(1);
-    expect(report.assignments[0].workerId).toBe('boundary-worker');
-    expect(report.assignments[0].checkpointTransferMs).toBe(Number.POSITIVE_INFINITY);
+    expect(report.assignments[0]).toMatchObject({
+      workerId: 'boundary-worker',
+      checkpointTransferMs: 0,
+      checkpointTransferBytes: 0,
+    });
   });
 });
