@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildCoordinatorPrototypeSegments,
   runCoordinatorPrototype,
 } from '../src/coordinator-prototype.js';
+import { AllowlistedPrototypeTransport } from '../src/two-worker-prototype.js';
 import { WorkerTier } from '../src/types.js';
 
 const telemetry = {
@@ -76,5 +77,44 @@ describe('Coordinator worker-loss selector', () => {
       resumeCount: 1,
       failureReason: 'worker-lost: visitor-b',
     });
+  });
+
+  it('searches from the first assignment when a worker id is supplied without an index', () => {
+    const report = runCoordinatorPrototype({
+      ...createAlternatingWorkerManifest(),
+      lostWorkerId: 'visitor-a',
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.retryResumeImpact).toMatchObject({
+      retryCount: 1,
+      resumeCount: 0,
+      failureReason: 'worker-lost: visitor-a',
+    });
+  });
+
+  it('rejects malformed explicit loss indexes before simulated transport connections', () => {
+    const connectSpy = vi.spyOn(AllowlistedPrototypeTransport.prototype, 'connect');
+    const invalidIndexes = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    try {
+      for (const lostAfterAssignmentIndex of invalidIndexes) {
+        expect(() => runCoordinatorPrototype({
+          ...createAlternatingWorkerManifest(),
+          lostWorkerId: 'visitor-a',
+          lostAfterAssignmentIndex,
+        })).toThrow('lostAfterAssignmentIndex must be a non-negative safe integer');
+      }
+      expect(connectSpy).not.toHaveBeenCalled();
+    } finally {
+      connectSpy.mockRestore();
+    }
   });
 });
