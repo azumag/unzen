@@ -23,6 +23,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         anchored: bool,
         nofollow_link: bool,
         nofollow_stat: bool,
+        pathname_lstat: bool = True,
     ) -> dict[str, object]:
         with (
             mock.patch.object(
@@ -40,6 +41,11 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 "nofollow_stat_supported",
                 return_value=nofollow_stat,
             ),
+            mock.patch.object(
+                preflight,
+                "lstat_supported",
+                return_value=pathname_lstat,
+            ),
         ):
             return preflight.capability_report()
 
@@ -50,12 +56,14 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             nofollow_stat=True,
         )
         self.assertEqual(report["schemaVersion"], preflight.SCHEMA_VERSION)
+        self.assertEqual(preflight.SCHEMA_VERSION, "1.1.0")
         self.assertEqual(
             report["capabilities"],
             {
                 "componentAnchored": True,
                 "nofollowHardlink": True,
                 "nofollowStat": True,
+                "pathnameLstat": True,
             },
         )
         paths = report["snapshotPaths"]
@@ -112,11 +120,36 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             )
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
+    def test_host_without_lstat_is_unsupported_even_when_anchored_primitives_exist(self) -> None:
+        report = self._report(
+            anchored=True,
+            nofollow_link=True,
+            nofollow_stat=True,
+            pathname_lstat=False,
+        )
+        self.assertEqual(
+            report["capabilities"],
+            {
+                "componentAnchored": True,
+                "nofollowHardlink": True,
+                "nofollowStat": True,
+                "pathnameLstat": False,
+            },
+        )
+        paths = report["snapshotPaths"]
+        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+            self.assertEqual(
+                paths[name],
+                {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
+            )
+        self.assertFalse(preflight.requirement_satisfied(report, "all"))
+
     def test_cli_emits_json_and_gates_requested_path(self) -> None:
         with (
             mock.patch.object(preflight, "component_walk_supported", return_value=False),
             mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_stat_supported", return_value=False),
+            mock.patch.object(preflight, "lstat_supported", return_value=True),
         ):
             generated_output = StringIO()
             with redirect_stdout(generated_output):
@@ -134,6 +167,26 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             self.assertEqual(
                 generated_report["snapshotPaths"][name]["mode"],
                 preflight.MODE_PATHNAME_FALLBACK,
+            )
+
+    def test_cli_missing_lstat_emits_json_and_exits_nonzero(self) -> None:
+        with (
+            mock.patch.object(preflight, "component_walk_supported", return_value=True),
+            mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
+            mock.patch.object(preflight, "nofollow_stat_supported", return_value=True),
+            mock.patch.object(preflight, "lstat_supported", return_value=False),
+        ):
+            output = StringIO()
+            with redirect_stdout(output):
+                exit_code = preflight.main(["--require", "all"])
+
+        self.assertEqual(exit_code, 1)
+        report = json.loads(output.getvalue())
+        self.assertFalse(report["capabilities"]["pathnameLstat"])
+        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+            self.assertEqual(
+                report["snapshotPaths"][name],
+                {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
             )
 
     def test_unknown_requirement_is_rejected(self) -> None:
