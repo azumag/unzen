@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import os
 import sys
@@ -67,36 +68,23 @@ class ArtifactExecutionSnapshotManifestGenerationTest(unittest.TestCase):
                 ),
             )
 
-            real_identity = snapshot._snapshot_workspace_identity
-            real_open = os.open
-            captured_root: Path | None = None
+            real_opened_root = snapshot._opened_verified_snapshot_root
             moved_snapshot = root / "moved-accepted-snapshot"
             replacement_root: Path | None = None
             replaced = False
 
-            def capture_workspace(path: Path) -> snapshot.SnapshotWorkspaceIdentity:
-                nonlocal captured_root
-                observed = real_identity(path)
-                if path.name.startswith(".unzen-artifact-execution-"):
-                    captured_root = path
-                return observed
-
-            def replace_on_manifest_create(path, flags, *args, **kwargs):
+            @contextmanager
+            def replace_after_root_open(
+                snapshot_root: Path,
+                expected_root_identity: snapshot.SnapshotWorkspaceIdentity,
+            ):
                 nonlocal replaced, replacement_root
-                path_name = Path(path).name if isinstance(path, (str, os.PathLike)) else ""
-                creating_manifest = (
-                    path_name == manifest.name
-                    and flags & os.O_CREAT
-                    and flags & os.O_EXCL
-                )
-                if creating_manifest and not replaced:
-                    self.assertIsNotNone(captured_root)
-                    assert captured_root is not None
-                    captured_root.rename(moved_snapshot)
-                    captured_root.mkdir()
-                    replacement_root = captured_root
+                with real_opened_root(snapshot_root, expected_root_identity) as root_fd:
+                    snapshot_root.rename(moved_snapshot)
+                    snapshot_root.mkdir()
+                    replacement_root = snapshot_root
                     replaced = True
-                return real_open(path, flags, *args, **kwargs)
+                    yield root_fd
 
             with (
                 mock.patch.object(snapshot, "_verify_execution_boundary", return_value=boundary),
@@ -107,10 +95,9 @@ class ArtifactExecutionSnapshotManifestGenerationTest(unittest.TestCase):
                 ),
                 mock.patch.object(
                     snapshot,
-                    "_snapshot_workspace_identity",
-                    side_effect=capture_workspace,
+                    "_opened_verified_snapshot_root",
+                    side_effect=replace_after_root_open,
                 ),
-                mock.patch.object(snapshot.os, "open", side_effect=replace_on_manifest_create),
             ):
                 with self.assertRaisesRegex(RuntimeError, "workspace changed"):
                     with snapshot.verified_artifact_execution_snapshot(manifest):
