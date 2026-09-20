@@ -50,11 +50,18 @@ simulated harness with a Cloudflare Workers prototype.
 | `requestLifecycle` | API request acceptance, prompt byte size, assignment count, completion flag, and final segment |
 | `workerHeartbeats` | Worker ID, tier, last heartbeat, eligibility, and any retention or heartbeat failure reason |
 | `assignments` | `AdaptiveChunkDispatcher` assignment report plus `assignedBy` marker |
-| `checkpointRelay` | From-worker, to-worker, segment index, bytes, `via: coordinator`, and `directWorkerNetworking: false` |
+| `checkpointRelay` | Actual positive-byte checkpoint transfers only: from-worker, to-worker, segment index, bytes, `via: coordinator`, and `directWorkerNetworking: false` |
 | `retryResumeImpact` | Retry count, resume count, affected segments, resumed checkpoint segment, added delay, and failure reason |
 | `transport` | Coordinator/CDN allowlist and connections touched by the simulated run |
 | `bottlenecksToIssue` | Next issue candidates if the harness passes the scale-up gate |
 | `failureReason` | Fail-closed reason when no eligible worker or direct networking appears |
+
+Rolling consecutive assignments stay visible in `assignments` with
+`checkpointTransferBytes=0` and `checkpointTransferMs=0`, but they do not add a
+`checkpointRelay` row because the checkpoint is not transferred back to the
+same worker. Coordinator-owned recovery checkpoint semantics remain unchanged;
+the relay list is intentionally limited to transfers that actually consume
+relay bytes and transfer time.
 
 ## Cloudflare Workers Prototype Handoff
 
