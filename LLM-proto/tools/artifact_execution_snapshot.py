@@ -14,7 +14,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
-import shutil
 import stat
 import tempfile
 from typing import Iterator, Sequence
@@ -357,12 +356,11 @@ def _remove_verified_snapshot_root(
     snapshot_root: Path,
     expected_identity: SnapshotWorkspaceIdentity,
 ) -> None:
-    observed_identity = _snapshot_workspace_identity(snapshot_root)
-    if observed_identity != expected_identity:
-        raise RuntimeError(
-            f"artifact execution snapshot workspace changed before cleanup: {snapshot_root}"
-        )
-    shutil.rmtree(snapshot_root)
+    execution_snapshot_paths.remove_verified_workspace(
+        snapshot_root,
+        expected_identity,
+        label=_ARTIFACT_SNAPSHOT_LABEL,
+    )
 
 
 @contextmanager
