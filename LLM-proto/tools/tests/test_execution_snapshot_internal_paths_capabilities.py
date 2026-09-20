@@ -131,6 +131,27 @@ class ExecutionSnapshotInternalPathCapabilityTest(unittest.TestCase):
             )
         )
 
+    def test_malformed_supports_follow_symlinks_disables_nofollow_capabilities(self) -> None:
+        with mock.patch.object(
+            internal_paths.os,
+            "supports_follow_symlinks",
+            None,
+            create=True,
+        ):
+            self.assertFalse(internal_paths.nofollow_hardlink_supported())
+            self.assertFalse(internal_paths.nofollow_stat_supported())
+            self.assertFalse(internal_paths.component_walk_supported())
+            self.assertFalse(internal_paths.generation_bound_cleanup_supported())
+
+    def test_malformed_supports_dir_fd_disables_anchored_modes(self) -> None:
+        with mock.patch.object(internal_paths.os, "supports_dir_fd", None, create=True):
+            self.assertFalse(internal_paths.component_walk_supported())
+            self.assertFalse(internal_paths.generation_bound_cleanup_supported())
+
+    def test_malformed_supports_fd_disables_generation_bound_cleanup(self) -> None:
+        with mock.patch.object(internal_paths.os, "supports_fd", None, create=True):
+            self.assertFalse(internal_paths.generation_bound_cleanup_supported())
+
     def test_missing_link_callable_disables_nofollow_hardlink_and_component_walk(self) -> None:
         with mock.patch.object(internal_paths.os, "link", None):
             self.assertFalse(internal_paths.nofollow_hardlink_supported())
