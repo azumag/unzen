@@ -46,6 +46,24 @@ class ArtifactExecutionSnapshotCapabilityTest(unittest.TestCase):
         ):
             return snapshot._internal_component_walk_supported()
 
+    def test_component_walk_predicate_delegates_to_shared_boundary(self) -> None:
+        with mock.patch.object(
+            snapshot.execution_snapshot_paths,
+            "component_walk_supported",
+            return_value=True,
+        ) as shared:
+            self.assertTrue(snapshot._internal_component_walk_supported())
+        shared.assert_called_once_with()
+
+    def test_pathname_hard_link_predicate_delegates_to_shared_boundary(self) -> None:
+        with mock.patch.object(
+            snapshot.execution_snapshot_paths,
+            "nofollow_hardlink_supported",
+            return_value=True,
+        ) as shared:
+            self.assertTrue(snapshot._pathname_hard_link_supported())
+        shared.assert_called_once_with()
+
     def test_full_capability_set_enables_component_walk(self) -> None:
         self.assertTrue(
             self._component_walk_supported(
