@@ -22,7 +22,7 @@ from execution_snapshot_internal_paths import (
 )
 
 
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 MODE_COMPONENT_ANCHORED = "component-anchored"
 MODE_PATHNAME_FALLBACK = "pathname-fallback"
 MODE_UNSUPPORTED = "unsupported"
@@ -35,6 +35,22 @@ def _mode(*, anchored: bool, fallback: bool) -> str:
     if fallback:
         return MODE_PATHNAME_FALLBACK
     return MODE_UNSUPPORTED
+
+
+def _missing_capabilities(
+    *,
+    component_anchored: bool,
+    nofollow_link: bool,
+    pathname_lstat: bool,
+) -> list[str]:
+    """Return only capabilities that prevent every safe snapshot mode."""
+
+    missing: list[str] = []
+    if not pathname_lstat:
+        missing.append("pathnameLstat")
+    if not component_anchored and not nofollow_link:
+        missing.append("nofollowHardlink")
+    return missing
 
 
 def capability_report() -> dict[str, object]:
@@ -51,6 +67,19 @@ def capability_report() -> dict[str, object]:
     source_mode = _mode(anchored=anchored, fallback=pathname_fallback)
     legacy_mode = _mode(anchored=anchored, fallback=pathname_fallback)
     generated_mode = _mode(anchored=anchored, fallback=pathname_fallback)
+    missing_capabilities = _missing_capabilities(
+        component_anchored=component_anchored,
+        nofollow_link=nofollow_link,
+        pathname_lstat=pathname_lstat,
+    )
+
+    def snapshot_path(mode: str) -> dict[str, object]:
+        usable = mode != MODE_UNSUPPORTED
+        return {
+            "usable": usable,
+            "mode": mode,
+            "missingCapabilities": [] if usable else list(missing_capabilities),
+        }
 
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -61,18 +90,9 @@ def capability_report() -> dict[str, object]:
             "pathnameLstat": pathname_lstat,
         },
         "snapshotPaths": {
-            "sourceModel": {
-                "usable": source_mode != MODE_UNSUPPORTED,
-                "mode": source_mode,
-            },
-            "legacyTwoSegment": {
-                "usable": legacy_mode != MODE_UNSUPPORTED,
-                "mode": legacy_mode,
-            },
-            "generatedMultiSegment": {
-                "usable": generated_mode != MODE_UNSUPPORTED,
-                "mode": generated_mode,
-            },
+            "sourceModel": snapshot_path(source_mode),
+            "legacyTwoSegment": snapshot_path(legacy_mode),
+            "generatedMultiSegment": snapshot_path(generated_mode),
         },
     }
 
