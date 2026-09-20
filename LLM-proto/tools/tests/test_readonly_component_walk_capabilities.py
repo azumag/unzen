@@ -59,6 +59,19 @@ class ReadonlyComponentWalkCapabilityTest(unittest.TestCase):
             )
         )
 
+    def test_malformed_supports_dir_fd_disables_component_walk(self) -> None:
+        with patch.object(readonly_component_walk.os, "supports_dir_fd", None, create=True):
+            self.assertFalse(readonly_component_walk.component_walk_supported())
+
+    def test_malformed_supports_follow_symlinks_disables_component_walk(self) -> None:
+        with patch.object(
+            readonly_component_walk.os,
+            "supports_follow_symlinks",
+            None,
+            create=True,
+        ):
+            self.assertFalse(readonly_component_walk.component_walk_supported())
+
     def test_missing_open_function_disables_component_walk(self) -> None:
         with patch.object(readonly_component_walk.os, "open", None):
             self.assertFalse(readonly_component_walk.component_walk_supported())
