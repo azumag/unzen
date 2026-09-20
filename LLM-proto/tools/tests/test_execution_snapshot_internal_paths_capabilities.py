@@ -96,6 +96,26 @@ class ExecutionSnapshotInternalPathCapabilityTest(unittest.TestCase):
             )
         )
 
+    def test_missing_link_callable_disables_nofollow_hardlink_and_component_walk(self) -> None:
+        with mock.patch.object(internal_paths.os, "link", None):
+            self.assertFalse(internal_paths.nofollow_hardlink_supported())
+            self.assertFalse(internal_paths.component_walk_supported())
+
+    def test_missing_stat_callable_disables_nofollow_stat_and_component_walk(self) -> None:
+        with mock.patch.object(internal_paths.os, "stat", None):
+            self.assertFalse(internal_paths.nofollow_stat_supported())
+            self.assertFalse(internal_paths.component_walk_supported())
+
+    def test_missing_anchored_operation_disables_component_walk(self) -> None:
+        for name in ("open", "mkdir", "unlink", "fstat", "close"):
+            with self.subTest(name=name), mock.patch.object(internal_paths.os, name, None):
+                self.assertFalse(internal_paths.component_walk_supported())
+
+    def test_lstat_capability_tracks_callable_presence(self) -> None:
+        self.assertTrue(internal_paths.lstat_supported())
+        with mock.patch.object(internal_paths.os, "lstat", None):
+            self.assertFalse(internal_paths.lstat_supported())
+
     def test_workspace_identity_uses_lstat_without_follow_symlink_keyword(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "snapshot"
