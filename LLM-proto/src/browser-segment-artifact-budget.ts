@@ -14,6 +14,8 @@
  * an unvalidated value before its type has been established.
  */
 
+import type { SegmentArtifact } from './model-manifest.js';
+
 export const BROWSER_SEGMENT_TARGET_BYTES = 200 * 1024 * 1024;
 export const BROWSER_SEGMENT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024;
 export const BROWSER_SEGMENT_NORMAL_MAX_BYTES = 512 * 1024 * 1024;
@@ -29,6 +31,25 @@ export interface BrowserSegmentArtifactBudgetResult {
   readonly normalMaxBytes: number;
   readonly absoluteMaxBytes: number;
   readonly usable: boolean;
+}
+
+/**
+ * Evaluate the byte-size field of a runtime segment artifact through the same
+ * product policy as raw measured byte counts.
+ *
+ * The object boundary matters even though callers normally hold a typed
+ * `SegmentArtifact`: decoded/asserted values and accessor-backed objects can
+ * cross JavaScript boundaries. Capture `byteSize` exactly once before
+ * delegating so validation and classification cannot observe different reads.
+ */
+export function evaluateBrowserSegmentArtifact(
+  artifact: Pick<SegmentArtifact, 'byteSize'>,
+): BrowserSegmentArtifactBudgetResult {
+  if (typeof artifact !== 'object' || artifact === null || Array.isArray(artifact)) {
+    throw new Error('segment artifact must be an object');
+  }
+  const byteSize = (artifact as { readonly byteSize?: unknown }).byteSize;
+  return evaluateBrowserSegmentArtifactBytes(byteSize as number);
 }
 
 export function evaluateBrowserSegmentArtifactBytes(
