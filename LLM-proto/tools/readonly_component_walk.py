@@ -11,7 +11,7 @@ def component_walk_supported() -> bool:
 
     open_fn = getattr(os, "open", None)
     stat_fn = getattr(os, "stat", None)
-    if open_fn is None or stat_fn is None:
+    if not callable(open_fn) or not callable(stat_fn):
         return False
 
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
