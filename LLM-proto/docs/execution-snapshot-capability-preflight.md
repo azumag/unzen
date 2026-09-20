@@ -22,6 +22,8 @@ Capability predicates treat missing required OS callables as unsupported rather 
 
 All current execution-snapshot implementations additionally capture workspace/source/artifact pathname identity with `lstat()`. Therefore `componentAnchored=true` describes the component-walk primitive only: a host with those primitives but without `pathnameLstat` is still reported `unsupported` for source-model, legacy two-segment, and generated multi-segment snapshots. Missing `os.lstat` never silently falls through to a symlink-following metadata read.
 
+The standalone preflight is recommended because it rejects an unsupported host before expensive model preparation begins, but it is not a required correctness step. The public source-model, legacy two-segment, and generated multi-segment execution-snapshot context managers independently enforce the mandatory `os.lstat` capability before artifact verification, snapshot workspace creation, or numerical evidence production. A caller that skips the CLI preflight therefore still receives a deliberate `RuntimeError` rather than a raw `AttributeError` when pathname no-follow metadata is unavailable.
+
 `missingCapabilities` intentionally lists only capabilities that prevent every safe mode for that snapshot path. A usable `component-anchored` or `pathname-fallback` path reports an empty list. If pathname `lstat()` is unavailable, the list contains `pathnameLstat`. If component anchoring is unavailable and the host also cannot express an explicit no-follow hard link, the list contains `nofollowHardlink`. Missing no-follow `stat` by itself is not a fallback blocker, so a host may legitimately report `nofollowStat=false`, select `pathname-fallback`, and still have `missingCapabilities=[]`.
 
 ## Current fallback contract
