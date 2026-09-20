@@ -41,6 +41,12 @@ def nofollow_stat_supported() -> bool:
     return stat_fn in supports_follow_symlinks
 
 
+def lstat_supported() -> bool:
+    """Return whether pathname no-follow metadata reads are available."""
+
+    return callable(getattr(os, "lstat", None))
+
+
 def component_walk_supported() -> bool:
     open_fn = getattr(os, "open", None)
     mkdir_fn = getattr(os, "mkdir", None)
