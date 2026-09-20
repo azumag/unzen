@@ -16,12 +16,13 @@ from typing import Sequence
 
 from execution_snapshot_internal_paths import (
     component_walk_supported,
+    lstat_supported,
     nofollow_hardlink_supported,
     nofollow_stat_supported,
 )
 
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 MODE_COMPONENT_ANCHORED = "component-anchored"
 MODE_PATHNAME_FALLBACK = "pathname-fallback"
 MODE_UNSUPPORTED = "unsupported"
@@ -39,11 +40,13 @@ def _mode(*, anchored: bool, fallback: bool) -> str:
 def capability_report() -> dict[str, object]:
     """Return one snapshot of the execution-snapshot filesystem capabilities."""
 
-    anchored = component_walk_supported()
+    component_anchored = component_walk_supported()
     nofollow_link = nofollow_hardlink_supported()
     nofollow_stat = nofollow_stat_supported()
+    pathname_lstat = lstat_supported()
 
-    pathname_fallback = nofollow_link
+    anchored = component_anchored and pathname_lstat
+    pathname_fallback = nofollow_link and pathname_lstat
 
     source_mode = _mode(anchored=anchored, fallback=pathname_fallback)
     legacy_mode = _mode(anchored=anchored, fallback=pathname_fallback)
@@ -52,9 +55,10 @@ def capability_report() -> dict[str, object]:
     return {
         "schemaVersion": SCHEMA_VERSION,
         "capabilities": {
-            "componentAnchored": anchored,
+            "componentAnchored": component_anchored,
             "nofollowHardlink": nofollow_link,
             "nofollowStat": nofollow_stat,
+            "pathnameLstat": pathname_lstat,
         },
         "snapshotPaths": {
             "sourceModel": {
