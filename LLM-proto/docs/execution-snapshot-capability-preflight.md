@@ -8,19 +8,21 @@ Before downloading or opening a large model, run:
 python tools/check_execution_snapshot_capabilities.py --require all --pretty
 ```
 
-The command is dependency-neutral and only inspects Python/OS filesystem capabilities. Schema `1.1.0` emits a machine-readable JSON object containing:
+The command is dependency-neutral and only inspects Python/OS filesystem capabilities. Schema `1.2.0` emits a machine-readable JSON object containing:
 
 - `capabilities.componentAnchored`: whether the shared component-by-component `dir_fd`/`O_NOFOLLOW` primitives are available;
 - `capabilities.nofollowHardlink`: whether `os.link(..., follow_symlinks=False)` is available;
 - `capabilities.nofollowStat`: whether `os.stat(..., follow_symlinks=False)` is available for the stronger component-anchored mode;
 - `capabilities.pathnameLstat`: whether `os.lstat()` is available for the pathname identity reads required by every execution-snapshot mode;
-- `snapshotPaths.sourceModel`, `legacyTwoSegment`, and `generatedMultiSegment`: whether each execution-snapshot path is usable and which mode it would select.
+- `snapshotPaths.sourceModel`, `legacyTwoSegment`, and `generatedMultiSegment`: whether each execution-snapshot path is usable, which mode it would select, and `missingCapabilities`, the concrete capability blockers when the path is unsupported.
 
 `--require generated`, `--require source`, and `--require legacy` can gate one path. The default `--require all` succeeds only if all three paths are usable. A satisfied requirement exits with status `0`; an unsupported requirement still prints the report but exits with status `1`.
 
 Capability predicates treat missing required OS callables as unsupported rather than dereferencing them while probing. In particular, a reduced Python host without `os.link` cannot advertise no-follow hard-link or component-anchored support, and a host without `os.stat` cannot advertise no-follow stat or component-anchored support. The anchored predicate also rejects hosts missing the other operations it directly relies on (`os.open`, `os.mkdir`, `os.unlink`, `os.fstat`, or `os.close`). This keeps the preflight machine-readable and fail-closed instead of leaking `AttributeError` from capability detection.
 
 All current execution-snapshot implementations additionally capture workspace/source/artifact pathname identity with `lstat()`. Therefore `componentAnchored=true` describes the component-walk primitive only: a host with those primitives but without `pathnameLstat` is still reported `unsupported` for source-model, legacy two-segment, and generated multi-segment snapshots. Missing `os.lstat` never silently falls through to a symlink-following metadata read.
+
+`missingCapabilities` intentionally lists only capabilities that prevent every safe mode for that snapshot path. A usable `component-anchored` or `pathname-fallback` path reports an empty list. If pathname `lstat()` is unavailable, the list contains `pathnameLstat`. If component anchoring is unavailable and the host also cannot express an explicit no-follow hard link, the list contains `nofollowHardlink`. Missing no-follow `stat` by itself is not a fallback blocker, so a host may legitimately report `nofollowStat=false`, select `pathname-fallback`, and still have `missingCapabilities=[]`.
 
 ## Current fallback contract
 
