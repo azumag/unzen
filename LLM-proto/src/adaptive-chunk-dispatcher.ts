@@ -338,7 +338,13 @@ export class AdaptiveChunkDispatcher {
       const cacheHit = missingArtifacts !== undefined
         ? missingArtifacts.length === 0
         : this.allSegmentsResident(selected.worker, nextSegment, endSegment);
-      const coldLoad = !cacheHit && !selected.rollingConsecutive;
+      // Manifest-backed reports have an exact pre-assignment artifact snapshot.
+      // A rolling assignment can still be a cold artifact load when it must fetch
+      // one or more missing bundles, so do not let worker continuity hide that IO.
+      // Preserve the legacy no-ledger meaning for the prototype path.
+      const coldLoad = missingArtifacts !== undefined
+        ? missingArtifacts.length > 0
+        : !cacheHit && !selected.rollingConsecutive;
       const checkpointTransferMs = this.estimateCheckpointTransferMs(selected.worker.telemetry);
       const coordinatorConnectionUrl =
         `${this.coordinatorUrl}/adaptive/${validatedRequestId}/chunk/${nextSegment}`;
