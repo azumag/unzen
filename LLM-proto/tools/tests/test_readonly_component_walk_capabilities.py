@@ -59,6 +59,14 @@ class ReadonlyComponentWalkCapabilityTest(unittest.TestCase):
             )
         )
 
+    def test_missing_open_function_disables_component_walk(self) -> None:
+        with patch.object(readonly_component_walk.os, "open", None):
+            self.assertFalse(readonly_component_walk.component_walk_supported())
+
+    def test_missing_stat_function_disables_component_walk(self) -> None:
+        with patch.object(readonly_component_walk.os, "stat", None):
+            self.assertFalse(readonly_component_walk.component_walk_supported())
+
     def test_both_verifier_wrappers_delegate_to_shared_predicate(self) -> None:
         with patch.object(
             readonly_component_walk,
