@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
-import stat
 
 from prepare_real_split import _relative_artifact_path, prepare_real_split
 from source_file_snapshot import measure_regular_file
@@ -44,18 +42,6 @@ TIER_LIMITS = {
     "normal": NORMAL_MAX_BYTES,
     "absolute": ABSOLUTE_MAX_BYTES,
 }
-
-
-def _file_stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_mode,
-        metadata.st_nlink,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-    )
 
 
 def sha256_file(path: Path) -> str:
@@ -125,43 +111,15 @@ def _prepared_artifact_file(raw: str, output_dir: Path, *, field: str) -> Path:
 
 
 def _prepared_artifact_size(raw: str, output_dir: Path, *, field: str) -> int:
-    """Measure one contained artifact from the exact regular-file snapshot validated here."""
+    """Measure one contained artifact through the shared stable-file boundary."""
 
     resolved = _prepared_artifact_file(raw, output_dir, field=field)
-    try:
-        before = resolved.lstat()
-    except OSError as error:
-        raise RuntimeError(f"generated P0 {field} changed before measurement: {resolved}: {error}") from error
-    if not stat.S_ISREG(before.st_mode):
-        raise RuntimeError(f"generated P0 {field} must remain a regular file: {resolved}")
-    expected = _file_stat_signature(before)
-
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(resolved, flags)
-    except OSError as error:
-        raise RuntimeError(f"generated P0 {field} could not be opened safely: {resolved}: {error}") from error
-
-    try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            raise RuntimeError(f"generated P0 {field} must remain a regular file: {resolved}")
-        if _file_stat_signature(opened) != expected:
-            raise RuntimeError(
-                f"generated P0 {field} changed between containment check and open: {resolved}"
-            )
-        try:
-            after_path = resolved.lstat()
-        except OSError as error:
-            raise RuntimeError(
-                f"generated P0 {field} changed during measurement: {resolved}: {error}"
-            ) from error
-        if _file_stat_signature(after_path) != _file_stat_signature(opened):
-            raise RuntimeError(f"generated P0 {field} changed during measurement: {resolved}")
-        return opened.st_size
-    finally:
-        os.close(descriptor)
+    size, _ = measure_regular_file(
+        resolved,
+        hash_file=False,
+        label=f"generated P0 {field}",
+    )
+    return size
 
 
 def _artifact_bytes(segment: dict[str, object], output_dir: Path) -> int:

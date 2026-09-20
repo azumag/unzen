@@ -12,6 +12,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import prepare_browser_p0 as p0_module  # noqa: E402
+import source_file_snapshot as snapshot_module  # noqa: E402
 
 
 class BrowserP0ArtifactSizeSnapshotTest(unittest.TestCase):
@@ -80,7 +81,7 @@ class BrowserP0ArtifactSizeSnapshotTest(unittest.TestCase):
             source.write_bytes(b"original")
             replacement.write_bytes(b"replacement-is-larger")
             resolved = source.resolve()
-            real_open = p0_module.os.open
+            real_open = snapshot_module.os.open
             replaced = False
 
             def replace_then_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
@@ -93,8 +94,8 @@ class BrowserP0ArtifactSizeSnapshotTest(unittest.TestCase):
                 return real_open(path, flags, *args, **kwargs)
 
             segment = {"index": 0, "path": "segment0.onnx", "externalData": []}
-            with mock.patch.object(p0_module.os, "open", side_effect=replace_then_open):
-                with self.assertRaisesRegex(RuntimeError, "changed between containment check and open"):
+            with mock.patch.object(snapshot_module.os, "open", side_effect=replace_then_open):
+                with self.assertRaisesRegex(RuntimeError, "changed between path check and open"):
                     p0_module._artifact_bytes(segment, root)
             self.assertTrue(replaced)
 
@@ -105,7 +106,7 @@ class BrowserP0ArtifactSizeSnapshotTest(unittest.TestCase):
             source = root / "segment0.onnx"
             source.write_bytes(b"original")
             resolved = source.resolve()
-            real_open = p0_module.os.open
+            real_open = snapshot_module.os.open
             replaced = False
 
             def fifo_then_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
@@ -118,7 +119,7 @@ class BrowserP0ArtifactSizeSnapshotTest(unittest.TestCase):
                 return real_open(path, flags, *args, **kwargs)
 
             segment = {"index": 0, "path": "segment0.onnx", "externalData": []}
-            with mock.patch.object(p0_module.os, "open", side_effect=fifo_then_open):
+            with mock.patch.object(snapshot_module.os, "open", side_effect=fifo_then_open):
                 with self.assertRaisesRegex(RuntimeError, "must remain a regular file"):
                     p0_module._artifact_bytes(segment, root)
             self.assertTrue(replaced)
