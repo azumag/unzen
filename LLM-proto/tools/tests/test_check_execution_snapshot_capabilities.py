@@ -67,31 +67,24 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             )
         self.assertTrue(preflight.requirement_satisfied(report, "all"))
 
-    def test_generated_path_can_use_link_only_pathname_fallback(self) -> None:
+    def test_all_paths_can_use_link_only_pathname_fallback(self) -> None:
         report = self._report(
             anchored=False,
             nofollow_link=True,
             nofollow_stat=False,
         )
         paths = report["snapshotPaths"]
-        self.assertEqual(
-            paths["generatedMultiSegment"],
-            {"usable": True, "mode": preflight.MODE_PATHNAME_FALLBACK},
-        )
-        self.assertEqual(
-            paths["sourceModel"],
-            {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
-        )
-        self.assertEqual(
-            paths["legacyTwoSegment"],
-            {"usable": False, "mode": preflight.MODE_UNSUPPORTED},
-        )
+        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+            self.assertEqual(
+                paths[name],
+                {"usable": True, "mode": preflight.MODE_PATHNAME_FALLBACK},
+            )
         self.assertTrue(preflight.requirement_satisfied(report, "generated"))
-        self.assertFalse(preflight.requirement_satisfied(report, "source"))
-        self.assertFalse(preflight.requirement_satisfied(report, "legacy"))
-        self.assertFalse(preflight.requirement_satisfied(report, "all"))
+        self.assertTrue(preflight.requirement_satisfied(report, "source"))
+        self.assertTrue(preflight.requirement_satisfied(report, "legacy"))
+        self.assertTrue(preflight.requirement_satisfied(report, "all"))
 
-    def test_shared_pathname_fallback_requires_link_and_stat(self) -> None:
+    def test_pathname_fallback_with_nofollow_stat_remains_usable(self) -> None:
         report = self._report(
             anchored=False,
             nofollow_link=True,
@@ -133,14 +126,15 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 source_exit = preflight.main(["--require", "source", "--pretty"])
 
         self.assertEqual(generated_exit, 0)
-        self.assertEqual(source_exit, 1)
+        self.assertEqual(source_exit, 0)
         generated_report = json.loads(generated_output.getvalue())
         source_report = json.loads(source_output.getvalue())
         self.assertEqual(generated_report, source_report)
-        self.assertEqual(
-            generated_report["snapshotPaths"]["generatedMultiSegment"]["mode"],
-            preflight.MODE_PATHNAME_FALLBACK,
-        )
+        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+            self.assertEqual(
+                generated_report["snapshotPaths"][name]["mode"],
+                preflight.MODE_PATHNAME_FALLBACK,
+            )
 
     def test_unknown_requirement_is_rejected(self) -> None:
         report = self._report(

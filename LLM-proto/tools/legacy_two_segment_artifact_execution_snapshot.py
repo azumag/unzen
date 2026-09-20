@@ -43,7 +43,7 @@ SnapshotWorkspaceIdentity = tuple[int, int]
 
 def _regular_identity(path: Path, *, label: str) -> ArtifactIdentity:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(f"{label} changed after legacy artifact preflight: {path}") from error
     if not stat.S_ISREG(metadata.st_mode):
@@ -58,7 +58,7 @@ def _regular_identity(path: Path, *, label: str) -> ArtifactIdentity:
 
 def _preflight_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(f"{label} changed during legacy artifact preflight: {path}") from error
     if not stat.S_ISREG(metadata.st_mode):
@@ -116,7 +116,7 @@ def _assert_prelink_fingerprint(
 
 def _artifact_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(f"{label} changed during legacy split execution: {path}") from error
     if not stat.S_ISREG(metadata.st_mode):
@@ -134,7 +134,7 @@ def _artifact_fingerprint(path: Path, *, label: str) -> ArtifactFingerprint:
 
 def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(
             f"legacy artifact execution snapshot workspace changed before cleanup: {path}"

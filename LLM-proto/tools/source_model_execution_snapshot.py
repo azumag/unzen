@@ -322,7 +322,7 @@ def _assert_source_path_identity(
 ) -> None:
     try:
         observed_resolved = requested_path.resolve(strict=True)
-        metadata = os.stat(resolved_path, follow_symlinks=False)
+        metadata = os.lstat(resolved_path)
     except OSError as error:
         raise RuntimeError(f"{label} changed before reference execution: {requested_path}") from error
     if (
@@ -340,7 +340,7 @@ def _assert_source_link_identity(
     label: str,
 ) -> None:
     try:
-        metadata = os.stat(source_path, follow_symlinks=False)
+        metadata = os.lstat(source_path)
     except OSError as error:
         raise RuntimeError(
             f"{label} changed while execution snapshot was being pinned: {source_path}"
@@ -415,7 +415,7 @@ def _link_verified_snapshot_file(
                     follow_symlinks=False,
                 )
             else:
-                metadata = os.stat(destination, follow_symlinks=False)
+                metadata = os.lstat(destination)
             if (
                 not stat.S_ISREG(metadata.st_mode)
                 or (metadata.st_dev, metadata.st_ino) != expected_identity
@@ -436,7 +436,7 @@ def _link_verified_snapshot_file(
 
 def _source_execution_fingerprint(path: Path, *, label: str) -> SourceFingerprint:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(f"{label} changed during reference execution: {path}") from error
     if not stat.S_ISREG(metadata.st_mode):
@@ -486,7 +486,7 @@ def _assert_source_execution_fingerprints(
 
 def _snapshot_workspace_identity(path: Path) -> SnapshotWorkspaceIdentity:
     try:
-        metadata = os.stat(path, follow_symlinks=False)
+        metadata = os.lstat(path)
     except OSError as error:
         raise RuntimeError(
             f"source execution snapshot workspace changed before cleanup: {path}"
