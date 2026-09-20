@@ -20,6 +20,10 @@ from typing import Iterator, Sequence
 SnapshotWorkspaceIdentity = tuple[int, int]
 InternalParentIdentity = tuple[tuple[str, ...], int, int]
 
+MODE_COMPONENT_ANCHORED = "component-anchored"
+MODE_PATHNAME_FALLBACK = "pathname-fallback"
+MODE_UNSUPPORTED = "unsupported"
+
 
 def nofollow_hardlink_supported() -> bool:
     """Return whether ``os.link`` supports an explicit no-follow source contract."""
@@ -80,6 +84,51 @@ def component_walk_supported() -> bool:
         and unlink_fn in supports_dir_fd
         and nofollow_hardlink_supported()
         and nofollow_stat_supported()
+    )
+
+
+def execution_snapshot_mode(
+    *,
+    component_anchored: bool,
+    nofollow_hardlink: bool,
+    pathname_lstat: bool,
+) -> str:
+    """Select the strongest safe execution-snapshot path mode."""
+
+    if not pathname_lstat:
+        return MODE_UNSUPPORTED
+    if component_anchored:
+        return MODE_COMPONENT_ANCHORED
+    if nofollow_hardlink:
+        return MODE_PATHNAME_FALLBACK
+    return MODE_UNSUPPORTED
+
+
+def assert_execution_snapshot_runtime_supported(*, label: str) -> str:
+    """Fail closed before verification/workspace work on unsupported hosts.
+
+    The standalone capability preflight and every public execution-snapshot
+    runtime share ``execution_snapshot_mode`` so a direct runtime caller cannot
+    proceed farther than the CLI gate would permit.
+    """
+
+    pathname_lstat = lstat_supported()
+    component_anchored = component_walk_supported()
+    nofollow_hardlink = nofollow_hardlink_supported()
+    mode = execution_snapshot_mode(
+        component_anchored=component_anchored,
+        nofollow_hardlink=nofollow_hardlink,
+        pathname_lstat=pathname_lstat,
+    )
+    if mode != MODE_UNSUPPORTED:
+        return mode
+    if not pathname_lstat:
+        raise RuntimeError(
+            f"{label} requires os.lstat for no-follow pathname metadata"
+        )
+    raise RuntimeError(
+        f"{label} pathname fallback requires "
+        "os.link(..., follow_symlinks=False); refusing to use implicit symlink-follow semantics"
     )
 
 
