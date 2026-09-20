@@ -43,12 +43,11 @@ def capability_report() -> dict[str, object]:
     nofollow_link = nofollow_hardlink_supported()
     nofollow_stat = nofollow_stat_supported()
 
-    shared_fallback = nofollow_link and nofollow_stat
-    generated_fallback = nofollow_link
+    pathname_fallback = nofollow_link
 
-    source_mode = _mode(anchored=anchored, fallback=shared_fallback)
-    legacy_mode = _mode(anchored=anchored, fallback=shared_fallback)
-    generated_mode = _mode(anchored=anchored, fallback=generated_fallback)
+    source_mode = _mode(anchored=anchored, fallback=pathname_fallback)
+    legacy_mode = _mode(anchored=anchored, fallback=pathname_fallback)
+    generated_mode = _mode(anchored=anchored, fallback=pathname_fallback)
 
     return {
         "schemaVersion": SCHEMA_VERSION,
