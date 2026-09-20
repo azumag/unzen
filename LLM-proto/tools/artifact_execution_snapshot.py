@@ -19,6 +19,7 @@ import tempfile
 from typing import Iterator, Sequence
 
 import execution_snapshot_internal_paths as execution_snapshot_paths
+from execution_snapshot_manifest_write import assert_manifest_write_supported
 from verify_multi_segment_artifact_snapshot import (
     _identity,
     _verify_artifact_snapshot_stable,
@@ -372,6 +373,7 @@ def verified_artifact_execution_snapshot(
     execution_snapshot_paths.assert_execution_snapshot_runtime_supported(
         label=_ARTIFACT_SNAPSHOT_LABEL
     )
+    assert_manifest_write_supported(label=_ARTIFACT_SNAPSHOT_LABEL)
 
     manifest_path = manifest_path.expanduser().absolute()
     report, manifest_bytes, entries = _verify_execution_boundary(manifest_path)
