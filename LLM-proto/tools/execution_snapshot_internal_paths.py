@@ -49,14 +49,23 @@ def _directory_open_flags_supported() -> bool:
     )
 
 
+def _capability_contains(name: str, function: object) -> bool:
+    """Return membership in a Python ``os.supports_*`` capability container."""
+
+    capabilities = getattr(os, name, ())
+    try:
+        return function in capabilities
+    except TypeError:
+        return False
+
+
 def nofollow_hardlink_supported() -> bool:
     """Return whether ``os.link`` supports an explicit no-follow source contract."""
 
     link_fn = getattr(os, "link", None)
     if not callable(link_fn):
         return False
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    return link_fn in supports_follow_symlinks
+    return _capability_contains("supports_follow_symlinks", link_fn)
 
 
 def nofollow_stat_supported() -> bool:
@@ -65,8 +74,7 @@ def nofollow_stat_supported() -> bool:
     stat_fn = getattr(os, "stat", None)
     if not callable(stat_fn):
         return False
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    return stat_fn in supports_follow_symlinks
+    return _capability_contains("supports_follow_symlinks", stat_fn)
 
 
 def lstat_supported() -> bool:
@@ -101,16 +109,13 @@ def generation_bound_cleanup_supported() -> bool:
     if not _directory_open_flags_supported():
         return False
 
-    supports_dir_fd = getattr(os, "supports_dir_fd", set())
-    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
-    supports_fd = getattr(os, "supports_fd", set())
     return (
-        open_fn in supports_dir_fd
-        and stat_fn in supports_dir_fd
-        and unlink_fn in supports_dir_fd
-        and rmdir_fn in supports_dir_fd
-        and stat_fn in supports_follow_symlinks
-        and scandir_fn in supports_fd
+        _capability_contains("supports_dir_fd", open_fn)
+        and _capability_contains("supports_dir_fd", stat_fn)
+        and _capability_contains("supports_dir_fd", unlink_fn)
+        and _capability_contains("supports_dir_fd", rmdir_fn)
+        and _capability_contains("supports_follow_symlinks", stat_fn)
+        and _capability_contains("supports_fd", scandir_fn)
     )
 
 
@@ -138,13 +143,12 @@ def component_walk_supported() -> bool:
     if not _directory_open_flags_supported():
         return False
 
-    supports_dir_fd = getattr(os, "supports_dir_fd", set())
     return (
-        open_fn in supports_dir_fd
-        and mkdir_fn in supports_dir_fd
-        and link_fn in supports_dir_fd
-        and stat_fn in supports_dir_fd
-        and unlink_fn in supports_dir_fd
+        _capability_contains("supports_dir_fd", open_fn)
+        and _capability_contains("supports_dir_fd", mkdir_fn)
+        and _capability_contains("supports_dir_fd", link_fn)
+        and _capability_contains("supports_dir_fd", stat_fn)
+        and _capability_contains("supports_dir_fd", unlink_fn)
         and nofollow_hardlink_supported()
         and nofollow_stat_supported()
     )
