@@ -60,6 +60,32 @@ class SourceModelInternalParentSnapshotTest(unittest.TestCase):
 
             self.assertFalse(snapshot_root.exists())
 
+    def test_pathname_fallback_does_not_require_nofollow_stat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph, external, manifest = self._fixture(root)
+            real_stat = os.stat
+
+            def reject_pathname_nofollow_stat(path, *args, **kwargs):
+                if kwargs.get("follow_symlinks") is False and kwargs.get("dir_fd") is None:
+                    raise AssertionError("pathname fallback must use lstat metadata")
+                return real_stat(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(internal_paths, "component_walk_supported", return_value=False),
+                mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+                mock.patch.object(snapshot.os, "stat", side_effect=reject_pathname_nofollow_stat),
+            ):
+                with snapshot.verified_source_execution_snapshot(graph, manifest) as (
+                    _report,
+                    snapshot_graph,
+                ):
+                    snapshot_root = snapshot_graph.parent
+                    pinned_external = snapshot_root / "weights" / "shards" / external.name
+                    self.assertEqual(os.lstat(pinned_external).st_ino, os.lstat(external).st_ino)
+
+            self.assertFalse(snapshot_root.exists())
+
     @unittest.skipUnless(
         internal_paths.component_walk_supported(),
         "requires dir_fd/O_NOFOLLOW component walking",
