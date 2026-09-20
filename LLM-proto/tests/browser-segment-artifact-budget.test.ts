@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES as HARNESS_ABSOLUTE_MAX_BYTES,
+  BROWSER_SEGMENT_PREFERRED_MAX_BYTES as HARNESS_PREFERRED_MAX_BYTES,
+} from '../browser-harness/webgpu-2b-split/artifact-budget.js';
+import {
   BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES,
   BROWSER_SEGMENT_NORMAL_MAX_BYTES,
   BROWSER_SEGMENT_PREFERRED_MAX_BYTES,
@@ -13,6 +17,11 @@ describe('browser segment artifact budget', () => {
     expect(BROWSER_SEGMENT_TARGET_BYTES).toBe(200 * 1024 * 1024);
     expect(BROWSER_SEGMENT_PREFERRED_MAX_BYTES).toBe(256 * 1024 * 1024);
     expect(evaluateBrowserSegmentArtifactBytes(BROWSER_SEGMENT_TARGET_BYTES).tier).toBe('preferred');
+  });
+
+  it('keeps overlapping runtime and standalone browser-harness ceilings identical', () => {
+    expect(HARNESS_PREFERRED_MAX_BYTES).toBe(BROWSER_SEGMENT_PREFERRED_MAX_BYTES);
+    expect(HARNESS_ABSOLUTE_MAX_BYTES).toBe(BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES);
   });
 
   it('classifies larger shards without treating the 1 GiB hard limit as a normal target', () => {
