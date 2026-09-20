@@ -228,6 +228,68 @@ class SourceFileSnapshotTests(unittest.TestCase):
                     label="source model",
                 )
 
+    def test_malformed_required_open_flag_fails_before_open(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            path = Path(raw_dir) / "weights.bin"
+            path.write_bytes(b"payload")
+            with (
+                patch.object(target.os, "O_RDONLY", None),
+                patch.object(target.os, "open") as open_mock,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "external data open flag os.O_RDONLY must be an integer",
+                ):
+                    target.measure_regular_file(
+                        path,
+                        hash_file=True,
+                        label="external data",
+                    )
+            open_mock.assert_not_called()
+
+    def test_malformed_present_optional_open_flag_fails_before_open(self) -> None:
+        optional_name = next(
+            (name for name in target._OPTIONAL_READ_OPEN_FLAGS if hasattr(target.os, name)),
+            None,
+        )
+        if optional_name is None:
+            self.skipTest("no optional snapshot open flag is available on this host")
+
+        with tempfile.TemporaryDirectory() as raw_dir:
+            path = Path(raw_dir) / "weights.bin"
+            path.write_bytes(b"payload")
+            with (
+                patch.object(target.os, optional_name, None),
+                patch.object(target.os, "open") as open_mock,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    rf"external data open flag os\.{optional_name} must be an integer",
+                ):
+                    target.measure_regular_file(
+                        path,
+                        hash_file=True,
+                        label="external data",
+                    )
+            open_mock.assert_not_called()
+
+    def test_absent_optional_open_flag_remains_supported(self) -> None:
+        optional_name = next(
+            (name for name in target._OPTIONAL_READ_OPEN_FLAGS if hasattr(target.os, name)),
+            None,
+        )
+        if optional_name is None:
+            self.skipTest("no optional snapshot open flag is available on this host")
+
+        original = getattr(target.os, optional_name)
+        try:
+            delattr(target.os, optional_name)
+            flags = target._read_open_flags(label="source model")
+        finally:
+            setattr(target.os, optional_name, original)
+
+        self.assertIs(type(flags), int)
+
 
 if __name__ == "__main__":
     unittest.main()
