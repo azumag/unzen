@@ -90,6 +90,48 @@ class ExecutionSnapshotSharedCleanupTest(unittest.TestCase):
                 label="artifact execution snapshot",
             )
 
+    def test_source_workspace_identity_delegates_and_preserves_error_contract(self) -> None:
+        root = Path("source-snapshot")
+        with mock.patch.object(
+            source_snapshot,
+            "workspace_identity",
+            return_value=(11, 22),
+        ) as shared:
+            self.assertEqual(source_snapshot._snapshot_workspace_identity(root), (11, 22))
+        shared.assert_called_once_with(root, label="source execution snapshot")
+
+        with mock.patch.object(
+            source_snapshot,
+            "workspace_identity",
+            side_effect=RuntimeError("shared failure"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"source execution snapshot workspace changed before cleanup: source-snapshot$",
+            ):
+                source_snapshot._snapshot_workspace_identity(root)
+
+    def test_legacy_workspace_identity_delegates_and_preserves_error_contract(self) -> None:
+        root = Path("legacy-snapshot")
+        with mock.patch.object(
+            legacy_snapshot,
+            "workspace_identity",
+            return_value=(33, 44),
+        ) as shared:
+            self.assertEqual(legacy_snapshot._snapshot_workspace_identity(root), (33, 44))
+        shared.assert_called_once_with(root, label="legacy artifact execution snapshot")
+
+        with mock.patch.object(
+            legacy_snapshot,
+            "workspace_identity",
+            side_effect=RuntimeError("shared failure"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"legacy artifact execution snapshot workspace changed before cleanup: legacy-snapshot$",
+            ):
+                legacy_snapshot._snapshot_workspace_identity(root)
+
 
 if __name__ == "__main__":
     unittest.main()
