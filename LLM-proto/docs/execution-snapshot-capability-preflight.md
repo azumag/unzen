@@ -12,18 +12,18 @@ The command is dependency-neutral and only inspects Python/OS filesystem capabil
 
 - `capabilities.componentAnchored`: whether the shared component-by-component `dir_fd`/`O_NOFOLLOW` path is available;
 - `capabilities.nofollowHardlink`: whether `os.link(..., follow_symlinks=False)` is available;
-- `capabilities.nofollowStat`: whether `os.stat(..., follow_symlinks=False)` is available;
+- `capabilities.nofollowStat`: whether `os.stat(..., follow_symlinks=False)` is available for the stronger component-anchored mode;
 - `snapshotPaths.sourceModel`, `legacyTwoSegment`, and `generatedMultiSegment`: whether each execution-snapshot path is usable and which mode it would select.
 
 `--require generated`, `--require source`, and `--require legacy` can gate one path. The default `--require all` succeeds only if all three paths are usable. A satisfied requirement exits with status `0`; an unsupported requirement still prints the report but exits with status `1`.
 
 ## Current fallback contract
 
-When the component-anchored capability set is available, all execution-snapshot paths use `component-anchored` mode.
+When the component-anchored capability set is available, all execution-snapshot paths use `component-anchored` mode. That mode still requires the no-follow stat form because final-component metadata is checked relative to an opened parent directory descriptor.
 
-When it is unavailable, the shared source-model and legacy two-segment path currently requires both explicit no-follow hard links and explicit no-follow final-file stat operations. The generated multi-segment path already uses `lstat()` for pathname metadata, so its pathname fallback only requires an explicit no-follow hard link. The preflight reuses the same predicates as the runtime boundary and must be kept aligned if those contracts change.
+When component anchoring is unavailable, all three execution-snapshot implementations use `lstat()` for pathname-only workspace, parent, file-identity, and execution-fingerprint metadata. Their pathname fallback therefore requires only an explicit no-follow hard link. A host may report `nofollowStat=false` while source-model, legacy two-segment, and generated multi-segment snapshots all remain usable in `pathname-fallback` mode as long as `nofollowHardlink=true`.
 
-A host without the required capabilities is reported as `unsupported`; the tool does not silently downgrade to default-follow filesystem operations.
+A host without explicit no-follow hard-link support is reported as `unsupported`; the tool does not silently downgrade to default-follow filesystem operations. The preflight reuses the same predicates as the runtime boundary and must be kept aligned if those contracts change.
 
 ## Evidence boundary
 
