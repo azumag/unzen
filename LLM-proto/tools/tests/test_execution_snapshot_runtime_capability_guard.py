@@ -112,6 +112,34 @@ class ExecutionSnapshotRuntimeCapabilityGuardTest(unittest.TestCase):
         verify_boundary.assert_not_called()
         mkdtemp.assert_not_called()
 
+    def test_generated_runtime_rejects_missing_manifest_write_before_verification_or_workspace(self) -> None:
+        with (
+            mock.patch.object(internal_paths, "lstat_supported", return_value=True),
+            mock.patch.object(internal_paths, "component_walk_supported", return_value=False),
+            mock.patch.object(internal_paths, "nofollow_hardlink_supported", return_value=True),
+            mock.patch.object(
+                artifact_snapshot,
+                "assert_manifest_write_supported",
+                side_effect=RuntimeError(
+                    "artifact execution snapshot requires manifest write capability"
+                ),
+            ) as manifest_guard,
+            mock.patch.object(artifact_snapshot, "_verify_execution_boundary") as verify_boundary,
+            mock.patch.object(artifact_snapshot.tempfile, "mkdtemp") as mkdtemp,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "artifact execution snapshot requires manifest write capability",
+            ):
+                with artifact_snapshot.verified_artifact_execution_snapshot(
+                    Path("split-manifest.json")
+                ):
+                    self.fail("unsupported runtime must not yield")
+
+        manifest_guard.assert_called_once_with(label="artifact execution snapshot")
+        verify_boundary.assert_not_called()
+        mkdtemp.assert_not_called()
+
     def test_runtime_guard_allows_anchored_and_safe_fallback_modes(self) -> None:
         with (
             mock.patch.object(internal_paths, "lstat_supported", return_value=True),
