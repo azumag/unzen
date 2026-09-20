@@ -24,6 +24,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         nofollow_link: bool,
         nofollow_stat: bool,
         pathname_lstat: bool = True,
+        manifest_write: bool = True,
     ) -> dict[str, object]:
         with (
             mock.patch.object(
@@ -46,6 +47,11 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 "lstat_supported",
                 return_value=pathname_lstat,
             ),
+            mock.patch.object(
+                preflight,
+                "manifest_write_supported",
+                return_value=manifest_write,
+            ),
         ):
             return preflight.capability_report()
 
@@ -56,7 +62,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             nofollow_stat=True,
         )
         self.assertEqual(report["schemaVersion"], preflight.SCHEMA_VERSION)
-        self.assertEqual(preflight.SCHEMA_VERSION, "1.2.0")
+        self.assertEqual(preflight.SCHEMA_VERSION, "1.3.0")
         self.assertEqual(
             report["capabilities"],
             {
@@ -64,6 +70,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 "nofollowHardlink": True,
                 "nofollowStat": True,
                 "pathnameLstat": True,
+                "snapshotManifestWrite": True,
             },
         )
         paths = report["snapshotPaths"]
@@ -99,6 +106,37 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
         self.assertTrue(preflight.requirement_satisfied(report, "source"))
         self.assertTrue(preflight.requirement_satisfied(report, "legacy"))
         self.assertTrue(preflight.requirement_satisfied(report, "all"))
+
+    def test_missing_manifest_write_blocks_only_generated_snapshot(self) -> None:
+        report = self._report(
+            anchored=False,
+            nofollow_link=True,
+            nofollow_stat=False,
+            manifest_write=False,
+        )
+        self.assertFalse(report["capabilities"]["snapshotManifestWrite"])
+        paths = report["snapshotPaths"]
+        for name in ("sourceModel", "legacyTwoSegment"):
+            self.assertEqual(
+                paths[name],
+                {
+                    "usable": True,
+                    "mode": preflight.MODE_PATHNAME_FALLBACK,
+                    "missingCapabilities": [],
+                },
+            )
+        self.assertEqual(
+            paths["generatedMultiSegment"],
+            {
+                "usable": False,
+                "mode": preflight.MODE_UNSUPPORTED,
+                "missingCapabilities": ["snapshotManifestWrite"],
+            },
+        )
+        self.assertFalse(preflight.requirement_satisfied(report, "generated"))
+        self.assertTrue(preflight.requirement_satisfied(report, "source"))
+        self.assertTrue(preflight.requirement_satisfied(report, "legacy"))
+        self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
     def test_pathname_fallback_with_nofollow_stat_remains_usable(self) -> None:
         report = self._report(
@@ -150,6 +188,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 "nofollowHardlink": True,
                 "nofollowStat": True,
                 "pathnameLstat": False,
+                "snapshotManifestWrite": True,
             },
         )
         paths = report["snapshotPaths"]
@@ -164,19 +203,24 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             )
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
-    def test_host_without_lstat_or_fallback_hardlinks_reports_both_blockers(self) -> None:
+    def test_generated_path_reports_shared_and_manifest_write_blockers(self) -> None:
         report = self._report(
             anchored=False,
             nofollow_link=False,
             nofollow_stat=False,
             pathname_lstat=False,
+            manifest_write=False,
         )
         paths = report["snapshotPaths"]
-        for name in ("sourceModel", "legacyTwoSegment", "generatedMultiSegment"):
+        for name in ("sourceModel", "legacyTwoSegment"):
             self.assertEqual(
                 paths[name]["missingCapabilities"],
                 ["pathnameLstat", "nofollowHardlink"],
             )
+        self.assertEqual(
+            paths["generatedMultiSegment"]["missingCapabilities"],
+            ["pathnameLstat", "nofollowHardlink", "snapshotManifestWrite"],
+        )
         self.assertFalse(preflight.requirement_satisfied(report, "all"))
 
     def test_cli_emits_json_and_gates_requested_path(self) -> None:
@@ -185,6 +229,7 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
             mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_stat_supported", return_value=False),
             mock.patch.object(preflight, "lstat_supported", return_value=True),
+            mock.patch.object(preflight, "manifest_write_supported", return_value=True),
         ):
             generated_output = StringIO()
             with redirect_stdout(generated_output):
@@ -208,12 +253,36 @@ class ExecutionSnapshotCapabilityPreflightTest(unittest.TestCase):
                 },
             )
 
+    def test_cli_missing_manifest_write_rejects_generated_but_not_source(self) -> None:
+        with (
+            mock.patch.object(preflight, "component_walk_supported", return_value=False),
+            mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
+            mock.patch.object(preflight, "nofollow_stat_supported", return_value=False),
+            mock.patch.object(preflight, "lstat_supported", return_value=True),
+            mock.patch.object(preflight, "manifest_write_supported", return_value=False),
+        ):
+            generated_output = StringIO()
+            with redirect_stdout(generated_output):
+                generated_exit = preflight.main(["--require", "generated"])
+            source_output = StringIO()
+            with redirect_stdout(source_output):
+                source_exit = preflight.main(["--require", "source"])
+
+        self.assertEqual(generated_exit, 1)
+        self.assertEqual(source_exit, 0)
+        report = json.loads(generated_output.getvalue())
+        self.assertEqual(
+            report["snapshotPaths"]["generatedMultiSegment"]["missingCapabilities"],
+            ["snapshotManifestWrite"],
+        )
+
     def test_cli_missing_lstat_emits_json_and_exits_nonzero(self) -> None:
         with (
             mock.patch.object(preflight, "component_walk_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_hardlink_supported", return_value=True),
             mock.patch.object(preflight, "nofollow_stat_supported", return_value=True),
             mock.patch.object(preflight, "lstat_supported", return_value=False),
+            mock.patch.object(preflight, "manifest_write_supported", return_value=True),
         ):
             output = StringIO()
             with redirect_stdout(output):
