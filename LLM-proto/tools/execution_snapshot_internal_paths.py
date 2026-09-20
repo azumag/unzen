@@ -25,6 +25,29 @@ MODE_COMPONENT_ANCHORED = "component-anchored"
 MODE_PATHNAME_FALLBACK = "pathname-fallback"
 MODE_UNSUPPORTED = "unsupported"
 
+_REQUIRED_DIRECTORY_OPEN_FLAGS = ("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW")
+_OPTIONAL_DIRECTORY_OPEN_FLAGS = ("O_CLOEXEC",)
+_MISSING = object()
+
+
+def _integer_flag(name: str, *, required: bool) -> bool:
+    raw = getattr(os, name, _MISSING)
+    if raw is _MISSING:
+        return not required
+    return type(raw) is int
+
+
+def _directory_open_flags_supported() -> bool:
+    if not all(
+        _integer_flag(name, required=True)
+        for name in _REQUIRED_DIRECTORY_OPEN_FLAGS
+    ):
+        return False
+    return all(
+        _integer_flag(name, required=False)
+        for name in _OPTIONAL_DIRECTORY_OPEN_FLAGS
+    )
+
 
 def nofollow_hardlink_supported() -> bool:
     """Return whether ``os.link`` supports an explicit no-follow source contract."""
@@ -75,14 +98,14 @@ def generation_bound_cleanup_supported() -> bool:
         )
     ):
         return False
+    if not _directory_open_flags_supported():
+        return False
 
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
     supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     supports_fd = getattr(os, "supports_fd", set())
     return (
-        hasattr(os, "O_DIRECTORY")
-        and hasattr(os, "O_NOFOLLOW")
-        and open_fn in supports_dir_fd
+        open_fn in supports_dir_fd
         and stat_fn in supports_dir_fd
         and unlink_fn in supports_dir_fd
         and rmdir_fn in supports_dir_fd
@@ -112,12 +135,12 @@ def component_walk_supported() -> bool:
         )
     ):
         return False
+    if not _directory_open_flags_supported():
+        return False
 
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
     return (
-        hasattr(os, "O_DIRECTORY")
-        and hasattr(os, "O_NOFOLLOW")
-        and open_fn in supports_dir_fd
+        open_fn in supports_dir_fd
         and mkdir_fn in supports_dir_fd
         and link_fn in supports_dir_fd
         and stat_fn in supports_dir_fd
