@@ -323,7 +323,7 @@ describe('validateEvidenceEnvelope', () => {
     expect(result.status).toBe('valid');
     expect(verifierSha256).toBe(ARTIFACT_SHA256);
     expect(verifierContent).toBeInstanceOf(Uint8Array);
-    expect(verifierContent).not.toBe(hostile);
+    expect(verifierContent === hostile).toBe(false);
     expect(Object.getPrototypeOf(verifierContent)).toBe(Uint8Array.prototype);
     expect(new TextDecoder().decode(verifierContent as Uint8Array)).toBe(ARTIFACT_CONTENT);
     expect(hooks).toEqual({
