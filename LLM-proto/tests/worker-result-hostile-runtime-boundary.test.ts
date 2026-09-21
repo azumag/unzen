@@ -13,15 +13,31 @@ function registerWorker(pool: WorkerPool, id: string, vramMB = 4096): void {
   pool.register({ workerId: workerId(id), tier: WorkerTier.TIER_3, vramMB });
 }
 
+function makePromiseSafeRevokedRoot(): object {
+  const revoked = Proxy.revocable({ requestId: 'unused' }, {});
+  revoked.revoke();
+
+  // Native Promise resolution probes a fulfilled object for `then` before the
+  // pipeline can inspect it. A directly revoked Proxy would therefore fail in
+  // Promise assimilation instead of exercising the result-envelope boundary.
+  // The outer Proxy makes that probe safe while Array.isArray() still unwraps
+  // into the revoked target and throws inside the boundary we intend to test.
+  return new Proxy(revoked.proxy, {
+    get(_target, property) {
+      if (property === 'then') return undefined;
+      return Reflect.get(_target, property);
+    },
+  });
+}
+
 describe('worker-result hostile runtime boundary', () => {
   it('Pipeline rejects a revoked result root through its stable result-envelope diagnostic', async () => {
     const workerPool = new WorkerPool();
     const checkpointStore = new CheckpointStore();
     registerWorker(workerPool, 'revoked-segment');
-    const revoked = Proxy.revocable({ requestId: 'unused' }, {});
-    revoked.revoke();
+    const revokedRoot = makePromiseSafeRevokedRoot();
     const executor: SegmentExecutor = {
-      execute: async () => revoked.proxy as unknown as SegmentResult,
+      execute: async () => revokedRoot as unknown as SegmentResult,
     };
     const pipeline = new Pipeline(
       makeSegments(1),
@@ -41,10 +57,9 @@ describe('worker-result hostile runtime boundary', () => {
     const workerPool = new WorkerPool();
     const checkpointStore = new CheckpointStore();
     registerWorker(workerPool, 'revoked-span', 4200);
-    const revoked = Proxy.revocable({ requestId: 'unused' }, {});
-    revoked.revoke();
+    const revokedRoot = makePromiseSafeRevokedRoot();
     const executor: SpanExecutor = {
-      execute: async () => revoked.proxy as unknown as SpanResult,
+      execute: async () => revokedRoot as unknown as SpanResult,
     };
     const pipeline = new SpanPipeline(
       makeSegments(2),
@@ -89,7 +104,7 @@ describe('worker-result hostile runtime boundary', () => {
       FAST_OPTIONS,
     );
 
-    await expect(pipeline.run(makeRequest(1, 0, 'lazy-segment-request')))
+    await expect(pipeline.run(makeRequest(1, 0, 'lazy-segment-request'))
       .rejects.toThrow('final segment 0 must not produce a checkpoint');
     expect(nestedReads).toBe(0);
     expect(workerPool.get(workerId('lazy-segment'))?.status).toBe(WorkerStatus.DISCONNECTED);
@@ -125,7 +140,7 @@ describe('worker-result hostile runtime boundary', () => {
       FAST_OPTIONS,
     );
 
-    await expect(pipeline.run(makeRequest(2, 0, 'lazy-span-request')))
+    await expect(pipeline.run(makeRequest(2, 0, 'lazy-span-request'))
       .rejects.toThrow('final span 0..1 must not produce a checkpoint');
     expect(nestedReads).toBe(0);
     expect(workerPool.get(workerId('lazy-span'))?.status).toBe(WorkerStatus.DISCONNECTED);
