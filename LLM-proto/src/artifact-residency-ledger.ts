@@ -10,10 +10,11 @@
 
 import { evaluateBrowserSegmentArtifact } from './browser-segment-artifact-budget.js';
 import { assertValidModelManifest } from './model-manifest-validator.js';
-import type {
-  SegmentArtifact,
-  SegmentArtifactComponent,
-  SegmentedModelManifest,
+import {
+  canonicalSegmentArtifactBundleFields,
+  type SegmentArtifact,
+  type SegmentArtifactComponent,
+  type SegmentedModelManifest,
 } from './model-manifest.js';
 import { workerId, type SegmentConfig, type WorkerId } from './types.js';
 
@@ -672,6 +673,11 @@ function cloneAndValidateComponents(
       artifactLocator,
     });
   });
+
+  // Re-run the canonical bundle grammar only on the owned copies. This aligns
+  // direct-constructor path safety with manifest validation without re-reading
+  // caller-controlled component accessors or iterators.
+  canonicalSegmentArtifactBundleFields(copied);
 
   if (graphCount !== 1) {
     throw new Error(
