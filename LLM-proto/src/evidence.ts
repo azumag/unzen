@@ -104,6 +104,12 @@ type CapturedIndependentEvidenceVerification = {
   reason: unknown;
 };
 
+type EvidenceValidationPolicySnapshot = {
+  nowMs: number;
+  supportedSchemaVersions: readonly string[];
+  trustedVerifiers: readonly TrustedEvidenceVerifier[];
+};
+
 export interface TrustedEvidenceVerifier {
   name: string;
   version?: string;
@@ -228,6 +234,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   options: EvidenceValidationOptions = {},
 ): Promise<EvidenceValidationResult<TPayload>> {
   const issues: EvidenceValidationIssue[] = [];
+  const policy = snapshotValidationPolicy(options);
   if (!isRecord(input)) {
     issue(issues, 'invalid-envelope', '$', 'evidence envelope must be an object');
     return result<TPayload>('invalid', issues);
@@ -237,8 +244,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   const readiness = isReadinessStatus(input.readinessStatus)
     ? input.readinessStatus
     : undefined;
-  const nowMs = resolveNow(options.now);
-  const capturedAtMs = validateBase(input, issues, nowMs);
+  const capturedAtMs = validateBase(input, issues, policy.nowMs);
 
   if (!level) {
     issue(issues, 'invalid-evidence-level', '$.evidenceLevel', 'invalid evidence level');
@@ -247,8 +253,10 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     issue(issues, 'invalid-readiness-status', '$.readinessStatus', 'invalid readiness status');
   }
 
-  const supported = options.supportedSchemaVersions ?? [EVIDENCE_SCHEMA_VERSION];
-  if (typeof input.schemaVersion === 'string' && !supported.includes(input.schemaVersion)) {
+  if (
+    typeof input.schemaVersion === 'string'
+    && !policy.supportedSchemaVersions.includes(input.schemaVersion)
+  ) {
     issue(
       issues,
       'unsupported-schema-version',
@@ -271,7 +279,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   }
 
   if (level === 'captured-and-verified') {
-    validateCaptured(input, issues, nowMs, capturedAtMs, options.trustedVerifiers ?? []);
+    validateCaptured(input, issues, policy.nowMs, capturedAtMs, policy.trustedVerifiers);
   }
 
   if (issues.length > 0) {
@@ -635,6 +643,81 @@ function isTrustedVerifier(
   );
 }
 
+function snapshotValidationPolicy(
+  options: EvidenceValidationOptions,
+): EvidenceValidationPolicySnapshot {
+  let now: EvidenceValidationOptions['now'];
+  try {
+    now = options.now;
+  } catch {
+    now = undefined;
+  }
+
+  let supportedSchemaVersions: EvidenceValidationOptions['supportedSchemaVersions'];
+  try {
+    supportedSchemaVersions = options.supportedSchemaVersions;
+  } catch {
+    supportedSchemaVersions = [];
+  }
+
+  let trustedVerifiers: EvidenceValidationOptions['trustedVerifiers'];
+  try {
+    trustedVerifiers = options.trustedVerifiers;
+  } catch {
+    trustedVerifiers = [];
+  }
+
+  return {
+    nowMs: resolveNowSafely(now),
+    supportedSchemaVersions: snapshotSupportedSchemaVersions(supportedSchemaVersions),
+    trustedVerifiers: snapshotTrustedVerifiers(trustedVerifiers),
+  };
+}
+
+function snapshotSupportedSchemaVersions(
+  supported: readonly string[] | undefined,
+): readonly string[] {
+  if (supported === undefined) return [EVIDENCE_SCHEMA_VERSION];
+  try {
+    if (!Array.isArray(supported)) return [];
+    const length = supported.length;
+    if (!Number.isSafeInteger(length) || length < 0) return [];
+    const snapshot: string[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const version = supported[index];
+      if (typeof version !== 'string') return [];
+      snapshot.push(version);
+    }
+    return snapshot;
+  } catch {
+    return [];
+  }
+}
+
+function snapshotTrustedVerifiers(
+  trusted: readonly TrustedEvidenceVerifier[] | undefined,
+): readonly TrustedEvidenceVerifier[] {
+  if (trusted === undefined) return [];
+  try {
+    if (!Array.isArray(trusted)) return [];
+    const length = trusted.length;
+    if (!Number.isSafeInteger(length) || length < 0) return [];
+    const snapshot: TrustedEvidenceVerifier[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const entry = trusted[index] as unknown;
+      if (!isRecord(entry)) return [];
+      const name = entry.name;
+      const version = entry.version;
+      if (!isNonEmptyString(name)) return [];
+      if (version !== undefined && !isNonEmptyString(version)) return [];
+      snapshot.push(version === undefined ? { name } : { name, version });
+    }
+    return snapshot;
+  } catch {
+    return [];
+  }
+}
+
 function isEvidenceLevel(value: unknown): value is EvidenceLevel {
   return typeof value === 'string' && EVIDENCE_LEVELS.includes(value as EvidenceLevel);
 }
@@ -667,6 +750,14 @@ function resolveNow(value: EvidenceValidationOptions['now']): number {
     if (!Number.isNaN(parsed)) return parsed;
   }
   return Date.now();
+}
+
+function resolveNowSafely(value: EvidenceValidationOptions['now']): number {
+  try {
+    return resolveNow(value);
+  } catch {
+    return Date.now();
+  }
 }
 
 function normalizeSha256(value: string): string {
