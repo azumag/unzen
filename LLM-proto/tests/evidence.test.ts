@@ -225,6 +225,157 @@ describe('validateEvidenceEnvelope', () => {
     expect(evidenceSupportsReadiness(result)).toBe(false);
   });
 
+  it('fails closed when the artifact loader returns a Proxy-wrapped Uint8Array', async () => {
+    const proxied = new Proxy(new TextEncoder().encode(ARTIFACT_CONTENT), {});
+    let verifierCalled = false;
+
+    const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
+      ...verificationOptions,
+      loadArtifact: async () => proxied as unknown as Uint8Array,
+      verifyArtifact: async () => {
+        verifierCalled = true;
+        return {
+          verifier: 'unzen-ci-evidence-verifier',
+          version: '1.0.0',
+          verifiedAt: '2026-07-10T13:05:00.000Z',
+          result: 'pass' as const,
+        };
+      },
+    });
+
+    expect(result.status).toBe('not-evaluated');
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'artifact-load-failed',
+      }),
+    );
+    expect(verifierCalled).toBe(false);
+  });
+
+  it('copies hostile Uint8Array subclasses without invoking caller-defined byte hooks', async () => {
+    class HostileBytes extends Uint8Array {}
+
+    const hooks = {
+      byteLength: 0,
+      buffer: 0,
+      byteOffset: 0,
+      slice: 0,
+      iterator: 0,
+      constructor: 0,
+    };
+    const hostile = new HostileBytes(new TextEncoder().encode(ARTIFACT_CONTENT));
+    Object.defineProperties(hostile, {
+      byteLength: {
+        get() {
+          hooks.byteLength += 1;
+          throw new Error('byteLength hook must not run');
+        },
+      },
+      buffer: {
+        get() {
+          hooks.buffer += 1;
+          throw new Error('buffer hook must not run');
+        },
+      },
+      byteOffset: {
+        get() {
+          hooks.byteOffset += 1;
+          throw new Error('byteOffset hook must not run');
+        },
+      },
+      slice: {
+        value() {
+          hooks.slice += 1;
+          throw new Error('slice hook must not run');
+        },
+      },
+      constructor: {
+        get() {
+          hooks.constructor += 1;
+          throw new Error('constructor hook must not run');
+        },
+      },
+    });
+    Object.defineProperty(hostile, Symbol.iterator, {
+      value() {
+        hooks.iterator += 1;
+        throw new Error('iterator hook must not run');
+      },
+    });
+
+    const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
+      ...verificationOptions,
+      loadArtifact: async () => hostile,
+      verifyArtifact: async ({ artifactContent, actualSha256 }) => {
+        expect(actualSha256).toBe(ARTIFACT_SHA256);
+        expect(artifactContent).toBeInstanceOf(Uint8Array);
+        expect(artifactContent).not.toBe(hostile);
+        expect(Object.getPrototypeOf(artifactContent)).toBe(Uint8Array.prototype);
+        expect(new TextDecoder().decode(artifactContent as Uint8Array)).toBe(ARTIFACT_CONTENT);
+        return {
+          verifier: 'unzen-ci-evidence-verifier',
+          version: '1.0.0',
+          verifiedAt: '2026-07-10T13:05:00.000Z',
+          result: 'pass' as const,
+        };
+      },
+    });
+
+    expect(result.status).toBe('valid');
+    expect(hooks).toEqual({
+      byteLength: 0,
+      buffer: 0,
+      byteOffset: 0,
+      slice: 0,
+      iterator: 0,
+      constructor: 0,
+    });
+  });
+
+  it('passes the same owned ArrayBuffer snapshot bytes to digest and independent verification', async () => {
+    const sourceBytes = new TextEncoder().encode(ARTIFACT_CONTENT);
+    const sourceBuffer = sourceBytes.buffer.slice(
+      sourceBytes.byteOffset,
+      sourceBytes.byteOffset + sourceBytes.byteLength,
+    ) as ArrayBuffer;
+
+    const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
+      ...verificationOptions,
+      loadArtifact: async () => sourceBuffer,
+      verifyArtifact: async ({ artifactContent, actualSha256 }) => {
+        new Uint8Array(sourceBuffer).fill(0);
+        expect(actualSha256).toBe(ARTIFACT_SHA256);
+        expect(artifactContent).toBeInstanceOf(Uint8Array);
+        expect(new TextDecoder().decode(artifactContent as Uint8Array)).toBe(ARTIFACT_CONTENT);
+        return {
+          verifier: 'unzen-ci-evidence-verifier',
+          version: '1.0.0',
+          verifiedAt: '2026-07-10T13:05:00.000Z',
+          result: 'pass' as const,
+        };
+      },
+    });
+
+    expect(result.status).toBe('valid');
+  });
+
+  it('fails closed when the artifact loader returns detached bytes', async () => {
+    const detached = new TextEncoder().encode(ARTIFACT_CONTENT);
+    structuredClone(detached.buffer, { transfer: [detached.buffer] });
+
+    const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
+      ...verificationOptions,
+      loadArtifact: async () => detached,
+    });
+
+    expect(result.status).toBe('not-evaluated');
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'artifact-load-failed',
+      }),
+    );
+  });
+
   it('rejects expired captured evidence', async () => {
     const result = await validateEvidenceEnvelope(
       createVerifiedEnvelope({
