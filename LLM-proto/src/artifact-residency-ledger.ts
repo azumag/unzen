@@ -42,20 +42,14 @@ export class ArtifactResidencyLedger {
   private readonly measuredTotalArtifactBytes: number;
 
   constructor(artifacts: readonly SegmentArtifact[]) {
-    if (!Array.isArray(artifacts)) {
-      throw new Error('ArtifactResidencyLedger artifacts must be an array');
-    }
-    const artifactCount = artifacts.length;
-    if (artifactCount === 0) {
+    const capturedArtifacts = captureArrayByNumericIndex(artifacts, {
+      nonArray: 'ArtifactResidencyLedger artifacts must be an array',
+      unreadableLength: 'ArtifactResidencyLedger artifacts length could not be read',
+      unreadableElement: (position) =>
+        `ArtifactResidencyLedger artifact at position ${position} could not be read`,
+    });
+    if (capturedArtifacts.length === 0) {
       throw new Error('ArtifactResidencyLedger requires at least one segment artifact');
-    }
-
-    // Fix caller-owned top-level membership before any artifact field accessor
-    // runs. An early artifact getter must not be able to replace/remove a later
-    // array slot during the same validation pass.
-    const capturedArtifacts: unknown[] = [];
-    for (let position = 0; position < artifactCount; position++) {
-      capturedArtifacts.push((artifacts as readonly unknown[])[position]);
     }
 
     // Validate before sorting. Runtime callers can cross the TypeScript boundary
@@ -127,18 +121,11 @@ export class ArtifactResidencyLedger {
    * was hand-written inconsistently with this artifact inventory.
    */
   assertCompatibleSegments(segments: readonly SegmentConfig[]): void {
-    if (!Array.isArray(segments)) {
-      throw new Error('segment configs must be an array');
-    }
-
-    // Fix caller-owned top-level membership before any segment field accessor
-    // runs. This mirrors the constructor boundary and prevents an early getter
-    // from swapping a later config before it is validated.
-    const segmentConfigCount = segments.length;
-    const capturedSegments: unknown[] = [];
-    for (let position = 0; position < segmentConfigCount; position++) {
-      capturedSegments.push((segments as readonly unknown[])[position]);
-    }
+    const capturedSegments = captureArrayByNumericIndex(segments, {
+      nonArray: 'segment configs must be an array',
+      unreadableLength: 'segment configs length could not be read',
+      unreadableElement: (position) => `segment config at position ${position} could not be read`,
+    });
 
     // This method is a public trust boundary too: callers can bypass the
     // SpanRouter/AdaptiveChunkDispatcher validators with asserted or decoded
@@ -194,18 +181,12 @@ export class ArtifactResidencyLedger {
     worker: WorkerId,
     segmentIndexes: readonly number[],
   ): WorkerArtifactResidencySnapshot {
-    if (!Array.isArray(segmentIndexes)) {
-      throw new Error('worker segmentIndexes must be an array');
-    }
-
-    // Heartbeat/cache inventory is a runtime boundary. Fix membership before
-    // reading any element so a caller-owned array cannot shrink while it is
-    // being validated, and avoid a caller-overridden Symbol.iterator entirely.
-    const segmentIndexCount = segmentIndexes.length;
-    const capturedIndexes: unknown[] = [];
-    for (let position = 0; position < segmentIndexCount; position++) {
-      capturedIndexes.push((segmentIndexes as readonly unknown[])[position]);
-    }
+    const capturedIndexes = captureArrayByNumericIndex(segmentIndexes, {
+      nonArray: 'worker segmentIndexes must be an array',
+      unreadableLength: 'worker segmentIndexes length could not be read',
+      unreadableElement: (position) =>
+        `worker segment index at position ${position} could not be read`,
+    });
 
     const next = new Set<number>();
     for (let position = 0; position < capturedIndexes.length; position++) {
@@ -696,6 +677,52 @@ function cloneAndValidateComponents(
     );
   }
   return Object.freeze(copied);
+}
+
+interface ArrayCaptureDiagnostics {
+  readonly nonArray: string;
+  readonly unreadableLength: string;
+  readonly unreadableElement: (position: number) => string;
+}
+
+/**
+ * Capture caller-owned arrays without invoking their iterator. Every operation
+ * that can execute proxy code is bounded so revoked proxies and throwing traps
+ * become ledger-owned diagnostics instead of escaping native/caller errors.
+ */
+function captureArrayByNumericIndex(
+  input: unknown,
+  diagnostics: ArrayCaptureDiagnostics,
+): unknown[] {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(input);
+  } catch {
+    throw new Error(diagnostics.nonArray);
+  }
+  if (!isArray) {
+    throw new Error(diagnostics.nonArray);
+  }
+
+  let length: unknown;
+  try {
+    length = (input as readonly unknown[]).length;
+  } catch {
+    throw new Error(diagnostics.unreadableLength);
+  }
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) {
+    throw new Error(diagnostics.unreadableLength);
+  }
+
+  const captured: unknown[] = [];
+  for (let position = 0; position < length; position++) {
+    try {
+      captured.push((input as readonly unknown[])[position]);
+    } catch {
+      throw new Error(diagnostics.unreadableElement(position));
+    }
+  }
+  return captured;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
