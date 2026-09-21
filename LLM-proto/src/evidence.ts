@@ -120,6 +120,19 @@ type CapturedEvidenceClaimSnapshot = {
   verificationResult: unknown;
 };
 
+type EvidenceMetadataSnapshot = {
+  producer: Record<string, unknown> | undefined;
+  producerName: unknown;
+  producerVersion: unknown;
+  environment: Record<string, unknown> | undefined;
+  environmentRuntime: unknown;
+  environmentRuntimeVersion: unknown;
+  environmentExecutionSurface: unknown;
+  redaction: Record<string, unknown> | undefined;
+  redactionApplied: unknown;
+  redactionPolicyVersion: unknown;
+};
+
 export interface TrustedEvidenceVerifier {
   name: string;
   version?: string;
@@ -255,7 +268,8 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   const readinessStatus = input.readinessStatus;
   const level = isEvidenceLevel(evidenceLevel) ? evidenceLevel : undefined;
   const readiness = isReadinessStatus(readinessStatus) ? readinessStatus : undefined;
-  const capturedAtMs = validateBase(input, issues, policy.nowMs, schemaVersion);
+  const metadata = snapshotEvidenceMetadata(input);
+  const capturedAtMs = validateBase(input, metadata, issues, policy.nowMs, schemaVersion);
 
   if (!level) {
     issue(issues, 'invalid-evidence-level', '$.evidenceLevel', 'invalid evidence level');
@@ -293,6 +307,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   if (level === 'captured-and-verified') {
     capturedClaims = validateCaptured(
       input,
+      metadata,
       issues,
       policy.nowMs,
       capturedAtMs,
@@ -445,6 +460,7 @@ export function evidenceSupportsReadiness(
 
 function validateBase(
   input: Record<string, unknown>,
+  metadata: EvidenceMetadataSnapshot,
   issues: EvidenceValidationIssue[],
   nowMs: number,
   schemaVersion: unknown,
@@ -464,27 +480,48 @@ function validateBase(
     issue(issues, 'future-captured-at', '$.capturedAt', 'capturedAt exceeds clock skew');
   }
 
-  validateNamedVersion(input.producer, '$.producer', issues);
-  if (!isRecord(input.environment)) {
+  if (!metadata.producer) {
+    issue(issues, 'invalid-envelope', '$.producer', '$.producer must be an object');
+  } else {
+    requiredStringValue(metadata.producerName, 'name', '$.producer.name', issues);
+    requiredStringValue(metadata.producerVersion, 'version', '$.producer.version', issues);
+  }
+
+  if (!metadata.environment) {
     issue(issues, 'invalid-envelope', '$.environment', 'environment must be an object');
   } else {
-    requiredString(input.environment, 'runtime', '$.environment.runtime', issues);
-    requiredString(input.environment, 'runtimeVersion', '$.environment.runtimeVersion', issues);
-    requiredString(
-      input.environment,
+    requiredStringValue(
+      metadata.environmentRuntime,
+      'runtime',
+      '$.environment.runtime',
+      issues,
+    );
+    requiredStringValue(
+      metadata.environmentRuntimeVersion,
+      'runtimeVersion',
+      '$.environment.runtimeVersion',
+      issues,
+    );
+    requiredStringValue(
+      metadata.environmentExecutionSurface,
       'executionSurface',
       '$.environment.executionSurface',
       issues,
     );
   }
 
-  if (!isRecord(input.redaction)) {
+  if (!metadata.redaction) {
     issue(issues, 'invalid-envelope', '$.redaction', 'redaction must be an object');
   } else {
-    if (typeof input.redaction.applied !== 'boolean') {
+    if (typeof metadata.redactionApplied !== 'boolean') {
       issue(issues, 'invalid-envelope', '$.redaction.applied', 'applied must be boolean');
     }
-    requiredString(input.redaction, 'policyVersion', '$.redaction.policyVersion', issues);
+    requiredStringValue(
+      metadata.redactionPolicyVersion,
+      'policyVersion',
+      '$.redaction.policyVersion',
+      issues,
+    );
   }
 
   if (!Object.prototype.hasOwnProperty.call(input, 'payload')) {
@@ -495,12 +532,16 @@ function validateBase(
 
 function validateCaptured(
   input: Record<string, unknown>,
+  metadata: EvidenceMetadataSnapshot,
   issues: EvidenceValidationIssue[],
   nowMs: number,
   capturedAtMs: number | undefined,
   trustedVerifiers: readonly TrustedEvidenceVerifier[],
 ): CapturedEvidenceClaimSnapshot {
-  if (!isRecord(input.producer) || !isNonEmptyString(input.producer.commitSha)) {
+  const producerCommitSha = metadata.producer
+    ? readPropertySafely(metadata.producer, 'commitSha')
+    : undefined;
+  if (!isNonEmptyString(producerCommitSha)) {
     issue(
       issues,
       'missing-producer-commit-sha',
@@ -509,37 +550,54 @@ function validateCaptured(
     );
   }
 
-  if (!isRecord(input.environment) || !isNamedVersion(input.environment.os)) {
+  const environmentOs = metadata.environment
+    ? snapshotNamedVersion(readPropertySafely(metadata.environment, 'os'))
+    : undefined;
+  if (!environmentOs) {
     issue(
       issues,
       'missing-environment-metadata',
       '$.environment.os',
       'OS name and version are required',
     );
-  } else if (
-    isBrowserSurface(input.environment.executionSurface) &&
-    !isNamedVersion(input.environment.browser)
-  ) {
-    issue(
-      issues,
-      'missing-browser-metadata',
-      '$.environment.browser',
-      'browser name and version are required',
-    );
+  } else if (isBrowserSurface(metadata.environmentExecutionSurface)) {
+    const environmentBrowser = metadata.environment
+      ? snapshotNamedVersion(readPropertySafely(metadata.environment, 'browser'))
+      : undefined;
+    if (!environmentBrowser) {
+      issue(
+        issues,
+        'missing-browser-metadata',
+        '$.environment.browser',
+        'browser name and version are required',
+      );
+    }
   }
 
-  if (
-    !isRecord(input.scenario) ||
-    !isNonEmptyString(input.scenario.feature) ||
-    !isNonEmptyString(input.scenario.scenario) ||
-    !isNonEmptyString(input.scenario.expectedResult)
-  ) {
+  const scenario = readRecordPropertySafely(input, 'scenario');
+  if (!scenario) {
     issue(
       issues,
       'missing-scenario-metadata',
       '$.scenario',
       'feature, scenario, and expectedResult are required',
     );
+  } else {
+    const scenarioFeature = readPropertySafely(scenario, 'feature');
+    const scenarioName = readPropertySafely(scenario, 'scenario');
+    const scenarioExpectedResult = readPropertySafely(scenario, 'expectedResult');
+    if (
+      !isNonEmptyString(scenarioFeature) ||
+      !isNonEmptyString(scenarioName) ||
+      !isNonEmptyString(scenarioExpectedResult)
+    ) {
+      issue(
+        issues,
+        'missing-scenario-metadata',
+        '$.scenario',
+        'feature, scenario, and expectedResult are required',
+      );
+    }
   }
 
   let artifactLocator: unknown;
@@ -721,6 +779,54 @@ function isTrustedVerifier(
   );
 }
 
+function snapshotEvidenceMetadata(input: Record<string, unknown>): EvidenceMetadataSnapshot {
+  const producer = readRecordPropertySafely(input, 'producer');
+  const environment = readRecordPropertySafely(input, 'environment');
+  const redaction = readRecordPropertySafely(input, 'redaction');
+  return {
+    producer,
+    producerName: producer ? readPropertySafely(producer, 'name') : undefined,
+    producerVersion: producer ? readPropertySafely(producer, 'version') : undefined,
+    environment,
+    environmentRuntime: environment ? readPropertySafely(environment, 'runtime') : undefined,
+    environmentRuntimeVersion: environment
+      ? readPropertySafely(environment, 'runtimeVersion')
+      : undefined,
+    environmentExecutionSurface: environment
+      ? readPropertySafely(environment, 'executionSurface')
+      : undefined,
+    redaction,
+    redactionApplied: redaction ? readPropertySafely(redaction, 'applied') : undefined,
+    redactionPolicyVersion: redaction
+      ? readPropertySafely(redaction, 'policyVersion')
+      : undefined,
+  };
+}
+
+function readRecordPropertySafely(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = readPropertySafely(record, key);
+  return isRecord(value) ? value : undefined;
+}
+
+function readPropertySafely(record: Record<string, unknown>, key: string): unknown {
+  try {
+    return record[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function snapshotNamedVersion(value: unknown): { name: string; version: string } | undefined {
+  if (!isRecord(value)) return undefined;
+  const name = readPropertySafely(value, 'name');
+  const version = readPropertySafely(value, 'version');
+  if (!isNonEmptyString(name) || !isNonEmptyString(version)) return undefined;
+  return { name, version };
+}
+
 function snapshotValidationPolicy(
   options: EvidenceValidationOptions,
 ): EvidenceValidationPolicySnapshot {
@@ -805,7 +911,11 @@ function isReadinessStatus(value: unknown): value is ReadinessStatus {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  try {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function isNonEmptyString(value: unknown): value is string {
