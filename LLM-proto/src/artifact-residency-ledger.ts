@@ -374,46 +374,51 @@ function cloneAndValidateSegmentConfig(input: unknown, arrayIndex: number): Segm
     throw new Error(`segment config ${arrayIndex} must be an object`);
   }
 
-  const index = input.index;
+  const indexDiagnostic = `segment config ${arrayIndex} index must be a non-negative safe integer`;
+  const index = readRecordField(input, 'index', indexDiagnostic);
   if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) {
-    throw new Error(`segment config ${arrayIndex} index must be a non-negative safe integer`);
+    throw new Error(indexDiagnostic);
   }
 
-  const layerStart = input.layerStart;
+  const layerStartDiagnostic =
+    `segment config ${arrayIndex} layerStart must be a non-negative safe integer`;
+  const layerStart = readRecordField(input, 'layerStart', layerStartDiagnostic);
   if (
     typeof layerStart !== 'number' ||
     !Number.isSafeInteger(layerStart) ||
     layerStart < 0
   ) {
-    throw new Error(`segment config ${arrayIndex} layerStart must be a non-negative safe integer`);
+    throw new Error(layerStartDiagnostic);
   }
 
-  const layerEnd = input.layerEnd;
+  const layerEndDiagnostic =
+    `segment config ${arrayIndex} layerEnd must be a safe integer ` +
+    `greater than or equal to layerStart`;
+  const layerEnd = readRecordField(input, 'layerEnd', layerEndDiagnostic);
   if (
     typeof layerEnd !== 'number' ||
     !Number.isSafeInteger(layerEnd) ||
     layerEnd < layerStart
   ) {
-    throw new Error(
-      `segment config ${arrayIndex} layerEnd must be a safe integer ` +
-      `greater than or equal to layerStart`,
-    );
+    throw new Error(layerEndDiagnostic);
   }
 
-  const modelWeightHash = input.modelWeightHash;
+  const modelWeightHashDiagnostic =
+    `segment config ${arrayIndex} modelWeightHash must be a non-empty string`;
+  const modelWeightHash = readRecordField(input, 'modelWeightHash', modelWeightHashDiagnostic);
   if (typeof modelWeightHash !== 'string' || modelWeightHash.trim().length === 0) {
-    throw new Error(`segment config ${arrayIndex} modelWeightHash must be a non-empty string`);
+    throw new Error(modelWeightHashDiagnostic);
   }
 
-  const estimatedVramMB = input.estimatedVramMB;
+  const estimatedVramDiagnostic =
+    `segment config ${arrayIndex} estimatedVramMB must be a positive finite number`;
+  const estimatedVramMB = readRecordField(input, 'estimatedVramMB', estimatedVramDiagnostic);
   if (
     typeof estimatedVramMB !== 'number' ||
     !Number.isFinite(estimatedVramMB) ||
     estimatedVramMB <= 0
   ) {
-    throw new Error(
-      `segment config ${arrayIndex} estimatedVramMB must be a positive finite number`,
-    );
+    throw new Error(estimatedVramDiagnostic);
   }
 
   return Object.freeze({
@@ -433,115 +438,144 @@ function cloneAndValidateArtifact(input: unknown, arrayIndex: number): SegmentAr
   // Capture each field only when validation reaches it. This keeps the existing
   // fail-fast ordering while binding validation and the stored artifact to the
   // exact same caller-observed values.
-  const index = input.index;
+  const indexDiagnostic = `segment artifact ${arrayIndex} index must be a non-negative safe integer`;
+  const index = readRecordField(input, 'index', indexDiagnostic);
   if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) {
-    throw new Error(`segment artifact ${arrayIndex} index must be a non-negative safe integer`);
+    throw new Error(indexDiagnostic);
   }
 
-  const layerStart = input.layerStart;
+  const layerStartDiagnostic = `segment ${index} layerStart must be a non-negative safe integer`;
+  const layerStart = readRecordField(input, 'layerStart', layerStartDiagnostic);
   if (
     typeof layerStart !== 'number' ||
     !Number.isSafeInteger(layerStart) ||
     layerStart < 0
   ) {
-    throw new Error(`segment ${index} layerStart must be a non-negative safe integer`);
+    throw new Error(layerStartDiagnostic);
   }
 
-  const layerEnd = input.layerEnd;
+  const layerEndDiagnostic =
+    `segment ${index} layerEnd must be a safe integer greater than or equal to layerStart`;
+  const layerEnd = readRecordField(input, 'layerEnd', layerEndDiagnostic);
   if (
     typeof layerEnd !== 'number' ||
     !Number.isSafeInteger(layerEnd) ||
     layerEnd < layerStart
   ) {
-    throw new Error(
-      `segment ${index} layerEnd must be a safe integer greater than or equal to layerStart`,
-    );
+    throw new Error(layerEndDiagnostic);
   }
 
-  const byteSize = input.byteSize;
+  const byteSizeDiagnostic = `segment ${index} byteSize must be a safe positive integer`;
+  const byteSize = readRecordField(input, 'byteSize', byteSizeDiagnostic);
   if (typeof byteSize !== 'number' || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
-    throw new Error(`segment ${index} byteSize must be a safe positive integer`);
+    throw new Error(byteSizeDiagnostic);
   }
 
-  const sha256 = input.sha256;
+  const sha256Diagnostic =
+    `segment ${index} sha256 must be exactly 64 lowercase hexadecimal characters`;
+  const sha256 = readRecordField(input, 'sha256', sha256Diagnostic);
   if (typeof sha256 !== 'string' || !SHA256_HEX_PATTERN.test(sha256)) {
-    throw new Error(
-      `segment ${index} sha256 must be exactly 64 lowercase hexadecimal characters`,
-    );
+    throw new Error(sha256Diagnostic);
   }
 
-  const contentType = input.contentType;
+  const contentTypeDiagnostic = `segment ${index} contentType must be non-empty`;
+  const contentType = readRecordField(input, 'contentType', contentTypeDiagnostic);
   if (typeof contentType !== 'string' || contentType.trim().length === 0) {
-    throw new Error(`segment ${index} contentType must be non-empty`);
+    throw new Error(contentTypeDiagnostic);
   }
 
-  const encoding = input.encoding;
+  const encodingDiagnostic = `segment ${index} encoding must be a string when present`;
+  const encoding = readRecordField(input, 'encoding', encodingDiagnostic);
   if (encoding !== undefined && typeof encoding !== 'string') {
-    throw new Error(`segment ${index} encoding must be a string when present`);
+    throw new Error(encodingDiagnostic);
   }
 
-  const artifactLocator = input.artifactLocator;
+  const artifactLocatorDiagnostic = `segment ${index} artifactLocator must be non-empty`;
+  const artifactLocator = readRecordField(input, 'artifactLocator', artifactLocatorDiagnostic);
   if (typeof artifactLocator !== 'string' || artifactLocator.trim().length === 0) {
-    throw new Error(`segment ${index} artifactLocator must be non-empty`);
+    throw new Error(artifactLocatorDiagnostic);
   }
 
-  const componentsInput = input.components;
-  if (componentsInput !== undefined && !Array.isArray(componentsInput)) {
-    throw new Error(`segment ${index} components must be an array when present`);
+  const componentsDiagnostic = `segment ${index} components must be an array when present`;
+  const componentsInput = readRecordField(input, 'components', componentsDiagnostic);
+  let capturedComponents: unknown[] | undefined;
+  if (componentsInput !== undefined) {
+    capturedComponents = captureArrayByNumericIndex(componentsInput, {
+      nonArray: componentsDiagnostic,
+      unreadableLength: componentsDiagnostic,
+      unreadableElement: (componentIndex) =>
+        `segment ${index} component ${componentIndex} must be an object`,
+    });
   }
 
-  const estimatedMemoryMB = input.estimatedMemoryMB;
+  const estimatedMemoryDiagnostic =
+    `segment ${index} estimatedMemoryMB must be a positive finite number`;
+  const estimatedMemoryMB = readRecordField(input, 'estimatedMemoryMB', estimatedMemoryDiagnostic);
   if (
     typeof estimatedMemoryMB !== 'number' ||
     !Number.isFinite(estimatedMemoryMB) ||
     estimatedMemoryMB <= 0
   ) {
-    throw new Error(`segment ${index} estimatedMemoryMB must be a positive finite number`);
+    throw new Error(estimatedMemoryDiagnostic);
   }
 
-  const memoryBasis = input.memoryBasis;
+  const memoryBasisDiagnostic =
+    `segment ${index} memoryBasis must be measured, budgeted, or estimated`;
+  const memoryBasis = readRecordField(input, 'memoryBasis', memoryBasisDiagnostic);
   if (typeof memoryBasis !== 'string' || !MEMORY_BASIS_VALUES.has(memoryBasis)) {
-    throw new Error(
-      `segment ${index} memoryBasis must be measured, budgeted, or estimated`,
-    );
+    throw new Error(memoryBasisDiagnostic);
   }
 
-  const measurementConditions = input.measurementConditions;
+  const measurementConditionsDiagnostic =
+    `segment ${index} measurementConditions must be a string when present`;
+  const measurementConditions = readRecordField(
+    input,
+    'measurementConditions',
+    measurementConditionsDiagnostic,
+  );
   if (measurementConditions !== undefined && typeof measurementConditions !== 'string') {
-    throw new Error(`segment ${index} measurementConditions must be a string when present`);
+    throw new Error(measurementConditionsDiagnostic);
   }
 
-  const compatibleRuntimesInput = input.compatibleRuntimes;
-  if (!Array.isArray(compatibleRuntimesInput)) {
-    throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
-  }
-  const compatibleRuntimeCount = compatibleRuntimesInput.length;
-  if (compatibleRuntimeCount === 0) {
-    throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
-  }
-  const compatibleRuntimeValues: unknown[] = [];
-  for (let runtimeIndex = 0; runtimeIndex < compatibleRuntimeCount; runtimeIndex++) {
-    compatibleRuntimeValues.push(compatibleRuntimesInput[runtimeIndex]);
-  }
-  if (!compatibleRuntimeValues.every(
-    (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
-  )) {
-    throw new Error(`segment ${index} compatibleRuntimes must be a non-empty string array`);
+  const compatibleRuntimesDiagnostic =
+    `segment ${index} compatibleRuntimes must be a non-empty string array`;
+  const compatibleRuntimesInput = readRecordField(
+    input,
+    'compatibleRuntimes',
+    compatibleRuntimesDiagnostic,
+  );
+  const compatibleRuntimeValues = captureArrayByNumericIndex(compatibleRuntimesInput, {
+    nonArray: compatibleRuntimesDiagnostic,
+    unreadableLength: compatibleRuntimesDiagnostic,
+    unreadableElement: () => compatibleRuntimesDiagnostic,
+  });
+  if (
+    compatibleRuntimeValues.length === 0 ||
+    !compatibleRuntimeValues.every(
+      (runtime) => typeof runtime === 'string' && runtime.trim().length > 0,
+    )
+  ) {
+    throw new Error(compatibleRuntimesDiagnostic);
   }
   const compatibleRuntimes = Object.freeze(compatibleRuntimeValues as string[]);
 
-  const minimumRuntimeVersion = input.minimumRuntimeVersion;
+  const minimumRuntimeVersionDiagnostic = `segment ${index} minimumRuntimeVersion must be non-empty`;
+  const minimumRuntimeVersion = readRecordField(
+    input,
+    'minimumRuntimeVersion',
+    minimumRuntimeVersionDiagnostic,
+  );
   if (typeof minimumRuntimeVersion !== 'string' || minimumRuntimeVersion.trim().length === 0) {
-    throw new Error(`segment ${index} minimumRuntimeVersion must be non-empty`);
+    throw new Error(minimumRuntimeVersionDiagnostic);
   }
 
   const components = cloneAndValidateComponents({
     index,
     byteSize,
     artifactLocator,
-    ...(componentsInput === undefined
+    ...(capturedComponents === undefined
       ? {}
-      : { components: componentsInput as readonly SegmentArtifactComponent[] }),
+      : { components: capturedComponents as readonly SegmentArtifactComponent[] }),
   } as SegmentArtifact);
 
   return Object.freeze({
@@ -575,9 +609,9 @@ function cloneAndValidateComponents(
     throw new Error(`segment ${artifact.index} component bundle must not be empty`);
   }
 
-  // Fix the original component positions before invoking any component field
-  // accessor. A getter that truncates the caller-owned array cannot make a
-  // later position disappear silently from validation.
+  // The caller-owned component array was captured before this function is
+  // reached. Fix these owned positions before invoking component field accessors
+  // so an early component cannot affect which later record is validated.
   const componentInputs: unknown[] = [];
   for (let componentIndex = 0; componentIndex < componentCount; componentIndex++) {
     componentInputs.push(componentsInput[componentIndex]);
@@ -592,53 +626,62 @@ function cloneAndValidateComponents(
       throw new Error(`segment ${artifact.index} component ${componentIndex} must be an object`);
     }
 
-    const role = componentInput.role;
+    const roleDiagnostic =
+      `segment ${artifact.index} component ${componentIndex} role must be graph or external-data`;
+    const role = readRecordField(componentInput, 'role', roleDiagnostic);
     if (typeof role !== 'string' || !COMPONENT_ROLES.has(role)) {
-      throw new Error(
-        `segment ${artifact.index} component ${componentIndex} role must be graph or external-data`,
-      );
+      throw new Error(roleDiagnostic);
     }
 
-    const path = componentInput.path;
+    const pathDiagnostic =
+      `segment ${artifact.index} component ${componentIndex} path must be non-empty`;
+    const path = readRecordField(componentInput, 'path', pathDiagnostic);
     if (typeof path !== 'string' || path.trim().length === 0) {
-      throw new Error(`segment ${artifact.index} component ${componentIndex} path must be non-empty`);
+      throw new Error(pathDiagnostic);
     }
     if (componentPaths.has(path)) {
       throw new Error(`segment ${artifact.index} component path ${path} must be unique`);
     }
     componentPaths.add(path);
 
-    const byteSize = componentInput.byteSize;
+    const byteSizeDiagnostic =
+      `segment ${artifact.index} component ${componentIndex} byteSize must be a safe positive integer`;
+    const byteSize = readRecordField(componentInput, 'byteSize', byteSizeDiagnostic);
     if (typeof byteSize !== 'number' || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
-      throw new Error(
-        `segment ${artifact.index} component ${componentIndex} byteSize must be a safe positive integer`,
-      );
+      throw new Error(byteSizeDiagnostic);
     }
 
-    const sha256 = componentInput.sha256;
+    const sha256Diagnostic =
+      `segment ${artifact.index} component ${componentIndex} sha256 must be exactly 64 lowercase hexadecimal characters`;
+    const sha256 = readRecordField(componentInput, 'sha256', sha256Diagnostic);
     if (typeof sha256 !== 'string' || !SHA256_HEX_PATTERN.test(sha256)) {
-      throw new Error(
-        `segment ${artifact.index} component ${componentIndex} sha256 must be exactly 64 lowercase hexadecimal characters`,
-      );
+      throw new Error(sha256Diagnostic);
     }
 
-    const contentType = componentInput.contentType;
+    const contentTypeDiagnostic =
+      `segment ${artifact.index} component ${componentIndex} contentType must be non-empty`;
+    const contentType = readRecordField(componentInput, 'contentType', contentTypeDiagnostic);
     if (typeof contentType !== 'string' || contentType.trim().length === 0) {
-      throw new Error(
-        `segment ${artifact.index} component ${componentIndex} contentType must be non-empty`,
-      );
+      throw new Error(contentTypeDiagnostic);
     }
 
-    const artifactLocator = componentInput.artifactLocator;
-    if (typeof artifactLocator !== 'string' || artifactLocator.trim().length === 0) {
-      throw new Error(
-        `segment ${artifact.index} component ${componentIndex} artifactLocator must be non-empty`,
-      );
+    const artifactLocatorDiagnostic =
+      `segment ${artifact.index} component ${componentIndex} artifactLocator must be non-empty`;
+    const componentArtifactLocator = readRecordField(
+      componentInput,
+      'artifactLocator',
+      artifactLocatorDiagnostic,
+    );
+    if (
+      typeof componentArtifactLocator !== 'string' ||
+      componentArtifactLocator.trim().length === 0
+    ) {
+      throw new Error(artifactLocatorDiagnostic);
     }
 
     if (role === 'graph') {
       graphCount++;
-      graphLocator = artifactLocator;
+      graphLocator = componentArtifactLocator;
     }
     componentBytes += byteSize;
     if (!Number.isSafeInteger(componentBytes)) {
@@ -651,7 +694,7 @@ function cloneAndValidateComponents(
       byteSize,
       sha256,
       contentType,
-      artifactLocator,
+      artifactLocator: componentArtifactLocator,
     });
   });
 
@@ -725,6 +768,30 @@ function captureArrayByNumericIndex(
   return captured;
 }
 
+/**
+ * Read one caller-owned record property without allowing accessor failures or
+ * hostile thrown values to escape into the ledger. The value is returned as-is
+ * and is never inspected until the caller validates its primitive/shape.
+ */
+function readRecordField(
+  record: Record<string, unknown>,
+  field: string,
+  diagnostic: string,
+): unknown {
+  try {
+    return record[field];
+  } catch {
+    throw new Error(diagnostic);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
