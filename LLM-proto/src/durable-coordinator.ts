@@ -32,6 +32,20 @@ export type {
   SuppressionRecord,
 } from './durable-coordinator-core.js';
 
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_ARRAY_BUFFER_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'buffer',
+)?.get;
+const TYPED_ARRAY_BYTE_OFFSET_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteOffset',
+)?.get;
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteLength',
+)?.get;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
   try {
@@ -469,6 +483,34 @@ function malformedCheckpointPayload(): ExecutionResult['checkpoint'] {
   return { payload: undefined } as unknown as CheckpointEnvelope;
 }
 
+/**
+ * Convert a genuine Uint8Array (including subclasses) into a plain view over
+ * the same backing bytes without copying them. Intrinsic typed-array getters
+ * bypass caller-defined `buffer`/`byteOffset`/`byteLength` accessors, and live
+ * Proxy-wrapped typed arrays are rejected because `ArrayBuffer.isView()` does
+ * not treat the Proxy as a genuine ArrayBuffer view.
+ */
+function stableCheckpointPayloadView(value: unknown): Uint8Array | undefined {
+  if (
+    !ArrayBuffer.isView(value)
+    || !(value instanceof Uint8Array)
+    || !TYPED_ARRAY_BUFFER_GETTER
+    || !TYPED_ARRAY_BYTE_OFFSET_GETTER
+    || !TYPED_ARRAY_BYTE_LENGTH_GETTER
+  ) {
+    return undefined;
+  }
+
+  try {
+    const buffer = Reflect.apply(TYPED_ARRAY_BUFFER_GETTER, value, []) as ArrayBufferLike;
+    const byteOffset = Reflect.apply(TYPED_ARRAY_BYTE_OFFSET_GETTER, value, []) as number;
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []) as number;
+    return new Uint8Array(buffer, byteOffset, byteLength);
+  } catch {
+    return undefined;
+  }
+}
+
 function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkpoint'] {
   // Preserve the core's malformed-container and payload-first safety gates,
   // while bounding Array.isArray/Proxy traps at this public wrapper boundary.
@@ -492,25 +534,16 @@ function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkp
     return malformedCheckpointPayload();
   }
 
-  let payloadIsUint8Array: boolean;
-  try {
-    // `instanceof` alone accepts a live Proxy around a Uint8Array even though
-    // that Proxy lacks typed-array internal slots and would later throw when
-    // the core reads `.byteLength`. `ArrayBuffer.isView()` rejects that shape
-    // while continuing to accept genuine Uint8Array subclasses.
-    payloadIsUint8Array = ArrayBuffer.isView(payloadValue) && payloadValue instanceof Uint8Array;
-  } catch {
-    return malformedCheckpointPayload();
-  }
-  if (!payloadIsUint8Array) {
+  const payload = stableCheckpointPayloadView(payloadValue);
+  if (payload === undefined) {
     return { payload: payloadValue } as unknown as CheckpointEnvelope;
   }
 
   // Do not copy executor-owned checkpoint bytes here. The core owns the
   // configured byte ceiling, so it must reject an oversized payload before any
-  // ownership allocation. This reference remains synchronous only: the core
-  // snapshots it before crossing the async digest boundary.
-  const payload = payloadValue as Uint8Array;
+  // ownership allocation. The stable view above shares the original backing
+  // bytes; the core still performs the first byte copy synchronously after the
+  // size gate and before crossing the async digest boundary.
 
   // The legacy core spread retained only own-enumerable metadata fields. Read
   // only those declared names, once each, without enumerating unknown caller
