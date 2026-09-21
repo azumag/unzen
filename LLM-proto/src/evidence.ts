@@ -110,6 +110,16 @@ type EvidenceValidationPolicySnapshot = {
   trustedVerifiers: readonly TrustedEvidenceVerifier[];
 };
 
+type CapturedEvidenceClaimSnapshot = {
+  artifactLocator: unknown;
+  artifactSha256: unknown;
+  artifactExpiresAt: unknown;
+  verificationVerifier: unknown;
+  verificationVersion: unknown;
+  verificationVerifiedAt: unknown;
+  verificationResult: unknown;
+};
+
 export interface TrustedEvidenceVerifier {
   name: string;
   version?: string;
@@ -279,8 +289,15 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     );
   }
 
+  let capturedClaims: CapturedEvidenceClaimSnapshot | undefined;
   if (level === 'captured-and-verified') {
-    validateCaptured(input, issues, policy.nowMs, capturedAtMs, policy.trustedVerifiers);
+    capturedClaims = validateCaptured(
+      input,
+      issues,
+      policy.nowMs,
+      capturedAtMs,
+      policy.trustedVerifiers,
+    );
   }
 
   if (issues.length > 0) {
@@ -301,11 +318,12 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   }
 
   const captured = envelope as CapturedAndVerifiedEvidenceEnvelope<TPayload>;
-  const expectedSha256 = normalizeSha256(captured.artifact.sha256);
+  const claims = capturedClaims as CapturedEvidenceClaimSnapshot;
+  const expectedSha256 = normalizeSha256(claims.artifactSha256 as string);
   const expectedVerification = {
-    verifier: captured.verification.verifier,
-    version: captured.verification.version,
-    verifiedAt: captured.verification.verifiedAt,
+    verifier: claims.verificationVerifier as string,
+    version: claims.verificationVersion as string,
+    verifiedAt: claims.verificationVerifiedAt as string,
   } as const;
   const loadArtifact = options.loadArtifact;
 
@@ -325,7 +343,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
 
   let artifactContent: CanonicalArtifactContent;
   try {
-    const loadedArtifact = await loadArtifact(captured.artifact.locator);
+    const loadedArtifact = await loadArtifact(claims.artifactLocator as string);
     artifactContent = snapshotArtifactContent(loadedArtifact);
   } catch (error) {
     issue(
@@ -481,7 +499,7 @@ function validateCaptured(
   nowMs: number,
   capturedAtMs: number | undefined,
   trustedVerifiers: readonly TrustedEvidenceVerifier[],
-): void {
+): CapturedEvidenceClaimSnapshot {
   if (!isRecord(input.producer) || !isNonEmptyString(input.producer.commitSha)) {
     issue(
       issues,
@@ -524,11 +542,18 @@ function validateCaptured(
     );
   }
 
-  if (!isRecord(input.artifact)) {
+  let artifactLocator: unknown;
+  let artifactSha256: unknown;
+  let artifactExpiresAt: unknown;
+  const artifact = input.artifact;
+  if (!isRecord(artifact)) {
     issue(issues, 'missing-artifact', '$.artifact', 'artifact is required');
   } else {
-    requiredString(input.artifact, 'locator', '$.artifact.locator', issues);
-    if (!isNonEmptyString(input.artifact.sha256) || !SHA256_PATTERN.test(input.artifact.sha256)) {
+    artifactLocator = artifact.locator;
+    artifactSha256 = artifact.sha256;
+    artifactExpiresAt = artifact.expiresAt;
+    requiredStringValue(artifactLocator, 'locator', '$.artifact.locator', issues);
+    if (!isNonEmptyString(artifactSha256) || !SHA256_PATTERN.test(artifactSha256)) {
       issue(
         issues,
         'invalid-artifact-digest',
@@ -536,8 +561,8 @@ function validateCaptured(
         'sha256 must be a hexadecimal SHA-256 digest',
       );
     }
-    const expiresAtMs = requiredTimestamp(
-      input.artifact,
+    const expiresAtMs = requiredTimestampValue(
+      artifactExpiresAt,
       'expiresAt',
       '$.artifact.expiresAt',
       issues,
@@ -547,20 +572,37 @@ function validateCaptured(
     }
   }
 
-  if (!isRecord(input.verification)) {
+  let verificationVerifier: unknown;
+  let verificationVersion: unknown;
+  let verificationVerifiedAt: unknown;
+  let verificationResult: unknown;
+  const verification = input.verification;
+  if (!isRecord(verification)) {
     issue(issues, 'missing-verification', '$.verification', 'verification is required');
-    return;
+    return {
+      artifactLocator,
+      artifactSha256,
+      artifactExpiresAt,
+      verificationVerifier,
+      verificationVersion,
+      verificationVerifiedAt,
+      verificationResult,
+    };
   }
 
-  requiredString(input.verification, 'verifier', '$.verification.verifier', issues);
-  requiredString(input.verification, 'version', '$.verification.version', issues);
-  const verifiedAtMs = requiredTimestamp(
-    input.verification,
+  verificationVerifier = verification.verifier;
+  verificationVersion = verification.version;
+  verificationVerifiedAt = verification.verifiedAt;
+  verificationResult = verification.result;
+  requiredStringValue(verificationVerifier, 'verifier', '$.verification.verifier', issues);
+  requiredStringValue(verificationVersion, 'version', '$.verification.version', issues);
+  const verifiedAtMs = requiredTimestampValue(
+    verificationVerifiedAt,
     'verifiedAt',
     '$.verification.verifiedAt',
     issues,
   );
-  if (input.verification.result !== 'pass') {
+  if (verificationResult !== 'pass') {
     issue(issues, 'verification-failed', '$.verification.result', 'verification must pass');
   }
   if (capturedAtMs !== undefined && verifiedAtMs !== undefined && verifiedAtMs < capturedAtMs) {
@@ -572,17 +614,27 @@ function validateCaptured(
     );
   }
   if (
-    isNonEmptyString(input.verification.verifier) &&
-    isNonEmptyString(input.verification.version) &&
-    !isTrustedVerifier(input.verification.verifier, input.verification.version, trustedVerifiers)
+    isNonEmptyString(verificationVerifier) &&
+    isNonEmptyString(verificationVersion) &&
+    !isTrustedVerifier(verificationVerifier, verificationVersion, trustedVerifiers)
   ) {
     issue(
       issues,
       'untrusted-verifier',
       '$.verification.verifier',
-      `verifier is not trusted: ${input.verification.verifier}@${input.verification.version}`,
+      `verifier is not trusted: ${verificationVerifier}@${verificationVersion}`,
     );
   }
+
+  return {
+    artifactLocator,
+    artifactSha256,
+    artifactExpiresAt,
+    verificationVerifier,
+    verificationVersion,
+    verificationVerifiedAt,
+    verificationResult,
+  };
 }
 
 function result<TPayload = unknown>(
@@ -622,7 +674,16 @@ function requiredString(
   path: string,
   issues: EvidenceValidationIssue[],
 ): void {
-  if (!isNonEmptyString(record[key])) {
+  requiredStringValue(record[key], key, path, issues);
+}
+
+function requiredStringValue(
+  value: unknown,
+  key: string,
+  path: string,
+  issues: EvidenceValidationIssue[],
+): void {
+  if (!isNonEmptyString(value)) {
     issue(issues, 'invalid-envelope', path, `${key} must be a non-empty string`);
   }
 }
@@ -633,7 +694,15 @@ function requiredTimestamp(
   path: string,
   issues: EvidenceValidationIssue[],
 ): number | undefined {
-  const value = record[key];
+  return requiredTimestampValue(record[key], key, path, issues);
+}
+
+function requiredTimestampValue(
+  value: unknown,
+  key: string,
+  path: string,
+  issues: EvidenceValidationIssue[],
+): number | undefined {
   const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
   if (Number.isNaN(parsed)) {
     issue(issues, 'invalid-timestamp', path, `${key} must be a valid timestamp`);
