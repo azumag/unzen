@@ -21,7 +21,7 @@ function makeHostileCheckpoint(requestId: string, segmentIndex: number): Hostile
   const reads: Record<string, number> = {};
   const bump = (field: string): number => (reads[field] = (reads[field] ?? 0) + 1);
   const payload = new Uint8Array([1, 2, 3]);
-  const shape = [1, 3];
+  const shape = [1, 1, 3];
   const metadata = {
     dtype: 'float16',
     get shape() {
@@ -76,7 +76,7 @@ function expectStableCheckpoint(checkpoint: unknown, requestId: string): void {
     requestId,
     segmentIndex: 0,
     metadata: {
-      shape: [1, 3],
+      shape: [1, 1, 3],
       dtype: 'float16',
       sequenceLength: 3,
       timestamp: 123,

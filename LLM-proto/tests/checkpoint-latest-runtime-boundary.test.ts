@@ -8,7 +8,7 @@ function checkpoint(): Checkpoint {
     segmentIndex: 2,
     hiddenStates: new Uint8Array([1]),
     metadata: {
-      shape: [1],
+      shape: [1, 1, 1],
       dtype: 'float16',
       sequenceLength: 1,
       timestamp: 1,

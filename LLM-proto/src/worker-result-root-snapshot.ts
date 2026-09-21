@@ -17,6 +17,8 @@ export interface SpanResultRootSnapshot {
   readonly output: unknown;
 }
 
+const CHECKPOINT_TENSOR_RANK = 3;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -36,8 +38,14 @@ function memoize<T>(read: () => T): () => T {
 function snapshotShapeBoundary(shape: unknown): unknown {
   if (!Array.isArray(shape)) return shape;
   const length = shape.length;
-  const owned: unknown[] = new Array(length);
-  for (let index = 0; index < length; index += 1) {
+  // An invalid rank is already unusable as a checkpoint. Convert it to a small
+  // owned invalid snapshot instead of allocating/iterating according to an
+  // untrusted Array/Proxy length; CheckpointStore will report the protocol error.
+  if (length !== CHECKPOINT_TENSOR_RANK) {
+    return Object.freeze([]);
+  }
+  const owned: unknown[] = new Array(CHECKPOINT_TENSOR_RANK);
+  for (let index = 0; index < CHECKPOINT_TENSOR_RANK; index += 1) {
     owned[index] = shape[index];
   }
   return Object.freeze(owned);
