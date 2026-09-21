@@ -91,6 +91,16 @@ function trackCheckpointWork() {
   };
 }
 
+function withCheckpointPayload(result: ExecutionResult, payload: Uint8Array): ExecutionResult {
+  return {
+    ...result,
+    checkpoint: {
+      ...result.checkpoint!,
+      payload,
+    },
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -111,6 +121,55 @@ describe.each([
 
     expect(work.copies()).toBe(0);
     expect(work.digestSpy).not.toHaveBeenCalled();
+    expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+  });
+
+  it('rejects a Proxy-wrapped Uint8Array without leaking a native TypedArray error', async () => {
+    const f = await fixture(usePublicBoundary, 64);
+    const digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest');
+    const proxiedPayload = new Proxy(f.result.checkpoint!.payload, {});
+
+    await expect(
+      f.coord.acceptResult(withCheckpointPayload(f.result, proxiedPayload), f.createdAt),
+    ).resolves.toEqual({
+      kind: 'checkpoint-rejected',
+      message: 'checkpoint payload must be a Uint8Array',
+    });
+
+    expect(digestSpy).not.toHaveBeenCalled();
+    expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+  });
+
+  it('uses intrinsic byte length when a genuine Uint8Array shadows byteLength', async () => {
+    const f = await fixture(usePublicBoundary);
+    const digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest');
+    const hostilePayload = new Uint8Array([1, 2, 3]);
+    Object.defineProperty(hostilePayload, 'byteLength', {
+      configurable: true,
+      get: () => 1,
+    });
+    Object.defineProperty(hostilePayload, Symbol.iterator, {
+      configurable: true,
+      value: () => {
+        throw new Error('checkpoint payload iterator must not run');
+      },
+    });
+    Object.defineProperty(hostilePayload, 'slice', {
+      configurable: true,
+      value: () => {
+        throw new Error('checkpoint payload slice must not run');
+      },
+    });
+
+    expect(hostilePayload.byteLength).toBe(1);
+    await expect(
+      f.coord.acceptResult(withCheckpointPayload(f.result, hostilePayload), f.createdAt),
+    ).resolves.toEqual({
+      kind: 'checkpoint-rejected',
+      message: 'checkpoint payload 3B exceeds the 2B limit',
+    });
+
+    expect(digestSpy).not.toHaveBeenCalled();
     expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
   });
 });
