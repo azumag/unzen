@@ -91,6 +91,38 @@ describe('validateEvidenceEnvelope callback-reference snapshots', () => {
     expect(result.issues).toEqual([]);
   });
 
+  it('fails closed when the artifact-loader getter throws', async () => {
+    const options = baseOptions();
+    let reads = 0;
+    const hostileThrownValue = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error('thrown value must not be inspected');
+      },
+      get() {
+        throw new Error('thrown value must not be stringified');
+      },
+    });
+    Object.defineProperty(options, 'loadArtifact', {
+      configurable: true,
+      get() {
+        reads += 1;
+        throw hostileThrownValue;
+      },
+    });
+
+    const result = await validateEvidenceEnvelope(envelope(), options);
+
+    expect(reads).toBe(1);
+    expect(result.status).toBe('not-evaluated');
+    expect(result.issues).toEqual([
+      {
+        code: 'artifact-unavailable',
+        path: '$.artifact.locator',
+        message: 'captured-and-verified evidence requires an external artifact loader',
+      },
+    ]);
+  });
+
   it('captures the independent verifier before the artifact loader can replace it', async () => {
     let originalCalls = 0;
     let replacementCalls = 0;
@@ -136,6 +168,76 @@ describe('validateEvidenceEnvelope callback-reference snapshots', () => {
     const result = await validateEvidenceEnvelope(envelope(), options);
 
     expect(reads).toBe(1);
+    expect(result.status).toBe('valid');
+    expect(result.issues).toEqual([]);
+  });
+
+  it('fails closed when the independent-verifier getter throws before loading', async () => {
+    const options = baseOptions();
+    let verifierReads = 0;
+    let loaderCalls = 0;
+    options.loadArtifact = async () => {
+      loaderCalls += 1;
+      return ARTIFACT_CONTENT;
+    };
+    const hostileThrownValue = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error('thrown value must not be inspected');
+      },
+      get() {
+        throw new Error('thrown value must not be stringified');
+      },
+    });
+    Object.defineProperty(options, 'verifyArtifact', {
+      configurable: true,
+      get() {
+        verifierReads += 1;
+        throw hostileThrownValue;
+      },
+    });
+
+    const result = await validateEvidenceEnvelope(envelope(), options);
+
+    expect(verifierReads).toBe(1);
+    expect(loaderCalls).toBe(0);
+    expect(result.status).toBe('not-evaluated');
+    expect(result.issues).toEqual([
+      {
+        code: 'verification-unavailable',
+        path: '$.verification',
+        message: 'captured-and-verified evidence requires an independent verifier callback',
+      },
+    ]);
+  });
+
+  it('does not inspect artifact callbacks for synthetic evidence', async () => {
+    const options = baseOptions();
+    let loaderReads = 0;
+    let verifierReads = 0;
+    Object.defineProperty(options, 'loadArtifact', {
+      configurable: true,
+      get() {
+        loaderReads += 1;
+        throw new Error('synthetic evidence must not inspect loadArtifact');
+      },
+    });
+    Object.defineProperty(options, 'verifyArtifact', {
+      configurable: true,
+      get() {
+        verifierReads += 1;
+        throw new Error('synthetic evidence must not inspect verifyArtifact');
+      },
+    });
+    const synthetic = {
+      ...envelope(),
+      evidenceLevel: 'synthetic-fixture',
+      readinessStatus: 'contract-tested',
+    };
+
+    const result = await validateEvidenceEnvelope(synthetic, options);
+
+    expect(loaderReads).toBe(0);
+    expect(verifierReads).toBe(0);
     expect(result.status).toBe('valid');
     expect(result.issues).toEqual([]);
   });
