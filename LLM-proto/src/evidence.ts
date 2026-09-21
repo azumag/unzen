@@ -94,7 +94,7 @@ export type EvidenceEnvelope<TPayload = unknown> =
 
 export type ArtifactContent = string | ArrayBuffer | Uint8Array;
 
-type CanonicalArtifactContent = string | Uint8Array;
+type CanonicalArtifactContent = string | Uint8Array<ArrayBuffer>;
 
 export interface TrustedEvidenceVerifier {
   name: string;
@@ -664,7 +664,7 @@ function snapshotArtifactContent(content: unknown): CanonicalArtifactContent {
   throw new TypeError('artifact loader must return a string, ArrayBuffer, or Uint8Array');
 }
 
-function snapshotUint8Array(content: unknown): Uint8Array | undefined {
+function snapshotUint8Array(content: unknown): Uint8Array<ArrayBuffer> | undefined {
   if (!ArrayBuffer.isView(content) || !(content instanceof Uint8Array)) return undefined;
   if (
     !TYPED_ARRAY_BUFFER_GETTER ||
@@ -687,7 +687,7 @@ function snapshotUint8Array(content: unknown): Uint8Array | undefined {
   }
 }
 
-function snapshotArrayBuffer(content: unknown): Uint8Array | undefined {
+function snapshotArrayBuffer(content: unknown): Uint8Array<ArrayBuffer> | undefined {
   if (typeof content !== 'object' || content === null || !ARRAY_BUFFER_BYTE_LENGTH_GETTER) {
     return undefined;
   }
