@@ -263,9 +263,9 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('invalid', issues);
   }
 
-  const schemaVersion = input.schemaVersion;
-  const evidenceLevel = input.evidenceLevel;
-  const readinessStatus = input.readinessStatus;
+  const schemaVersion = readPropertySafely(input, 'schemaVersion');
+  const evidenceLevel = readPropertySafely(input, 'evidenceLevel');
+  const readinessStatus = readPropertySafely(input, 'readinessStatus');
   const level = isEvidenceLevel(evidenceLevel) ? evidenceLevel : undefined;
   const readiness = isReadinessStatus(readinessStatus) ? readinessStatus : undefined;
   const metadata = snapshotEvidenceMetadata(input);
