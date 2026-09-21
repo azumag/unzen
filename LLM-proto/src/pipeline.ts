@@ -93,9 +93,20 @@ function readOwnEnumerableOption<T extends object, K extends keyof T>(
   key: K,
 ): T[K] | undefined {
   if (source === undefined) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(source, key);
+  } catch {
+    throw new TypeError(`Pipeline option ${String(key)} could not be inspected`);
+  }
   if (descriptor === undefined || descriptor.enumerable !== true) return undefined;
-  return source[key];
+
+  try {
+    return source[key];
+  } catch {
+    throw new TypeError(`Pipeline option ${String(key)} could not be read`);
+  }
 }
 
 function resolvePipelineOptions(options: unknown): PipelineOptions {

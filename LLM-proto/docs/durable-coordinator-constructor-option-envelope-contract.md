@@ -8,6 +8,12 @@ Only declared **own enumerable** option fields participate. This preserves the p
 
 Each participating declared field is read exactly once. Validation and the values passed to the durable implementation therefore use the same captured runtime values even when the caller supplied accessors or a Proxy.
 
+## Hostile accessor and Proxy boundary
+
+Top-level record classification is bounded. A revoked options Proxy whose `Array.isArray()` classification throws is rejected through `DurableCoordinator options must be a non-null, non-array object`, rather than leaking a native Proxy exception. Each declared field then has two independently guarded operations: own-property descriptor inspection and the single value read. A throwing descriptor trap fails with `DurableCoordinator option <field> could not be inspected`; a throwing declared getter/value trap fails with `DurableCoordinator option <field> could not be read`.
+
+The caller-provided thrown value is never inspected, stringified, or coerced. In particular, failure handling does not execute hostile `toString()` or `Symbol.toPrimitive` hooks. The guards preserve declared-field order, own/enumerable filtering, no-`ownKeys` behavior, and the one-read contract.
+
 ## Validation
 
 The option container, when supplied, must be a non-null, non-array object.
@@ -45,7 +51,7 @@ Comparison/deadline metadata (`heartbeatTimeoutMs`, `leaseTtlMs`, `checkpointTtl
 
 ## Ordering
 
-Constructor option resolution and validation completes before the core coordinator constructor can initialize repository-backed worker/lease state, timers, recovery state, or apply the fixture-manifest gate. Invalid or host-timer-overflowing options therefore fail closed without repository/registry side effects.
+Constructor option resolution and validation completes before the core coordinator constructor can initialize repository-backed worker/lease state, timers, recovery state, or apply the fixture-manifest gate. Invalid, inaccessible, or host-timer-overflowing options therefore fail closed without repository/registry side effects.
 
 The direct durable-core checkpoint path also treats its resolved `maxCheckpointBytes` value as untrusted runtime configuration. It rechecks that ceiling as a non-negative safe integer before copying checkpoint payload bytes, so direct-core test/integration callers cannot bypass the allocation-order guarantee by supplying an invalid runtime value.
 

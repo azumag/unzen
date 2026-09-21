@@ -68,7 +68,12 @@ const DEFAULT_OPTIONS: CoordinatorOptions = {
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function isNonNegativeFiniteNumber(value: unknown): value is number {
@@ -84,9 +89,20 @@ function readOwnEnumerableOption<T extends object, K extends keyof T>(
   key: K,
 ): T[K] | undefined {
   if (source === undefined) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(source, key);
+  } catch {
+    throw new TypeError(`Coordinator option ${String(key)} could not be inspected`);
+  }
   if (descriptor === undefined || descriptor.enumerable !== true) return undefined;
-  return source[key];
+
+  try {
+    return source[key];
+  } catch {
+    throw new TypeError(`Coordinator option ${String(key)} could not be read`);
+  }
 }
 
 function resolveCoordinatorOptions(options: unknown): CoordinatorOptions {
