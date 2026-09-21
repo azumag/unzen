@@ -5,8 +5,17 @@ export interface FinalOutputSnapshot {
 
 type FinalOutputLabel = 'final segment output' | 'final span output';
 
+const MAX_ARRAY_LENGTH = 0xffff_ffff;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
@@ -33,6 +42,23 @@ function makeFinalOutputError(
   return segmentError;
 }
 
+function readFinalOutputField(
+  value: Record<string, unknown>,
+  field: 'tokens' | 'text',
+  makeError: (message: string) => Error,
+  label?: FinalOutputLabel,
+): unknown {
+  try {
+    return value[field];
+  } catch {
+    throw makeFinalOutputError(
+      makeError,
+      field === 'tokens' ? ' tokens must be an array' : ' text must be a string',
+      label,
+    );
+  }
+}
+
 /**
  * Validate a worker-owned final output and detach it from executor-controlled
  * accessors, array mutation, and iteration hooks before the coordinator accepts it.
@@ -46,22 +72,53 @@ export function snapshotFinalOutput(
     throw makeFinalOutputError(makeError, ' must be a non-null, non-array object', label);
   }
 
-  // Capture each declared output field exactly once. Runtime callers can provide
-  // getter/Proxy-backed objects even though the protocol type is readonly.
-  const tokens = value.tokens;
-  const text = value.text;
+  // Capture each declared output field exactly once and in the historical order.
+  // Runtime callers can provide getter/Proxy-backed objects even though the
+  // protocol type is readonly; accessor failures must not escape this boundary.
+  const tokens = readFinalOutputField(value, 'tokens', makeError, label);
+  const text = readFinalOutputField(value, 'text', makeError, label);
 
-  if (!Array.isArray(tokens)) {
+  let tokensAreArray: boolean;
+  try {
+    tokensAreArray = Array.isArray(tokens);
+  } catch {
+    throw makeFinalOutputError(makeError, ' tokens must be an array', label);
+  }
+  if (!tokensAreArray) {
     throw makeFinalOutputError(makeError, ' tokens must be an array', label);
   }
 
   // Copy by numeric index rather than iteration. A worker-controlled array may
   // override Symbol.iterator; validation and retained output must observe the
-  // same element values exactly once.
-  const length = tokens.length;
+  // same element values exactly once. Bound length/index traps as well so a
+  // revoked or hostile array proxy cannot leak its exception.
+  let length: unknown;
+  try {
+    length = (tokens as readonly unknown[]).length;
+  } catch {
+    throw makeFinalOutputError(makeError, ' tokens must be an array', label);
+  }
+  if (
+    typeof length !== 'number' ||
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > MAX_ARRAY_LENGTH
+  ) {
+    throw makeFinalOutputError(makeError, ' tokens must be an array', label);
+  }
+
   const ownedTokens = new Array<number>(length);
   for (let index = 0; index < length; index++) {
-    const token = tokens[index];
+    let token: unknown;
+    try {
+      token = (tokens as readonly unknown[])[index];
+    } catch {
+      throw makeFinalOutputError(
+        makeError,
+        ' tokens must contain non-negative safe integers',
+        label,
+      );
+    }
     if (!isNonNegativeSafeInteger(token)) {
       throw makeFinalOutputError(
         makeError,
