@@ -5,6 +5,8 @@ export interface FinalOutputSnapshot {
 
 type FinalOutputLabel = 'final segment output' | 'final span output';
 
+const MAX_ARRAY_LENGTH = 0xffff_ffff;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -96,7 +98,12 @@ export function snapshotFinalOutput(
   } catch {
     throw makeFinalOutputError(makeError, ' tokens must be an array', label);
   }
-  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) {
+  if (
+    typeof length !== 'number' ||
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > MAX_ARRAY_LENGTH
+  ) {
     throw makeFinalOutputError(makeError, ' tokens must be an array', label);
   }
 
