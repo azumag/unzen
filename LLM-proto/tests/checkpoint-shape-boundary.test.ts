@@ -87,4 +87,56 @@ describe('checkpoint shape runtime boundary', () => {
     expect(lengthReads).toBe(1);
     expect(memberReads).toBe(3);
   });
+
+  it('fails closed on a revoked shape Proxy instead of leaking Array.isArray errors', () => {
+    const revoked = Proxy.revocable([1, 1, 3], {});
+    revoked.revoke();
+    const snapshot = snapshotSegmentResultRoot({
+      requestId: 'shape-boundary-request',
+      segmentIndex: 0,
+      workerId: 'shape-boundary-worker',
+      processingTimeMs: 1,
+      checkpoint: checkpointWithShape(revoked.proxy),
+      output: undefined,
+    });
+
+    expect(() => CheckpointStore.snapshotValidatedCheckpoint(snapshot.checkpoint))
+      .toThrow('checkpoint metadata.shape must contain positive safe integers');
+  });
+
+  it('fails closed on throwing shape length and numeric-index traps', () => {
+    const hostileLength = new Proxy([1, 1, 3], {
+      get(target, property, receiver) {
+        if (property === 'length') throw new Error('hostile shape length');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const lengthSnapshot = snapshotSegmentResultRoot({
+      requestId: 'shape-boundary-request',
+      segmentIndex: 0,
+      workerId: 'shape-boundary-worker',
+      processingTimeMs: 1,
+      checkpoint: checkpointWithShape(hostileLength),
+      output: undefined,
+    });
+    expect(() => CheckpointStore.snapshotValidatedCheckpoint(lengthSnapshot.checkpoint))
+      .toThrow('checkpoint metadata.shape must contain positive safe integers');
+
+    const hostileIndex = new Proxy([1, 1, 3], {
+      get(target, property, receiver) {
+        if (property === '1') throw new Error('hostile shape index');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const indexSnapshot = snapshotSegmentResultRoot({
+      requestId: 'shape-boundary-request',
+      segmentIndex: 0,
+      workerId: 'shape-boundary-worker',
+      processingTimeMs: 1,
+      checkpoint: checkpointWithShape(hostileIndex),
+      output: undefined,
+    });
+    expect(() => CheckpointStore.snapshotValidatedCheckpoint(indexSnapshot.checkpoint))
+      .toThrow('checkpoint metadata.shape must contain positive safe integers');
+  });
 });
