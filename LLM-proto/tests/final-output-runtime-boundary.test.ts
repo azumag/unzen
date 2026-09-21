@@ -71,6 +71,18 @@ describe('final output hostile runtime boundary', () => {
       'final segment output',
     )).toThrow(/final segment output tokens must be an array/);
 
+    const impossibleLength = new Proxy([1], {
+      get(target, property, receiver) {
+        if (property === 'length') return Number.MAX_SAFE_INTEGER;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(() => snapshotFinalOutput(
+      { tokens: impossibleLength, text: 'ok' },
+      makeError,
+      'final segment output',
+    )).toThrow(/final segment output tokens must be an array/);
+
     const throwingIndex = new Proxy([1], {
       get(target, property, receiver) {
         if (property === '0') throw hostileThrownValue;
