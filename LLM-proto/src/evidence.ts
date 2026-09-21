@@ -340,7 +340,19 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     version: claims.verificationVersion as string,
     verifiedAt: claims.verificationVerifiedAt as string,
   } as const;
-  const loadArtifact = options.loadArtifact;
+
+  let loadArtifact: EvidenceValidationOptions['loadArtifact'];
+  try {
+    loadArtifact = options.loadArtifact;
+  } catch {
+    issue(
+      issues,
+      'artifact-unavailable',
+      '$.artifact.locator',
+      'captured-and-verified evidence requires an external artifact loader',
+    );
+    return result<TPayload>('not-evaluated', issues, level, readiness);
+  }
 
   if (!loadArtifact) {
     issue(
@@ -354,7 +366,18 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
 
   // Capture the verifier before invoking the loader so one validation operation
   // cannot have its independent-verifier policy replaced across the await.
-  const verifyArtifact = options.verifyArtifact;
+  let verifyArtifact: EvidenceValidationOptions['verifyArtifact'];
+  try {
+    verifyArtifact = options.verifyArtifact;
+  } catch {
+    issue(
+      issues,
+      'verification-unavailable',
+      '$.verification',
+      'captured-and-verified evidence requires an independent verifier callback',
+    );
+    return result<TPayload>('not-evaluated', issues, level, readiness);
+  }
 
   let artifactContent: CanonicalArtifactContent;
   try {
