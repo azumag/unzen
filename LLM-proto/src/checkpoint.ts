@@ -64,7 +64,11 @@ export class CheckpointStore {
     CheckpointStore.assertValidSegmentIndex(segmentIndex);
 
     const hiddenStates = candidate.hiddenStates;
-    if (!(hiddenStates instanceof Uint8Array) || hiddenStates.byteLength === 0) {
+    if (
+      !ArrayBuffer.isView(hiddenStates)
+      || !(hiddenStates instanceof Uint8Array)
+      || hiddenStates.byteLength === 0
+    ) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
 
