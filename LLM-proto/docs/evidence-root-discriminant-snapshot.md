@@ -1,6 +1,6 @@
 # Evidence root discriminant snapshot
 
-`validateEvidenceEnvelope()` treats the caller-owned envelope as a runtime trust boundary. After the top-level record check, the validator reads `schemaVersion`, `evidenceLevel`, and `readinessStatus` exactly once and keeps those primitive values for the rest of that validation attempt.
+`validateEvidenceEnvelope()` treats the caller-owned envelope as a runtime trust boundary. After the top-level record check, the validator reads `schemaVersion`, `evidenceLevel`, and `readinessStatus` exactly once and keeps those primitive values for the rest of that validation attempt. Those reads use the validator's bounded property-read boundary: if a getter throws, the thrown value is not inspected or stringified and the field is treated as absent/invalid under the existing validation taxonomy.
 
 This prevents accessor-backed or Proxy-backed envelopes from returning one valid value during a type/classification check and a different value when the validator later selects an evidence branch, checks readiness, or compares schema support. In particular:
 
