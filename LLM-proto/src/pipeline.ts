@@ -72,7 +72,12 @@ const DEFAULT_OPTIONS: PipelineOptions = {
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
