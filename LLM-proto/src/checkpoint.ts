@@ -64,11 +64,14 @@ export class CheckpointStore {
     CheckpointStore.assertValidSegmentIndex(segmentIndex);
 
     const hiddenStates = candidate.hiddenStates;
-    if (
-      !ArrayBuffer.isView(hiddenStates)
-      || !(hiddenStates instanceof Uint8Array)
-      || hiddenStates.byteLength === 0
-    ) {
+    if (!ArrayBuffer.isView(hiddenStates) || !(hiddenStates instanceof Uint8Array)) {
+      throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
+    }
+    // Normalize through the intrinsic Uint8Array constructor before touching
+    // byteLength or later taking a snapshot. A genuine subclass is still accepted,
+    // but caller-defined getters/methods/species are not part of the trust boundary.
+    const hiddenStatesSnapshot = new Uint8Array(hiddenStates);
+    if (hiddenStatesSnapshot.byteLength === 0) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
 
@@ -127,7 +130,7 @@ export class CheckpointStore {
     return {
       requestId,
       segmentIndex,
-      hiddenStates,
+      hiddenStates: hiddenStatesSnapshot,
       metadata: {
         shape,
         dtype,
