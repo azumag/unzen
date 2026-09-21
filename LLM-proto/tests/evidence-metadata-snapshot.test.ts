@@ -31,6 +31,11 @@ describe('validateEvidenceEnvelope metadata snapshots', () => {
     Object.defineProperties(producer, {
       name: { configurable: true, enumerable: true, get: once('producer.name', producer.name) },
       version: { configurable: true, enumerable: true, get: once('producer.version', producer.version) },
+      commitSha: {
+        configurable: true,
+        enumerable: true,
+        get: once('producer.commitSha', producer.commitSha),
+      },
     });
     Object.defineProperties(environment, {
       runtime: { configurable: true, enumerable: true, get: once('environment.runtime', environment.runtime) },
@@ -73,6 +78,7 @@ describe('validateEvidenceEnvelope metadata snapshots', () => {
       'scenario',
       'producer.name',
       'producer.version',
+      'producer.commitSha',
       'environment.runtime',
       'environment.runtimeVersion',
       'environment.executionSurface',
@@ -109,9 +115,7 @@ describe('validateEvidenceEnvelope metadata snapshots', () => {
   });
 
   it('keeps captured-only metadata lazy for synthetic evidence', async () => {
-    const envelope = createSyntheticEnvelope({ status: 'pass' }) as ReturnType<
-      typeof createSyntheticEnvelope<{ status: string }>
-    > & Record<string, unknown>;
+    const envelope = createSyntheticEnvelope({ status: 'pass' });
     let scenarioReads = 0;
     let artifactReads = 0;
     let verificationReads = 0;
