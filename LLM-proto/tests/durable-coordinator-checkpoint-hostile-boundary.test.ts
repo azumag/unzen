@@ -126,6 +126,18 @@ function hostileThrownValue(): { readonly coercions: () => number; readonly valu
   return { coercions: () => coercions, value };
 }
 
+async function expectPayloadRejected(f: Fixture, candidate: unknown): Promise<void> {
+  await expect(f.coord.handleWorkerResult({
+    identity: f.identity,
+    processingTimeMs: 1,
+    checkpoint: candidate as never,
+  })).resolves.toEqual({
+    kind: 'checkpoint-rejected',
+    message: 'checkpoint payload must be a Uint8Array',
+  });
+  expect(f.repo.getCheckpoint(f.identity.requestId, 0)).toBeUndefined();
+}
+
 describe('DurableCoordinator hostile checkpoint runtime boundary', () => {
   it('fails closed on a throwing payload getter before touching metadata', async () => {
     const f = fixture();
@@ -143,47 +155,32 @@ describe('DurableCoordinator hostile checkpoint runtime boundary', () => {
       },
     };
 
-    await expect(f.coord.handleWorkerResult({
-      identity: f.identity,
-      processingTimeMs: 1,
-      checkpoint: candidate as never,
-    })).resolves.toEqual({
-      kind: 'checkpoint-rejected',
-      message: 'checkpoint payload must be a Uint8Array',
-    });
+    await expectPayloadRejected(f, candidate);
 
     expect(payloadReads).toBe(1);
     expect(requestIdReads).toBe(0);
     expect(hostile.coercions()).toBe(0);
-    expect(f.repo.getCheckpoint(f.identity.requestId, 0)).toBeUndefined();
   });
 
-  it('fails closed on revoked checkpoint and payload proxies', async () => {
+  it('fails closed on a revoked checkpoint root proxy', async () => {
     const f = fixture();
     const revokedRoot = Proxy.revocable({ payload: new Uint8Array([1]) }, {});
     revokedRoot.revoke();
+    await expectPayloadRejected(f, revokedRoot.proxy);
+  });
 
-    await expect(f.coord.handleWorkerResult({
-      identity: f.identity,
-      processingTimeMs: 1,
-      checkpoint: revokedRoot.proxy as never,
-    })).resolves.toEqual({
-      kind: 'checkpoint-rejected',
-      message: 'checkpoint payload must be a Uint8Array',
-    });
+  it('fails closed on revoked and live Proxy-wrapped Uint8Array payloads', async () => {
+    const revokedFixture = fixture();
+    const revokedPayload = Proxy.revocable(new Uint8Array([1, 2, 3]), {});
+    revokedPayload.revoke();
+    await expectPayloadRejected(revokedFixture, { payload: revokedPayload.proxy });
 
-    const payloadProxy = Proxy.revocable(new Uint8Array([1, 2, 3]), {});
-    payloadProxy.revoke();
-    await expect(f.coord.handleWorkerResult({
-      identity: f.identity,
-      processingTimeMs: 1,
-      checkpoint: { payload: payloadProxy.proxy } as never,
-    })).resolves.toEqual({
-      kind: 'checkpoint-rejected',
-      message: 'checkpoint payload must be a Uint8Array',
-    });
-
-    expect(f.repo.getCheckpoint(f.identity.requestId, 0)).toBeUndefined();
+    // A live Proxy around a typed array passes `instanceof Uint8Array`, but it
+    // has no typed-array internal slots. Reject it before the core reads
+    // `.byteLength`, which would otherwise throw a native TypeError.
+    const liveFixture = fixture();
+    const livePayload = new Proxy(new Uint8Array([1, 2, 3]), {});
+    await expectPayloadRejected(liveFixture, { payload: livePayload });
   });
 
   it('fails closed when a declared metadata descriptor cannot be inspected without enumerating', async () => {
