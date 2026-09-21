@@ -25,6 +25,42 @@ import type { WorkerId, InferenceRequestId } from './types.js';
 export const CHECKPOINT_FORMAT_VERSION = '1.0.0';
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteLength',
+)?.get;
+const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+
+/**
+ * Validate the runtime byte view and read its actual length through the typed-
+ * array intrinsic, bypassing caller-defined subclass properties. Proxy-wrapped
+ * typed arrays are not genuine ArrayBuffer views and therefore fail closed.
+ */
+function runtimeUint8ArrayByteLength(value: unknown): number | undefined {
+  if (
+    !ArrayBuffer.isView(value)
+    || !(value instanceof Uint8Array)
+    || !TYPED_ARRAY_BYTE_LENGTH_GETTER
+  ) {
+    return undefined;
+  }
+  try {
+    return Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []) as number;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Copy genuine Uint8Array bytes without invoking caller-defined copy hooks. */
+function copyRuntimeUint8Array(
+  value: Uint8Array,
+  byteLength: number,
+): Uint8Array<ArrayBuffer> {
+  const snapshot = new Uint8Array(byteLength);
+  Reflect.apply(UINT8_ARRAY_SET, snapshot, [value, 0]);
+  return snapshot;
+}
 
 export interface CheckpointEnvelope {
   readonly requestId: InferenceRequestId;
@@ -77,8 +113,11 @@ async function digestOwnedBytes(data: Uint8Array<ArrayBuffer>): Promise<string> 
 export async function sha256Hex(data: Uint8Array): Promise<string> {
   // Copy into a fresh ArrayBuffer-typed view so crypto.subtle.digest accepts
   // it regardless of the source buffer's (possibly SharedArrayBuffer) type.
-  const bytes = new Uint8Array(data.byteLength);
-  bytes.set(data);
+  const byteLength = runtimeUint8ArrayByteLength(data);
+  if (byteLength === undefined) {
+    throw new TypeError('SHA-256 input must be a Uint8Array');
+  }
+  const bytes = copyRuntimeUint8Array(data, byteLength);
   return digestOwnedBytes(bytes);
 }
 
@@ -91,12 +130,12 @@ export async function createCheckpointEnvelope(
   input: CreateCheckpointEnvelopeInput,
 ): Promise<CheckpointEnvelope> {
   const capturedPayload = input.payload;
-  if (!(capturedPayload instanceof Uint8Array)) {
+  const capturedPayloadLength = runtimeUint8ArrayByteLength(capturedPayload);
+  if (capturedPayloadLength === undefined) {
     throw new TypeError('checkpoint payload must be a Uint8Array');
   }
 
-  const ownedPayload = new Uint8Array(capturedPayload.byteLength);
-  ownedPayload.set(capturedPayload);
+  const ownedPayload = copyRuntimeUint8Array(capturedPayload, capturedPayloadLength);
   const payloadDigest = await digestOwnedBytes(ownedPayload);
 
   return {
@@ -131,12 +170,15 @@ export async function verifyCheckpointDigest(
 
   const runtime = envelope as unknown as Record<string, unknown>;
   let payload: Uint8Array;
+  let actualPayloadLength: number;
   let payloadLength: number;
   let payloadDigest: string;
   try {
     const capturedPayload = runtime.payload;
-    if (!(capturedPayload instanceof Uint8Array)) return false;
-    payload = capturedPayload;
+    const capturedByteLength = runtimeUint8ArrayByteLength(capturedPayload);
+    if (capturedByteLength === undefined) return false;
+    payload = capturedPayload as Uint8Array;
+    actualPayloadLength = capturedByteLength;
 
     const capturedPayloadLength = runtime.payloadLength;
     if (!Number.isSafeInteger(capturedPayloadLength) || (capturedPayloadLength as number) < 0) return false;
@@ -149,10 +191,9 @@ export async function verifyCheckpointDigest(
     return false;
   }
 
-  if (payload.byteLength !== payloadLength) return false;
+  if (actualPayloadLength !== payloadLength) return false;
 
-  const ownedPayload = new Uint8Array(payloadLength);
-  ownedPayload.set(payload);
+  const ownedPayload = copyRuntimeUint8Array(payload, payloadLength);
   return (await digestOwnedBytes(ownedPayload)) === payloadDigest;
 }
 
@@ -264,7 +305,8 @@ function captureCheckpointStructure(input: unknown): CheckpointStructureCapture 
   }
 
   const payload = envelope.payload;
-  if (!(payload instanceof Uint8Array)) {
+  const actualPayloadLength = runtimeUint8ArrayByteLength(payload);
+  if (actualPayloadLength === undefined) {
     return { ok: false, message: 'checkpoint payload must be a Uint8Array' };
   }
 
@@ -276,7 +318,7 @@ function captureCheckpointStructure(input: unknown): CheckpointStructureCapture 
   ) {
     return { ok: false, message: 'checkpoint payloadLength must be a non-negative safe integer' };
   }
-  if (payloadLength !== payload.byteLength) {
+  if (payloadLength !== actualPayloadLength) {
     return { ok: false, message: 'checkpoint payloadLength does not match payload byte length' };
   }
 
@@ -315,7 +357,7 @@ function captureCheckpointStructure(input: unknown): CheckpointStructureCapture 
       payloadLength,
       payloadDigest,
       previousCheckpointDigest,
-      payload,
+      payload: payload as Uint8Array,
     },
   };
 }
@@ -400,8 +442,7 @@ export async function validateCheckpointEnvelope(
   // The copy happens only after structure, identity, budget, and TTL checks.
   // From this point through the async digest yield, caller mutation cannot
   // change the bytes that are authenticated.
-  const ownedPayload = new Uint8Array(checkpoint.payloadLength);
-  ownedPayload.set(checkpoint.payload);
+  const ownedPayload = copyRuntimeUint8Array(checkpoint.payload, checkpoint.payloadLength);
   if ((await digestOwnedBytes(ownedPayload)) !== checkpoint.payloadDigest) {
     return mismatch('checkpoint payload digest mismatch');
   }
