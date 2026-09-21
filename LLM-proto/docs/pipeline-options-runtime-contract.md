@@ -15,6 +15,12 @@ The runtime contract is:
 - `segmentTimeoutMs` and `retryDelayMs` must be non-negative finite numbers no greater than `2147483647ms` (`MAX_TIMER_DELAY_MS`), the largest delay consistently representable by browser/Node host timers;
 - explicit zero remains valid, preserving the existing zero-retry, immediate-timeout, and no-delay semantics.
 
+## Hostile accessor and Proxy boundary
+
+Top-level record classification is bounded, including the `Array.isArray()` call used to reject arrays, so a revoked options Proxy reaches the normal `Pipeline options must be a non-null, non-array object` diagnostic instead of leaking a native exception. Declared-field descriptor lookup and value access are guarded separately: a throwing descriptor trap fails with `Pipeline option <field> could not be inspected`, while a throwing declared getter/value trap fails with `Pipeline option <field> could not be read`.
+
+The caller-thrown value is discarded without stringification, coercion, or other inspection. This prevents failure reporting from invoking hostile `toString()` or `Symbol.toPrimitive` hooks. The guards retain own/enumerable membership, no-`ownKeys` behavior, declared-field order, and successful read-once semantics.
+
 Malformed values such as `Symbol`, `NaN`, infinities, negative delays/timeouts, fractional retry counts, or timer delays above the signed 32-bit host-timer range are rejected deterministically at construction. They cannot enter the retry loop, timer creation, or cause a healthy worker to be selected/disconnected for an invalid caller envelope. A valid-first/altered-second accessor also cannot make the value accepted during validation differ from the value retained by the pipeline.
 
 This does not change routing, checkpoint behavior, valid timeout behavior, or retry counts. It is runtime reliability work related to #167 and does not provide new real Llama-3.2-1B q4 materialization, physical WebGPU, real multi-browser relay/latency, or worker-loss-resume evidence.
