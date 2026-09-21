@@ -35,14 +35,25 @@ describe('checkpoint hidden-state runtime boundary', () => {
     expect(owned.hiddenStates).not.toBe(hiddenStates);
   });
 
-  it('keeps genuine Uint8Array subclasses compatible', () => {
+  it('accepts a genuine subclass without invoking caller-controlled byte hooks', () => {
     class CheckpointBytes extends Uint8Array {}
     const hiddenStates = new CheckpointBytes([1, 2, 3]);
+    Object.defineProperty(hiddenStates, 'byteLength', {
+      get() {
+        throw new Error('checkpoint boundary must not read a subclass byteLength hook');
+      },
+    });
+    Object.defineProperty(hiddenStates, 'slice', {
+      value() {
+        throw new Error('checkpoint boundary must not invoke a subclass slice hook');
+      },
+    });
 
     const owned = CheckpointStore.snapshotValidatedCheckpoint(
       checkpointWithHiddenStates(hiddenStates),
     );
 
     expect(owned.hiddenStates).toEqual(new Uint8Array([1, 2, 3]));
+    expect(Object.getPrototypeOf(owned.hiddenStates)).toBe(Uint8Array.prototype);
   });
 });
