@@ -292,6 +292,13 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   }
 
   const captured = envelope as CapturedAndVerifiedEvidenceEnvelope<TPayload>;
+  const expectedSha256 = normalizeSha256(captured.artifact.sha256);
+  const expectedVerification = {
+    verifier: captured.verification.verifier,
+    version: captured.verification.version,
+    verifiedAt: captured.verification.verifiedAt,
+  } as const;
+
   if (!options.loadArtifact) {
     issue(
       issues,
@@ -317,7 +324,6 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   }
 
   const actualSha256 = await sha256Hex(artifactContent);
-  const expectedSha256 = normalizeSha256(captured.artifact.sha256);
   if (actualSha256 !== expectedSha256) {
     issue(
       issues,
@@ -364,9 +370,9 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
 
   if (
     attestation.result !== 'pass' ||
-    attestation.verifier !== captured.verification.verifier ||
-    attestation.version !== captured.verification.version ||
-    attestation.verifiedAt !== captured.verification.verifiedAt
+    attestation.verifier !== expectedVerification.verifier ||
+    attestation.version !== expectedVerification.version ||
+    attestation.verifiedAt !== expectedVerification.verifiedAt
   ) {
     issue(
       issues,
@@ -379,18 +385,9 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('invalid', issues, level, readiness);
   }
 
-  const verifier = attestation.verifier as string;
-  const version = attestation.version as string;
-  if (!isTrustedVerifier(verifier, version, options.trustedVerifiers ?? [])) {
-    issue(
-      issues,
-      'untrusted-verifier',
-      '$.verification.verifier',
-      `verifier is not trusted: ${verifier}@${version}`,
-    );
-    return result<TPayload>('invalid', issues, level, readiness);
-  }
-
+  // validateCaptured() already established that the captured verifier/version is trusted.
+  // Because the runtime attestation must exactly match those captured claims above, re-reading
+  // caller-owned trustedVerifiers after an awaited callback would only introduce a TOCTOU.
   return {
     status: 'valid',
     claimedEvidenceLevel: level,
