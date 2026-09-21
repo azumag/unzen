@@ -730,5 +730,13 @@ async function sha256Hex(content: CanonicalArtifactContent): Promise<string> {
 }
 
 function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    if (error instanceof Error) {
+      const message = error.message;
+      return typeof message === 'string' ? message : String(message);
+    }
+    return String(error);
+  } catch {
+    return 'uninspectable thrown value';
+  }
 }
