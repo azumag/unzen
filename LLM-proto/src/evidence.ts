@@ -298,8 +298,9 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     version: captured.verification.version,
     verifiedAt: captured.verification.verifiedAt,
   } as const;
+  const loadArtifact = options.loadArtifact;
 
-  if (!options.loadArtifact) {
+  if (!loadArtifact) {
     issue(
       issues,
       'artifact-unavailable',
@@ -309,9 +310,13 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('not-evaluated', issues, level, readiness);
   }
 
+  // Capture the verifier before invoking the loader so one validation operation
+  // cannot have its independent-verifier policy replaced across the await.
+  const verifyArtifact = options.verifyArtifact;
+
   let artifactContent: CanonicalArtifactContent;
   try {
-    const loadedArtifact = await options.loadArtifact(captured.artifact.locator);
+    const loadedArtifact = await loadArtifact(captured.artifact.locator);
     artifactContent = snapshotArtifactContent(loadedArtifact);
   } catch (error) {
     issue(
@@ -334,7 +339,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('invalid', issues, level, readiness);
   }
 
-  if (!options.verifyArtifact) {
+  if (!verifyArtifact) {
     issue(
       issues,
       'verification-unavailable',
@@ -346,7 +351,7 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
 
   let attestation: CapturedIndependentEvidenceVerification;
   try {
-    const runtimeAttestation = (await options.verifyArtifact({
+    const runtimeAttestation = (await verifyArtifact({
       envelope: captured,
       artifactContent,
       actualSha256,
