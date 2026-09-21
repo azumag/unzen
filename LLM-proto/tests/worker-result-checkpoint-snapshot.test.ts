@@ -21,10 +21,10 @@ describe('worker-result checkpoint snapshot boundary', () => {
   it('captures accessor-backed checkpoint identity and payload exactly once', () => {
     const reads: Record<string, number> = {};
     const payload = new Uint8Array([1, 2, 3]);
-    const shapeTarget = [1, 3];
+    const shapeTarget = [1, 1, 3];
     const shape = new Proxy(shapeTarget, {
       get(target, property, receiver) {
-        if (property === '0' || property === '1') {
+        if (property === '0' || property === '1' || property === '2') {
           const read = bump(reads, `shape.${String(property)}`);
           return read === 1 ? Reflect.get(target, property, receiver) : 999;
         }
@@ -79,7 +79,7 @@ describe('worker-result checkpoint snapshot boundary', () => {
     expect(owned.segmentIndex).toBe(0);
     expect([...owned.hiddenStates]).toEqual([1, 2, 3]);
     expect(owned.metadata).toEqual({
-      shape: [1, 3],
+      shape: [1, 1, 3],
       dtype: 'float16',
       sequenceLength: 3,
       timestamp: 123,
@@ -95,12 +95,13 @@ describe('worker-result checkpoint snapshot boundary', () => {
       'metadata.timestamp',
       'shape.0',
       'shape.1',
+      'shape.2',
     ]);
   });
 
   it('isolates SpanPipeline checkpoint payloads from later source mutation', () => {
     const payload = new Uint8Array([4, 5, 6]);
-    const shape = [1, 3];
+    const shape = [1, 1, 3];
     const metadata = {
       shape,
       dtype: 'float16',
@@ -136,7 +137,7 @@ describe('worker-result checkpoint snapshot boundary', () => {
     expect(owned.segmentIndex).toBe(1);
     expect([...owned.hiddenStates]).toEqual([4, 5, 6]);
     expect(owned.metadata).toEqual({
-      shape: [1, 3],
+      shape: [1, 1, 3],
       dtype: 'float16',
       sequenceLength: 3,
       timestamp: 456,
