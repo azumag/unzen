@@ -17,6 +17,15 @@ function expectSingleReads(reads: Record<string, number>, fields: readonly strin
   }
 }
 
+function validMetadata() {
+  return {
+    shape: [1, 1, 3],
+    dtype: 'float16',
+    sequenceLength: 3,
+    timestamp: 123,
+  };
+}
+
 describe('worker-result checkpoint snapshot boundary', () => {
   it('captures accessor-backed checkpoint identity and payload exactly once', () => {
     const reads: Record<string, number> = {};
@@ -146,5 +155,79 @@ describe('worker-result checkpoint snapshot boundary', () => {
     const store = new CheckpointStore();
     store.save(owned);
     expect(store.get(owned.requestId, 1)).toEqual(owned);
+  });
+
+  it('fails closed for Proxy-wrapped Uint8Array payloads without leaking native errors', () => {
+    const payload = new Proxy(new Uint8Array([1, 2, 3]), {});
+    const checkpoint = {
+      requestId: 'req-proxy-payload',
+      segmentIndex: 0,
+      hiddenStates: payload,
+      metadata: validMetadata(),
+    };
+
+    const snapshot = snapshotSegmentResultRoot({
+      requestId: 'req-proxy-payload',
+      segmentIndex: 0,
+      workerId: 'worker-proxy',
+      processingTimeMs: 1,
+      checkpoint,
+      output: undefined,
+    });
+
+    expect(() => CheckpointStore.assertValidCheckpoint(snapshot.checkpoint)).toThrow(
+      'checkpoint hiddenStates must be a non-empty Uint8Array',
+    );
+  });
+
+  it('copies genuine Uint8Array subclasses without caller-defined byte hooks', () => {
+    class HostileUint8Array extends Uint8Array {}
+    const payload = new HostileUint8Array([7, 8, 9]);
+    const hooks = { byteLength: 0, slice: 0, iterator: 0 };
+
+    Object.defineProperties(payload, {
+      byteLength: {
+        configurable: true,
+        get() {
+          hooks.byteLength += 1;
+          return 999;
+        },
+      },
+      slice: {
+        configurable: true,
+        value() {
+          hooks.slice += 1;
+          throw new Error('hostile slice must not run');
+        },
+      },
+      [Symbol.iterator]: {
+        configurable: true,
+        value() {
+          hooks.iterator += 1;
+          throw new Error('hostile iterator must not run');
+        },
+      },
+    });
+
+    const snapshot = snapshotSpanResultRoot({
+      requestId: 'req-hostile-subclass',
+      workerId: 'worker-hostile',
+      startSegment: 0,
+      endSegment: 1,
+      processingTimeMs: 1,
+      checkpoint: {
+        requestId: 'req-hostile-subclass',
+        segmentIndex: 1,
+        hiddenStates: payload,
+        metadata: validMetadata(),
+      },
+      output: undefined,
+    });
+
+    CheckpointStore.assertValidCheckpoint(snapshot.checkpoint);
+    const owned = (snapshot.checkpoint as Checkpoint).hiddenStates;
+    expect(owned.constructor).toBe(Uint8Array);
+    expect([...owned]).toEqual([7, 8, 9]);
+    expect(hooks).toEqual({ byteLength: 0, slice: 0, iterator: 0 });
   });
 });
