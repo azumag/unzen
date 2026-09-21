@@ -156,6 +156,147 @@ describe('SimulatedPrototypeWorker execution envelope', () => {
     } as never)).rejects.toThrow('Simulated worker loss');
   });
 
+  it('fails closed for Proxy-wrapped segment-1 bytes before transport, cache, or fail-once state', async () => {
+    const worker = makeSegment1Worker(true);
+    const transport = makeTransport();
+    const hiddenStates = new Proxy(new Uint8Array([72, 69, 76, 76, 79]), {});
+
+    await expect(worker.execute({
+      requestId: 'request-seg1-proxy',
+      prompt: 'hello',
+      coordinatorUrl,
+      cdnUrl,
+      transport,
+      checkpoint: {
+        requestId: 'request-seg1-proxy',
+        segmentIndex: 0,
+        hiddenStates,
+        metadata: {
+          shape: [1, 5, 1],
+          dtype: 'uint8',
+          sequenceLength: 5,
+          timestamp: Date.now(),
+        },
+      },
+    } as never)).rejects.toThrow(
+      'prototype segment 1 checkpoint hiddenStates must be a Uint8Array',
+    );
+
+    expect(transport.connectionCount).toBe(0);
+    expect(worker.snapshotMetadata().cachedSegments).toEqual([]);
+
+    await expect(worker.execute({
+      requestId: 'request-seg1-after-proxy',
+      prompt: 'hello',
+      coordinatorUrl,
+      cdnUrl,
+      transport,
+      checkpoint: {
+        requestId: 'request-seg1-after-proxy',
+        segmentIndex: 0,
+        hiddenStates: new TextEncoder().encode('HELLO'),
+        metadata: {
+          shape: [1, 5, 1],
+          dtype: 'uint8',
+          sequenceLength: 5,
+          timestamp: Date.now(),
+        },
+      },
+    } as never)).rejects.toThrow('Simulated worker loss');
+  });
+
+  it('owns genuine Uint8Array subclass bytes without caller-defined hooks', async () => {
+    class HostileUint8Array extends Uint8Array {}
+    const hiddenStates = new HostileUint8Array(new TextEncoder().encode('HELLO'));
+    const hooks = {
+      byteLength: 0,
+      buffer: 0,
+      byteOffset: 0,
+      slice: 0,
+      iterator: 0,
+      constructor: 0,
+    };
+
+    Object.defineProperties(hiddenStates, {
+      byteLength: {
+        configurable: true,
+        get() {
+          hooks.byteLength += 1;
+          return 999;
+        },
+      },
+      buffer: {
+        configurable: true,
+        get() {
+          hooks.buffer += 1;
+          throw new Error('hostile buffer must not run');
+        },
+      },
+      byteOffset: {
+        configurable: true,
+        get() {
+          hooks.byteOffset += 1;
+          throw new Error('hostile byteOffset must not run');
+        },
+      },
+      slice: {
+        configurable: true,
+        value() {
+          hooks.slice += 1;
+          throw new Error('hostile slice must not run');
+        },
+      },
+      [Symbol.iterator]: {
+        configurable: true,
+        value() {
+          hooks.iterator += 1;
+          throw new Error('hostile iterator must not run');
+        },
+      },
+      constructor: {
+        configurable: true,
+        get() {
+          hooks.constructor += 1;
+          throw new Error('hostile constructor/species must not run');
+        },
+      },
+    });
+
+    const worker = makeSegment1Worker();
+    const transport = makeTransport();
+    const output = await worker.execute({
+      requestId: 'request-seg1-hostile-subclass',
+      prompt: 'ignored',
+      coordinatorUrl,
+      cdnUrl,
+      transport,
+      checkpoint: {
+        requestId: 'request-seg1-hostile-subclass',
+        segmentIndex: 0,
+        hiddenStates,
+        metadata: {
+          shape: [1, 5, 1],
+          dtype: 'uint8',
+          sequenceLength: 5,
+          timestamp: Date.now(),
+        },
+      },
+    } as never);
+
+    expect(output.text).toBe('proto-2b:HELLO');
+    expect(output.checkpointBytes).toBe(5);
+    expect(transport.connectionCount).toBe(3);
+    expect(worker.snapshotMetadata().cachedSegments).toEqual([1]);
+    expect(hooks).toEqual({
+      byteLength: 0,
+      buffer: 0,
+      byteOffset: 0,
+      slice: 0,
+      iterator: 0,
+      constructor: 0,
+    });
+  });
+
   it('keeps valid segment-0 and segment-1 execution behavior', async () => {
     const transport = makeTransport();
     const segment0 = makeSegment0Worker();
