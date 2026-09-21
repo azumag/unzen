@@ -9,7 +9,9 @@ Before any execution side effect, the worker now snapshots and validates the val
 - `prompt` is a string;
 - `coordinatorUrl` and `cdnUrl` are valid absolute URLs with network origins;
 - `transport` is an `AllowlistedPrototypeTransport`;
-- segment 1 receives a checkpoint object whose `hiddenStates` is a `Uint8Array`.
+- segment 1 receives a checkpoint object whose `hiddenStates` is a genuine `Uint8Array` view.
+
+Segment-1 checkpoint bytes are an ownership boundary, not just a nominal type check. Proxy-wrapped typed arrays fail closed through the existing stable `prototype segment 1 checkpoint hiddenStates must be a Uint8Array` validation error before transport, cache, or one-shot failure state changes. Accepted `Uint8Array` values, including genuine subclasses, are measured through intrinsic TypedArray `buffer`, `byteOffset`, and `byteLength` accessors and copied into a base `Uint8Array` snapshot. Caller-defined `byteLength`, `buffer`, `byteOffset`, `slice`, iterator, constructor/species hooks therefore do not participate in byte sizing, relay decoding, or checkpoint ownership.
 
 Only after that preflight may the worker append transport history, consume the configured one-shot simulated failure, or update its cached-segment authority. A malformed execution envelope therefore leaves those three state surfaces unchanged, and a malformed call cannot consume `failFirstRun`.
 
