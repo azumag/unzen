@@ -88,6 +88,11 @@ interface TwoWorkerPrototypeRunnerDependencies {
 
 const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
+const NativeUint8Array = Uint8Array;
+const typedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype) as object;
+const typedArrayBufferGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer')?.get;
+const typedArrayByteOffsetGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset')?.get;
+const typedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength')?.get;
 
 export class AllowlistedPrototypeTransport {
   private readonly connectionLog: string[] = [];
@@ -217,7 +222,6 @@ export class SimulatedPrototypeWorker {
       this.shouldFailFirstRun = false;
       throw new Error(`Simulated worker loss: ${this.id}`);
     }
-
     const cacheHit = this.cachedSegments.has(this.segmentIndex);
     this.cachedSegments.add(this.segmentIndex);
     const startedAt = Date.now();
@@ -479,8 +483,10 @@ function validateSegmentExecutionInput(
     if (typeof checkpoint !== 'object' || checkpoint === null || Array.isArray(checkpoint)) {
       throw new Error('prototype segment 1 requires a checkpoint object');
     }
-    const hiddenStates = (checkpoint as Record<string, unknown>).hiddenStates;
-    if (!(hiddenStates instanceof Uint8Array)) {
+    const hiddenStates = snapshotPrototypeUint8Array(
+      (checkpoint as Record<string, unknown>).hiddenStates,
+    );
+    if (!hiddenStates) {
       throw new Error('prototype segment 1 checkpoint hiddenStates must be a Uint8Array');
     }
     checkpointHiddenStates = hiddenStates;
@@ -494,6 +500,37 @@ function validateSegmentExecutionInput(
     cdnUrl,
     transport,
   };
+}
+
+function snapshotPrototypeUint8Array(value: unknown): Uint8Array | undefined {
+  let isUint8Array = false;
+  try {
+    isUint8Array = value instanceof NativeUint8Array;
+  } catch {
+    return undefined;
+  }
+  if (!isUint8Array || !ArrayBuffer.isView(value)) {
+    return undefined;
+  }
+  if (
+    typeof typedArrayBufferGetter !== 'function'
+    || typeof typedArrayByteOffsetGetter !== 'function'
+    || typeof typedArrayByteLengthGetter !== 'function'
+  ) {
+    return undefined;
+  }
+
+  try {
+    const buffer = typedArrayBufferGetter.call(value) as ArrayBufferLike;
+    const byteOffset = typedArrayByteOffsetGetter.call(value) as number;
+    const byteLength = typedArrayByteLengthGetter.call(value) as number;
+    const source = new NativeUint8Array(buffer, byteOffset, byteLength);
+    const owned = new NativeUint8Array(byteLength);
+    NativeUint8Array.prototype.set.call(owned, source);
+    return owned;
+  } catch {
+    return undefined;
+  }
 }
 
 function validateTwoWorkerPrototypeRunnerDependencies(
