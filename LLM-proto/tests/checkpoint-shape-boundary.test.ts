@@ -27,9 +27,9 @@ function shapeWithReportedLength(length: number): unknown[] {
 
 describe('checkpoint shape runtime boundary', () => {
   it.each([
-    [1],
-    [1, 2],
-    [1, 2, 3, 4],
+    [[1]],
+    [[1, 2]],
+    [[1, 2, 3, 4]],
   ])('rejects non-three-dimensional checkpoint shape %j', (shape) => {
     expect(() => CheckpointStore.snapshotValidatedCheckpoint(checkpointWithShape(shape)))
       .toThrow('checkpoint metadata.shape must contain exactly 3 dimensions');
