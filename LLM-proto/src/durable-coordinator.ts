@@ -247,6 +247,7 @@ function bridgeSubmissionSignal(surface: CapturedSubmissionSignalSurface): Bridg
   let cleaned = false;
   let observedByCore = false;
   const onAbort = () => controller.abort();
+
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
@@ -493,7 +494,11 @@ function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkp
 
   let payloadIsUint8Array: boolean;
   try {
-    payloadIsUint8Array = payloadValue instanceof Uint8Array;
+    // `instanceof` alone accepts a live Proxy around a Uint8Array even though
+    // that Proxy lacks typed-array internal slots and would later throw when
+    // the core reads `.byteLength`. `ArrayBuffer.isView()` rejects that shape
+    // while continuing to accept genuine Uint8Array subclasses.
+    payloadIsUint8Array = ArrayBuffer.isView(payloadValue) && payloadValue instanceof Uint8Array;
   } catch {
     return malformedCheckpointPayload();
   }
@@ -505,7 +510,7 @@ function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkp
   // configured byte ceiling, so it must reject an oversized payload before any
   // ownership allocation. This reference remains synchronous only: the core
   // snapshots it before crossing the async digest boundary.
-  const payload = payloadValue;
+  const payload = payloadValue as Uint8Array;
 
   // The legacy core spread retained only own-enumerable metadata fields. Read
   // only those declared names, once each, without enumerating unknown caller
