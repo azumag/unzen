@@ -96,6 +96,14 @@ export type ArtifactContent = string | ArrayBuffer | Uint8Array;
 
 type CanonicalArtifactContent = string | Uint8Array<ArrayBuffer>;
 
+type CapturedIndependentEvidenceVerification = {
+  verifier: unknown;
+  version: unknown;
+  verifiedAt: unknown;
+  result: unknown;
+  reason: unknown;
+};
+
 export interface TrustedEvidenceVerifier {
   name: string;
   version?: string;
@@ -330,13 +338,20 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('not-evaluated', issues, level, readiness);
   }
 
-  let attestation: IndependentEvidenceVerification;
+  let attestation: CapturedIndependentEvidenceVerification;
   try {
-    attestation = await options.verifyArtifact({
+    const runtimeAttestation = (await options.verifyArtifact({
       envelope: captured,
       artifactContent,
       actualSha256,
-    });
+    })) as unknown as Record<string, unknown>;
+    attestation = {
+      verifier: runtimeAttestation.verifier,
+      version: runtimeAttestation.version,
+      verifiedAt: runtimeAttestation.verifiedAt,
+      result: runtimeAttestation.result,
+      reason: runtimeAttestation.reason,
+    };
   } catch (error) {
     issue(
       issues,
@@ -357,17 +372,21 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
       issues,
       'verification-attestation-mismatch',
       '$.verification',
-      attestation.reason ?? 'independent verifier attestation does not match the envelope',
+      typeof attestation.reason === 'string'
+        ? attestation.reason
+        : 'independent verifier attestation does not match the envelope',
     );
     return result<TPayload>('invalid', issues, level, readiness);
   }
 
-  if (!isTrustedVerifier(attestation.verifier, attestation.version, options.trustedVerifiers ?? [])) {
+  const verifier = attestation.verifier as string;
+  const version = attestation.version as string;
+  if (!isTrustedVerifier(verifier, version, options.trustedVerifiers ?? [])) {
     issue(
       issues,
       'untrusted-verifier',
       '$.verification.verifier',
-      `verifier is not trusted: ${attestation.verifier}@${attestation.version}`,
+      `verifier is not trusted: ${verifier}@${version}`,
     );
     return result<TPayload>('invalid', issues, level, readiness);
   }
