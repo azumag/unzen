@@ -54,15 +54,7 @@ export function snapshotSpanSegments(
   segments: unknown,
   owner = 'SpanRouter',
 ): readonly SegmentConfig[] {
-  if (!Array.isArray(segments)) {
-    throw new Error(`${owner} segments must be an array`);
-  }
-
-  const segmentCount = segments.length;
-  const capturedSegments: unknown[] = [];
-  for (let position = 0; position < segmentCount; position++) {
-    capturedSegments.push((segments as readonly unknown[])[position]);
-  }
+  const capturedSegments = captureSegmentArray(segments, owner);
 
   const segmentSnapshot = Object.freeze(
     capturedSegments.map((segment, arrayIndex) =>
@@ -260,23 +252,62 @@ export class SpanRouter {
   }
 }
 
+function captureSegmentArray(segments: unknown, owner: string): readonly unknown[] {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(segments);
+  } catch {
+    throw new Error(`${owner} segments must be an array`);
+  }
+  if (!isArray) {
+    throw new Error(`${owner} segments must be an array`);
+  }
+
+  const source = segments as readonly unknown[];
+  let segmentCount: unknown;
+  try {
+    segmentCount = source.length;
+  } catch {
+    throw new Error(`${owner} segments could not be read`);
+  }
+  if (
+    typeof segmentCount !== 'number' ||
+    !Number.isSafeInteger(segmentCount) ||
+    segmentCount < 0 ||
+    segmentCount > 0xffff_ffff
+  ) {
+    throw new Error(`${owner} segments could not be read`);
+  }
+
+  const capturedSegments = new Array<unknown>(segmentCount);
+  for (let position = 0; position < segmentCount; position++) {
+    try {
+      capturedSegments[position] = source[position];
+    } catch {
+      throw new Error(`${owner} segment ${position} could not be read`);
+    }
+  }
+  return capturedSegments;
+}
+
 function validateSegmentConfig(
   value: unknown,
   arrayIndex: number,
   owner: string,
 ): SegmentConfig {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayRecord(value)) {
     throw new Error(`${owner} segment ${arrayIndex} must be an object`);
   }
-  const segment = value as Record<string, unknown>;
+  const segment = value;
 
-  const index = segment.index;
+  const indexError = `${owner} segment index must be a non-negative safe integer`;
+  const index = readSegmentField(segment, 'index', indexError);
   if (
     typeof index !== 'number' ||
     !Number.isSafeInteger(index) ||
     index < 0
   ) {
-    throw new Error(`${owner} segment index must be a non-negative safe integer`);
+    throw new Error(indexError);
   }
   if (index !== arrayIndex) {
     throw new Error(
@@ -285,40 +316,44 @@ function validateSegmentConfig(
     );
   }
 
-  const layerStart = segment.layerStart;
+  const layerStartError =
+    `${owner} segment ${arrayIndex} layerStart must be a non-negative safe integer`;
+  const layerStart = readSegmentField(segment, 'layerStart', layerStartError);
   if (
     typeof layerStart !== 'number' ||
     !Number.isSafeInteger(layerStart) ||
     layerStart < 0
   ) {
-    throw new Error(`${owner} segment ${arrayIndex} layerStart must be a non-negative safe integer`);
+    throw new Error(layerStartError);
   }
 
-  const layerEnd = segment.layerEnd;
+  const layerEndError =
+    `${owner} segment ${arrayIndex} layerEnd must be a safe integer greater than or equal to layerStart`;
+  const layerEnd = readSegmentField(segment, 'layerEnd', layerEndError);
   if (
     typeof layerEnd !== 'number' ||
     !Number.isSafeInteger(layerEnd) ||
     layerEnd < layerStart
   ) {
-    throw new Error(
-      `${owner} segment ${arrayIndex} layerEnd must be a safe integer greater than or equal to layerStart`,
-    );
+    throw new Error(layerEndError);
   }
 
-  const modelWeightHash = segment.modelWeightHash;
+  const modelWeightHashError =
+    `${owner} segment ${arrayIndex} modelWeightHash must be a non-empty string`;
+  const modelWeightHash = readSegmentField(segment, 'modelWeightHash', modelWeightHashError);
   if (typeof modelWeightHash !== 'string' || modelWeightHash.trim().length === 0) {
-    throw new Error(`${owner} segment ${arrayIndex} modelWeightHash must be a non-empty string`);
+    throw new Error(modelWeightHashError);
   }
 
-  const estimatedVramMB = segment.estimatedVramMB;
+  const estimatedVramMBError =
+    `segment ${arrayIndex} estimatedVramMB must be a positive finite number`;
+  const estimatedVramMB = readSegmentField(segment, 'estimatedVramMB', estimatedVramMBError);
   if (
     typeof estimatedVramMB !== 'number' ||
     !Number.isFinite(estimatedVramMB) ||
     estimatedVramMB <= 0
   ) {
-    throw new Error(
-      `segment ${arrayIndex} estimatedVramMB must be a positive finite number`,
-    );
+    throw new Error(estimatedVramMBError);
   }
 
   return {
@@ -328,4 +363,27 @@ function validateSegmentConfig(
     modelWeightHash,
     estimatedVramMB,
   };
+}
+
+function readSegmentField(
+  segment: Record<string, unknown>,
+  key: string,
+  errorMessage: string,
+): unknown {
+  try {
+    return segment[key];
+  } catch {
+    throw new Error(errorMessage);
+  }
+}
+
+function isNonArrayRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
