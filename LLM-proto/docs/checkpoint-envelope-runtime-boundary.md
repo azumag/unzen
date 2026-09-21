@@ -25,13 +25,14 @@ All checkpoint byte operations first require a genuine `Uint8Array` view. A `Pro
 - caller objects are not spread or enumerated, so unknown enumerable getters and `ownKeys` traps are outside the validation path;
 - the configured payload ceiling is validated and enforced before allocating the defensive payload copy;
 - after structure, identity, byte-budget, and TTL eligibility have succeeded, payload bytes are copied with the intrinsic setter into an owned base `Uint8Array` before the first asynchronous digest yield;
+- if a genuine payload buffer is detached by a later caller-controlled getter after structural capture but before that owned copy, validation fails closed with the stable `checkpoint payload digest mismatch` integrity result rather than leaking a native TypedArray exception;
 - SHA-256 validation is performed against that owned copy, so later caller mutation cannot alter the authenticated bytes;
 - the pre-existing public `CheckpointValidationResult` failure messages and fail-fast ordering remain the compatibility contract.
 
 `verifyCheckpointDigest()` independently enforces the same ownership principle for its narrower boolean API:
 
 - `payload`, actual payload byte length, declared `payloadLength`, and `payloadDigest` are captured in validation order;
-- malformed values, Proxy-backed typed arrays, or throwing scoped getters fail closed with `false`;
+- malformed values, Proxy-backed typed arrays, throwing scoped getters, or payload detachment between structural capture and owned copy fail closed with `false`;
 - caller objects are not spread or enumerated;
 - byte-length validation uses the intrinsic length captured from the payload rather than a caller-defined property;
 - eligible bytes are copied to a fresh owned base `Uint8Array` before the asynchronous SHA-256 digest boundary;
