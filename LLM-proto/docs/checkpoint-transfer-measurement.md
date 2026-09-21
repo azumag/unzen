@@ -89,23 +89,34 @@ numeric inputs.
 
 Checkpoint envelope validation is symmetric at the relay boundary. Before
 serialization, the outbound checkpoint must have a non-empty request ID, a
-non-negative safe segment index, `Uint8Array` hidden states, valid tensor
+non-negative safe segment index, genuine `Uint8Array` hidden states, valid tensor
 metadata, and a hidden-state byte length that exactly matches the declared
 shape/dtype. The serializer captures caller-owned `hiddenStates`, `requestId`,
-`segmentIndex`, and `metadata` once in fail-fast order, validates that snapshot,
-and uses only the validated hidden-state reference for frame sizing, payload
-copy, and `payloadBytes` reporting. A getter/Proxy therefore cannot pass one
-hidden-state buffer or identity through validation and substitute another for
-the serialized frame. The serializer writes only the validated canonical header
-fields and checks frame-length arithmetic before allocation. The deserializer
-first requires the top-level received frame itself to be a `Uint8Array`, before
-any `byteLength`, buffer, slice, or decode access; it then applies the same
-metadata rules to the received header and independently verifies the actual
-payload byte length.
+`segmentIndex`, and `metadata` once in fail-fast order. For the byte payload it
+first verifies a real TypedArray view, then reads `buffer`, `byteOffset`, and
+`byteLength` through intrinsic TypedArray accessors and constructs a base
+`Uint8Array` view. Proxy-wrapped typed arrays therefore fail with the stable
+checkpoint validation error, while genuine subclasses cannot spoof byte length
+or run caller-defined `buffer`, `byteOffset`, `byteLength`, `slice`, iterator, or
+species hooks during frame sizing or copy. The serializer writes only the
+validated canonical header fields and checks frame-length arithmetic before
+allocation.
+
+The deserializer applies the same byte-view rule before any frame size, buffer,
+slice, or decode access. It requires a genuine `Uint8Array` view, captures the
+actual `buffer`, `byteOffset`, and `byteLength` through the intrinsic TypedArray
+accessors, and continues from a base `Uint8Array` view. Proxy-wrapped frames fail
+closed with `serialized checkpoint must be a Uint8Array`; genuine subclasses are
+accepted without invoking caller-defined byte-view or copy hooks. The decoded
+header then receives the same metadata validation and the actual payload byte
+length is independently checked against shape and dtype.
 
 Serialized checkpoint requirements:
 
-- the top-level frame is a `Uint8Array`;
+- the top-level frame is a genuine `Uint8Array` view; Proxy wrappers are rejected
+  before byte access;
+- frame `buffer`, `byteOffset`, and `byteLength` come from intrinsic TypedArray
+  accessors rather than caller-defined properties;
 - the frame contains the four-byte little-endian header-length prefix;
 - the declared header length is non-zero and contained by the frame;
 - the header is valid JSON with a non-empty request ID, non-negative safe
@@ -140,7 +151,7 @@ the evidence producer or prove a real browser/WebGPU/Coordinator transport.
 
 ```bash
 cd LLM-proto
-npm test -- --run tests/checkpoint-transfer-measurement.test.ts tests/checkpoint-transfer-owned-snapshot.test.ts
+npm test -- --run tests/checkpoint-transfer-measurement.test.ts tests/checkpoint-transfer-owned-snapshot.test.ts tests/checkpoint-transfer-byte-view.test.ts
 ```
 
 The full regression bar remains:

@@ -65,6 +65,11 @@ const BYTES_PER_DTYPE = {
 } as const;
 
 const MAX_SERIALIZED_HEADER_BYTES = 0xffff_ffff;
+const NativeUint8Array = Uint8Array;
+const typedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype) as object;
+const typedArrayBufferGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer')?.get;
+const typedArrayByteOffsetGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset')?.get;
+const typedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength')?.get;
 
 export function createDefaultCheckpointMeasurementManifest(
   feasibilityReport: WebGpu30BFeasibilityReport = evaluateWebGpu30BFeasibility(
@@ -202,7 +207,10 @@ export function serializeCheckpointPayload(checkpoint: Checkpoint): SerializedCh
 }
 
 export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint {
-  const frame = validateSerializedCheckpointFrame(serialized);
+  const frame = captureRuntimeUint8ArrayView(
+    serialized,
+    'serialized checkpoint must be a Uint8Array',
+  );
   if (frame.byteLength < 4) {
     throw new Error('serialized checkpoint must contain a 4-byte header length');
   }
@@ -423,11 +431,32 @@ function snapshotCheckpointTensorSpec(tensor: unknown): CheckpointTensorSpec {
   };
 }
 
-function validateSerializedCheckpointFrame(value: unknown): Uint8Array {
-  if (!(value instanceof Uint8Array)) {
-    throw new Error('serialized checkpoint must be a Uint8Array');
+function captureRuntimeUint8ArrayView(value: unknown, errorMessage: string): Uint8Array {
+  let isUint8Array = false;
+  try {
+    isUint8Array = value instanceof NativeUint8Array;
+  } catch {
+    throw new Error(errorMessage);
   }
-  return value;
+
+  if (
+    !isUint8Array
+    || !ArrayBuffer.isView(value)
+    || typeof typedArrayBufferGetter !== 'function'
+    || typeof typedArrayByteOffsetGetter !== 'function'
+    || typeof typedArrayByteLengthGetter !== 'function'
+  ) {
+    throw new Error(errorMessage);
+  }
+
+  try {
+    const buffer = Reflect.apply(typedArrayBufferGetter, value, []) as ArrayBufferLike;
+    const byteOffset = Reflect.apply(typedArrayByteOffsetGetter, value, []) as number;
+    const byteLength = Reflect.apply(typedArrayByteLengthGetter, value, []) as number;
+    return new NativeUint8Array(buffer, byteOffset, byteLength);
+  } catch {
+    throw new Error(errorMessage);
+  }
 }
 
 function validateCheckpointForSerialization(checkpoint: Checkpoint): {
@@ -445,10 +474,10 @@ function validateCheckpointForSerialization(checkpoint: Checkpoint): {
     throw new Error('checkpoint must be an object');
   }
 
-  const hiddenStates = checkpoint.hiddenStates;
-  if (!(hiddenStates instanceof Uint8Array)) {
-    throw new Error('checkpoint hiddenStates must be a Uint8Array');
-  }
+  const hiddenStates = captureRuntimeUint8ArrayView(
+    checkpoint.hiddenStates,
+    'checkpoint hiddenStates must be a Uint8Array',
+  );
 
   const requestId = checkpoint.requestId;
   const segmentIndex = checkpoint.segmentIndex;
