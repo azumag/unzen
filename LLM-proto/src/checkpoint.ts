@@ -12,6 +12,12 @@
 
 import type { Checkpoint, InferenceRequestId } from './types.js';
 
+const CHECKPOINT_TENSOR_RANK = 3;
+const CHECKPOINT_SHAPE_RANK_ERROR =
+  'checkpoint metadata.shape must contain exactly 3 dimensions';
+const CHECKPOINT_SHAPE_DIMENSION_ERROR =
+  'checkpoint metadata.shape must contain positive safe integers';
+
 interface ValidatedCheckpointCapture {
   readonly requestId: InferenceRequestId;
   readonly segmentIndex: number;
@@ -70,21 +76,25 @@ export class CheckpointStore {
 
     const shapeValue = metadata.shape;
     if (!Array.isArray(shapeValue)) {
-      throw new Error('checkpoint metadata.shape must contain positive safe integers');
+      throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
     }
+    // Rank is part of the checkpoint protocol, not an arbitrary runtime array
+    // length. Reject it before any length-derived allocation or iteration so an
+    // asserted/Proxy-backed checkpoint cannot turn validation into a large
+    // allocation or leak a native RangeError.
     const shapeLength = shapeValue.length;
-    if (shapeLength === 0) {
-      throw new Error('checkpoint metadata.shape must contain positive safe integers');
+    if (shapeLength !== CHECKPOINT_TENSOR_RANK) {
+      throw new Error(CHECKPOINT_SHAPE_RANK_ERROR);
     }
-    const shapeMembers: unknown[] = new Array(shapeLength);
-    for (let index = 0; index < shapeLength; index += 1) {
+    const shapeMembers: unknown[] = new Array(CHECKPOINT_TENSOR_RANK);
+    for (let index = 0; index < CHECKPOINT_TENSOR_RANK; index += 1) {
       shapeMembers[index] = shapeValue[index];
     }
-    const shape: number[] = new Array(shapeLength);
-    for (let index = 0; index < shapeLength; index += 1) {
+    const shape: number[] = new Array(CHECKPOINT_TENSOR_RANK);
+    for (let index = 0; index < CHECKPOINT_TENSOR_RANK; index += 1) {
       const dimension = shapeMembers[index];
       if (typeof dimension !== 'number' || !Number.isSafeInteger(dimension) || dimension <= 0) {
-        throw new Error('checkpoint metadata.shape must contain positive safe integers');
+        throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
       }
       shape[index] = dimension;
     }
