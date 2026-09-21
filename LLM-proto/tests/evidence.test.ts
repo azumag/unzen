@@ -303,15 +303,14 @@ describe('validateEvidenceEnvelope', () => {
       },
     });
 
+    let verifierContent: unknown;
+    let verifierSha256: string | undefined;
     const result = await validateEvidenceEnvelope(createVerifiedEnvelope(), {
       ...verificationOptions,
       loadArtifact: async () => hostile,
       verifyArtifact: async ({ artifactContent, actualSha256 }) => {
-        expect(actualSha256).toBe(ARTIFACT_SHA256);
-        expect(artifactContent).toBeInstanceOf(Uint8Array);
-        expect(artifactContent).not.toBe(hostile);
-        expect(Object.getPrototypeOf(artifactContent)).toBe(Uint8Array.prototype);
-        expect(new TextDecoder().decode(artifactContent as Uint8Array)).toBe(ARTIFACT_CONTENT);
+        verifierContent = artifactContent;
+        verifierSha256 = actualSha256;
         return {
           verifier: 'unzen-ci-evidence-verifier',
           version: '1.0.0',
@@ -322,6 +321,11 @@ describe('validateEvidenceEnvelope', () => {
     });
 
     expect(result.status).toBe('valid');
+    expect(verifierSha256).toBe(ARTIFACT_SHA256);
+    expect(verifierContent).toBeInstanceOf(Uint8Array);
+    expect(verifierContent).not.toBe(hostile);
+    expect(Object.getPrototypeOf(verifierContent)).toBe(Uint8Array.prototype);
+    expect(new TextDecoder().decode(verifierContent as Uint8Array)).toBe(ARTIFACT_CONTENT);
     expect(hooks).toEqual({
       byteLength: 0,
       buffer: 0,
