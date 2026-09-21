@@ -35,6 +35,11 @@ describe('checkpoint shape runtime boundary', () => {
       .toThrow('checkpoint metadata.shape must contain exactly 3 dimensions');
   });
 
+  it('preserves the established empty-shape validation error', () => {
+    expect(() => CheckpointStore.snapshotValidatedCheckpoint(checkpointWithShape([])))
+      .toThrow('checkpoint metadata.shape must contain positive safe integers');
+  });
+
   it('rejects a hostile direct shape length before native array allocation', () => {
     const shape = shapeWithReportedLength(2 ** 32);
 
@@ -54,7 +59,7 @@ describe('checkpoint shape runtime boundary', () => {
     });
 
     expect(() => CheckpointStore.snapshotValidatedCheckpoint(snapshot.checkpoint))
-      .toThrow('checkpoint metadata.shape must contain exactly 3 dimensions');
+      .toThrow('checkpoint metadata.shape must contain positive safe integers');
   });
 
   it('copies only the canonical three dimensions from a valid Proxy-backed shape', () => {
