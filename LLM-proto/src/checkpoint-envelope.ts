@@ -62,6 +62,23 @@ function copyRuntimeUint8Array(
   return snapshot;
 }
 
+/**
+ * Best-effort owned copy for malformed-input boundaries. A genuine view can
+ * become detached after its byte length was captured by a later caller-owned
+ * getter, so native TypedArray copy errors must be translated into the public
+ * fail-closed result instead of leaking through the boundary.
+ */
+function tryCopyRuntimeUint8Array(
+  value: Uint8Array,
+  byteLength: number,
+): Uint8Array<ArrayBuffer> | undefined {
+  try {
+    return copyRuntimeUint8Array(value, byteLength);
+  } catch {
+    return undefined;
+  }
+}
+
 export interface CheckpointEnvelope {
   readonly requestId: InferenceRequestId;
   /** The attempt that produced this checkpoint. */
@@ -193,7 +210,8 @@ export async function verifyCheckpointDigest(
 
   if (actualPayloadLength !== payloadLength) return false;
 
-  const ownedPayload = copyRuntimeUint8Array(payload, payloadLength);
+  const ownedPayload = tryCopyRuntimeUint8Array(payload, payloadLength);
+  if (!ownedPayload) return false;
   return (await digestOwnedBytes(ownedPayload)) === payloadDigest;
 }
 
@@ -441,8 +459,13 @@ export async function validateCheckpointEnvelope(
 
   // The copy happens only after structure, identity, budget, and TTL checks.
   // From this point through the async digest yield, caller mutation cannot
-  // change the bytes that are authenticated.
-  const ownedPayload = copyRuntimeUint8Array(checkpoint.payload, checkpoint.payloadLength);
+  // change the bytes that are authenticated. If a later caller-owned getter
+  // detached the captured view in the meantime, fail closed as an integrity
+  // mismatch rather than leaking a native TypedArray internal-slot error.
+  const ownedPayload = tryCopyRuntimeUint8Array(checkpoint.payload, checkpoint.payloadLength);
+  if (!ownedPayload) {
+    return mismatch('checkpoint payload digest mismatch');
+  }
   if ((await digestOwnedBytes(ownedPayload)) !== checkpoint.payloadDigest) {
     return mismatch('checkpoint payload digest mismatch');
   }
