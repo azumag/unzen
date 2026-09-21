@@ -132,6 +132,44 @@ describe('SpanRouter segment ownership', () => {
     )).toThrow(/SpanRouter segments must be an array/);
   });
 
+  it('fails closed on a revoked top-level array proxy', () => {
+    const { proxy, revoke } = Proxy.revocable(makeMutableSegments(), {});
+    revoke();
+
+    expect(() => new SpanRouter(
+      proxy as unknown as readonly SegmentConfig[],
+      new WorkerPool(),
+    )).toThrow(/SpanRouter segments must be an array/);
+  });
+
+  it('fails closed when the segment array length trap throws', () => {
+    const segments = new Proxy(makeMutableSegments(), {
+      get(target, property, receiver) {
+        if (property === 'length') {
+          throw new Error('hostile length trap');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(() => new SpanRouter(segments, new WorkerPool()))
+      .toThrow(/SpanRouter segments could not be read/);
+  });
+
+  it('fails closed when an indexed segment read throws', () => {
+    const segments = new Proxy(makeMutableSegments(), {
+      get(target, property, receiver) {
+        if (property === '1') {
+          throw new Error('hostile index trap');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(() => new SpanRouter(segments, new WorkerPool()))
+      .toThrow(/SpanRouter segment 1 could not be read/);
+  });
+
   it.each([
     null,
     [],
@@ -145,6 +183,48 @@ describe('SpanRouter segment ownership', () => {
       segments as unknown as readonly SegmentConfig[],
       new WorkerPool(),
     )).toThrow(/SpanRouter segment 0 must be an object/);
+  });
+
+  it('fails closed on a revoked segment-record proxy', () => {
+    const { proxy, revoke } = Proxy.revocable(makeMutableSegments()[0], {});
+    revoke();
+    const segments = makeMutableSegments() as unknown[];
+    segments[0] = proxy;
+
+    expect(() => new SpanRouter(
+      segments as unknown as readonly SegmentConfig[],
+      new WorkerPool(),
+    )).toThrow(/SpanRouter segment 0 must be an object/);
+  });
+
+  it.each([
+    ['index', /segment index must be a non-negative safe integer/],
+    ['layerStart', /layerStart must be a non-negative safe integer/],
+    ['layerEnd', /layerEnd must be a safe integer greater than or equal to layerStart/],
+    ['modelWeightHash', /modelWeightHash must be a non-empty string/],
+    ['estimatedVramMB', /estimatedVramMB must be a positive finite number/],
+  ] as const)('fails closed when the %s getter throws without inspecting the thrown value', (field, pattern) => {
+    const hostileThrownValue = {
+      toString() {
+        throw new Error('thrown value must not be stringified');
+      },
+      [Symbol.toPrimitive]() {
+        throw new Error('thrown value must not be coerced');
+      },
+    };
+    const runtimeSegment = { ...makeMutableSegments()[0] } as Record<string, unknown>;
+    Object.defineProperty(runtimeSegment, field, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw hostileThrownValue;
+      },
+    });
+
+    expect(() => new SpanRouter(
+      [runtimeSegment] as unknown as readonly SegmentConfig[],
+      new WorkerPool(),
+    )).toThrow(pattern);
   });
 
   it.each([
