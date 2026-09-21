@@ -547,7 +547,7 @@ function validateBase(
     );
   }
 
-  if (!Object.prototype.hasOwnProperty.call(input, 'payload')) {
+  if (!hasOwnPropertySafely(input, 'payload')) {
     issue(issues, 'invalid-envelope', '$.payload', 'payload is required');
   }
   return capturedAtMs;
@@ -755,7 +755,7 @@ function requiredString(
   path: string,
   issues: EvidenceValidationIssue[],
 ): void {
-  requiredStringValue(record[key], key, path, issues);
+  requiredStringValue(readPropertySafely(record, key), key, path, issues);
 }
 
 function requiredStringValue(
@@ -775,7 +775,7 @@ function requiredTimestamp(
   path: string,
   issues: EvidenceValidationIssue[],
 ): number | undefined {
-  return requiredTimestampValue(record[key], key, path, issues);
+  return requiredTimestampValue(readPropertySafely(record, key), key, path, issues);
 }
 
 function requiredTimestampValue(
@@ -839,6 +839,14 @@ function readPropertySafely(record: Record<string, unknown>, key: string): unkno
     return record[key];
   } catch {
     return undefined;
+  }
+}
+
+function hasOwnPropertySafely(record: Record<string, unknown>, key: string): boolean {
+  try {
+    return Object.prototype.hasOwnProperty.call(record, key);
+  } catch {
+    return false;
   }
 }
 
