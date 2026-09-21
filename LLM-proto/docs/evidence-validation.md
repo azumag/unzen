@@ -70,6 +70,8 @@ const result = await validateEvidenceEnvelope(envelope, {
 
 `trustedVerifiers`、`loadArtifact`、`verifyArtifact`をevidence payload自身から組み立ててはならない。`verifyArtifact`はCI署名、artifact store metadata、operator attestation等を確認する信頼済み実装を使用する。
 
+validatorは1回のvalidation operation中、base validationとcaptured-only validationの両方で参照する`producer`、`environment`、`redaction`のobject referenceと、その共通primitive fieldを最初の読取りでsnapshotする。特に`environment.executionSurface`は同じsnapshotをbase validationとbrowser metadata要件判定で共有するため、getterや同一objectを持つ別コードが途中で値を書き換えてvalidation branchを切り替えることはできない。captured-onlyの`scenario`は`captured-and-verified` branchへ入った場合だけ一度読み、synthetic/self-reported evidenceでは`scenario`、`artifact`、`verification`を不要にeager readしない。getterがthrowした場合はそのfieldを欠損値として扱い、既存のvalidation issueへfail-closeする。
+
 `loadArtifact()`のTypeScript戻り値もruntimeではuntrustedとして扱う。文字列は従来どおりそのまま扱うが、`ArrayBuffer`または`Uint8Array`はvalidator境界でgenuineなbinary objectかを確認し、caller-owned viewの`byteLength`、`buffer`、`byteOffset`、iterator、`slice()`、constructor/species hookを使わずにowned base `Uint8Array`へsnapshotする。Proxy-wrapped、detached、その他の無効なbinary値はnative internal-slot例外を外へ漏らさず`artifact-load-failed`としてfail-closeする。
 
 binary artifactでは、SHA-256計算と後段の`verifyArtifact()`へ同じowned snapshotを使用する。したがって、loaderが返した元のbuffer/viewがdigest計算後に変更されても、independent verifierが見るbytesはaccepted digestの対象からずれない。
@@ -117,6 +119,8 @@ unit testでは以下を確認する。
 - trusted verifier、freshness、digest、独立attestationが揃ったartifactを受理する
 - attestation不一致、digest不一致、期限切れ、schema不一致、unknown verifierを拒否する
 - browser evidenceにbrowser metadataを必須とする
+- shared metadata reference / primitive fieldをoperation中に再読せず、最初の`executionSurface`をbrowser metadata判定にも使用する
+- synthetic evidenceではcaptured-onlyの`scenario` / `artifact` / `verification`を読まない
 - Proxy-wrappedまたはdetached binary artifactをnative例外なしでfail-closeする
 - hostile `Uint8Array` subclassのcaller-defined byte access hookを実行しない
 - `ArrayBuffer`/`Uint8Array`のowned snapshotをdigestとindependent verifierで共有し、元bufferのmutationから隔離する
