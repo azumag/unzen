@@ -45,10 +45,26 @@ export interface BrowserSegmentArtifactBudgetResult {
 export function evaluateBrowserSegmentArtifact(
   artifact: Pick<SegmentArtifact, 'byteSize'>,
 ): BrowserSegmentArtifactBudgetResult {
-  if (typeof artifact !== 'object' || artifact === null || Array.isArray(artifact)) {
+  if (typeof artifact !== 'object' || artifact === null) {
     throw new Error('segment artifact must be an object');
   }
-  const byteSize = (artifact as { readonly byteSize?: unknown }).byteSize;
+
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(artifact);
+  } catch {
+    throw new Error('segment artifact must be an object');
+  }
+  if (isArray) {
+    throw new Error('segment artifact must be an object');
+  }
+
+  let byteSize: unknown;
+  try {
+    byteSize = (artifact as { readonly byteSize?: unknown }).byteSize;
+  } catch {
+    throw new Error('segment artifact byte size must be a positive safe integer');
+  }
   return evaluateBrowserSegmentArtifactBytes(byteSize as number);
 }
 
