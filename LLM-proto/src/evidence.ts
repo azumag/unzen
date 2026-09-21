@@ -626,13 +626,13 @@ function validateCaptured(
   let artifactLocator: unknown;
   let artifactSha256: unknown;
   let artifactExpiresAt: unknown;
-  const artifact = input.artifact;
-  if (!isRecord(artifact)) {
+  const artifact = readRecordPropertySafely(input, 'artifact');
+  if (!artifact) {
     issue(issues, 'missing-artifact', '$.artifact', 'artifact is required');
   } else {
-    artifactLocator = artifact.locator;
-    artifactSha256 = artifact.sha256;
-    artifactExpiresAt = artifact.expiresAt;
+    artifactLocator = readPropertySafely(artifact, 'locator');
+    artifactSha256 = readPropertySafely(artifact, 'sha256');
+    artifactExpiresAt = readPropertySafely(artifact, 'expiresAt');
     requiredStringValue(artifactLocator, 'locator', '$.artifact.locator', issues);
     if (!isNonEmptyString(artifactSha256) || !SHA256_PATTERN.test(artifactSha256)) {
       issue(
@@ -657,8 +657,8 @@ function validateCaptured(
   let verificationVersion: unknown;
   let verificationVerifiedAt: unknown;
   let verificationResult: unknown;
-  const verification = input.verification;
-  if (!isRecord(verification)) {
+  const verification = readRecordPropertySafely(input, 'verification');
+  if (!verification) {
     issue(issues, 'missing-verification', '$.verification', 'verification is required');
     return {
       artifactLocator,
@@ -671,10 +671,10 @@ function validateCaptured(
     };
   }
 
-  verificationVerifier = verification.verifier;
-  verificationVersion = verification.version;
-  verificationVerifiedAt = verification.verifiedAt;
-  verificationResult = verification.result;
+  verificationVerifier = readPropertySafely(verification, 'verifier');
+  verificationVersion = readPropertySafely(verification, 'version');
+  verificationVerifiedAt = readPropertySafely(verification, 'verifiedAt');
+  verificationResult = readPropertySafely(verification, 'result');
   requiredStringValue(verificationVerifier, 'verifier', '$.verification.verifier', issues);
   requiredStringValue(verificationVersion, 'version', '$.verification.version', issues);
   const verifiedAtMs = requiredTimestampValue(
