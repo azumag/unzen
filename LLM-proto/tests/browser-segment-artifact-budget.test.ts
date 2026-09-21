@@ -66,6 +66,50 @@ describe('browser segment artifact budget', () => {
     expect(reads).toBe(1);
   });
 
+  it('fails closed when SegmentArtifact.byteSize getter throws', () => {
+    const artifact = {
+      get byteSize(): number {
+        throw new Error('caller-controlled getter failure');
+      },
+    };
+
+    expect(() => evaluateBrowserSegmentArtifact(artifact)).toThrow(
+      'segment artifact byte size must be a positive safe integer',
+    );
+  });
+
+  it('does not inspect or stringify hostile values thrown by byteSize accessors', () => {
+    const hostileThrownValue = {
+      toString() {
+        throw new Error('hostile value must not be stringified');
+      },
+      [Symbol.toPrimitive]() {
+        throw new Error('hostile value must not be coerced');
+      },
+    };
+    const artifact = {
+      get byteSize(): number {
+        throw hostileThrownValue;
+      },
+    };
+
+    expect(() => evaluateBrowserSegmentArtifact(artifact)).toThrow(
+      'segment artifact byte size must be a positive safe integer',
+    );
+  });
+
+  it('fails closed on revoked proxies before byteSize property access', () => {
+    const { proxy, revoke } = Proxy.revocable(
+      { byteSize: BROWSER_SEGMENT_TARGET_BYTES },
+      {},
+    );
+    revoke();
+
+    expect(() => evaluateBrowserSegmentArtifact(proxy)).toThrow(
+      'segment artifact must be an object',
+    );
+  });
+
   it.each([
     null,
     undefined,
