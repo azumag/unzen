@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CheckpointStore } from '../src/checkpoint.js';
 import type { Checkpoint } from '../src/types.js';
 import {
+  isWorkerResultRecord,
   snapshotSegmentResultRoot,
   snapshotSpanResultRoot,
 } from '../src/worker-result-root-snapshot.js';
@@ -23,6 +24,23 @@ function validMetadata() {
     dtype: 'float16',
     sequenceLength: 3,
     timestamp: 123,
+  };
+}
+
+function hostileThrownValue() {
+  const hooks = { toString: 0, primitive: 0 };
+  return {
+    hooks,
+    value: {
+      toString() {
+        hooks.toString += 1;
+        throw new Error('hostile toString must not run');
+      },
+      [Symbol.toPrimitive]() {
+        hooks.primitive += 1;
+        throw new Error('hostile primitive conversion must not run');
+      },
+    },
   };
 }
 
@@ -229,5 +247,150 @@ describe('worker-result checkpoint snapshot boundary', () => {
     expect(owned.constructor).toBe(Uint8Array);
     expect([...owned]).toEqual([7, 8, 9]);
     expect(hooks).toEqual({ byteLength: 0, slice: 0, iterator: 0 });
+  });
+
+  it('fails closed on revoked worker-result roots without leaking native Proxy errors', () => {
+    const { proxy, revoke } = Proxy.revocable({ requestId: 'revoked' }, {});
+    revoke();
+
+    expect(isWorkerResultRecord(proxy)).toBe(false);
+    expect(() => snapshotSegmentResultRoot(proxy)).not.toThrow();
+    expect(() => snapshotSpanResultRoot(proxy)).not.toThrow();
+
+    const segment = snapshotSegmentResultRoot(proxy);
+    const span = snapshotSpanResultRoot(proxy);
+    expect(typeof segment.requestId).not.toBe('string');
+    expect(typeof span.requestId).not.toBe('string');
+  });
+
+  it.each([
+    'requestId',
+    'segmentIndex',
+    'workerId',
+    'processingTimeMs',
+    'checkpoint',
+    'output',
+  ] as const)('bounds throwing SegmentResult root getter %s without inspecting the thrown value', (field) => {
+    const hostile = hostileThrownValue();
+    const result: Record<string, unknown> = {
+      requestId: 'root-request',
+      segmentIndex: 0,
+      workerId: 'root-worker',
+      processingTimeMs: 1,
+      checkpoint: undefined,
+      output: undefined,
+    };
+    Object.defineProperty(result, field, {
+      enumerable: true,
+      get() {
+        throw hostile.value;
+      },
+    });
+
+    expect(() => snapshotSegmentResultRoot(result)).not.toThrow();
+    expect(hostile.hooks).toEqual({ toString: 0, primitive: 0 });
+  });
+
+  it.each([
+    'requestId',
+    'workerId',
+    'startSegment',
+    'endSegment',
+    'processingTimeMs',
+    'checkpoint',
+    'output',
+  ] as const)('bounds throwing SpanResult root getter %s without inspecting the thrown value', (field) => {
+    const hostile = hostileThrownValue();
+    const result: Record<string, unknown> = {
+      requestId: 'span-root-request',
+      workerId: 'span-root-worker',
+      startSegment: 0,
+      endSegment: 1,
+      processingTimeMs: 1,
+      checkpoint: undefined,
+      output: undefined,
+    };
+    Object.defineProperty(result, field, {
+      enumerable: true,
+      get() {
+        throw hostile.value;
+      },
+    });
+
+    expect(() => snapshotSpanResultRoot(result)).not.toThrow();
+    expect(hostile.hooks).toEqual({ toString: 0, primitive: 0 });
+  });
+
+  it('fails closed on revoked checkpoint and metadata records through checkpoint validation', () => {
+    const revokedCheckpoint = Proxy.revocable({ requestId: 'x' }, {});
+    revokedCheckpoint.revoke();
+    const checkpointSnapshot = snapshotSegmentResultRoot({
+      requestId: 'req-revoked-checkpoint',
+      segmentIndex: 0,
+      workerId: 'worker-revoked',
+      processingTimeMs: 1,
+      checkpoint: revokedCheckpoint.proxy,
+      output: undefined,
+    });
+    expect(() => CheckpointStore.assertValidCheckpoint(checkpointSnapshot.checkpoint)).toThrow();
+
+    const revokedMetadata = Proxy.revocable(validMetadata(), {});
+    revokedMetadata.revoke();
+    const metadataSnapshot = snapshotSpanResultRoot({
+      requestId: 'req-revoked-metadata',
+      workerId: 'worker-revoked',
+      startSegment: 0,
+      endSegment: 0,
+      processingTimeMs: 1,
+      checkpoint: {
+        requestId: 'req-revoked-metadata',
+        segmentIndex: 0,
+        hiddenStates: new Uint8Array([1]),
+        metadata: revokedMetadata.proxy,
+      },
+      output: undefined,
+    });
+    expect(() => CheckpointStore.assertValidCheckpoint(metadataSnapshot.checkpoint)).toThrow();
+  });
+
+  it('memoizes throwing checkpoint accessors and leaves nested fields lazy', () => {
+    const reads: Record<string, number> = {};
+    const hostile = hostileThrownValue();
+    const checkpoint = {
+      get requestId() {
+        bump(reads, 'checkpoint.requestId');
+        throw hostile.value;
+      },
+      get segmentIndex() {
+        bump(reads, 'checkpoint.segmentIndex');
+        return 0;
+      },
+      get hiddenStates() {
+        bump(reads, 'checkpoint.hiddenStates');
+        return new Uint8Array([1]);
+      },
+      get metadata() {
+        bump(reads, 'checkpoint.metadata');
+        return validMetadata();
+      },
+    };
+
+    const snapshot = snapshotSegmentResultRoot({
+      requestId: 'req-lazy-checkpoint',
+      segmentIndex: 0,
+      workerId: 'worker-lazy',
+      processingTimeMs: 1,
+      checkpoint,
+      output: undefined,
+    });
+
+    expect(reads).toEqual({});
+    const captured = snapshot.checkpoint as Record<string, unknown>;
+    expect(captured.requestId).toBe(captured.requestId);
+    expect(reads['checkpoint.requestId']).toBe(1);
+    expect(reads['checkpoint.segmentIndex']).toBeUndefined();
+    expect(reads['checkpoint.hiddenStates']).toBeUndefined();
+    expect(reads['checkpoint.metadata']).toBeUndefined();
+    expect(hostile.hooks).toEqual({ toString: 0, primitive: 0 });
   });
 });
