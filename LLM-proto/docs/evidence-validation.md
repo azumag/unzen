@@ -70,13 +70,17 @@ const result = await validateEvidenceEnvelope(envelope, {
 
 `trustedVerifiers`、`loadArtifact`、`verifyArtifact`をevidence payload自身から組み立ててはならない。`verifyArtifact`はCI署名、artifact store metadata、operator attestation等を確認する信頼済み実装を使用する。
 
+`loadArtifact()`のTypeScript戻り値もruntimeではuntrustedとして扱う。文字列は従来どおりそのまま扱うが、`ArrayBuffer`または`Uint8Array`はvalidator境界でgenuineなbinary objectかを確認し、caller-owned viewの`byteLength`、`buffer`、`byteOffset`、iterator、`slice()`、constructor/species hookを使わずにowned base `Uint8Array`へsnapshotする。Proxy-wrapped、detached、その他の無効なbinary値はnative internal-slot例外を外へ漏らさず`artifact-load-failed`としてfail-closeする。
+
+binary artifactでは、SHA-256計算と後段の`verifyArtifact()`へ同じowned snapshotを使用する。したがって、loaderが返した元のbuffer/viewがdigest計算後に変更されても、independent verifierが見るbytesはaccepted digestの対象からずれない。
+
 ## Validation status
 
 | Status | 意味 |
 |---|---|
 | `valid` | envelope、artifact integrity、独立attestationが通った |
 | `invalid` | schema、digest、期限、verifier、attestation、readiness等に問題がある |
-| `not-evaluated` | artifact loaderまたは独立verifierがなく、Level 3として評価できない |
+| `not-evaluated` | artifact loaderまたは独立verifierがなく、Level 3として評価できない。loaderが無効なruntime値を返した場合もfail-closeしてここに留める |
 
 `not-evaluated`は`valid`として扱わない。
 
@@ -113,6 +117,9 @@ unit testでは以下を確認する。
 - trusted verifier、freshness、digest、独立attestationが揃ったartifactを受理する
 - attestation不一致、digest不一致、期限切れ、schema不一致、unknown verifierを拒否する
 - browser evidenceにbrowser metadataを必須とする
+- Proxy-wrappedまたはdetached binary artifactをnative例外なしでfail-closeする
+- hostile `Uint8Array` subclassのcaller-defined byte access hookを実行しない
+- `ArrayBuffer`/`Uint8Array`のowned snapshotをdigestとindependent verifierで共有し、元bufferのmutationから隔離する
 
 ## このPRの範囲外
 
