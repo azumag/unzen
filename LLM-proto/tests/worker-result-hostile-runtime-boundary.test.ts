@@ -13,31 +13,40 @@ function registerWorker(pool: WorkerPool, id: string, vramMB = 4096): void {
   pool.register({ workerId: workerId(id), tier: WorkerTier.TIER_3, vramMB });
 }
 
-function makePromiseSafeRevokedRoot(): object {
-  const revoked = Proxy.revocable({ requestId: 'unused' }, {});
-  revoked.revoke();
-
-  // Native Promise resolution probes a fulfilled object for `then` before the
-  // pipeline can inspect it. A directly revoked Proxy would therefore fail in
-  // Promise assimilation instead of exercising the result-envelope boundary.
-  // The outer Proxy makes that probe safe while Array.isArray() still unwraps
-  // into the revoked target and throws inside the boundary we intend to test.
-  return new Proxy(revoked.proxy, {
-    get(_target, property) {
-      if (property === 'then') return undefined;
-      return Reflect.get(_target, property);
+function hostileThrownValue() {
+  const hooks = { toString: 0, primitive: 0 };
+  return {
+    hooks,
+    value: {
+      toString() {
+        hooks.toString += 1;
+        throw new Error('hostile toString must not run');
+      },
+      [Symbol.toPrimitive]() {
+        hooks.primitive += 1;
+        throw new Error('hostile primitive conversion must not run');
+      },
     },
-  });
+  };
 }
 
 describe('worker-result hostile runtime boundary', () => {
-  it('Pipeline rejects a revoked result root through its stable result-envelope diagnostic', async () => {
+  it('Pipeline bounds a throwing result-root getter and disconnects the worker', async () => {
     const workerPool = new WorkerPool();
     const checkpointStore = new CheckpointStore();
-    registerWorker(workerPool, 'revoked-segment');
-    const revokedRoot = makePromiseSafeRevokedRoot();
+    registerWorker(workerPool, 'hostile-segment');
+    const hostile = hostileThrownValue();
     const executor: SegmentExecutor = {
-      execute: async () => revokedRoot as unknown as SegmentResult,
+      execute: async (_workerId, assignment) => ({
+        get requestId() {
+          throw hostile.value;
+        },
+        segmentIndex: assignment.segment.index,
+        workerId: _workerId,
+        processingTimeMs: 1,
+        checkpoint: undefined,
+        output: { tokens: [1], text: 'unused' },
+      }) as unknown as SegmentResult,
     };
     const pipeline = new Pipeline(
       makeSegments(1),
@@ -47,19 +56,30 @@ describe('worker-result hostile runtime boundary', () => {
       FAST_OPTIONS,
     );
 
-    await expect(pipeline.run(makeRequest(1, 0, 'revoked-segment-request')))
-      .rejects.toThrow('segment result must be a non-null, non-array object');
-    expect(workerPool.get(workerId('revoked-segment'))?.status).toBe(WorkerStatus.DISCONNECTED);
+    await expect(pipeline.run(makeRequest(1, 0, 'hostile-segment-request')))
+      .rejects.toThrow('segment result requestId must be a string');
+    expect(hostile.hooks).toEqual({ toString: 0, primitive: 0 });
+    expect(workerPool.get(workerId('hostile-segment'))?.status).toBe(WorkerStatus.DISCONNECTED);
     expect(checkpointStore.size).toBe(0);
   });
 
-  it('SpanPipeline rejects a revoked result root through its stable result-envelope diagnostic', async () => {
+  it('SpanPipeline bounds a throwing result-root getter and disconnects the worker', async () => {
     const workerPool = new WorkerPool();
     const checkpointStore = new CheckpointStore();
-    registerWorker(workerPool, 'revoked-span', 4200);
-    const revokedRoot = makePromiseSafeRevokedRoot();
+    registerWorker(workerPool, 'hostile-span', 4200);
+    const hostile = hostileThrownValue();
     const executor: SpanExecutor = {
-      execute: async () => revokedRoot as unknown as SpanResult,
+      execute: async (_workerId, assignment) => ({
+        get requestId() {
+          throw hostile.value;
+        },
+        startSegment: assignment.segments[0].index,
+        endSegment: assignment.segments[assignment.segments.length - 1].index,
+        workerId: _workerId,
+        processingTimeMs: 1,
+        checkpoint: undefined,
+        output: { tokens: [1], text: 'unused' },
+      }) as unknown as SpanResult,
     };
     const pipeline = new SpanPipeline(
       makeSegments(2),
@@ -69,9 +89,10 @@ describe('worker-result hostile runtime boundary', () => {
       FAST_OPTIONS,
     );
 
-    await expect(pipeline.run(makeRequest(2, 0, 'revoked-span-request')))
-      .rejects.toThrow('span result must be a non-null, non-array object');
-    expect(workerPool.get(workerId('revoked-span'))?.status).toBe(WorkerStatus.DISCONNECTED);
+    await expect(pipeline.run(makeRequest(2, 0, 'hostile-span-request')))
+      .rejects.toThrow('span result requestId must be a string');
+    expect(hostile.hooks).toEqual({ toString: 0, primitive: 0 });
+    expect(workerPool.get(workerId('hostile-span'))?.status).toBe(WorkerStatus.DISCONNECTED);
     expect(checkpointStore.size).toBe(0);
   });
 
