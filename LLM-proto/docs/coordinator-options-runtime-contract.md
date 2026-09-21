@@ -19,6 +19,12 @@ The coordinator therefore captures declared runtime options into a new owned env
 - omitted values keep the existing defaults and explicit zero numeric controls remain valid;
 - absent optional fields remain absent from the owned option envelope.
 
+## Hostile accessor and Proxy boundary
+
+Top-level record classification is bounded: if `Array.isArray()` itself throws for a revoked options Proxy, construction fails through the normal `Coordinator options must be a non-null, non-array object` diagnostic. For each declared field, own-property descriptor lookup and the subsequent value read are also guarded independently. A throwing `getOwnPropertyDescriptor` trap fails with `Coordinator option <field> could not be inspected`; a throwing declared getter/value trap fails with `Coordinator option <field> could not be read`.
+
+Caller-thrown values are discarded without inspection, stringification, or coercion, so error handling cannot invoke hostile `toString()` or `Symbol.toPrimitive` hooks. These guards do not enumerate the caller object, do not invoke `ownKeys`, and do not alter inherited/non-enumerable filtering or successful-field read-once semantics.
+
 The `allowFixtureManifest` rule is intentionally strict because it is a test-only escape hatch. Truthy non-boolean values such as the string `"false"` must never relax the production-only manifest source check. Only an accepted own-enumerable boolean `true` opts into fixture manifests; omission, inherited/non-enumerable values, or `false` keep the production source gate.
 
 A valid-first/altered-second accessor cannot pass validation and then change the retry, timer, segment-count, or fixture-gate value retained by the coordinator. Likewise, an unrelated getter cannot widen the construction trust boundary merely because it is enumerable. Oversized timer-backed values fail during construction, before heartbeat timer registration, request state, worker selection, or executor work.
