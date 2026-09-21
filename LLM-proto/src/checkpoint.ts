@@ -81,8 +81,12 @@ export class CheckpointStore {
     // Rank is part of the checkpoint protocol, not an arbitrary runtime array
     // length. Reject it before any length-derived allocation or iteration so an
     // asserted/Proxy-backed checkpoint cannot turn validation into a large
-    // allocation or leak a native RangeError.
+    // allocation or leak a native RangeError. Preserve the established empty-
+    // shape validation message for compatibility with existing callers/tests.
     const shapeLength = shapeValue.length;
+    if (shapeLength === 0) {
+      throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
+    }
     if (shapeLength !== CHECKPOINT_TENSOR_RANK) {
       throw new Error(CHECKPOINT_SHAPE_RANK_ERROR);
     }
