@@ -18,6 +18,12 @@ export interface SpanResultRootSnapshot {
 }
 
 const CHECKPOINT_TENSOR_RANK = 3;
+const NativeUint8Array = Uint8Array;
+const typedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype) as object;
+const typedArrayBufferGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer')?.get;
+const typedArrayByteOffsetGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset')?.get;
+const typedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength')?.get;
+const invalidCheckpointPayload = Object.freeze({});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -33,6 +39,43 @@ function memoize<T>(read: () => T): () => T {
     }
     return value;
   };
+}
+
+function snapshotUint8ArrayBoundary(value: unknown): unknown {
+  let isUint8Array = false;
+  try {
+    isUint8Array = value instanceof NativeUint8Array;
+  } catch {
+    return invalidCheckpointPayload;
+  }
+  if (!isUint8Array) return value;
+
+  // A Proxy can satisfy instanceof while lacking TypedArray internal slots.
+  // Reject it before invoking any TypedArray method so worker-controlled values
+  // cannot leak a native incompatible-receiver TypeError through this boundary.
+  if (!ArrayBuffer.isView(value)) return invalidCheckpointPayload;
+  if (
+    typeof typedArrayBufferGetter !== 'function'
+    || typeof typedArrayByteOffsetGetter !== 'function'
+    || typeof typedArrayByteLengthGetter !== 'function'
+  ) {
+    return invalidCheckpointPayload;
+  }
+
+  try {
+    const buffer = typedArrayBufferGetter.call(value) as ArrayBufferLike;
+    const byteOffset = typedArrayByteOffsetGetter.call(value) as number;
+    const byteLength = typedArrayByteLengthGetter.call(value) as number;
+    const source = new NativeUint8Array(buffer, byteOffset, byteLength);
+    const owned = new NativeUint8Array(byteLength);
+    NativeUint8Array.prototype.set.call(owned, source);
+    return owned;
+  } catch {
+    // Detached or otherwise invalid TypedArray state is untrusted input. Feed a
+    // stable non-TypedArray sentinel into CheckpointStore's existing protocol
+    // validation instead of exposing a native internal-slot error.
+    return invalidCheckpointPayload;
+  }
 }
 
 function snapshotShapeBoundary(shape: unknown): unknown {
@@ -81,10 +124,7 @@ function snapshotCheckpointBoundary(checkpoint: unknown): unknown {
 
   const readRequestId = memoize(() => checkpoint.requestId);
   const readSegmentIndex = memoize(() => checkpoint.segmentIndex);
-  const readHiddenStates = memoize(() => {
-    const hiddenStates = checkpoint.hiddenStates;
-    return hiddenStates instanceof Uint8Array ? hiddenStates.slice() : hiddenStates;
-  });
+  const readHiddenStates = memoize(() => snapshotUint8ArrayBoundary(checkpoint.hiddenStates));
   const readMetadata = memoize(() => snapshotMetadataBoundary(checkpoint.metadata));
 
   return Object.freeze(Object.defineProperties({}, {
