@@ -240,11 +240,12 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('invalid', issues);
   }
 
-  const level = isEvidenceLevel(input.evidenceLevel) ? input.evidenceLevel : undefined;
-  const readiness = isReadinessStatus(input.readinessStatus)
-    ? input.readinessStatus
-    : undefined;
-  const capturedAtMs = validateBase(input, issues, policy.nowMs);
+  const schemaVersion = input.schemaVersion;
+  const evidenceLevel = input.evidenceLevel;
+  const readinessStatus = input.readinessStatus;
+  const level = isEvidenceLevel(evidenceLevel) ? evidenceLevel : undefined;
+  const readiness = isReadinessStatus(readinessStatus) ? readinessStatus : undefined;
+  const capturedAtMs = validateBase(input, issues, policy.nowMs, schemaVersion);
 
   if (!level) {
     issue(issues, 'invalid-evidence-level', '$.evidenceLevel', 'invalid evidence level');
@@ -254,14 +255,14 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
   }
 
   if (
-    typeof input.schemaVersion === 'string'
-    && !policy.supportedSchemaVersions.includes(input.schemaVersion)
+    typeof schemaVersion === 'string'
+    && !policy.supportedSchemaVersions.includes(schemaVersion)
   ) {
     issue(
       issues,
       'unsupported-schema-version',
       '$.schemaVersion',
-      `unsupported evidence schema version: ${input.schemaVersion}`,
+      `unsupported evidence schema version: ${schemaVersion}`,
     );
   }
 
@@ -428,8 +429,16 @@ function validateBase(
   input: Record<string, unknown>,
   issues: EvidenceValidationIssue[],
   nowMs: number,
+  schemaVersion: unknown,
 ): number | undefined {
-  requiredString(input, 'schemaVersion', '$.schemaVersion', issues);
+  if (!isNonEmptyString(schemaVersion)) {
+    issue(
+      issues,
+      'invalid-envelope',
+      '$.schemaVersion',
+      'schemaVersion must be a non-empty string',
+    );
+  }
   requiredString(input, 'evidenceKind', '$.evidenceKind', issues);
   requiredString(input, 'runId', '$.runId', issues);
   const capturedAtMs = requiredTimestamp(input, 'capturedAt', '$.capturedAt', issues);
