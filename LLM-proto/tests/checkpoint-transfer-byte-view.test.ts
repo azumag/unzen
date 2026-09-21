@@ -20,6 +20,8 @@ function createSmallCheckpoint(): Checkpoint {
   });
 }
 
+// Keep the object a genuine TypedArray while shadowing every property/hook that
+// direct property access or subclass-aware copy helpers could otherwise invoke.
 function withHostileUint8ArrayHooks(source: Uint8Array): {
   readonly view: Uint8Array;
   readonly hookReads: () => number;
