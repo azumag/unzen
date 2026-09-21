@@ -8,6 +8,7 @@
  * artifact sizes or accepting a cache hit for a different model revision.
  */
 
+import { evaluateBrowserSegmentArtifact } from './browser-segment-artifact-budget.js';
 import { assertValidModelManifest } from './model-manifest-validator.js';
 import type {
   SegmentArtifact,
@@ -62,6 +63,22 @@ export class ArtifactResidencyLedger {
     const validated = capturedArtifacts.map((artifact, arrayIndex) =>
       cloneAndValidateArtifact(artifact, arrayIndex),
     );
+    const measuredTotalArtifactBytes = validated.reduce(
+      (sum, artifact) => sum + artifact.byteSize,
+      0,
+    );
+    if (!Number.isSafeInteger(measuredTotalArtifactBytes)) {
+      throw new Error('total artifact byte size exceeds JavaScript safe integer range');
+    }
+    for (const artifact of validated) {
+      const budget = evaluateBrowserSegmentArtifact(artifact);
+      if (!budget.usable) {
+        throw new Error(
+          `segment ${artifact.index} exceeds browser artifact absolute budget: ` +
+          `${artifact.byteSize} > ${budget.absoluteMaxBytes} bytes`,
+        );
+      }
+    }
     const sorted = [...validated].sort((left, right) => left.index - right.index);
     for (let expectedIndex = 0; expectedIndex < sorted.length; expectedIndex++) {
       const artifact = sorted[expectedIndex];
@@ -74,13 +91,7 @@ export class ArtifactResidencyLedger {
       this.artifactsByIndex.set(artifact.index, artifact);
     }
 
-    this.measuredTotalArtifactBytes = sorted.reduce(
-      (sum, artifact) => sum + artifact.byteSize,
-      0,
-    );
-    if (!Number.isSafeInteger(this.measuredTotalArtifactBytes)) {
-      throw new Error('total artifact byte size exceeds JavaScript safe integer range');
-    }
+    this.measuredTotalArtifactBytes = measuredTotalArtifactBytes;
   }
 
   /**

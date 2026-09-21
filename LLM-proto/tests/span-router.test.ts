@@ -263,7 +263,10 @@ describe('SpanRouter', () => {
   });
 
   it('fails closed when the residency inventory belongs to another segment geometry', () => {
-    const { artifacts } = makeManifestBackedSegments([2100, 2100]);
+    const { artifacts } = makeManifestBackedSegments(
+      [2100, 2100],
+      [256 * 1024 * 1024, 256 * 1024 * 1024],
+    );
     const ledger = new ArtifactResidencyLedger(artifacts);
     const mismatched = makeSegments(2);
 
