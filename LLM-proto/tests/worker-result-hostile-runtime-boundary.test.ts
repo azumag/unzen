@@ -104,7 +104,7 @@ describe('worker-result hostile runtime boundary', () => {
       FAST_OPTIONS,
     );
 
-    await expect(pipeline.run(makeRequest(1, 0, 'lazy-segment-request'))
+    await expect(pipeline.run(makeRequest(1, 0, 'lazy-segment-request')))
       .rejects.toThrow('final segment 0 must not produce a checkpoint');
     expect(nestedReads).toBe(0);
     expect(workerPool.get(workerId('lazy-segment'))?.status).toBe(WorkerStatus.DISCONNECTED);
@@ -140,7 +140,7 @@ describe('worker-result hostile runtime boundary', () => {
       FAST_OPTIONS,
     );
 
-    await expect(pipeline.run(makeRequest(2, 0, 'lazy-span-request'))
+    await expect(pipeline.run(makeRequest(2, 0, 'lazy-span-request')))
       .rejects.toThrow('final span 0..1 must not produce a checkpoint');
     expect(nestedReads).toBe(0);
     expect(workerPool.get(workerId('lazy-span'))?.status).toBe(WorkerStatus.DISCONNECTED);
