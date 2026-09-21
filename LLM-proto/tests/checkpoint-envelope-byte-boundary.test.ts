@@ -63,6 +63,11 @@ function hostileSubclass(bytes = [1, 2, 3, 4]): Uint8Array {
   return payload;
 }
 
+function detachPayload(payload: Uint8Array): void {
+  const buffer = payload.buffer as ArrayBuffer;
+  structuredClone(buffer, { transfer: [buffer] });
+}
+
 describe('checkpoint envelope byte runtime boundary', () => {
   it('rejects Proxy-wrapped typed arrays without leaking native internal-slot errors', async () => {
     const proxied = new Proxy(new Uint8Array([1, 2, 3, 4]), {});
@@ -102,6 +107,40 @@ describe('checkpoint envelope byte runtime boundary', () => {
     await expect(verifyCheckpointDigest(hostile)).resolves.toBe(true);
     await expect(validateCheckpointEnvelope(hostile, expectedFor(envelope))).resolves.toEqual({
       ok: true,
+    });
+  });
+
+  it('fails digest verification closed if a later getter detaches the captured payload', async () => {
+    const envelope = await createCheckpointEnvelope(baseInput(new Uint8Array([1, 2, 3, 4])));
+    const hostile = { ...envelope } as CheckpointEnvelope;
+    Object.defineProperty(hostile, 'payloadDigest', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        detachPayload(envelope.payload);
+        return envelope.payloadDigest;
+      },
+    });
+
+    await expect(verifyCheckpointDigest(hostile)).resolves.toBe(false);
+  });
+
+  it('returns an integrity mismatch if expected metadata detaches payload before validation copy', async () => {
+    const envelope = await createCheckpointEnvelope(baseInput(new Uint8Array([1, 2, 3, 4])));
+    const expected = expectedFor(envelope);
+    Object.defineProperty(expected, 'now', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        detachPayload(envelope.payload);
+        return envelope.createdAt + 1;
+      },
+    });
+
+    await expect(validateCheckpointEnvelope(envelope, expected)).resolves.toEqual({
+      ok: false,
+      code: 'checkpoint-integrity-mismatch',
+      message: 'checkpoint payload digest mismatch',
     });
   });
 });
