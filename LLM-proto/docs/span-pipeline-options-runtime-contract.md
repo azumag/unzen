@@ -18,6 +18,12 @@ The runtime contract is:
 - `artifactResidencyLedger`, when supplied as an own-enumerable field, retains its original object identity and `assertCompatibleSegments()` still runs only after the numeric envelope is valid;
 - explicit zero remains valid: zero retries means only the initial route, zero timeout remains an immediate timeout, and zero retry delay remains no delay.
 
+## Hostile accessor and Proxy boundary
+
+Top-level record classification is bounded, including the `Array.isArray()` call used to reject arrays. A revoked options Proxy therefore fails through `SpanPipeline options must be a non-null, non-array object` rather than leaking a native Proxy exception. Declared-field descriptor lookup and value access are guarded independently: a throwing descriptor trap fails with `SpanPipeline option <field> could not be inspected`, while a throwing declared getter/value trap fails with `SpanPipeline option <field> could not be read`.
+
+Caller-thrown values are discarded without inspection, stringification, or coercion, so failure handling cannot execute hostile `toString()` or `Symbol.toPrimitive` hooks. The guards preserve own/enumerable filtering, declared-field order, no-`ownKeys` behavior, and successful read-once semantics. Numeric fields are still resolved before `artifactResidencyLedger`, so an earlier hostile numeric option cannot trigger residency dependency getters or compatibility checks.
+
 The upper bound reflects the signed 32-bit range used by browser/Node timers. Values above it are rejected rather than silently overflowing into a much shorter or immediate timer. A multi-segment span can still exceed the limit after `spanSize * perSegmentTimeoutMs`; that derived deadline is preflighted for the entire selected route before any worker is marked busy or the executor is invoked.
 
 Malformed or unsupported values fail at construction before `ArtifactResidencyLedger.assertCompatibleSegments()`, request mutation, worker selection/busy-state mutation, timer creation, or executor invocation. This avoids JavaScript coercion or values such as `Symbol`, `NaN`, infinities, negative delays, fractional retry counts, or unrepresentable host-timer delays escaping into retry/timer control flow, while also preventing unrelated caller getters from expanding the construction trust boundary.
