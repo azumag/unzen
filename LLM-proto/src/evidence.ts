@@ -94,6 +94,8 @@ export type EvidenceEnvelope<TPayload = unknown> =
 
 export type ArtifactContent = string | ArrayBuffer | Uint8Array;
 
+type CanonicalArtifactContent = string | Uint8Array;
+
 export interface TrustedEvidenceVerifier {
   name: string;
   version?: string;
@@ -195,6 +197,23 @@ const MAX_READINESS: Record<EvidenceLevel, ReadinessStatus> = {
 };
 const SHA256_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const ARRAY_BUFFER_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  'byteLength',
+)?.get;
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_ARRAY_BUFFER_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'buffer',
+)?.get;
+const TYPED_ARRAY_BYTE_OFFSET_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteOffset',
+)?.get;
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteLength',
+)?.get;
 
 export async function validateEvidenceEnvelope<TPayload = unknown>(
   input: unknown,
@@ -275,9 +294,10 @@ export async function validateEvidenceEnvelope<TPayload = unknown>(
     return result<TPayload>('not-evaluated', issues, level, readiness);
   }
 
-  let artifactContent: ArtifactContent;
+  let artifactContent: CanonicalArtifactContent;
   try {
-    artifactContent = await options.loadArtifact(captured.artifact.locator);
+    const loadedArtifact = await options.loadArtifact(captured.artifact.locator);
+    artifactContent = snapshotArtifactContent(loadedArtifact);
   } catch (error) {
     issue(
       issues,
@@ -632,18 +652,60 @@ function normalizeSha256(value: string): string {
   return value.toLowerCase().replace(/^sha256:/, '');
 }
 
-async function sha256Hex(content: ArtifactContent): Promise<string> {
-  const source =
-    typeof content === 'string'
-      ? new TextEncoder().encode(content)
-      : content instanceof Uint8Array
-        ? content
-        : new Uint8Array(content);
-  // Web Crypto's BufferSource typing requires an ArrayBuffer-backed view.
-  // Copy even Uint8Array inputs so SharedArrayBuffer-backed data cannot leak
-  // an ArrayBufferLike type into subtle.digest().
-  const bytes = new Uint8Array(source.byteLength);
-  bytes.set(source);
+function snapshotArtifactContent(content: unknown): CanonicalArtifactContent {
+  if (typeof content === 'string') return content;
+
+  const uint8Snapshot = snapshotUint8Array(content);
+  if (uint8Snapshot) return uint8Snapshot;
+
+  const arrayBufferSnapshot = snapshotArrayBuffer(content);
+  if (arrayBufferSnapshot) return arrayBufferSnapshot;
+
+  throw new TypeError('artifact loader must return a string, ArrayBuffer, or Uint8Array');
+}
+
+function snapshotUint8Array(content: unknown): Uint8Array | undefined {
+  if (!ArrayBuffer.isView(content) || !(content instanceof Uint8Array)) return undefined;
+  if (
+    !TYPED_ARRAY_BUFFER_GETTER ||
+    !TYPED_ARRAY_BYTE_OFFSET_GETTER ||
+    !TYPED_ARRAY_BYTE_LENGTH_GETTER
+  ) {
+    return undefined;
+  }
+
+  try {
+    const buffer = Reflect.apply(TYPED_ARRAY_BUFFER_GETTER, content, []) as ArrayBufferLike;
+    const byteOffset = Reflect.apply(TYPED_ARRAY_BYTE_OFFSET_GETTER, content, []) as number;
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, content, []) as number;
+    const source = new Uint8Array(buffer, byteOffset, byteLength);
+    const snapshot = new Uint8Array(byteLength);
+    Uint8Array.prototype.set.call(snapshot, source);
+    return snapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function snapshotArrayBuffer(content: unknown): Uint8Array | undefined {
+  if (typeof content !== 'object' || content === null || !ARRAY_BUFFER_BYTE_LENGTH_GETTER) {
+    return undefined;
+  }
+
+  try {
+    const byteLength = Reflect.apply(ARRAY_BUFFER_BYTE_LENGTH_GETTER, content, []) as number;
+    const source = new Uint8Array(content as ArrayBuffer);
+    if (source.byteLength !== byteLength) return undefined;
+    const snapshot = new Uint8Array(byteLength);
+    Uint8Array.prototype.set.call(snapshot, source);
+    return snapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+async function sha256Hex(content: CanonicalArtifactContent): Promise<string> {
+  const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
