@@ -152,7 +152,9 @@ export class CheckpointStore {
     return {
       requestId: captured.requestId,
       segmentIndex: captured.segmentIndex,
-      hiddenStates: captured.hiddenStates.slice(),
+      // captureValidatedCheckpoint() already canonicalized these bytes into a
+      // fresh base Uint8Array owned exclusively by this returned snapshot.
+      hiddenStates: captured.hiddenStates,
       metadata: {
         shape: [...captured.metadata.shape],
         dtype: captured.metadata.dtype,
