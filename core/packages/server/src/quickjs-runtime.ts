@@ -31,6 +31,10 @@ import {
   UnzenRuntimeError,
   type ExecutionOptions,
 } from '@unzen/shared';
+import {
+  describeQuickJsRuntimeFailure,
+  isKnownQuickJsRuntimeError,
+} from './quickjs-runtime-error-boundary';
 
 interface QuickJSExecutionSnapshot {
   code: string;
@@ -282,13 +286,14 @@ export class QuickJSRuntime {
 
       return value;
     } catch (error) {
-      // Re-throw our custom errors as-is
-      if (error instanceof UnzenRuntimeError || error instanceof UnzenFunctionError) {
+      // Re-throw our custom errors as-is, but bound the identity checks because
+      // arbitrary host/runtime failures can be revoked or hostile Proxies.
+      if (isKnownQuickJsRuntimeError(error)) {
         throw error;
       }
 
-      // Wrap unknown errors
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Wrap unknown host/runtime errors without invoking object/function coercion.
+      const errorMessage = describeQuickJsRuntimeFailure(error);
       throw new UnzenFunctionError(`Function execution failed: ${errorMessage}`);
     } finally {
       // Clean up context resources
