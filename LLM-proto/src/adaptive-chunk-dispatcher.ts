@@ -261,10 +261,29 @@ export class AdaptiveChunkDispatcher {
       throw new Error('checkpointBytes must be a positive finite number');
     }
 
-    const coordinatorUrl = options.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
-    const cdnUrl = options.cdnUrl ?? DEFAULT_CDN_URL;
-    const artifactResidencyLedger = options.artifactResidencyLedger;
-    const transport = options.transport ?? new AllowlistedPrototypeTransport([
+    const coordinatorUrlInput = readRuntimeField(
+      runtimeOptions,
+      'coordinatorUrl',
+      'AdaptiveChunkDispatcher coordinatorUrl could not be read',
+    ) as AdaptiveChunkDispatcherOptions['coordinatorUrl'];
+    const coordinatorUrl = coordinatorUrlInput ?? DEFAULT_COORDINATOR_URL;
+    const cdnUrlInput = readRuntimeField(
+      runtimeOptions,
+      'cdnUrl',
+      'AdaptiveChunkDispatcher cdnUrl could not be read',
+    ) as AdaptiveChunkDispatcherOptions['cdnUrl'];
+    const cdnUrl = cdnUrlInput ?? DEFAULT_CDN_URL;
+    const artifactResidencyLedger = readRuntimeField(
+      runtimeOptions,
+      'artifactResidencyLedger',
+      'AdaptiveChunkDispatcher artifactResidencyLedger could not be read',
+    ) as AdaptiveChunkDispatcherOptions['artifactResidencyLedger'];
+    const transportInput = readRuntimeField(
+      runtimeOptions,
+      'transport',
+      'AdaptiveChunkDispatcher transport could not be read',
+    ) as AdaptiveChunkDispatcherOptions['transport'];
+    const transport = transportInput ?? new AllowlistedPrototypeTransport([
       coordinatorUrl,
       cdnUrl,
     ]);
