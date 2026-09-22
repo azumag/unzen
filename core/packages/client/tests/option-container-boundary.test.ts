@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CodeFetcher } from '../src/code-fetcher';
 import { snapshotMoonBitExecutionOptions } from '../src/moonbit-call';
+import { MoonBitSandboxExecutor } from '../src/moonbit-sandbox';
 import { snapshotQuickJsExecutionOptions } from '../src/quickjs-call';
 import { registerUnzenCacheWorkerWith } from '../src/unzen-cache';
 
@@ -19,6 +20,11 @@ describe('Core client option-container trust boundary', () => {
   it('fails closed on revoked MoonBit execution option proxies', () => {
     expect(() => snapshotMoonBitExecutionOptions(revokedObjectProxy()))
       .toThrow('MoonBit execution options must be an object');
+  });
+
+  it('fails closed on revoked MoonBit sandbox option proxies before initialization', () => {
+    expect(() => new MoonBitSandboxExecutor(revokedObjectProxy() as never))
+      .toThrow('MoonBit sandbox options must be an object');
   });
 
   it('fails closed on revoked CodeFetcher option proxies before later work', () => {
@@ -41,6 +47,8 @@ describe('Core client option-container trust boundary', () => {
       .toThrow('QuickJS execution options must be an object');
     expect(() => snapshotMoonBitExecutionOptions([]))
       .toThrow('MoonBit execution options must be an object');
+    expect(() => new MoonBitSandboxExecutor([] as never))
+      .toThrow('MoonBit sandbox options must be an object');
     expect(() => new CodeFetcher('https://example.com', [] as never))
       .toThrow('CodeFetcher options must be an object');
 
