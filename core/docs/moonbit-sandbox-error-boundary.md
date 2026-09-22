@@ -14,3 +14,13 @@ The wrapping taxonomy is unchanged:
 - ordinary caller cancellation -> `UnzenCancelledError`.
 
 This boundary changes only failure normalization. Fetch deduplication, module cache/LRU behavior, integrity validation, WebAssembly compile/instantiate semantics, MoonBit ABI handling, and cancellation precedence remain unchanged.
+
+## Worker executor
+
+`MoonBitWorkerSandboxExecutor` uses the same bounded diagnostics for values crossing its fetch, signal, queue, and Worker lifecycle boundaries. In particular, Worker factory/configuration/`postMessage` failures and shared-fetch rejections can no longer escape through a revoked Proxy `instanceof` check or through implicit object coercion.
+
+The worker executor also bounds its preservation checks. Ordinary `UnzenCancelledError`, `UnzenNetworkError`, and `UnzenRuntimeError` values keep their existing taxonomy, while queue/init lifecycle callbacks preserve ordinary `Error` identity where they already propagated an `Error`. Revoked or non-Error object/function values are converted to `UnzenRuntimeError` without invoking caller-owned coercion hooks.
+
+Live structural `AbortSignal` reads are normalized at the same boundary. A signal whose state or subscription surface becomes unreadable after its initial snapshot settles through the documented runtime-error path instead of leaking a caller/native exception. This does not change cancellation precedence for a normal aborted signal.
+
+Worker queue ordering, generation teardown/restart, hard timeouts, protocol validation, module fetch deduplication/cache behavior, integrity validation, and public API semantics are unchanged.
