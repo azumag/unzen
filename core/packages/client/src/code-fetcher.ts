@@ -71,6 +71,46 @@ function normalizeCodeCacheByteLimit(value: unknown): number {
   return normalized;
 }
 
+/** Bounded identity check for catch-path values that may be hostile Proxies. */
+function isUnzenNetworkError(error: unknown): error is UnzenNetworkError {
+  try {
+    return error instanceof UnzenNetworkError;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Produce a useful catch-path diagnostic without invoking object/function
+ * coercion hooks. Error identity/message reads are themselves bounded because
+ * a Proxy may throw from prototype traversal or property access.
+ */
+function describeCodeFetchFailure(error: unknown): string {
+  if (error === null) return 'null';
+
+  const kind = typeof error;
+  if (kind !== 'object' && kind !== 'function') {
+    return String(error);
+  }
+  if (kind === 'function') return 'Unknown error';
+
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    return 'Unknown error';
+  }
+  if (!isError) return 'Unknown error';
+
+  let message: unknown;
+  try {
+    message = (error as Error).message;
+  } catch {
+    return 'Unknown error';
+  }
+  return typeof message === 'string' ? message : 'Unknown error';
+}
+
 /** Validate and own the manifest fields consumed by this fetcher. */
 function snapshotCodeManifestEntry(value: unknown): FunctionManifestEntry | undefined {
   const functions = Object.create(null) as Record<string, unknown>;
@@ -245,8 +285,9 @@ export class CodeFetcher {
 
       return code;
     } catch (error) {
-      // Re-throw UnzenNetworkError as-is
-      if (error instanceof UnzenNetworkError) {
+      // Re-throw ordinary UnzenNetworkError values as-is. The identity check
+      // is bounded because a revoked Proxy may throw during instanceof.
+      if (isUnzenNetworkError(error)) {
         throw error;
       }
 
@@ -256,9 +297,9 @@ export class CodeFetcher {
         throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
-      // Wrap other errors as network error
+      // Wrap other errors without invoking caller-controlled object coercion.
       throw new UnzenNetworkError(
-        `Failed to fetch code: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to fetch code: ${describeCodeFetchFailure(error)}`
       );
     }
   }
