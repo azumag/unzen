@@ -50,8 +50,13 @@ function expectProtocolViolation(
   }
 }
 
+function expectNoDurableBinding(repo: InMemoryRepository) {
+  expect(repo.listRequests()).toHaveLength(0);
+  expect(repo.getIdempotencyMapping(idempotencyKey('must-not-bind'))).toBeUndefined();
+}
+
 describe('DurableCoordinator submission accessor boundary', () => {
-  it('fails closed when a top-level submission option getter or Proxy trap throws', () => {
+  it('fails closed when a top-level submission option Proxy get trap throws', () => {
     for (const field of ['idempotencyKey', 'signal', 'timeoutMs'] as const) {
       const { coord, repo } = coordinator();
       const thrown = hostileThrownValue();
@@ -69,12 +74,32 @@ describe('DurableCoordinator submission accessor boundary', () => {
         () => coord.submit('prompt', options as never),
         `submission option ${field} could not be read`,
       );
-      expect(repo.listRequests()).toHaveLength(0);
-      expect(repo.getIdempotencyMapping(idempotencyKey('must-not-bind'))).toBeUndefined();
+      expectNoDurableBinding(repo);
     }
   });
 
-  it('fails closed before listener installation when an initial AbortSignal surface getter throws', () => {
+  it('fails closed when a direct top-level submission option getter throws', () => {
+    for (const field of ['idempotencyKey', 'signal', 'timeoutMs'] as const) {
+      const { coord, repo } = coordinator();
+      const thrown = hostileThrownValue();
+      const options: Record<string, unknown> = { idempotencyKey: 'must-not-bind' };
+      Object.defineProperty(options, field, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw thrown;
+        },
+      });
+
+      expectProtocolViolation(
+        () => coord.submit('prompt', options as never),
+        `submission option ${field} could not be read`,
+      );
+      expectNoDurableBinding(repo);
+    }
+  });
+
+  it('fails closed before listener installation when an initial AbortSignal Proxy get trap throws', () => {
     for (const field of ['aborted', 'addEventListener', 'removeEventListener'] as const) {
       const { coord, repo } = coordinator();
       const thrown = hostileThrownValue();
@@ -107,8 +132,43 @@ describe('DurableCoordinator submission accessor boundary', () => {
       );
       expect(addCalls).toBe(0);
       expect(removeCalls).toBe(0);
-      expect(repo.listRequests()).toHaveLength(0);
-      expect(repo.getIdempotencyMapping(idempotencyKey('must-not-bind'))).toBeUndefined();
+      expectNoDurableBinding(repo);
+    }
+  });
+
+  it('fails closed before listener installation when a direct initial AbortSignal getter throws', () => {
+    for (const field of ['aborted', 'addEventListener', 'removeEventListener'] as const) {
+      const { coord, repo } = coordinator();
+      const thrown = hostileThrownValue();
+      let addCalls = 0;
+      let removeCalls = 0;
+      const signal: Record<string, unknown> = {
+        aborted: false,
+        addEventListener() {
+          addCalls += 1;
+        },
+        removeEventListener() {
+          removeCalls += 1;
+        },
+      };
+      Object.defineProperty(signal, field, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw thrown;
+        },
+      });
+
+      expectProtocolViolation(
+        () => coord.submit('prompt', {
+          idempotencyKey: 'must-not-bind',
+          signal: signal as unknown as AbortSignal,
+        }),
+        'submission signal must expose boolean aborted and event-listener methods',
+      );
+      expect(addCalls).toBe(0);
+      expect(removeCalls).toBe(0);
+      expectNoDurableBinding(repo);
     }
   });
 });
