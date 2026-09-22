@@ -3,7 +3,7 @@
  * failures from Array.isArray(). Revoked proxies belong to the same public
  * validation bucket as arrays and non-object values.
  */
-export function isNonArrayObject(value: unknown): value is Record<string, unknown> {
+export function isNonArrayObject(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false;
   try {
     return !Array.isArray(value);
