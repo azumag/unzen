@@ -69,6 +69,13 @@ import {
   type MoonBitImportedStringConstants,
 } from './moonbit-compile-options';
 import { normalizeMoonBitCacheLimit } from './moonbit-cache';
+import {
+  describeMoonBitFailure,
+  isMoonBitCancelledFailure,
+  isMoonBitErrorFailure,
+  isMoonBitNetworkFailure,
+  isMoonBitRuntimeFailure,
+} from './moonbit-error-boundary';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
 import {
@@ -102,6 +109,47 @@ const DEFAULT_MAX_QUEUE_SIZE = 4;
 
 /** Counter for generating unique request IDs */
 let requestIdCounter = 0;
+
+/** Preserve documented worker failures without trusting arbitrary identities. */
+function normalizeMoonBitWorkerBoundaryFailure(error: unknown): Error {
+  if (
+    isMoonBitCancelledFailure(error)
+    || isMoonBitNetworkFailure(error)
+    || isMoonBitRuntimeFailure(error)
+  ) {
+    return error;
+  }
+  return new UnzenRuntimeError(describeMoonBitFailure(error));
+}
+
+/** Queue/init rejection callbacks require an Error but otherwise preserve identity. */
+function normalizeMoonBitWorkerLifecycleFailure(error: unknown): Error {
+  return isMoonBitErrorFailure(error)
+    ? error
+    : new UnzenRuntimeError(describeMoonBitFailure(error));
+}
+
+/** Read custom Worker error-event diagnostics without trusting the event object. */
+function describeMoonBitWorkerEvent(event: unknown): string {
+  if ((typeof event !== 'object' && typeof event !== 'function') || event === null) {
+    return 'unknown error';
+  }
+  try {
+    const message = (event as { message?: unknown }).message;
+    return typeof message === 'string' ? message : 'unknown error';
+  } catch {
+    return 'unknown error';
+  }
+}
+
+/** Re-check a structural signal without leaking its live getter failures. */
+function throwIfMoonBitWorkerAborted(signal?: AbortSignal): void {
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    throw normalizeMoonBitWorkerBoundaryFailure(error);
+  }
+}
 
 /** Diagnostics counters (same taxonomy as WebWorkerSandboxExecutor). */
 export interface MoonBitExecutorDiagnostics {
@@ -312,7 +360,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     try {
       signalSnapshot = snapshotMoonBitAbortSignal(signal);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     if (signalSnapshot.initiallyAborted) {
       throw new UnzenCancelledError('Execution cancelled by caller');
@@ -325,7 +373,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     try {
       moduleUrl = normalizeMoonBitModuleUrl(code);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     if (expectedHash !== undefined && !isValidUnzenContentHash(expectedHash)) {
       throw new UnzenNetworkError('Invalid MoonBit module hash in manifest');
@@ -368,12 +416,16 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
 
     pending.waiters++;
     try {
-      const bytes = await (requestSignal
-        ? raceWithAbort(pending.promise, requestSignal)
-        : pending.promise);
-      // Each waiter receives an isolated snapshot while the original remains
-      // private to the verified cache.
-      return bytes.slice(0);
+      try {
+        const bytes = await (requestSignal
+          ? raceWithAbort(pending.promise, requestSignal)
+          : pending.promise);
+        // Each waiter receives an isolated snapshot while the original remains
+        // private to the verified cache.
+        return bytes.slice(0);
+      } catch (error) {
+        throw normalizeMoonBitWorkerBoundaryFailure(error);
+      }
     } finally {
       pending.waiters--;
       if (
@@ -403,7 +455,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     try {
       executionOptions = snapshotMoonBitExecutionOptions(options);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     if (executionOptions.signalInitiallyAborted) {
       throw new UnzenCancelledError('Execution cancelled by caller');
@@ -418,7 +470,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     try {
       call = snapshotMoonBitCall(args, executionOptions.moonbitAbi);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
 
     let moduleUrl: string | undefined;
@@ -440,16 +492,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         bytes = snapshotMoonBitModuleBytes(code);
       }
     } catch (error) {
-      if (
-        error instanceof UnzenCancelledError
-        || error instanceof UnzenNetworkError
-        || error instanceof UnzenRuntimeError
-      ) {
-        throw error;
-      }
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw normalizeMoonBitWorkerBoundaryFailure(error);
     }
-    throwIfAborted(executionOptions.signal);
+    throwIfMoonBitWorkerAborted(executionOptions.signal);
 
     const requestId = `req-${++requestIdCounter}`;
     return new Promise<unknown>((resolve, reject) => {
@@ -545,7 +590,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     try {
       signalAborted = this.readSignalAborted(base.signal);
     } catch (error) {
-      base.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      base.reject(normalizeMoonBitWorkerLifecycleFailure(error));
       return;
     }
     if (signalAborted) {
@@ -568,7 +613,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       const index = this.queue.findIndex((entry) => entry.requestId === base.requestId);
       if (index >= 0) this.queue.splice(index, 1);
       this.removeAbortListener(queued);
-      queued.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      queued.reject(normalizeMoonBitWorkerLifecycleFailure(error));
       return;
     }
     // A structural signal may abort synchronously during registration.
@@ -593,7 +638,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
     try {
       signalAborted = this.readSignalAborted(req.signal);
     } catch (error) {
-      req.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      req.reject(normalizeMoonBitWorkerLifecycleFailure(error));
       return;
     }
     if (signalAborted) {
@@ -619,7 +664,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       }
       this.clearRunningTimers(running);
       this.removeAbortListener(running);
-      running.reject(error instanceof Error ? error : new UnzenRuntimeError(String(error)));
+      running.reject(normalizeMoonBitWorkerLifecycleFailure(error));
       void this.drainQueue();
       return;
     }
@@ -645,9 +690,9 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         }
         this.postExecuteMessage(this.runningRequest, this.generationId);
       },
-      (error: Error) => {
+      (error: unknown) => {
         if (this.runningRequest?.requestId !== requestId) return;
-        const err = error instanceof Error ? error : new UnzenRuntimeError(String(error));
+        const err = normalizeMoonBitWorkerLifecycleFailure(error);
         this.runningRequest = null;
         this.clearRunningTimers(running);
         this.removeAbortListener(running);
@@ -695,7 +740,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       this.clearRunningTimers(running);
       this.removeAbortListener(running);
       running.reject(new UnzenRuntimeError(
-        `Failed to send execute message: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to send execute message: ${describeMoonBitFailure(error)}`,
       ));
       void this.drainQueue();
     }
@@ -722,12 +767,12 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
           }
         }
       },
-      (error: Error) => {
+      (error: unknown) => {
         this.initPromise = null;
         if (this.state.status === 'initializing' && this.state.generationId === generationId) {
           this.state = { status: 'empty' };
         }
-        throw error;
+        throw normalizeMoonBitWorkerLifecycleFailure(error);
       },
     );
     return this.initPromise;
@@ -745,7 +790,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         this.diagnosticsState.initFailureCount++;
         this.resetToEmptyIfNotDisposed();
         reject(new UnzenRuntimeError(
-          `Failed to create Worker: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to create Worker: ${describeMoonBitFailure(error)}`,
         ));
         return;
       }
@@ -782,7 +827,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         this.teardownWorker();
         this.resetToEmptyIfNotDisposed();
         reject(new UnzenRuntimeError(
-          `Worker error during initialization: ${event.message ?? 'unknown error'}`,
+          `Worker error during initialization: ${describeMoonBitWorkerEvent(event)}`,
         ));
       };
 
@@ -817,7 +862,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
             this.teardownWorker();
             this.resetToEmptyIfNotDisposed();
             reject(new UnzenRuntimeError(
-              `Failed to configure Worker: ${error instanceof Error ? error.message : String(error)}`,
+              `Failed to configure Worker: ${describeMoonBitFailure(error)}`,
             ));
             return;
           }
@@ -844,7 +889,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         this.teardownWorker();
         this.resetToEmptyIfNotDisposed();
         reject(new UnzenRuntimeError(
-          `Failed to configure Worker: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to configure Worker: ${describeMoonBitFailure(error)}`,
         ));
         return;
       }
@@ -864,7 +909,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         this.teardownWorker();
         this.resetToEmptyIfNotDisposed();
         reject(new UnzenRuntimeError(
-          `Failed to send init message: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to send init message: ${describeMoonBitFailure(error)}`,
         ));
       }
     });
@@ -967,7 +1012,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         try {
           await this.ensureInitialized();
         } catch (error) {
-          const err = error instanceof Error ? error : new UnzenRuntimeError(String(error));
+          const err = normalizeMoonBitWorkerLifecycleFailure(error);
           this.rejectAllQueued(err);
           return;
         }
@@ -1078,7 +1123,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         throw new UnzenRuntimeError('MoonBit module fetch aborted');
       }
       throw new UnzenNetworkError(
-        `Failed to fetch MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to fetch MoonBit module: ${describeMoonBitFailure(error)}`,
       );
     }
     if (!response.ok) {
@@ -1099,7 +1144,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
         throw new UnzenRuntimeError('MoonBit module fetch aborted');
       }
       throw new UnzenNetworkError(
-        `Failed to read MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to read MoonBit module: ${describeMoonBitFailure(error)}`,
       );
     }
     throwIfAborted(signal);
@@ -1107,9 +1152,7 @@ export class MoonBitWorkerSandboxExecutor implements SandboxExecutor {
       try {
         await assertUnzenContentIntegrity(bytes, expectedHash);
       } catch (error) {
-        throw new UnzenNetworkError(
-          error instanceof Error ? error.message : String(error),
-        );
+        throw new UnzenNetworkError(describeMoonBitFailure(error));
       }
       throwIfAborted(signal);
     }
