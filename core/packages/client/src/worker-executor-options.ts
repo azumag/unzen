@@ -45,6 +45,37 @@ function normalizeWorkerHostFailure(error: unknown): Error {
   return new Error(typeof message === 'string' ? message : 'Unknown error');
 }
 
+/**
+ * Snapshot the only MessageEvent field consumed by the executors. An
+ * unreadable/revoked custom event becomes an undefined payload, which existing
+ * protocol validation classifies as a malformed worker response.
+ */
+function snapshotWorkerMessageEvent(event: unknown): MessageEvent<unknown> {
+  let data: unknown;
+  if ((typeof event === 'object' || typeof event === 'function') && event !== null) {
+    try {
+      data = (event as { data?: unknown }).data;
+    } catch {
+      data = undefined;
+    }
+  }
+  return { data } as MessageEvent<unknown>;
+}
+
+/** Snapshot custom Worker error diagnostics without trusting the event object. */
+function snapshotWorkerErrorEvent(event: unknown): ErrorEvent {
+  let message = 'unknown error';
+  if ((typeof event === 'object' || typeof event === 'function') && event !== null) {
+    try {
+      const candidate = (event as { message?: unknown }).message;
+      if (typeof candidate === 'string') message = candidate;
+    } catch {
+      // Keep the stable fallback; never coerce the caller-owned envelope.
+    }
+  }
+  return { message } as ErrorEvent;
+}
+
 /** Read the minimal Worker method surface exactly once. */
 function snapshotWorkerMethods(value: unknown): WorkerMethodSnapshot {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
@@ -73,8 +104,8 @@ function snapshotWorkerMethods(value: unknown): WorkerMethodSnapshot {
 /**
  * Wrap a caller-provided Worker in the exact host surface used by the
  * executors. The wrapper preserves handler assignment on the underlying Worker
- * while ensuring factory/configuration/postMessage failures cross the executor
- * catch boundary only as owned Error values.
+ * while ensuring lifecycle failures and event envelopes cross the executor
+ * boundary only as owned values.
  */
 function createBoundedWorkerFacade(worker: unknown): Worker {
   const methods = snapshotWorkerMethods(worker);
@@ -87,8 +118,17 @@ function createBoundedWorkerFacade(worker: unknown): Worker {
       return currentOnMessage;
     },
     set onmessage(handler: Worker['onmessage']) {
+      const boundedHandler = handler === null
+        ? null
+        : ((event: MessageEvent<unknown>) => {
+            Reflect.apply(
+              handler as unknown as (...args: unknown[]) => unknown,
+              target,
+              [snapshotWorkerMessageEvent(event)],
+            );
+          }) as Worker['onmessage'];
       try {
-        target.onmessage = handler;
+        target.onmessage = boundedHandler;
       } catch (error) {
         throw normalizeWorkerHostFailure(error);
       }
@@ -98,8 +138,17 @@ function createBoundedWorkerFacade(worker: unknown): Worker {
       return currentOnError;
     },
     set onerror(handler: Worker['onerror']) {
+      const boundedHandler = handler === null
+        ? null
+        : ((event: unknown) => {
+            Reflect.apply(
+              handler as unknown as (...args: unknown[]) => unknown,
+              target,
+              [snapshotWorkerErrorEvent(event)],
+            );
+          }) as Worker['onerror'];
       try {
-        target.onerror = handler;
+        target.onerror = boundedHandler;
       } catch (error) {
         throw normalizeWorkerHostFailure(error);
       }

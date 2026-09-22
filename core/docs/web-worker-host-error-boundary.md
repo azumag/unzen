@@ -15,6 +15,8 @@ A caller-provided `createWorker` factory is wrapped at the shared worker-executo
 
 Ordinary `Error` instances with a safely readable string `message` contribute that message to a new executor-owned `Error`; the caller-owned error object itself is never propagated across the boundary. Primitive thrown values retain their useful textual diagnostic. Other object/function values, revoked Proxies, throwing prototype checks, and throwing/non-string `message` accessors collapse to an owned `Error('Unknown error')`. Diagnostic normalization never calls caller-owned `Symbol.toPrimitive`, `valueOf`, or `toString`.
 
+The facade also owns the callback envelope before invoking executor-installed handlers. `MessageEvent.data` is read exactly once; an unreadable or revoked event becomes an owned event with `data: undefined`, allowing the existing versioned protocol validator to classify it as malformed. Error-event `message` is likewise read once and reduced to a string or `unknown error`. No other event properties are trusted or forwarded. This applies to both the QuickJS and MoonBit executors because they share the custom Worker facade.
+
 The default browser `new Worker(...)` factory is not wrapped; browser-native failures already enter the executor as ordinary platform exceptions. The bounded facade is specifically for the injectable caller-owned Worker boundary.
 
 ## Ordering and side effects
