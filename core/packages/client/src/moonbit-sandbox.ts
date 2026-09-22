@@ -537,10 +537,11 @@ function copyImportModules(
     if (!isNonArrayObject(sourceModule)) {
       throw new TypeError(`MoonBit import module "${moduleName}" must be an object`);
     }
+    const sourceModuleObject = sourceModule as Record<string, WebAssembly.ImportValue>;
 
     let importNames: string[];
     try {
-      importNames = Object.keys(sourceModule);
+      importNames = Object.keys(sourceModuleObject);
     } catch {
       throw new TypeError('MoonBit imports could not be read');
     }
@@ -548,9 +549,7 @@ function copyImportModules(
       ?? (Object.create(null) as WebAssembly.ModuleImports);
     for (const importName of importNames) {
       try {
-        targetModule[importName] = (
-          sourceModule as Record<string, WebAssembly.ImportValue>
-        )[importName];
+        targetModule[importName] = sourceModuleObject[importName];
       } catch {
         throw new TypeError('MoonBit imports could not be read');
       }
