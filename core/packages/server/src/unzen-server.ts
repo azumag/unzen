@@ -201,6 +201,23 @@ function assertValidRegistrationName(name: unknown): asserts name is string {
   }
 }
 
+/**
+ * Format an invalid timeout without invoking caller-controlled object/function
+ * coercion hooks. Primitive formatting retains the previous diagnostics because
+ * primitive String(...) conversion cannot execute caller code.
+ */
+function formatInvalidTimeout(timeout: unknown): string {
+  if (timeout === null) return 'null';
+  switch (typeof timeout) {
+    case 'object':
+      return '<object>';
+    case 'function':
+      return '<function>';
+    default:
+      return String(timeout);
+  }
+}
+
 function assertValidTimeout(timeout: unknown): asserts timeout is number | undefined {
   if (
     timeout !== undefined
@@ -212,7 +229,7 @@ function assertValidTimeout(timeout: unknown): asserts timeout is number | undef
     )
   ) {
     throw new Error(
-      `Invalid timeout ${String(timeout)}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`,
+      `Invalid timeout ${formatInvalidTimeout(timeout)}: must be an integer between 1 and ${MAX_FUNCTION_TIMEOUT}ms`,
     );
   }
 }
