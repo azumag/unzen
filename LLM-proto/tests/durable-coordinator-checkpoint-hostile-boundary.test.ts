@@ -187,23 +187,17 @@ describe('DurableCoordinator hostile checkpoint runtime boundary', () => {
     const f = fixture();
     const base = await checkpoint(f);
     let byteViewReads = 0;
-    class HostileByteView extends Uint8Array {
-      override get byteLength(): number {
-        byteViewReads += 1;
-        throw new Error('caller byteLength getter must not run');
-      }
-
-      override get byteOffset(): number {
-        byteViewReads += 1;
-        throw new Error('caller byteOffset getter must not run');
-      }
-
-      override get buffer(): ArrayBufferLike {
-        byteViewReads += 1;
-        throw new Error('caller buffer getter must not run');
-      }
-    }
+    class HostileByteView extends Uint8Array {}
     const payload = new HostileByteView([1, 2, 3, 4]);
+    for (const field of ['byteLength', 'byteOffset', 'buffer'] as const) {
+      Object.defineProperty(payload, field, {
+        configurable: true,
+        get() {
+          byteViewReads += 1;
+          throw new Error(`caller ${field} getter must not run`);
+        },
+      });
+    }
 
     const acceptance = await f.coord.handleWorkerResult({
       identity: f.identity,
