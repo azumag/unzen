@@ -28,7 +28,7 @@ export function snapshotQuickJsExecutionOptions(
 
   let signal: unknown;
   try {
-    signal = value.signal;
+    signal = (value as Record<string, unknown>).signal;
   } catch {
     throw new Error('QuickJS execution options could not be read');
   }
