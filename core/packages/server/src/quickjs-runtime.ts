@@ -205,9 +205,18 @@ export class QuickJSRuntime {
 
     const execution = snapshotExecution(code, args, options);
 
-    // Create a fresh context for this execution
-    // This ensures complete isolation between executions
-    const context = this.quickJS.newContext();
+    // Create a fresh context for this execution. Context creation itself is a
+    // host/runtime boundary and can fail before there is anything to dispose.
+    let context: ReturnType<QuickJSWASMModule['newContext']>;
+    try {
+      context = this.quickJS.newContext();
+    } catch (error) {
+      if (isKnownQuickJsRuntimeError(error)) {
+        throw error;
+      }
+      const errorMessage = describeQuickJsRuntimeFailure(error);
+      throw new UnzenFunctionError(`Function execution failed: ${errorMessage}`);
+    }
 
     try {
       // Set memory limit to 16MB (design.md §3.3)
