@@ -168,6 +168,47 @@ def _run_session(path: Path, feeds: dict[str,np.ndarray]) -> tuple[np.ndarray,fl
     del sess; gc.collect(); return out,create,run
 
 
+def _snapshot_physical_artifacts(
+    physical: list[object],
+    *,
+    expected_count: int = 4,
+) -> dict[int,int]:
+    """Validate and snapshot the physical artifact fields consumed by this probe."""
+    if (
+        not isinstance(expected_count,int)
+        or isinstance(expected_count,bool)
+        or expected_count <= 0
+    ):
+        raise RuntimeError("physical artifact count invalid")
+    if len(physical) != expected_count:
+        raise RuntimeError("physical artifact count drift")
+    by_index: dict[int,int]={}
+    for item in physical:
+        if not isinstance(item,dict):
+            raise RuntimeError("physical artifact must be object")
+        index=item.get("index")
+        if (
+            not isinstance(index,int)
+            or isinstance(index,bool)
+            or index < 0
+            or index >= expected_count
+        ):
+            raise RuntimeError("physical artifact index invalid")
+        if index in by_index:
+            raise RuntimeError(f"duplicate physical artifact index {index}")
+        byte_length=item.get("byteLength")
+        if (
+            not isinstance(byte_length,int)
+            or isinstance(byte_length,bool)
+            or byte_length <= 0
+        ):
+            raise RuntimeError(f"physical artifact {index} byte length invalid")
+        by_index[index]=byte_length
+    if sorted(by_index) != list(range(expected_count)):
+        raise RuntimeError("physical artifact indexes incomplete")
+    return by_index
+
+
 def _route_probe_tokens(
     tiles: list[object],
     *,
@@ -222,7 +263,8 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
     if len(cand)!=1: raise RuntimeError("expected one 4-way candidate")
     cand=cand[0]; tiles=cand.get("executionTiles"); physical=cand.get("physicalArtifacts")
     if not isinstance(tiles,list) or len(tiles)!=8 or not isinstance(physical,list) or len(physical)!=4: raise RuntimeError("4-way/8-tile geometry drift")
-    routed_tiles=_route_probe_tokens(tiles,physical_artifact_count=len(physical))
+    physical_by_index=_snapshot_physical_artifacts(physical,expected_count=len(physical))
+    routed_tiles=_route_probe_tokens(tiles,physical_artifact_count=len(physical_by_index))
 
     source_path,source_offset,source_length=_source_embedding_contract(source_model,layout)
     source_fd,opened=_open_pinned_source_external_data(source_path)
@@ -240,11 +282,8 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
         finally:
             reference_model.unlink(missing_ok=True)
 
-        physical_by_index={int(a["index"]):a for a in physical if isinstance(a,dict)}
         for index in range(4):
-            a=physical_by_index.get(index)
-            if a is None: raise RuntimeError(f"missing physical artifact {index}")
-            expected_bytes=a.get("byteLength")
+            expected_bytes=physical_by_index[index]
             expected_sha=tile_probe.PINNED_PREFERRED_PAYLOAD_SHA256[index]
             fd,verified,pinned=tile_probe._open_pinned_payload(payload_root/f"payload-{index:04d}.bin",expected_bytes=expected_bytes,expected_sha256=expected_sha)
             payload_fds[index]=(fd,payload_root/f"payload-{index:04d}.bin",pinned)
