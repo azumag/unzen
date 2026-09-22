@@ -33,6 +33,35 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
     expect(construct(options)).toThrow(/options must be a non-null object/);
   });
 
+  it('maps revoked top-level options to the existing options validation bucket', () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    expect(construct(proxy)).toThrow(/options must be a non-null object/);
+  });
+
+  it('bounds a throwing options.segments accessor without coercing the thrown value', () => {
+    let coercions = 0;
+    const hostileThrownValue = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error('must not coerce');
+      },
+      toString() {
+        coercions += 1;
+        throw new Error('must not stringify');
+      },
+    };
+    const options = Object.defineProperty({}, 'segments', {
+      get() {
+        throw hostileThrownValue;
+      },
+    });
+
+    expect(construct(options)).toThrow(/segments could not be read/);
+    expect(coercions).toBe(0);
+  });
+
   it.each([
     null,
     undefined,
@@ -43,6 +72,81 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
     {},
   ])('rejects a non-array segments container', (segments) => {
     expect(construct({ segments })).toThrow(/segments must be an array/);
+  });
+
+  it('bounds a revoked segments proxy', () => {
+    const { proxy, revoke } = Proxy.revocable(makeSegments(1), {});
+    revoke();
+
+    expect(construct({ segments: proxy })).toThrow(/segments must be an array/);
+  });
+
+  it('bounds a throwing segments.length trap without coercing the thrown value', () => {
+    let coercions = 0;
+    const hostileThrownValue = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        return 'unsafe';
+      },
+    };
+    const segments = new Proxy(makeSegments(1), {
+      get(target, property, receiver) {
+        if (property === 'length') {
+          throw hostileThrownValue;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(construct({ segments })).toThrow(/segments length could not be read/);
+    expect(coercions).toBe(0);
+  });
+
+  it('bounds throwing numeric-index traps before segment field validation', () => {
+    let fieldReads = 0;
+    const base = makeSegments(2);
+    const first = new Proxy(base[0] as unknown as Record<string, unknown>, {
+      get(target, property, receiver) {
+        fieldReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const segments = new Proxy([first, base[1]], {
+      get(target, property, receiver) {
+        if (property === '1') {
+          throw new Error('caller index failure');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(construct({ segments })).toThrow(/segment 1 could not be read/);
+    expect(fieldReads).toBe(0);
+  });
+
+  it('captures a valid proxied segment array by length and numeric index exactly once', () => {
+    const base = makeSegments(2);
+    let lengthReads = 0;
+    const indexReads = [0, 0];
+    let iteratorReads = 0;
+    const segments = new Proxy(base, {
+      get(target, property, receiver) {
+        if (property === 'length') {
+          lengthReads += 1;
+        } else if (property === '0' || property === '1') {
+          indexReads[Number(property)] += 1;
+        } else if (property === Symbol.iterator) {
+          iteratorReads += 1;
+          throw new Error('caller iterator must not be read');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(construct({ segments })).not.toThrow();
+    expect(lengthReads).toBe(1);
+    expect(indexReads).toEqual([1, 1]);
+    expect(iteratorReads).toBe(0);
   });
 
   it('preserves the existing non-empty segment requirement', () => {
@@ -135,6 +239,49 @@ describe('AdaptiveChunkDispatcher segment runtime envelope', () => {
       estimatedVramMB: 1,
     });
     expect(compatibleSegment).toEqual(expected);
+  });
+
+  it('maps a revoked segment record to the segment object validation bucket', () => {
+    const { proxy, revoke } = Proxy.revocable({
+      index: 0,
+      layerStart: 0,
+      layerEnd: 7,
+      modelWeightHash: 'sha256:seg-0',
+      estimatedVramMB: 2048,
+    }, {});
+    revoke();
+
+    expect(construct({ segments: [proxy] })).toThrow(/segment 0 must be an object/);
+  });
+
+  it.each([
+    ['index', /segment 0 index could not be read/],
+    ['layerStart', /segment 0 layerStart could not be read/],
+    ['layerEnd', /segment 0 layerEnd could not be read/],
+    ['modelWeightHash', /segment 0 modelWeightHash could not be read/],
+    ['estimatedVramMB', /segment 0 estimatedVramMB could not be read/],
+  ] as const)('bounds a throwing %s accessor without coercing the thrown value', (field, expected) => {
+    const segments = makeSegments(1);
+    let coercions = 0;
+    const hostileThrownValue = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error('must not coerce');
+      },
+      toString() {
+        coercions += 1;
+        throw new Error('must not stringify');
+      },
+    };
+    Object.defineProperty(segments[0], field, {
+      configurable: true,
+      get() {
+        throw hostileThrownValue;
+      },
+    });
+
+    expect(construct({ segments })).toThrow(expected);
+    expect(coercions).toBe(0);
   });
 
   it.each([
