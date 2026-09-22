@@ -6,6 +6,7 @@ import {
   type MoonBitAbi,
   type MoonBitAbiType,
 } from '@unzen/shared';
+import { isArrayContainer, readArrayIndex, readArrayLength } from './array-container';
 import { describeMoonbitArgError, isSupportedScalar } from './moonbit-scalar';
 
 /** Bound copy work and memory retained by one execution. */
@@ -44,7 +45,7 @@ const ARRAY_BRIDGES: Record<MoonBitArrayAbiType, ArrayBridgeExports> = {
 
 function describeValue(value: unknown): string {
   if (value === null) return 'null';
-  if (Array.isArray(value)) return 'array';
+  if (isArrayContainer(value)) return 'array';
   return typeof value;
 }
 
@@ -65,12 +66,16 @@ function assertArrayElement(type: MoonBitArrayAbiType, value: unknown, path: str
   }
 }
 
-/** Validate ABI metadata and arguments before instantiation/postMessage. */
-export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): void {
-  if (!Array.isArray(args)) {
+/** Capture the caller-owned top-level argument array without iterators/coercion. */
+function snapshotTopLevelMoonBitArguments(args: unknown): unknown[] {
+  if (!isArrayContainer(args)) {
     throw new Error('MoonBit arguments must be an array');
   }
-  const argCount = args.length;
+  const lengthRead = readArrayLength(args);
+  if (!lengthRead.ok) {
+    throw new Error('MoonBit arguments could not be read');
+  }
+  const argCount = lengthRead.value;
   if (
     typeof argCount !== 'number'
     || !Number.isInteger(argCount)
@@ -80,6 +85,20 @@ export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): voi
     throw new Error(`MoonBit supports at most ${MAX_MOONBIT_ARGUMENTS} arguments`);
   }
 
+  const snapshot = new Array<unknown>(argCount);
+  for (let index = 0; index < argCount; index++) {
+    const read = readArrayIndex(args, index);
+    if (!read.ok) {
+      throw new Error('MoonBit arguments could not be read');
+    }
+    snapshot[index] = read.value;
+  }
+  return snapshot;
+}
+
+/** Validate an already-owned argument snapshot. */
+function validateOwnedMoonBitArguments(args: unknown[], abi?: MoonBitAbi): void {
+  const argCount = args.length;
   let totalStringBytes = 0;
   const validateScalar = (arg: unknown, errorPrefix: string): void => {
     if (!isSupportedScalar(arg)) {
@@ -108,17 +127,13 @@ export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): voi
     return;
   }
 
-  const normalizedAbi = normalizeMoonBitAbi(abi);
-  if (normalizedAbi === undefined) {
-    throw new Error('Invalid MoonBit ABI metadata');
-  }
-  if (argCount !== normalizedAbi.params.length) {
-    throw new Error(`MoonBit ABI expects ${normalizedAbi.params.length} arguments, got ${argCount}`);
+  if (argCount !== abi.params.length) {
+    throw new Error(`MoonBit ABI expects ${abi.params.length} arguments, got ${argCount}`);
   }
 
   let totalArrayElements = 0;
-  for (let argIndex = 0; argIndex < normalizedAbi.params.length; argIndex++) {
-    const type = normalizedAbi.params[argIndex];
+  for (let argIndex = 0; argIndex < abi.params.length; argIndex++) {
+    const type = abi.params[argIndex];
     const arg = args[argIndex];
     if (type === 'scalar') {
       validateScalar(arg, `MoonBit ABI argument ${argIndex} expects a scalar`);
@@ -130,9 +145,6 @@ export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): voi
       );
     }
     const arrayLength = arg.length;
-    if (typeof arrayLength !== 'number' || !Number.isInteger(arrayLength) || arrayLength < 0) {
-      throw new Error(`MoonBit ABI argument ${argIndex} has an invalid array length`);
-    }
     totalArrayElements += arrayLength;
     if (totalArrayElements > MAX_MOONBIT_ARRAY_ELEMENTS) {
       throw new Error(
@@ -146,6 +158,11 @@ export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): voi
   }
 }
 
+/** Validate ABI metadata and arguments before instantiation/postMessage. */
+export function validateMoonBitArguments(args: unknown[], abi?: MoonBitAbi): void {
+  void snapshotMoonBitCall(args, abi);
+}
+
 /**
  * Snapshot and validate one call before asynchronous work. Shape/length
  * preflight happens before any nested array allocation or element iteration.
@@ -154,24 +171,12 @@ export function snapshotMoonBitCall(
   args: unknown[],
   abi?: MoonBitAbi,
 ): MoonBitCallSnapshot {
-  if (!Array.isArray(args)) {
-    throw new Error('MoonBit arguments must be an array');
-  }
-  const argCount = args.length;
-  if (
-    typeof argCount !== 'number'
-    || !Number.isInteger(argCount)
-    || argCount < 0
-    || argCount > MAX_MOONBIT_ARGUMENTS
-  ) {
-    throw new Error(`MoonBit supports at most ${MAX_MOONBIT_ARGUMENTS} arguments`);
-  }
+  const topLevelArgs = snapshotTopLevelMoonBitArguments(args);
+  const argCount = topLevelArgs.length;
 
   if (abi === undefined) {
-    const snapshotArgs = new Array<unknown>(argCount);
-    for (let index = 0; index < argCount; index++) snapshotArgs[index] = args[index];
-    validateMoonBitArguments(snapshotArgs);
-    return { args: snapshotArgs };
+    validateOwnedMoonBitArguments(topLevelArgs);
+    return { args: topLevelArgs };
   }
 
   const snapshotAbi = normalizeMoonBitAbi(abi);
@@ -186,17 +191,22 @@ export function snapshotMoonBitCall(
   }
 
   const arrayLengths = new Array<number | undefined>(argCount);
+  const arraySources = new Array<unknown>(argCount);
   let totalArrayElements = 0;
   for (let argIndex = 0; argIndex < argCount; argIndex++) {
     const type = snapshotParams[argIndex];
     if (type === 'scalar') continue;
-    const arg = args[argIndex];
-    if (!Array.isArray(arg)) {
+    const arg = topLevelArgs[argIndex];
+    if (!isArrayContainer(arg)) {
       throw new Error(
         `MoonBit ABI argument ${argIndex} expects ${type} (got ${describeValue(arg)})`,
       );
     }
-    const arrayLength = arg.length;
+    const lengthRead = readArrayLength(arg);
+    if (!lengthRead.ok) {
+      throw new Error(`MoonBit ABI argument ${argIndex} has an invalid array length`);
+    }
+    const arrayLength = lengthRead.value;
     if (typeof arrayLength !== 'number' || !Number.isInteger(arrayLength) || arrayLength < 0) {
       throw new Error(`MoonBit ABI argument ${argIndex} has an invalid array length`);
     }
@@ -207,24 +217,29 @@ export function snapshotMoonBitCall(
       );
     }
     arrayLengths[argIndex] = arrayLength;
+    arraySources[argIndex] = arg;
   }
 
   const snapshotArgs = new Array<unknown>(argCount);
   for (let argIndex = 0; argIndex < argCount; argIndex++) {
     const arrayLength = arrayLengths[argIndex];
     if (arrayLength === undefined) {
-      snapshotArgs[argIndex] = args[argIndex];
+      snapshotArgs[argIndex] = topLevelArgs[argIndex];
       continue;
     }
-    const source = args[argIndex] as unknown[];
+    const source = arraySources[argIndex];
     const values = new Array<unknown>(arrayLength);
     for (let elementIndex = 0; elementIndex < arrayLength; elementIndex++) {
-      values[elementIndex] = source[elementIndex];
+      const read = readArrayIndex(source, elementIndex);
+      if (!read.ok) {
+        throw new Error(`MoonBit ABI argument ${argIndex} could not be read`);
+      }
+      values[elementIndex] = read.value;
     }
     snapshotArgs[argIndex] = values;
   }
 
-  validateMoonBitArguments(snapshotArgs, snapshotAbi);
+  validateOwnedMoonBitArguments(snapshotArgs, snapshotAbi);
   return { args: snapshotArgs, abi: snapshotAbi };
 }
 
