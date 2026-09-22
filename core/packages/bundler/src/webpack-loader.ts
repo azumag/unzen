@@ -33,7 +33,14 @@ export interface UnzenWebpackLoaderContext {
  * arbitrary object/function thrown across the build-tool boundary.
  */
 function normalizeWebpackLoaderError(error: unknown): Error {
-  if (error instanceof Error) return error;
+  // `instanceof` can itself invoke a Proxy's [[GetPrototypeOf]] trap. Keep
+  // classification bounded so a revoked/hostile Proxy cannot replace the
+  // intended loader diagnostic with its own exception.
+  try {
+    if (error instanceof Error) return error;
+  } catch {
+    // Fall through to the non-Error object/function bucket below.
+  }
   if (error === null) return new Error('null');
   if (typeof error === 'object' || typeof error === 'function') {
     return new Error('Unzen webpack loader failed with a non-Error value');
