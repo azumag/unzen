@@ -12,9 +12,11 @@ interface WorkerMethodSnapshot {
  * Normalize an arbitrary caller/browser Worker lifecycle failure without
  * invoking object/function coercion.
  *
- * Ordinary Error instances keep their identity when their message can be read
- * safely. Primitive thrown values keep the same useful text that the previous
- * String(error) catch paths exposed. Revoked Proxies, throwing prototype
+ * Primitive thrown values keep the same useful text that the previous
+ * String(error) catch paths exposed. Ordinary Error instances contribute only
+ * a safely snapshotted string message; the returned Error is always owned by
+ * the executor boundary so a stateful Proxy cannot become hostile after the
+ * first prototype/message read. Revoked Proxies, throwing prototype
  * checks/message getters, and other object/function values collapse to an
  * owned Error with a stable diagnostic.
  */
@@ -40,7 +42,7 @@ function normalizeWorkerHostFailure(error: unknown): Error {
   } catch {
     return new Error('Unknown error');
   }
-  return typeof message === 'string' ? error as Error : new Error('Unknown error');
+  return new Error(typeof message === 'string' ? message : 'Unknown error');
 }
 
 /** Read the minimal Worker method surface exactly once. */
