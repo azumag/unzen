@@ -54,6 +54,17 @@ function isResponseBodyLimitFailure(error: unknown): error is ResponseBodyLimitE
   }
 }
 
+/** Preserve the normal limit diagnostic without trusting a Proxy message trap. */
+function describeResponseBodyLimitFailure(error: ResponseBodyLimitError): string {
+  try {
+    return typeof error.message === 'string'
+      ? error.message
+      : `Fallback response exceeds ${MAX_EXECUTION_RESPONSE_BYTES} bytes`;
+  } catch {
+    return `Fallback response exceeds ${MAX_EXECUTION_RESPONSE_BYTES} bytes`;
+  }
+}
+
 /** Normalize an arbitrary rejection value without invoking object coercion. */
 function describeFallbackFailure(error: unknown): string {
   if (error === null) return 'null';
@@ -208,7 +219,7 @@ export class FallbackHandler {
           throw new UnzenCancelledError('Execution cancelled by caller');
         }
         if (isResponseBodyLimitFailure(error)) {
-          throw new UnzenNetworkError(error.message);
+          throw new UnzenNetworkError(describeResponseBodyLimitFailure(error));
         }
         // Response body not parseable as JSON → network/infrastructure error
         throw new UnzenNetworkError(
