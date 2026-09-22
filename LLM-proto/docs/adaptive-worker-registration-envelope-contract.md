@@ -13,10 +13,12 @@ Registration is validated before worker or cache-residency state can change:
 5. Manifest-backed cache residency is synchronized only after the registration container, worker ID, captured tier, telemetry shape, telemetry values, cache indexes, and cache artifact identities have all passed validation.
 6. The worker map is replaced only after cache validation/synchronization succeeds.
 
-Rejected registrations therefore cannot create a worker, replace an existing valid worker, or clear/replace that worker's last known-good manifest-backed cache residency. Accessor- or Proxy-backed registrations also cannot return one valid tier for validation and a different tier for storage in the same registration attempt.
+The registration envelope itself is a bounded runtime read. Root object/array classification tolerates revoked Proxies, and `id`, `tier`, and `telemetry` are each captured exactly once through dispatcher-owned guarded reads. If a getter or Proxy trap throws, the dispatcher replaces that failure with a stable field-specific `adaptive worker registration ... could not be read` diagnostic. The thrown value is never inspected, stringified, or coerced, so caller-controlled `Symbol.toPrimitive`, `valueOf`, and `toString` hooks are not executed by this boundary.
+
+Rejected registrations therefore cannot create a worker, replace an existing valid worker, or clear/replace that worker's last known-good manifest-backed cache residency. Accessor- or Proxy-backed registrations also cannot return one valid ID, tier, or telemetry object for validation and a different value for storage in the same registration attempt.
 
 ## Preserved behavior
 
-This hardening does not change valid registration semantics, worker tier/scoring policy, telemetry ranges, cache identity rules, or valid re-registration replacement behavior. It only makes the TypeScript registration interface an explicit runtime trust boundary.
+This hardening does not change valid registration semantics, worker ID semantics, worker tier/scoring policy, telemetry ranges, cache identity rules, or valid re-registration replacement behavior. It only makes the TypeScript registration interface an explicit runtime trust boundary.
 
-Related: #580, #167, `adaptive-worker-telemetry-contract.md`.
+Related: #580, #686, #1432, #167, `adaptive-worker-telemetry-contract.md`.
