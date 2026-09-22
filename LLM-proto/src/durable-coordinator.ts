@@ -178,6 +178,22 @@ interface OwnedDurableWorkerRegistration {
   readonly vramMB: number;
 }
 
+function readDurableWorkerRegistrationField(
+  registration: Record<string, unknown>,
+  field: 'workerId' | 'tier' | 'vramMB',
+  invalidMessage: string,
+): unknown {
+  try {
+    return registration[field];
+  } catch {
+    // Keep caller-thrown values completely opaque. Inaccessible declared
+    // registration fields fail through the same protocol taxonomy used for a
+    // malformed primitive value, and later fields are not read after the
+    // inaccessible field.
+    throw new UnzenError(invalidMessage, ErrorCode.ProtocolViolation);
+  }
+}
+
 function snapshotDurableWorkerRegistration(
   registration: unknown,
 ): OwnedDurableWorkerRegistration {
@@ -189,12 +205,25 @@ function snapshotDurableWorkerRegistration(
   }
 
   // Registration fields historically use normal property lookup rather than
-  // object-spread membership. Preserve that behavior while reading each field
-  // only once, then let the existing core validator remain authoritative for
-  // type/range checks and manifest minimum-VRAM policy.
-  const workerIdValue = registration.workerId;
-  const tierValue = registration.tier;
-  const vramMBValue = registration.vramMB;
+  // object-spread membership. Preserve inherited lookup and capture every
+  // reached field once. A hostile getter/Proxy trap fails closed immediately;
+  // normal captured values continue to be validated by the core so its
+  // type/range and manifest minimum-VRAM policy remains authoritative.
+  const workerIdValue = readDurableWorkerRegistrationField(
+    registration,
+    'workerId',
+    'worker registration workerId must be a non-empty string',
+  );
+  const tierValue = readDurableWorkerRegistrationField(
+    registration,
+    'tier',
+    'worker registration tier must be TIER_1, TIER_2, or TIER_3',
+  );
+  const vramMBValue = readDurableWorkerRegistrationField(
+    registration,
+    'vramMB',
+    'worker registration vramMB must be a positive finite number',
+  );
 
   return {
     workerId: workerIdValue as WorkerId,
