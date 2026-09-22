@@ -16,6 +16,17 @@ function revokedErrorProxy(): unknown {
   return proxy;
 }
 
+function statefulErrorProxy(): unknown {
+  let prototypeReads = 0;
+  return new Proxy(new Error('stateful error'), {
+    getPrototypeOf(target) {
+      prototypeReads += 1;
+      if (prototypeReads > 1) throw new Error('second prototype read must not occur');
+      return Reflect.getPrototypeOf(target);
+    },
+  });
+}
+
 function hostileObject(calls: { count: number }): object {
   const fail = () => {
     calls.count += 1;
@@ -29,7 +40,7 @@ function hostileObject(calls: { count: number }): object {
 }
 
 function workerFactory(worker: object): (url: string | URL) => Worker {
-  return () => worker as Worker;
+  return () => worker as unknown as Worker;
 }
 
 function healthyInitWorker(options: {
@@ -94,6 +105,22 @@ describe('WebWorkerSandboxExecutor host error boundary', () => {
     executor.dispose();
   });
 
+  it('owns a safely-read Error message before later catch-path classification', async () => {
+    const executor = new WebWorkerSandboxExecutor({
+      workerUrl: '/worker.js',
+      createWorker: () => {
+        throw statefulErrorProxy();
+      },
+    });
+
+    await expect(executor.execute('function run() { return 1; }', []))
+      .rejects.toMatchObject({
+        name: 'UnzenRuntimeError',
+        message: 'Failed to create Worker: stateful error',
+      });
+    executor.dispose();
+  });
+
   it('does not coerce hostile values thrown while configuring a custom Worker', async () => {
     const calls = { count: 0 };
     const executor = new WebWorkerSandboxExecutor({
@@ -145,7 +172,7 @@ describe('WebWorkerSandboxExecutor host error boundary', () => {
       workerUrl: '/worker.js',
       createWorker: () => {
         factoryCalls += 1;
-        return healthyInitWorker() as Worker;
+        return healthyInitWorker() as unknown as Worker;
       },
     });
 
@@ -165,7 +192,7 @@ describe('WebWorkerSandboxExecutor host error boundary', () => {
       workerUrl: '/worker.js',
       createWorker: () => {
         factoryCalls += 1;
-        return healthyInitWorker() as Worker;
+        return healthyInitWorker() as unknown as Worker;
       },
     });
     const options = new Proxy({}, {
