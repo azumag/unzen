@@ -148,7 +148,7 @@ describe('MoonBitWorkerSandboxExecutor hostile rejection boundary', () => {
     const signal = {
       get aborted() {
         abortedReads++;
-        if (abortedReads >= 3) throw new Error('hostile queued signal state');
+        if (abortedReads >= 2) throw new Error('hostile queued signal state');
         return false;
       },
       addEventListener: vi.fn(),
