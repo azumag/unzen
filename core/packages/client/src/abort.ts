@@ -120,15 +120,20 @@ export function snapshotAbortSignalInput(value: unknown): AbortSignalInputSnapsh
  * Detect an AbortError regardless of environment.
  *
  * Browsers reject aborted fetches with DOMException('AbortError'); Node.js may
- * surface `{ name: 'AbortError' }` too. Checking the error name is more robust
- * than `instanceof DOMException`, which does not exist in Node.
+ * surface `{ name: 'AbortError' }` too. The error value is untrusted: reading
+ * `name` is bounded so a revoked Proxy or throwing getter cannot escape from
+ * catch-path classification.
  */
 export function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === 'object'
-    && error !== null
-    && (error as { name?: string }).name === 'AbortError'
-  );
+  if (typeof error !== 'object' || error === null) return false;
+
+  let name: unknown;
+  try {
+    name = (error as { name?: unknown }).name;
+  } catch {
+    return false;
+  }
+  return name === 'AbortError';
 }
 
 /**
