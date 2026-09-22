@@ -55,6 +55,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
+function stableMalformedRecordValue(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null) return value;
+  try {
+    Array.isArray(value);
+    return value;
+  } catch {
+    // Revoked Proxies must never cross back into the core's own shape checks.
+    // Use a stable malformed primitive while preserving every safe malformed
+    // value so the core keeps its established validation taxonomy.
+    return null;
+  }
+}
+
 function isNonNegativeFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -459,7 +472,9 @@ function readUntrustedField(
 }
 
 function snapshotResultIdentity(identity: unknown): ResultIdentitySnapshot {
-  if (!isRecord(identity)) return { identity: undefined, valid: false };
+  if (!isRecord(identity)) {
+    return { identity: stableMalformedRecordValue(identity), valid: false };
+  }
 
   const owned: Record<string, unknown> = {};
   for (const field of ['requestId', 'attemptId', 'leaseId', 'workerId', 'workerGeneration'] as const) {
@@ -491,9 +506,12 @@ function malformedFinalOutput(tokens: unknown = undefined): ExecutionResult['out
 }
 
 function snapshotDurableFinalOutput(output: unknown): ExecutionResult['output'] {
-  // Preserve the core validator's malformed-container diagnostic while never
-  // handing a revoked/hostile container back across the runtime boundary.
-  if (!isRecord(output)) return undefined as unknown as ExecutionResult['output'];
+  // Preserve safe malformed values so the core keeps its established public
+  // diagnostics. Revoked Proxies become a stable malformed primitive instead
+  // of leaking a native Array.isArray TypeError.
+  if (!isRecord(output)) {
+    return stableMalformedRecordValue(output) as ExecutionResult['output'];
+  }
 
   const tokensValue = readUntrustedField(output, 'tokens');
   let tokensAreArray = false;
@@ -680,9 +698,11 @@ function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkp
 }
 
 function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
-  // Let the existing core validator retain its exact malformed-top-level error
-  // without handing it a revoked Proxy that could make Array.isArray throw.
-  if (!isRecord(result)) return undefined as unknown as ExecutionResult;
+  // Preserve safe malformed values for the core's existing top-level error;
+  // revoked Proxies are replaced with a stable malformed primitive.
+  if (!isRecord(result)) {
+    return stableMalformedRecordValue(result) as ExecutionResult;
+  }
 
   const identityValue = readUntrustedField(result, 'identity');
   const identitySnapshot = snapshotResultIdentity(identityValue);
@@ -734,8 +754,11 @@ function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
 }
 
 function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
-  // Keep malformed/revoked roots inside the stable core diagnostic path.
-  if (!isRecord(failure)) return undefined as unknown as ExecutionFailure;
+  // Preserve safe malformed values for the core's existing top-level error;
+  // revoked Proxies are replaced with a stable malformed primitive.
+  if (!isRecord(failure)) {
+    return stableMalformedRecordValue(failure) as ExecutionFailure;
+  }
 
   const identityValue = readUntrustedField(failure, 'identity');
   const identitySnapshot = snapshotResultIdentity(identityValue);
