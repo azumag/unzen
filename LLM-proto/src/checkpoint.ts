@@ -17,12 +17,35 @@ const CHECKPOINT_SHAPE_RANK_ERROR =
   'checkpoint metadata.shape must contain exactly 3 dimensions';
 const CHECKPOINT_SHAPE_DIMENSION_ERROR =
   'checkpoint metadata.shape must contain positive safe integers';
+const UNREADABLE_CHECKPOINT_FIELD = Symbol('unreadable-checkpoint-field');
 
 interface ValidatedCheckpointCapture {
   readonly requestId: InferenceRequestId;
   readonly segmentIndex: number;
   readonly hiddenStates: Uint8Array;
   readonly metadata: Checkpoint['metadata'];
+}
+
+/** Classify an untrusted record without leaking revoked-Proxy Array.isArray failures. */
+function isNonArrayRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+/** Read one caller-owned field without inspecting or coercing a thrown value. */
+function readCheckpointField(
+  record: Record<string, unknown>,
+  field: string,
+): unknown | typeof UNREADABLE_CHECKPOINT_FIELD {
+  try {
+    return record[field];
+  } catch {
+    return UNREADABLE_CHECKPOINT_FIELD;
+  }
 }
 
 export class CheckpointStore {
@@ -47,42 +70,62 @@ export class CheckpointStore {
 
   /** Capture and validate every consumed checkpoint field exactly once. */
   private static captureValidatedCheckpoint(checkpoint: unknown): ValidatedCheckpointCapture {
-    if (
-      typeof checkpoint !== 'object' ||
-      checkpoint === null ||
-      Array.isArray(checkpoint)
-    ) {
+    if (!isNonArrayRecord(checkpoint)) {
       throw new Error('checkpoint must be a non-null object');
     }
 
-    const candidate = checkpoint as Record<string, unknown>;
-
-    const requestId = candidate.requestId;
+    const requestId = readCheckpointField(checkpoint, 'requestId');
+    if (requestId === UNREADABLE_CHECKPOINT_FIELD) {
+      throw new Error('checkpoint requestId must be a non-empty string');
+    }
     CheckpointStore.assertValidRequestId(requestId);
 
-    const segmentIndex = candidate.segmentIndex;
+    const segmentIndex = readCheckpointField(checkpoint, 'segmentIndex');
+    if (segmentIndex === UNREADABLE_CHECKPOINT_FIELD) {
+      throw new Error('checkpoint segmentIndex must be a non-negative safe integer');
+    }
     CheckpointStore.assertValidSegmentIndex(segmentIndex);
 
-    const hiddenStates = candidate.hiddenStates;
-    if (!ArrayBuffer.isView(hiddenStates) || !(hiddenStates instanceof Uint8Array)) {
+    const hiddenStates = readCheckpointField(checkpoint, 'hiddenStates');
+    if (hiddenStates === UNREADABLE_CHECKPOINT_FIELD) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
-    // Normalize through the intrinsic Uint8Array constructor before touching
-    // byteLength or later taking a snapshot. A genuine subclass is still accepted,
-    // but caller-defined getters/methods/species are not part of the trust boundary.
-    const hiddenStatesSnapshot = new Uint8Array(hiddenStates);
+    let hiddenStatesSnapshot: Uint8Array;
+    try {
+      if (!ArrayBuffer.isView(hiddenStates) || !(hiddenStates instanceof Uint8Array)) {
+        throw new Error('invalid hidden states');
+      }
+      // Normalize through the intrinsic Uint8Array constructor before touching
+      // byteLength or later taking a snapshot. A genuine subclass is still accepted,
+      // but caller-defined getters/methods/species are not part of the trust boundary.
+      hiddenStatesSnapshot = new Uint8Array(hiddenStates);
+    } catch {
+      throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
+    }
     if (hiddenStatesSnapshot.byteLength === 0) {
       throw new Error('checkpoint hiddenStates must be a non-empty Uint8Array');
     }
 
-    const metadataValue = candidate.metadata;
-    if (metadataValue === null || typeof metadataValue !== 'object') {
+    const metadataValue = readCheckpointField(checkpoint, 'metadata');
+    if (
+      metadataValue === UNREADABLE_CHECKPOINT_FIELD
+      || !isNonArrayRecord(metadataValue)
+    ) {
       throw new Error('checkpoint metadata must be an object');
     }
-    const metadata = metadataValue as Record<string, unknown>;
+    const metadata = metadataValue;
 
-    const shapeValue = metadata.shape;
-    if (!Array.isArray(shapeValue)) {
+    const shapeValue = readCheckpointField(metadata, 'shape');
+    if (shapeValue === UNREADABLE_CHECKPOINT_FIELD) {
+      throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
+    }
+    let isShapeArray = false;
+    try {
+      isShapeArray = Array.isArray(shapeValue);
+    } catch {
+      throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
+    }
+    if (!isShapeArray) {
       throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
     }
     // Rank is part of the checkpoint protocol, not an arbitrary runtime array
@@ -90,7 +133,12 @@ export class CheckpointStore {
     // asserted/Proxy-backed checkpoint cannot turn validation into a large
     // allocation or leak a native RangeError. Preserve the established empty-
     // shape validation message for compatibility with existing callers/tests.
-    const shapeLength = shapeValue.length;
+    let shapeLength: unknown;
+    try {
+      shapeLength = (shapeValue as unknown[]).length;
+    } catch {
+      throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
+    }
     if (shapeLength === 0) {
       throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
     }
@@ -98,8 +146,12 @@ export class CheckpointStore {
       throw new Error(CHECKPOINT_SHAPE_RANK_ERROR);
     }
     const shapeMembers: unknown[] = new Array(CHECKPOINT_TENSOR_RANK);
-    for (let index = 0; index < CHECKPOINT_TENSOR_RANK; index += 1) {
-      shapeMembers[index] = shapeValue[index];
+    try {
+      for (let index = 0; index < CHECKPOINT_TENSOR_RANK; index += 1) {
+        shapeMembers[index] = (shapeValue as unknown[])[index];
+      }
+    } catch {
+      throw new Error(CHECKPOINT_SHAPE_DIMENSION_ERROR);
     }
     const shape: number[] = new Array(CHECKPOINT_TENSOR_RANK);
     for (let index = 0; index < CHECKPOINT_TENSOR_RANK; index += 1) {
@@ -110,20 +162,34 @@ export class CheckpointStore {
       shape[index] = dimension;
     }
 
-    const dtype = metadata.dtype;
-    if (typeof dtype !== 'string' || dtype.trim().length === 0) {
+    const dtype = readCheckpointField(metadata, 'dtype');
+    if (
+      dtype === UNREADABLE_CHECKPOINT_FIELD
+      || typeof dtype !== 'string'
+      || dtype.trim().length === 0
+    ) {
       throw new Error('checkpoint metadata.dtype must be a non-empty string');
     }
 
-    const sequenceLength = metadata.sequenceLength;
-    if (typeof sequenceLength !== 'number' || !Number.isSafeInteger(sequenceLength) || sequenceLength < 0) {
+    const sequenceLength = readCheckpointField(metadata, 'sequenceLength');
+    if (
+      sequenceLength === UNREADABLE_CHECKPOINT_FIELD
+      || typeof sequenceLength !== 'number'
+      || !Number.isSafeInteger(sequenceLength)
+      || sequenceLength < 0
+    ) {
       throw new Error(
         'checkpoint metadata.sequenceLength must be a non-negative safe integer',
       );
     }
 
-    const timestamp = metadata.timestamp;
-    if (typeof timestamp !== 'number' || !Number.isSafeInteger(timestamp) || timestamp < 0) {
+    const timestamp = readCheckpointField(metadata, 'timestamp');
+    if (
+      timestamp === UNREADABLE_CHECKPOINT_FIELD
+      || typeof timestamp !== 'number'
+      || !Number.isSafeInteger(timestamp)
+      || timestamp < 0
+    ) {
       throw new Error('checkpoint metadata.timestamp must be a non-negative safe integer');
     }
 
