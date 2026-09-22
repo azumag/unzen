@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UnzenNetworkError } from '@unzen/shared';
+import {
+  MAX_EXECUTION_RESPONSE_BYTES,
+  UnzenNetworkError,
+} from '@unzen/shared';
 import { FallbackHandler } from '../src/fallback-handler';
+import { ResponseBodyLimitError } from '../src/response-body';
 
 const originalFetch = globalThis.fetch;
 
@@ -44,6 +48,31 @@ describe('FallbackHandler rejection-value boundary', () => {
       'Failed to execute fallback: Unknown error',
     );
     expect(coercions).toBe(0);
+  });
+
+  it('bounds a hostile message getter on ResponseBodyLimitError-like failures', async () => {
+    const failure = new Proxy(
+      new ResponseBodyLimitError('Fallback response', MAX_EXECUTION_RESPONSE_BYTES),
+      {
+        get(target, property, receiver) {
+          if (property === 'message') {
+            throw new Error('message getter must not escape');
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => { throw failure; },
+    }) as unknown as typeof fetch;
+    const handler = new FallbackHandler('https://example.com');
+
+    await expect(handler.execute('test', [])).rejects.toThrow(
+      `Fallback response exceeds ${MAX_EXECUTION_RESPONSE_BYTES} bytes`,
+    );
   });
 
   it('preserves ordinary Error and primitive rejection messages', async () => {
