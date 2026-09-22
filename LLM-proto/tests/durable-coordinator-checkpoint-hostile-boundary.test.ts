@@ -183,6 +183,42 @@ describe('DurableCoordinator hostile checkpoint runtime boundary', () => {
     await expectPayloadRejected(liveFixture, { payload: livePayload });
   });
 
+  it('normalizes a genuine Uint8Array subclass without invoking hostile byte-view accessors', async () => {
+    const f = fixture();
+    const base = await checkpoint(f);
+    let byteViewReads = 0;
+    class HostileByteView extends Uint8Array {
+      override get byteLength(): number {
+        byteViewReads += 1;
+        throw new Error('caller byteLength getter must not run');
+      }
+
+      override get byteOffset(): number {
+        byteViewReads += 1;
+        throw new Error('caller byteOffset getter must not run');
+      }
+
+      override get buffer(): ArrayBufferLike {
+        byteViewReads += 1;
+        throw new Error('caller buffer getter must not run');
+      }
+    }
+    const payload = new HostileByteView([1, 2, 3, 4]);
+
+    const acceptance = await f.coord.handleWorkerResult({
+      identity: f.identity,
+      processingTimeMs: 1,
+      checkpoint: { ...base, payload },
+    });
+
+    expect(acceptance.kind).toBe('accepted');
+    if (acceptance.kind !== 'accepted' || acceptance.isFinal) {
+      throw new Error('expected an accepted intermediate checkpoint');
+    }
+    expect([...acceptance.checkpoint!.payload]).toEqual([1, 2, 3, 4]);
+    expect(byteViewReads).toBe(0);
+  });
+
   it('fails closed when a declared metadata descriptor cannot be inspected without enumerating', async () => {
     const f = fixture();
     const base = await checkpoint(f);
