@@ -242,36 +242,80 @@ export async function verifyModelManifestSignature(
 }
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const BUNDLE_ARRAY_DIAGNOSTIC = 'segment artifact bundle components must be a non-empty array';
+
+function snapshotBundleComponentInputs(input: unknown): readonly unknown[] {
+  let isArray = false;
+  try {
+    isArray = Array.isArray(input);
+  } catch {
+    throw new Error(BUNDLE_ARRAY_DIAGNOSTIC);
+  }
+  if (!isArray) {
+    throw new Error(BUNDLE_ARRAY_DIAGNOSTIC);
+  }
+
+  let length: unknown;
+  try {
+    length = (input as readonly unknown[]).length;
+  } catch {
+    throw new Error(BUNDLE_ARRAY_DIAGNOSTIC);
+  }
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length <= 0) {
+    throw new Error(BUNDLE_ARRAY_DIAGNOSTIC);
+  }
+
+  const captured: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    try {
+      captured.push((input as readonly unknown[])[index]);
+    } catch {
+      throw new Error(`segment artifact bundle component ${index} could not be read`);
+    }
+  }
+  return captured;
+}
+
+function readBundleComponentField(
+  component: Record<string, unknown>,
+  field: string,
+  diagnostic: string,
+): unknown {
+  try {
+    return component[field];
+  } catch {
+    throw new Error(diagnostic);
+  }
+}
 
 function validateSegmentArtifactBundleComponents(
   input: unknown,
 ): readonly SegmentArtifactComponent[] {
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new Error('segment artifact bundle components must be a non-empty array');
-  }
-
+  const componentInputs = snapshotBundleComponentInputs(input);
   const paths = new Set<string>();
   let graphCount = 0;
   const validated: SegmentArtifactComponent[] = [];
 
-  for (const [index, rawComponent] of input.entries()) {
+  for (let index = 0; index < componentInputs.length; index++) {
+    const rawComponent = componentInputs[index];
     if (!isRecord(rawComponent)) {
       throw new Error(`segment artifact bundle component ${index} must be an object`);
     }
 
-    const role = rawComponent.role;
+    const roleDiagnostic =
+      `segment artifact bundle component ${index} role must be 'graph' or 'external-data'`;
+    const role = readBundleComponentField(rawComponent, 'role', roleDiagnostic);
     if (role !== 'graph' && role !== 'external-data') {
-      throw new Error(
-        `segment artifact bundle component ${index} role must be 'graph' or 'external-data'`,
-      );
+      throw new Error(roleDiagnostic);
     }
     if (role === 'graph') {
       graphCount += 1;
     }
 
+    const pathField = `segment artifact bundle component ${index} path`;
     const path = requireNonEmptyString(
-      rawComponent.path,
-      `segment artifact bundle component ${index} path`,
+      readBundleComponentField(rawComponent, 'path', `${pathField} must be a non-empty string`),
+      pathField,
     );
     if (!isSafeRelativeArtifactPath(path)) {
       throw new Error(
@@ -283,27 +327,37 @@ function validateSegmentArtifactBundleComponents(
     }
     paths.add(path);
 
-    const byteSize = rawComponent.byteSize;
+    const byteSizeDiagnostic =
+      `segment artifact bundle component ${index} byteSize must be a positive safe integer`;
+    const byteSize = readBundleComponentField(rawComponent, 'byteSize', byteSizeDiagnostic);
     if (typeof byteSize !== 'number' || !Number.isSafeInteger(byteSize) || byteSize <= 0) {
-      throw new Error(
-        `segment artifact bundle component ${index} byteSize must be a positive safe integer`,
-      );
+      throw new Error(byteSizeDiagnostic);
     }
 
-    const sha256 = rawComponent.sha256;
+    const sha256Diagnostic =
+      `segment artifact bundle component ${index} sha256 must be a canonical lowercase SHA-256 digest`;
+    const sha256 = readBundleComponentField(rawComponent, 'sha256', sha256Diagnostic);
     if (typeof sha256 !== 'string' || !SHA256_HEX_PATTERN.test(sha256)) {
-      throw new Error(
-        `segment artifact bundle component ${index} sha256 must be a canonical lowercase SHA-256 digest`,
-      );
+      throw new Error(sha256Diagnostic);
     }
 
+    const contentTypeField = `segment artifact bundle component ${index} contentType`;
     const contentType = requireNonEmptyString(
-      rawComponent.contentType,
-      `segment artifact bundle component ${index} contentType`,
+      readBundleComponentField(
+        rawComponent,
+        'contentType',
+        `${contentTypeField} must be a non-empty string`,
+      ),
+      contentTypeField,
     );
+    const artifactLocatorField = `segment artifact bundle component ${index} artifactLocator`;
     const artifactLocator = requireNonEmptyString(
-      rawComponent.artifactLocator,
-      `segment artifact bundle component ${index} artifactLocator`,
+      readBundleComponentField(
+        rawComponent,
+        'artifactLocator',
+        `${artifactLocatorField} must be a non-empty string`,
+      ),
+      artifactLocatorField,
     );
 
     validated.push({
@@ -339,7 +393,12 @@ function isSafeRelativeArtifactPath(path: string): boolean {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function componentRoleOrder(role: SegmentArtifactComponentRole): number {
