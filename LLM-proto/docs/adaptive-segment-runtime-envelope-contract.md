@@ -24,7 +24,7 @@ The dispatcher binds construction to one caller-observed segment container and o
 
 After membership capture, validation proceeds in array order. The same captured primitive values drive validation, error reporting, and construction of the frozen plain-object segment snapshots. A getter on an earlier segment therefore cannot replace a later caller-owned array slot, and a valid-first / altered-second getter on an individual field cannot make the accepted value differ from the value retained by the dispatcher. Later caller mutation likewise cannot change routing geometry, cache-hit range validation, or manifest-backed compatibility decisions.
 
-All operations that can execute caller-controlled proxy/accessor code in this segment-envelope path are bounded locally. The dispatcher does not stringify or classify values thrown by those traps, so hostile `Symbol.toPrimitive`, `valueOf`, or `toString` hooks cannot replace the intended validation failure with a caller-controlled exception.
+The proxy/accessor operations used to classify and capture the segment envelope above are bounded locally. The dispatcher does not stringify or classify values thrown by those traps, so hostile `Symbol.toPrimitive`, `valueOf`, or `toString` hooks cannot replace the intended validation failure with a caller-controlled exception. Other constructor option fields retain their existing validation contracts and are outside this segment-envelope hardening change.
 
 ## Compatibility
 
