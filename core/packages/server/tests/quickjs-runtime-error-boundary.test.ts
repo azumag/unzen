@@ -6,9 +6,9 @@ function runtimeThrowingOnContextCreation(failure: unknown): QuickJSRuntime {
   const runtime = new QuickJSRuntime();
   Object.defineProperty(runtime, 'quickJS', {
     value: {
-      newContext: vi.fn(() => {
+      newContext() {
         throw failure;
-      }),
+      },
     },
     configurable: true,
   });
@@ -22,15 +22,15 @@ function runtimeThrowingFromHost(failure: unknown): {
   const dispose = vi.fn();
   const context = {
     runtime: {
-      setMemoryLimit: vi.fn(() => {
+      setMemoryLimit() {
         throw failure;
-      }),
+      },
     },
     dispose,
   };
   const runtime = new QuickJSRuntime();
   Object.defineProperty(runtime, 'quickJS', {
-    value: { newContext: vi.fn(() => context) },
+    value: { newContext: () => context },
     configurable: true,
   });
   return { runtime, dispose };
