@@ -32,6 +32,20 @@ export type {
   SuppressionRecord,
 } from './durable-coordinator-core.js';
 
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const TYPED_ARRAY_BUFFER_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'buffer',
+)?.get;
+const TYPED_ARRAY_BYTE_OFFSET_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteOffset',
+)?.get;
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  'byteLength',
+)?.get;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
   try {
@@ -438,47 +452,116 @@ interface CapturedOwnEnumerableField {
   readonly value: unknown;
 }
 
+const INACCESSIBLE_CHECKPOINT_FIELD = null;
+
 function captureOwnEnumerableField(
   source: Record<string, unknown>,
   key: string,
 ): CapturedOwnEnumerableField {
-  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(source, key);
+  } catch {
+    // A declared field that cannot be inspected is represented as present but
+    // invalid so the authoritative checkpoint validator rejects it. In
+    // particular, an inaccessible optional previousCheckpointDigest must not
+    // be silently reinterpreted as "absent".
+    return { present: true, value: INACCESSIBLE_CHECKPOINT_FIELD };
+  }
   if (descriptor === undefined || descriptor.enumerable !== true) {
     return { present: false, value: undefined };
   }
-  return { present: true, value: source[key] };
+
+  try {
+    return { present: true, value: source[key] };
+  } catch {
+    return { present: true, value: INACCESSIBLE_CHECKPOINT_FIELD };
+  }
+}
+
+function malformedCheckpointPayload(): ExecutionResult['checkpoint'] {
+  return { payload: undefined } as unknown as CheckpointEnvelope;
+}
+
+/**
+ * Convert a genuine Uint8Array (including subclasses) into a plain view over
+ * the same backing bytes without copying them. Intrinsic typed-array getters
+ * bypass caller-defined `buffer`/`byteOffset`/`byteLength` accessors, and live
+ * Proxy-wrapped typed arrays are rejected because `ArrayBuffer.isView()` does
+ * not treat the Proxy as a genuine ArrayBuffer view.
+ */
+function stableCheckpointPayloadView(value: unknown): Uint8Array | undefined {
+  if (
+    !ArrayBuffer.isView(value)
+    || !(value instanceof Uint8Array)
+    || !TYPED_ARRAY_BUFFER_GETTER
+    || !TYPED_ARRAY_BYTE_OFFSET_GETTER
+    || !TYPED_ARRAY_BYTE_LENGTH_GETTER
+  ) {
+    return undefined;
+  }
+
+  try {
+    const buffer = Reflect.apply(TYPED_ARRAY_BUFFER_GETTER, value, []) as ArrayBufferLike;
+    const byteOffset = Reflect.apply(TYPED_ARRAY_BYTE_OFFSET_GETTER, value, []) as number;
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []) as number;
+    return new Uint8Array(buffer, byteOffset, byteLength);
+  } catch {
+    return undefined;
+  }
 }
 
 function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkpoint'] {
-  // Preserve the core's malformed-container and payload-first safety gates.
-  if (!isRecord(checkpoint)) return checkpoint as ExecutionResult['checkpoint'];
+  // Preserve the core's malformed-container and payload-first safety gates,
+  // while bounding Array.isArray/Proxy traps at this public wrapper boundary.
+  if (typeof checkpoint !== 'object' || checkpoint === null) {
+    return checkpoint as ExecutionResult['checkpoint'];
+  }
 
-  const payloadValue = checkpoint.payload;
-  if (!(payloadValue instanceof Uint8Array)) {
+  let checkpointIsArray: boolean;
+  try {
+    checkpointIsArray = Array.isArray(checkpoint);
+  } catch {
+    return malformedCheckpointPayload();
+  }
+  if (checkpointIsArray) return checkpoint as ExecutionResult['checkpoint'];
+
+  const checkpointRecord = checkpoint as Record<string, unknown>;
+  let payloadValue: unknown;
+  try {
+    payloadValue = checkpointRecord.payload;
+  } catch {
+    return malformedCheckpointPayload();
+  }
+
+  const payload = stableCheckpointPayloadView(payloadValue);
+  if (payload === undefined) {
     return { payload: payloadValue } as unknown as CheckpointEnvelope;
   }
 
   // Do not copy executor-owned checkpoint bytes here. The core owns the
   // configured byte ceiling, so it must reject an oversized payload before any
-  // ownership allocation. This reference remains synchronous only: the core
-  // snapshots it before crossing the async digest boundary.
-  const payload = payloadValue;
+  // ownership allocation. The stable view above shares the original backing
+  // bytes; the core still performs the first byte copy synchronously after the
+  // size gate and before crossing the async digest boundary.
 
   // The legacy core spread retained only own-enumerable metadata fields. Read
   // only those declared names, once each, without enumerating unknown caller
   // properties. Payload intentionally keeps the legacy direct-lookup rule.
-  const requestId = captureOwnEnumerableField(checkpoint, 'requestId').value;
-  const attemptId = captureOwnEnumerableField(checkpoint, 'attemptId').value;
-  const workerIdValue = captureOwnEnumerableField(checkpoint, 'workerId').value;
-  const workerGeneration = captureOwnEnumerableField(checkpoint, 'workerGeneration').value;
-  const formatVersion = captureOwnEnumerableField(checkpoint, 'formatVersion').value;
-  const segmentIndex = captureOwnEnumerableField(checkpoint, 'segmentIndex').value;
-  const payloadLength = captureOwnEnumerableField(checkpoint, 'payloadLength').value;
-  const modelManifestDigest = captureOwnEnumerableField(checkpoint, 'modelManifestDigest').value;
-  const payloadDigest = captureOwnEnumerableField(checkpoint, 'payloadDigest').value;
-  const createdAt = captureOwnEnumerableField(checkpoint, 'createdAt').value;
-  const ttlMs = captureOwnEnumerableField(checkpoint, 'ttlMs').value;
-  const previousCheckpointDigest = captureOwnEnumerableField(checkpoint, 'previousCheckpointDigest');
+  // Descriptor/getter failures are converted to a stable invalid primitive so
+  // the core remains the source of truth for the public rejection taxonomy.
+  const requestId = captureOwnEnumerableField(checkpointRecord, 'requestId').value;
+  const attemptId = captureOwnEnumerableField(checkpointRecord, 'attemptId').value;
+  const workerIdValue = captureOwnEnumerableField(checkpointRecord, 'workerId').value;
+  const workerGeneration = captureOwnEnumerableField(checkpointRecord, 'workerGeneration').value;
+  const formatVersion = captureOwnEnumerableField(checkpointRecord, 'formatVersion').value;
+  const segmentIndex = captureOwnEnumerableField(checkpointRecord, 'segmentIndex').value;
+  const payloadLength = captureOwnEnumerableField(checkpointRecord, 'payloadLength').value;
+  const modelManifestDigest = captureOwnEnumerableField(checkpointRecord, 'modelManifestDigest').value;
+  const payloadDigest = captureOwnEnumerableField(checkpointRecord, 'payloadDigest').value;
+  const createdAt = captureOwnEnumerableField(checkpointRecord, 'createdAt').value;
+  const ttlMs = captureOwnEnumerableField(checkpointRecord, 'ttlMs').value;
+  const previousCheckpointDigest = captureOwnEnumerableField(checkpointRecord, 'previousCheckpointDigest');
 
   return {
     requestId: requestId as CheckpointEnvelope['requestId'],
