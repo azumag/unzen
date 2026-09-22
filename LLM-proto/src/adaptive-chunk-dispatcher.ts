@@ -1179,13 +1179,37 @@ function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
   });
 }
 
+function formatWorkerTierForDiagnostic(tier: unknown): string {
+  if (tier === null) {
+    return 'null';
+  }
+  switch (typeof tier) {
+    case 'string':
+    case 'number':
+    case 'bigint':
+    case 'boolean':
+    case 'undefined':
+      return String(tier);
+    case 'symbol':
+      try {
+        return String(tier);
+      } catch {
+        return 'unknown';
+      }
+    default:
+      return 'unknown';
+  }
+}
+
 function assertWorkerTier(tier: WorkerTier): void {
   if (
     tier !== WorkerTier.TIER_1 &&
     tier !== WorkerTier.TIER_2 &&
     tier !== WorkerTier.TIER_3
   ) {
-    throw new Error(`worker tier must be one of 1, 2, or 3; received ${String(tier)}`);
+    throw new Error(
+      `worker tier must be one of 1, 2, or 3; received ${formatWorkerTierForDiagnostic(tier)}`,
+    );
   }
 }
 
