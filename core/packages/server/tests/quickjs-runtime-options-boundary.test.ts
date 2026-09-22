@@ -66,4 +66,17 @@ describe('QuickJSRuntime execution options runtime boundary', () => {
 
     expect(newContext).not.toHaveBeenCalled();
   });
+
+  it('fails closed on revoked arguments before allocating a context', async () => {
+    const { runtime, newContext } = runtimeWithContextSpy();
+    const revoked = Proxy.revocable([], {});
+    revoked.revoke();
+
+    await expect(runtime.execute(
+      'function run() { return 1; }',
+      revoked.proxy as never,
+    )).rejects.toThrow('QuickJS arguments must be an array');
+
+    expect(newContext).not.toHaveBeenCalled();
+  });
 });
