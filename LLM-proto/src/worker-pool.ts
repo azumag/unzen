@@ -19,6 +19,13 @@ import {
 } from './types.js';
 import type { WorkerRegistration } from './protocol.js';
 
+function describeRuntimeValue(value: unknown): string {
+  if (value === null) return 'null';
+  const kind = typeof value;
+  if (kind === 'object' || kind === 'function') return 'unknown';
+  return String(value);
+}
+
 export class WorkerPool {
   private readonly workers = new Map<WorkerId, WorkerInfo>();
   private readonly workerViews = new WeakMap<WorkerInfo, WorkerInfo>();
@@ -277,33 +284,56 @@ export class WorkerPool {
    * are bound to the same caller-observed values.
    */
   private validateRegistration(registration: WorkerRegistration): WorkerRegistration {
+    let isArray = false;
+    if (typeof registration === 'object' && registration !== null) {
+      try {
+        isArray = Array.isArray(registration);
+      } catch {
+        throw new Error('worker registration must be a non-null object');
+      }
+    }
     if (
       typeof registration !== 'object' ||
       registration === null ||
-      Array.isArray(registration)
+      isArray
     ) {
       throw new Error('worker registration must be a non-null object');
     }
 
-    const rawWorkerId: unknown = registration.workerId;
+    let rawWorkerId: unknown;
+    try {
+      rawWorkerId = registration.workerId;
+    } catch {
+      throw new Error('workerId could not be read');
+    }
     if (typeof rawWorkerId !== 'string' || rawWorkerId.trim().length === 0) {
       throw new Error('workerId must be a non-empty string');
     }
     const stableWorkerId = workerId(rawWorkerId);
 
-    const tier: unknown = registration.tier;
+    let tier: unknown;
+    try {
+      tier = registration.tier;
+    } catch {
+      throw new Error('worker tier could not be read');
+    }
     if (
       tier !== WorkerTier.TIER_1 &&
       tier !== WorkerTier.TIER_2 &&
       tier !== WorkerTier.TIER_3
     ) {
-      throw new Error(`worker tier must be 1, 2, or 3; found ${String(tier)}`);
+      throw new Error(`worker tier must be 1, 2, or 3; found ${describeRuntimeValue(tier)}`);
     }
 
-    const vramMB: unknown = registration.vramMB;
+    let vramMB: unknown;
+    try {
+      vramMB = registration.vramMB;
+    } catch {
+      throw new Error('worker vramMB could not be read');
+    }
     if (typeof vramMB !== 'number' || !Number.isFinite(vramMB) || vramMB <= 0) {
       throw new Error(
-        `worker vramMB must be a positive finite number; found ${String(vramMB)}`,
+        `worker vramMB must be a positive finite number; found ${describeRuntimeValue(vramMB)}`,
       );
     }
 
