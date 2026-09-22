@@ -516,7 +516,7 @@ function copyImportModules(
   target: WebAssembly.Imports,
   source: WebAssembly.Imports,
 ): void {
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) {
+  if (!isNonArrayObject(source)) {
     throw new TypeError('MoonBit imports must be an object');
   }
 
@@ -534,11 +534,7 @@ function copyImportModules(
     } catch {
       throw new TypeError('MoonBit imports could not be read');
     }
-    if (
-      typeof sourceModule !== 'object'
-      || sourceModule === null
-      || Array.isArray(sourceModule)
-    ) {
+    if (!isNonArrayObject(sourceModule)) {
       throw new TypeError(`MoonBit import module "${moduleName}" must be an object`);
     }
 
