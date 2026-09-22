@@ -168,6 +168,29 @@ def _run_session(path: Path, feeds: dict[str,np.ndarray]) -> tuple[np.ndarray,fl
     del sess; gc.collect(); return out,create,run
 
 
+def _route_probe_tokens(
+    tiles: list[object],
+) -> list[tuple[dict[str,object],int,int,int,list[int]]]:
+    """Snapshot valid tile ranges and require exact routing for every probe token."""
+    assignments=[0]*len(TOKEN_IDS)
+    routed: list[tuple[dict[str,object],int,int,int,list[int]]]=[]
+    for tile in tiles:
+        if not isinstance(tile,dict):
+            raise RuntimeError("tile must be object")
+        ti=tile.get("tileIndex"); start=tile.get("startRow"); end=tile.get("endRowExclusive")
+        if not all(isinstance(x,int) and not isinstance(x,bool) for x in (ti,start,end)):
+            raise RuntimeError("tile geometry invalid")
+        if start < 0 or start >= end or end > VOCAB_ROWS:
+            raise RuntimeError("tile row range invalid")
+        positions=[pos for pos,tok in enumerate(TOKEN_IDS) if start <= tok < end]
+        for position in positions:
+            assignments[position]+=1
+        routed.append((tile,ti,start,end,positions))
+    if any(count != 1 for count in assignments):
+        raise RuntimeError("execution tile routing must cover every probe token exactly once")
+    return routed
+
+
 def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
     if ort.__version__ != PINNED_ORT_VERSION: raise RuntimeError(f"onnxruntime version drift: {ort.__version__}")
     if os.name!="posix" or not Path('/dev/fd').is_dir(): raise RuntimeError("probe requires POSIX /dev/fd")
@@ -180,6 +203,7 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
     if len(cand)!=1: raise RuntimeError("expected one 4-way candidate")
     cand=cand[0]; tiles=cand.get("executionTiles"); physical=cand.get("physicalArtifacts")
     if not isinstance(tiles,list) or len(tiles)!=8 or not isinstance(physical,list) or len(physical)!=4: raise RuntimeError("4-way/8-tile geometry drift")
+    routed_tiles=_route_probe_tokens(tiles)
 
     source_path,source_offset,source_length=_source_embedding_contract(source_model,layout)
     source_fd,opened=_open_pinned_source_external_data(source_path)
@@ -208,11 +232,7 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
 
         actual=np.empty_like(reference)
         tile_runs=[]
-        for tile in tiles:
-            if not isinstance(tile,dict): raise RuntimeError("tile must be object")
-            ti=tile.get("tileIndex"); start=tile.get("startRow"); end=tile.get("endRowExclusive")
-            if not all(isinstance(x,int) and not isinstance(x,bool) for x in (ti,start,end)): raise RuntimeError("tile geometry invalid")
-            positions=[pos for pos,tok in enumerate(TOKEN_IDS) if start <= tok < end]
+        for tile,ti,start,end,positions in routed_tiles:
             if not positions: continue
             slices=tile.get("physicalSlices")
             if not isinstance(slices,list) or len(slices)!=1 or not isinstance(slices[0],dict): raise RuntimeError("preferred tile slice drift")

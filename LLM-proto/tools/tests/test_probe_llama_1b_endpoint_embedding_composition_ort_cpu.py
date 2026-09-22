@@ -12,6 +12,17 @@ import multi_segment_onnx
 import probe_llama_1b_endpoint_embedding_composition_ort_cpu as probe
 
 class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
+    def _execution_tiles(self) -> list[dict[str,object]]:
+        tile_rows=probe.VOCAB_ROWS//8
+        return [
+            {
+                "tileIndex": index,
+                "startRow": index*tile_rows,
+                "endRowExclusive": (index+1)*tile_rows,
+            }
+            for index in range(8)
+        ]
+
     def test_token_ids_cover_every_execution_tile_and_boundaries(self) -> None:
         self.assertEqual(probe.TOKEN_IDS[0],0)
         self.assertEqual(probe.TOKEN_IDS[-1],probe.VOCAB_ROWS-1)
@@ -20,6 +31,49 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
             start=tile*tile_rows; end=(tile+1)*tile_rows-1
             self.assertIn(start,probe.TOKEN_IDS)
             self.assertIn(end,probe.TOKEN_IDS)
+
+    def test_token_routing_preflight_covers_every_probe_position_once(self) -> None:
+        routed=probe._route_probe_tokens(self._execution_tiles())
+
+        self.assertEqual(len(routed),8)
+        positions=[position for _,_,_,_,tile_positions in routed for position in tile_positions]
+        self.assertEqual(sorted(positions),list(range(len(probe.TOKEN_IDS))))
+        self.assertEqual(len(positions),len(set(positions)))
+
+    def test_token_routing_preflight_rejects_gap(self) -> None:
+        tiles=self._execution_tiles()
+        tiles[1]["startRow"]=int(tiles[1]["startRow"])+1
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "cover every probe token exactly once",
+        ):
+            probe._route_probe_tokens(tiles)
+
+    def test_token_routing_preflight_rejects_overlap(self) -> None:
+        tiles=self._execution_tiles()
+        tiles[1]["startRow"]=int(tiles[1]["startRow"])-1
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "cover every probe token exactly once",
+        ):
+            probe._route_probe_tokens(tiles)
+
+    def test_token_routing_preflight_rejects_invalid_ranges(self) -> None:
+        malformed_ranges=(
+            (-1,probe.VOCAB_ROWS//8),
+            (0,probe.VOCAB_ROWS+1),
+            (1,1),
+            (2,1),
+        )
+        for start,end in malformed_ranges:
+            with self.subTest(start=start,end=end):
+                tiles=self._execution_tiles()
+                tiles[0]["startRow"]=start
+                tiles[0]["endRowExclusive"]=end
+                with self.assertRaisesRegex(RuntimeError,"tile row range invalid"):
+                    probe._route_probe_tokens(tiles)
 
     def test_source_weight_geometry_is_exact_float32_vocab_matrix(self) -> None:
         self.assertEqual(probe.SOURCE_WEIGHT_BYTES, probe.VOCAB_ROWS*probe.HIDDEN_SIZE*probe.FLOAT32_BYTES)
