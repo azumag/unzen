@@ -96,10 +96,11 @@ function snapshotExecution(
   if (!argsIsArray) {
     throw new UnzenFunctionError('QuickJS arguments must be an array');
   }
+  const argsArray = args as unknown[];
 
   let argumentCount: unknown;
   try {
-    argumentCount = args.length;
+    argumentCount = argsArray.length;
   } catch {
     throw new UnzenFunctionError('QuickJS arguments could not be read');
   }
@@ -118,7 +119,7 @@ function snapshotExecution(
   try {
     const snapshotArgs = new Array<unknown>(argumentCount);
     for (let index = 0; index < argumentCount; index += 1) {
-      snapshotArgs[index] = args[index];
+      snapshotArgs[index] = argsArray[index];
     }
     const serialized = JSON.stringify(snapshotArgs);
     if (typeof serialized !== 'string') {
