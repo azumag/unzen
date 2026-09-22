@@ -46,7 +46,16 @@ function snapshotExecution(
 ): QuickJSExecutionSnapshot {
   let requestedTimeout: unknown;
   if (options !== undefined) {
-    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    if (typeof options !== 'object' || options === null) {
+      throw new UnzenFunctionError('QuickJS execution options must be an object');
+    }
+    let optionsIsArray: boolean;
+    try {
+      optionsIsArray = Array.isArray(options);
+    } catch {
+      throw new UnzenFunctionError('QuickJS execution options must be an object');
+    }
+    if (optionsIsArray) {
       throw new UnzenFunctionError('QuickJS execution options must be an object');
     }
     try {
@@ -284,7 +293,7 @@ export class QuickJSRuntime {
   /**
    * Clean up runtime resources
    *
-   * Must be called when the runtime is no longer needed.
+   * Must be called when runtime resources are no longer needed.
    * After disposal, the runtime cannot be initialized or used again.
    */
   dispose(): void {
