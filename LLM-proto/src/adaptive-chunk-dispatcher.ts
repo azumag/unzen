@@ -868,7 +868,11 @@ function isNonNullNonArrayObject(value: unknown): value is Record<string, unknow
   if (typeof value !== 'object' || value === null) {
     return false;
   }
-  return !isArrayWithoutThrow(value);
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function assertAdaptiveWorkerRegistrationContainer(
