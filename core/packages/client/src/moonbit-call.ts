@@ -1,5 +1,6 @@
 import { MAX_FUNCTION_PAYLOAD_BYTES, type MoonBitAbi } from '@unzen/shared';
 import { snapshotAbortSignalInput } from './abort';
+import { isNonArrayObject } from './option-container';
 
 export interface MoonBitExecutionOptionsSnapshot {
   readonly signal?: AbortSignal;
@@ -25,7 +26,7 @@ export function snapshotMoonBitExecutionOptions(
   if (value === undefined) {
     return { signalInitiallyAborted: false, exportName: 'run' };
   }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayObject(value)) {
     throw new Error('MoonBit execution options must be an object');
   }
 
@@ -34,11 +35,10 @@ export function snapshotMoonBitExecutionOptions(
   let moonbitAbi: unknown;
   let expectedHash: unknown;
   try {
-    const record = value as Record<string, unknown>;
-    signal = record.signal;
-    exportName = record.exportName;
-    moonbitAbi = record.moonbitAbi;
-    expectedHash = record.expectedHash;
+    signal = value.signal;
+    exportName = value.exportName;
+    moonbitAbi = value.moonbitAbi;
+    expectedHash = value.expectedHash;
   } catch {
     throw new Error('MoonBit execution options could not be read');
   }
