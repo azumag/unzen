@@ -38,6 +38,7 @@ import {
   statKindForError,
 } from './demo-stats.js';
 import { classifyError, summarizeDiagnostics } from './demo-diagnostics.js';
+import { formatDemoThrownValue } from './demo-error-boundary.js';
 import {
   parseNumber,
   parseNumberList,
@@ -719,7 +720,11 @@ async function runDemo(adapter) {
     });
   } catch (error) {
     // executeWithDiagnostics never throws; this is a defensive guard.
-    result = { success: false, error: { code: 'unknown', message: String(error) }, diagnostics: null };
+    result = {
+      success: false,
+      error: { code: 'unknown', message: formatDemoThrownValue(error) },
+      diagnostics: null,
+    };
   }
   adapter.controller = null;
 
