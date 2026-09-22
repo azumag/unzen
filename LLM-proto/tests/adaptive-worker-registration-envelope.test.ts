@@ -50,6 +50,23 @@ function manifestBackedFixture(): {
   };
 }
 
+function hostileThrownValue(onCoercion: () => void): object {
+  return {
+    [Symbol.toPrimitive]() {
+      onCoercion();
+      throw new Error('must not coerce registration failure');
+    },
+    valueOf() {
+      onCoercion();
+      throw new Error('must not valueOf registration failure');
+    },
+    toString() {
+      onCoercion();
+      throw new Error('must not stringify registration failure');
+    },
+  };
+}
+
 describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
   it.each([
     null,
@@ -73,6 +90,55 @@ describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
     );
   });
 
+  it('fails closed on a revoked top-level registration Proxy', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+    const registration = Proxy.revocable({
+      id: 'revoked-registration-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: baseTelemetry,
+    }, {});
+    registration.revoke();
+
+    expect(() => dispatcher.registerWorker(
+      registration.proxy as AdaptiveWorkerRegistration,
+    )).toThrow(/adaptive worker registration must be a non-null object/);
+    expect(() => dispatcher.run('after-revoked-registration')).toThrow(
+      /No eligible adaptive worker/,
+    );
+  });
+
+  it.each([
+    ['id', /adaptive worker registration id could not be read/],
+    ['tier', /adaptive worker registration tier could not be read/],
+    ['telemetry', /adaptive worker registration telemetry could not be read/],
+  ] as const)(
+    'bounds a throwing registration %s getter without coercing the thrown value',
+    (field, expectedError) => {
+      const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+      let coercions = 0;
+      const thrown = hostileThrownValue(() => { coercions += 1; });
+      const registration: Record<string, unknown> = {
+        id: 'throwing-registration-worker',
+        tier: WorkerTier.TIER_2,
+        telemetry: baseTelemetry,
+      };
+      Object.defineProperty(registration, field, {
+        configurable: true,
+        get() {
+          throw thrown;
+        },
+      });
+
+      expect(() => dispatcher.registerWorker(
+        registration as unknown as AdaptiveWorkerRegistration,
+      )).toThrow(expectedError);
+      expect(coercions).toBe(0);
+      expect(() => dispatcher.run(`after-throwing-${field}`)).toThrow(
+        /No eligible adaptive worker/,
+      );
+    },
+  );
+
   it.each(['', '   ', 42, null, {}, [], Symbol('worker-id')])(
     'preserves workerId runtime validation for malformed registration IDs',
     (id) => {
@@ -93,6 +159,46 @@ describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
       );
     },
   );
+
+  it('captures id, tier, and telemetry exactly once from accessor-backed registration', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+    const reads = { id: 0, tier: 0, telemetry: 0 };
+    const registration = Object.defineProperties({}, {
+      id: {
+        enumerable: true,
+        get() {
+          reads.id += 1;
+          return reads.id === 1 ? 'single-read-registration-worker' : '';
+        },
+      },
+      tier: {
+        enumerable: true,
+        get() {
+          reads.tier += 1;
+          return reads.tier === 1 ? WorkerTier.TIER_2 : 99;
+        },
+      },
+      telemetry: {
+        enumerable: true,
+        get() {
+          reads.telemetry += 1;
+          return reads.telemetry === 1 ? baseTelemetry : null;
+        },
+      },
+    });
+
+    expect(() => dispatcher.registerWorker(
+      registration as unknown as AdaptiveWorkerRegistration,
+    )).not.toThrow();
+    expect(reads).toEqual({ id: 1, tier: 1, telemetry: 1 });
+
+    const report = dispatcher.run('after-single-read-registration');
+    expect(report.assignments).toHaveLength(1);
+    expect(report.assignments[0]).toMatchObject({
+      workerId: workerId('single-read-registration-worker'),
+      tier: WorkerTier.TIER_2,
+    });
+  });
 
   it('captures tier once and stores the same validated tier', () => {
     const dispatcher = new AdaptiveChunkDispatcher({
@@ -160,4 +266,56 @@ describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
       },
     });
   });
+
+  it.each(['id', 'tier', 'telemetry'] as const)(
+    'keeps the previous valid worker after a hostile %s re-registration getter',
+    (field) => {
+      const { artifact, segment } = manifestBackedFixture();
+      const ledger = new ArtifactResidencyLedger([artifact]);
+      const dispatcher = new AdaptiveChunkDispatcher({
+        segments: [segment],
+        artifactResidencyLedger: ledger,
+      });
+      const stableWorker = workerId('stable-hostile-reregistration-worker');
+      dispatcher.registerWorker({
+        id: stableWorker,
+        tier: WorkerTier.TIER_2,
+        telemetry: {
+          ...baseTelemetry,
+          cacheHits: [0],
+          cacheArtifacts: [{ segmentIndex: 0, sha256: artifact.sha256 }],
+        },
+      });
+
+      const registration: Record<string, unknown> = {
+        id: stableWorker,
+        tier: WorkerTier.TIER_3,
+        telemetry: { ...baseTelemetry, cacheHits: [] },
+      };
+      Object.defineProperty(registration, field, {
+        configurable: true,
+        get() {
+          throw hostileThrownValue(() => {
+            throw new Error('coercion hook must not execute');
+          });
+        },
+      });
+
+      expect(() => dispatcher.registerWorker(
+        registration as unknown as AdaptiveWorkerRegistration,
+      )).toThrow(/adaptive worker registration .* could not be read/);
+      expect(ledger.snapshot(stableWorker).residentSegmentIndexes).toEqual([0]);
+
+      const report = dispatcher.run(`after-hostile-reregistration-${field}`);
+      expect(report.assignments[0]).toMatchObject({
+        workerId: stableWorker,
+        tier: WorkerTier.TIER_2,
+        cacheHit: true,
+        loadReadings: {
+          gpuBusyRatio: baseTelemetry.gpuBusyRatio,
+          cpuBusyRatio: baseTelemetry.cpuBusyRatio,
+        },
+      });
+    },
+  );
 });
