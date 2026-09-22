@@ -38,6 +38,7 @@ import {
   validateWorkerRequest,
 } from './worker-protocol';
 import { snapshotQuickJsCall } from '../quickjs-call';
+import { describeQuickJsWorkerFailure } from './quickjs-worker-error-boundary';
 
 // Default timeout: 50ms (same as server-side QuickJSRuntime)
 const DEFAULT_TIMEOUT_MS = 50;
@@ -163,7 +164,7 @@ export async function handleWorkerMessage(
     } catch (error) {
       postRejectedMessage(
         msg,
-        error instanceof Error ? error.message : String(error),
+        describeQuickJsWorkerFailure(error),
         postMessage,
       );
       return;
@@ -202,7 +203,7 @@ async function handleInit(
     }
     postMessage(createInitResultMessage(true, generationId));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeQuickJsWorkerFailure(error);
     postMessage(createInitResultMessage(false, generationId, message));
   }
 }
@@ -434,7 +435,7 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
     // can handle it gracefully (e.g., fallback to server).
     handleWorkerMessage(event, workerState, self.postMessage.bind(self))
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = describeQuickJsWorkerFailure(error);
         postRejectedMessage(event.data, message, self.postMessage.bind(self));
       });
   };
