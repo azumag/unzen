@@ -215,13 +215,15 @@ def _route_probe_tokens(
     physical_artifact_count: int = 4,
     physical_artifact_bytes: dict[int,int] | None = None,
 ) -> list[tuple[dict[str,object],int,int,int,int,list[int]]]:
-    """Snapshot valid tile ranges/slices and require exact routing for every probe token."""
+    """Snapshot the canonical full-vocabulary tile partition and probe-token routing."""
     if (
         not isinstance(physical_artifact_count,int)
         or isinstance(physical_artifact_count,bool)
         or physical_artifact_count <= 0
     ):
         raise RuntimeError("physical artifact count invalid")
+    if len(tiles) != 8:
+        raise RuntimeError("execution tile count drift")
     if physical_artifact_bytes is not None:
         if not isinstance(physical_artifact_bytes,dict):
             raise RuntimeError("physical artifact byte table invalid")
@@ -235,7 +237,8 @@ def _route_probe_tokens(
 
     assignments=[0]*len(TOKEN_IDS)
     routed: list[tuple[dict[str,object],int,int,int,int,list[int]]]=[]
-    for tile in tiles:
+    expected_start=0
+    for tile_position,tile in enumerate(tiles):
         if not isinstance(tile,dict):
             raise RuntimeError("tile must be object")
         ti=tile.get("tileIndex"); start=tile.get("startRow"); end=tile.get("endRowExclusive")
@@ -243,6 +246,11 @@ def _route_probe_tokens(
             raise RuntimeError("tile geometry invalid")
         if start < 0 or start >= end or end > VOCAB_ROWS:
             raise RuntimeError("tile row range invalid")
+        if ti != tile_position:
+            raise RuntimeError("execution tile index must match canonical list position")
+        if start != expected_start:
+            raise RuntimeError("execution tile ranges must be ordered and contiguous")
+        expected_start=end
         slices=tile.get("physicalSlices")
         if not isinstance(slices,list) or len(slices)!=1 or not isinstance(slices[0],dict):
             raise RuntimeError("preferred tile slice drift")
@@ -299,6 +307,8 @@ def _route_probe_tokens(
         for position in positions:
             assignments[position]+=1
         routed.append((execution_tile,ti,start,end,ai,positions))
+    if expected_start != VOCAB_ROWS:
+        raise RuntimeError("execution tile ranges must cover the full vocabulary")
     if any(count != 1 for count in assignments):
         raise RuntimeError("execution tile routing must cover every probe token exactly once")
     return routed
