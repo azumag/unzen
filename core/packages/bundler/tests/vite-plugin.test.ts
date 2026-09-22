@@ -55,6 +55,25 @@ describe('unzenVitePlugin', () => {
     expect(sourcePattern.lastIndex).toBe(3);
   });
 
+  it('rejects a revoked top-level option container with the stable option diagnostic', () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    expect(() => unzenVitePlugin(proxy as never))
+      .toThrow('Unzen Vite plugin options must be an object');
+  });
+
+  it.each(['include', 'exclude'] as const)(
+    'rejects a revoked %s filter container with the stable filter diagnostic',
+    (field) => {
+      const { proxy, revoke } = Proxy.revocable<RegExp[]>([], {});
+      revoke();
+
+      expect(() => unzenVitePlugin({ [field]: proxy } as never))
+        .toThrow(`${field} filters could not be read`);
+    },
+  );
+
   it('rejects oversized sparse filter arrays at plugin construction', () => {
     expect(() => unzenVitePlugin({
       include: new Array(MAX_VITE_FILTER_PATTERNS + 1),

@@ -64,9 +64,20 @@ interface UnzenVitePluginOptionsSnapshot {
   readonly dependencyBundling?: ReturnType<typeof snapshotUnzenDependencyBundlingOptions>;
 }
 
+/** Classify caller-owned array containers without leaking revoked-Proxy errors. */
+function isArrayContainer(value: unknown, errorMessage: string): boolean {
+  try {
+    return Array.isArray(value);
+  } catch {
+    throw new TypeError(errorMessage);
+  }
+}
+
 function snapshotFilters(value: unknown, name: 'include' | 'exclude'): RegExp[] | undefined {
   if (value === undefined) return undefined;
-  const source = Array.isArray(value) ? value : [value];
+  const source = isArrayContainer(value, `${name} filters could not be read`)
+    ? value as unknown[]
+    : [value];
   let count: unknown;
   try {
     count = source.length;
@@ -97,7 +108,11 @@ function snapshotFilters(value: unknown, name: 'include' | 'exclude'): RegExp[] 
 }
 
 function snapshotVitePluginOptions(value: unknown): UnzenVitePluginOptionsSnapshot {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== 'object'
+    || value === null
+    || isArrayContainer(value, 'Unzen Vite plugin options must be an object')
+  ) {
     throw new TypeError('Unzen Vite plugin options must be an object');
   }
   let include: unknown;
