@@ -148,7 +148,9 @@ describe('MoonBitWorkerSandboxExecutor hostile rejection boundary', () => {
     const signal = {
       get aborted() {
         abortedReads++;
-        if (abortedReads >= 2) throw new Error('hostile queued signal state');
+        // Initial option snapshot and pre-dispatch recheck succeed. The queued
+        // lifecycle read is the first failure we intend to exercise.
+        if (abortedReads >= 3) throw new Error('hostile queued signal state');
         return false;
       },
       addEventListener: vi.fn(),
