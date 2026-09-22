@@ -35,10 +35,11 @@ export function snapshotMoonBitExecutionOptions(
   let moonbitAbi: unknown;
   let expectedHash: unknown;
   try {
-    signal = value.signal;
-    exportName = value.exportName;
-    moonbitAbi = value.moonbitAbi;
-    expectedHash = value.expectedHash;
+    const record = value as Record<string, unknown>;
+    signal = record.signal;
+    exportName = record.exportName;
+    moonbitAbi = record.moonbitAbi;
+    expectedHash = record.expectedHash;
   } catch {
     throw new Error('MoonBit execution options could not be read');
   }
