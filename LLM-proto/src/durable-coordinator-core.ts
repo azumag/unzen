@@ -11,6 +11,23 @@ const typedArrayBufferGetter = Object.getOwnPropertyDescriptor(typedArrayPrototy
 const typedArrayByteOffsetGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset')?.get;
 const typedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength')?.get;
 const invalidCheckpointPayload = Object.freeze({});
+const inaccessibleCheckpointMetadata = null;
+const checkpointMetadataFields = [
+  'requestId',
+  'attemptId',
+  'workerId',
+  'workerGeneration',
+  'formatVersion',
+  'segmentIndex',
+  'payloadLength',
+  'modelManifestDigest',
+  'payloadDigest',
+  'previousCheckpointDigest',
+  'createdAt',
+  'ttlMs',
+] as const;
+type CheckpointMetadataField = (typeof checkpointMetadataFields)[number];
+const checkpointMetadataFieldSet = new Set<string>(checkpointMetadataFields);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return false;
@@ -174,6 +191,11 @@ function stableUint8ArrayView(value: unknown): unknown {
   }
 }
 
+interface CapturedCheckpointMetadataField {
+  readonly present: boolean;
+  readonly value: unknown;
+}
+
 function checkpointWithStablePayload(checkpoint: unknown): unknown {
   if (typeof checkpoint !== 'object' || checkpoint === null) return checkpoint;
 
@@ -188,26 +210,97 @@ function checkpointWithStablePayload(checkpoint: unknown): unknown {
   }
   if (checkpointIsArray) return checkpoint;
 
+  const source = checkpoint as Record<string, unknown>;
   let payloadCaptured = false;
   let payloadValue: unknown;
-  const target = checkpoint as object;
+  let metadataAccessFailed = false;
+  const metadataCache = new Map<CheckpointMetadataField, CapturedCheckpointMetadataField>();
 
-  return new Proxy(target, {
-    get(source, property) {
-      if (property !== 'payload') return Reflect.get(source, property, source);
-      if (!payloadCaptured) {
-        let rawPayload: unknown;
-        try {
-          rawPayload = Reflect.get(source, property, source);
-        } catch {
-          // Keep caller-thrown values opaque and feed a stable malformed value
-          // into the existing Uint8Array rejection path.
-          rawPayload = invalidCheckpointPayload;
-        }
-        payloadValue = stableUint8ArrayView(rawPayload);
-        payloadCaptured = true;
+  const captureMetadataField = (field: CheckpointMetadataField): CapturedCheckpointMetadataField => {
+    const cached = metadataCache.get(field);
+    if (cached !== undefined) return cached;
+
+    // Once an inaccessible required field has made the checkpoint structurally
+    // invalid, do not execute later caller metadata accessors merely to prepare
+    // an envelope that the authoritative validator will reject earlier.
+    if (metadataAccessFailed) {
+      const skipped = { present: false, value: undefined } as const;
+      metadataCache.set(field, skipped);
+      return skipped;
+    }
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(source, field);
+    } catch {
+      const inaccessible = { present: true, value: inaccessibleCheckpointMetadata } as const;
+      metadataCache.set(field, inaccessible);
+      metadataAccessFailed = true;
+      return inaccessible;
+    }
+
+    if (descriptor === undefined || descriptor.enumerable !== true) {
+      const absent = { present: false, value: undefined } as const;
+      metadataCache.set(field, absent);
+      if (field !== 'previousCheckpointDigest') metadataAccessFailed = true;
+      return absent;
+    }
+
+    let value: unknown;
+    try {
+      value = Reflect.get(source, field, source);
+    } catch {
+      value = inaccessibleCheckpointMetadata;
+      metadataAccessFailed = true;
+    }
+    const captured = { present: true, value } as const;
+    metadataCache.set(field, captured);
+    return captured;
+  };
+
+  // Use an empty extensible target so the proxy can expose a stable declared
+  // metadata key set without forwarding Object spread's ownKeys operation to a
+  // caller-controlled Proxy. Descriptor/value capture remains lazy: the core's
+  // payload and byte-budget gates run before it spreads checkpoint metadata.
+  return new Proxy<Record<string, unknown>>({}, {
+    ownKeys() {
+      return [...checkpointMetadataFields];
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      if (typeof property !== 'string' || !checkpointMetadataFieldSet.has(property)) {
+        return undefined;
       }
-      return payloadValue;
+      const captured = captureMetadataField(property as CheckpointMetadataField);
+      if (!captured.present) return undefined;
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: false,
+        value: captured.value,
+      };
+    },
+    get(_target, property) {
+      if (property === 'payload') {
+        if (!payloadCaptured) {
+          let rawPayload: unknown;
+          try {
+            rawPayload = Reflect.get(source, property, source);
+          } catch {
+            // Keep caller-thrown values opaque and feed a stable malformed value
+            // into the existing Uint8Array rejection path.
+            rawPayload = invalidCheckpointPayload;
+          }
+          payloadValue = stableUint8ArrayView(rawPayload);
+          payloadCaptured = true;
+        }
+        return payloadValue;
+      }
+
+      if (typeof property === 'string' && checkpointMetadataFieldSet.has(property)) {
+        const captured = captureMetadataField(property as CheckpointMetadataField);
+        return captured.present ? captured.value : undefined;
+      }
+      return undefined;
     },
   });
 }
@@ -302,7 +395,9 @@ function snapshotExecutionFailure(failure: unknown): ExecutionFailure {
  * ordering. This shim snapshots the direct-core result/failure envelope fields
  * that can execute caller code, keeps final-output/checkpoint access lazy, and
  * canonicalizes a genuine checkpoint Uint8Array to a zero-copy base view at
- * the exact moment the intermediate-checkpoint path first reads it.
+ * the exact moment the intermediate-checkpoint path first reads it. Checkpoint
+ * metadata is exposed through a stable declared-key proxy only after the core's
+ * payload/byte-budget gates, so object spread never enumerates caller keys.
  */
 export class DurableCoordinator extends DurableCoordinatorImplementation {
   override async acceptResult(
