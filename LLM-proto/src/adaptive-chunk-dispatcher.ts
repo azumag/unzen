@@ -201,19 +201,39 @@ export class AdaptiveChunkDispatcher {
     }
     this.segments = segments;
 
-    const loadBudgetRatioInput = options.loadBudgetRatio;
+    const loadBudgetRatioInput = readRuntimeField(
+      runtimeOptions,
+      'loadBudgetRatio',
+      'AdaptiveChunkDispatcher loadBudgetRatio could not be read',
+    );
     const loadBudgetRatio = loadBudgetRatioInput === undefined
       ? DEFAULT_LOAD_BUDGET_RATIO
       : loadBudgetRatioInput;
-    if (!Number.isFinite(loadBudgetRatio) || loadBudgetRatio <= 0 || loadBudgetRatio > 1) {
+    if (
+      typeof loadBudgetRatio !== 'number' ||
+      !Number.isFinite(loadBudgetRatio) ||
+      loadBudgetRatio <= 0 ||
+      loadBudgetRatio > 1
+    ) {
       throw new Error('loadBudgetRatio must be a finite number in (0, 1]');
     }
-    const longLivedWorkerMsInput = options.longLivedWorkerMs;
+    const longLivedWorkerMsInput = readRuntimeField(
+      runtimeOptions,
+      'longLivedWorkerMs',
+      'AdaptiveChunkDispatcher longLivedWorkerMs could not be read',
+    );
     const longLivedWorkerMs = longLivedWorkerMsInput === undefined
       ? DEFAULT_LONG_LIVED_WORKER_MS
       : longLivedWorkerMsInput;
+    if (typeof longLivedWorkerMs !== 'number') {
+      throw new Error('longLivedWorkerMs must be a finite non-negative number');
+    }
     assertFiniteNonNegative('longLivedWorkerMs', longLivedWorkerMs);
-    const configuredVramLimitMBInput = options.configuredVramLimitMB;
+    const configuredVramLimitMBInput = readRuntimeField(
+      runtimeOptions,
+      'configuredVramLimitMB',
+      'AdaptiveChunkDispatcher configuredVramLimitMB could not be read',
+    );
     const configuredVramLimitMB = configuredVramLimitMBInput === undefined
       ? Number.POSITIVE_INFINITY
       : configuredVramLimitMBInput;
@@ -225,11 +245,19 @@ export class AdaptiveChunkDispatcher {
     ) {
       throw new Error('configuredVramLimitMB must be non-negative or positive infinity');
     }
-    const checkpointBytesInput = options.checkpointBytes;
+    const checkpointBytesInput = readRuntimeField(
+      runtimeOptions,
+      'checkpointBytes',
+      'AdaptiveChunkDispatcher checkpointBytes could not be read',
+    );
     const checkpointBytes = checkpointBytesInput === undefined
       ? DEFAULT_CHECKPOINT_BYTES
       : checkpointBytesInput;
-    if (!Number.isFinite(checkpointBytes) || checkpointBytes <= 0) {
+    if (
+      typeof checkpointBytes !== 'number' ||
+      !Number.isFinite(checkpointBytes) ||
+      checkpointBytes <= 0
+    ) {
       throw new Error('checkpointBytes must be a positive finite number');
     }
 
