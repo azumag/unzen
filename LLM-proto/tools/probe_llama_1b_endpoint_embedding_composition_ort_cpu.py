@@ -29,6 +29,7 @@ import onnx
 import onnxruntime as ort
 from onnx import TensorProto, helper
 
+from multi_segment_onnx import DEFAULT_SOURCE_GRAPH_MAX_BYTES
 import probe_llama_1b_endpoint_layout_candidates as layout_probe
 import probe_llama_1b_endpoint_preferred_tile_ort_cpu as tile_probe
 
@@ -51,13 +52,21 @@ def _source_graph_identity(s: os.stat_result) -> tuple[int,int,int,int,int,int,i
     return (s.st_mode,s.st_dev,s.st_ino,s.st_nlink,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
 
 
-def _read_source_graph_snapshot(source_model: Path) -> tuple[Path,bytes]:
-    """Read one stable regular-file snapshot without reopening the source graph."""
+def _read_source_graph_snapshot(
+    source_model: Path,
+    *,
+    max_bytes: int = DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+) -> tuple[Path,bytes]:
+    """Read one bounded stable regular-file snapshot without reopening the graph."""
+    if not isinstance(max_bytes,int) or isinstance(max_bytes,bool) or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
     requested=source_model
     resolved=requested.resolve(strict=True)
     expected=resolved.stat()
     if not stat.S_ISREG(expected.st_mode):
         raise RuntimeError(f"source graph must be a regular file: {resolved}")
+    if expected.st_size > max_bytes:
+        raise RuntimeError(f"source graph exceeds {max_bytes} bytes: {resolved}")
     flags=os.O_RDONLY | getattr(os,"O_BINARY",0) | getattr(os,"O_NONBLOCK",0) | getattr(os,"O_NOFOLLOW",0)
     fd=os.open(resolved,flags)
     try:
@@ -68,9 +77,21 @@ def _read_source_graph_snapshot(source_model: Path) -> tuple[Path,bytes]:
                 raise RuntimeError(f"source graph must be a regular file: {resolved}")
             if _source_graph_identity(opened) != _source_graph_identity(expected):
                 raise RuntimeError("source graph changed while opening")
-            graph_bytes=handle.read()
+            if opened.st_size > max_bytes:
+                raise RuntimeError(f"source graph exceeds {max_bytes} bytes: {resolved}")
+            chunks: list[bytes] = []
+            observed = 0
+            while True:
+                remaining=max_bytes + 1 - observed
+                block=handle.read(min(1024 * 1024,remaining))
+                if not block:
+                    break
+                chunks.append(block)
+                observed += len(block)
+                if observed > max_bytes:
+                    raise RuntimeError("source graph grew beyond input limit while reading")
             after=os.fstat(handle.fileno())
-            if _source_graph_identity(after) != _source_graph_identity(opened):
+            if _source_graph_identity(after) != _source_graph_identity(opened) or observed != after.st_size:
                 raise RuntimeError("source graph changed while reading")
     finally:
         if fd>=0: os.close(fd)
@@ -81,7 +102,7 @@ def _read_source_graph_snapshot(source_model: Path) -> tuple[Path,bytes]:
         raise RuntimeError("source graph path changed after reading") from None
     if current_resolved != resolved or _source_graph_identity(current) != _source_graph_identity(after):
         raise RuntimeError("source graph path changed after reading")
-    return resolved,graph_bytes
+    return resolved,b"".join(chunks)
 
 
 def _sha256_fd(fd: int, size: int) -> str:
