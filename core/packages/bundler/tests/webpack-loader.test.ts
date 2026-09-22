@@ -8,6 +8,27 @@ const SOURCE = `import { UnzenServer } from '@unzen/server';
 const server = new UnzenServer();
 server.define('double', (value: number) => value * 2);`;
 
+function createDependencyBundlingFixture(prefix: string) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const packageDirectory = join(root, 'node_modules', 'unzen-safe-math');
+  mkdirSync(packageDirectory, { recursive: true });
+  writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify({
+    name: 'unzen-safe-math',
+    version: '1.0.0',
+    type: 'module',
+    exports: './index.js',
+  }));
+  writeFileSync(
+    join(packageDirectory, 'index.js'),
+    'export const triple = (value) => value * 3;',
+  );
+  const source = `import { triple } from 'unzen-safe-math';
+import { UnzenServer } from '@unzen/server';
+const server = new UnzenServer();
+server.define('triple', (value: number) => triple(value));`;
+  return { root, packageDirectory, source };
+}
+
 describe('unzenWebpackLoader', () => {
   it('returns transformed code and a source map through the loader callback', () => {
     const callback = vi.fn();
@@ -52,23 +73,9 @@ describe('unzenWebpackLoader', () => {
   });
 
   it('runs asynchronously and disables loader caching for dependency bundling', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'unzen-webpack-loader-'));
-    const packageDirectory = join(root, 'node_modules', 'unzen-safe-math');
-    mkdirSync(packageDirectory, { recursive: true });
-    writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify({
-      name: 'unzen-safe-math',
-      version: '1.0.0',
-      type: 'module',
-      exports: './index.js',
-    }));
-    writeFileSync(
-      join(packageDirectory, 'index.js'),
-      'export const triple = (value) => value * 3;',
+    const { root, packageDirectory, source } = createDependencyBundlingFixture(
+      'unzen-webpack-loader-',
     );
-    const source = `import { triple } from 'unzen-safe-math';
-import { UnzenServer } from '@unzen/server';
-const server = new UnzenServer();
-server.define('triple', (value: number) => triple(value));`;
     const callback = vi.fn();
     const cacheable = vi.fn();
     const addDependency = vi.fn();
@@ -105,30 +112,17 @@ server.define('triple', (value: number) => triple(value));`;
   });
 
   it('reports addDependency failures through the async loader callback', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'unzen-webpack-loader-error-'));
-    const packageDirectory = join(root, 'node_modules', 'unzen-safe-math');
-    mkdirSync(packageDirectory, { recursive: true });
-    writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify({
-      name: 'unzen-safe-math',
-      version: '1.0.0',
-      type: 'module',
-      exports: './index.js',
-    }));
-    writeFileSync(
-      join(packageDirectory, 'index.js'),
-      'export const triple = (value) => value * 3;',
+    const { root, source } = createDependencyBundlingFixture(
+      'unzen-webpack-loader-error-',
     );
-    const source = `import { triple } from 'unzen-safe-math';
-import { UnzenServer } from '@unzen/server';
-const server = new UnzenServer();
-server.define('triple', (value: number) => triple(value));`;
     const callback = vi.fn();
+    const originalError = new Error('dependency registration failed');
     const context: UnzenWebpackLoaderContext = {
       resourcePath: join(root, 'functions.ts'),
       callback: vi.fn(),
       async: () => callback,
       addDependency() {
-        throw new Error('dependency registration failed');
+        throw originalError;
       },
       getOptions: () => ({
         dependencyBundling: { allowedModules: ['unzen-safe-math'] },
@@ -139,8 +133,76 @@ server.define('triple', (value: number) => triple(value));`;
       unzenWebpackLoader.call(context, source);
       await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
 
-      expect(callback.mock.calls[0]?.[0]).toBeInstanceOf(Error);
-      expect(callback.mock.calls[0]?.[0]?.message).toBe('dependency registration failed');
+      expect(callback.mock.calls[0]?.[0]).toBe(originalError);
+      expect(callback.mock.calls[0]).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not coerce hostile object failures from addDependency', async () => {
+    const { root, source } = createDependencyBundlingFixture(
+      'unzen-webpack-loader-hostile-error-',
+    );
+    const callback = vi.fn();
+    const coerce = vi.fn(() => {
+      throw new Error('failure coercion must not run');
+    });
+    const hostileFailure = {
+      [Symbol.toPrimitive]: coerce,
+      valueOf: coerce,
+      toString: coerce,
+    };
+    const context: UnzenWebpackLoaderContext = {
+      resourcePath: join(root, 'functions.ts'),
+      callback: vi.fn(),
+      async: () => callback,
+      addDependency() {
+        throw hostileFailure;
+      },
+      getOptions: () => ({
+        dependencyBundling: { allowedModules: ['unzen-safe-math'] },
+      }),
+    };
+
+    try {
+      unzenWebpackLoader.call(context, source);
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+
+      expect(coerce).not.toHaveBeenCalled();
+      const [error] = callback.mock.calls[0]!;
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe('Unzen webpack loader failed with a non-Error value');
+      expect(callback.mock.calls[0]).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves primitive non-Error addDependency failure text', async () => {
+    const { root, source } = createDependencyBundlingFixture(
+      'unzen-webpack-loader-primitive-error-',
+    );
+    const callback = vi.fn();
+    const context: UnzenWebpackLoaderContext = {
+      resourcePath: join(root, 'functions.ts'),
+      callback: vi.fn(),
+      async: () => callback,
+      addDependency() {
+        throw 'dependency registration failed';
+      },
+      getOptions: () => ({
+        dependencyBundling: { allowedModules: ['unzen-safe-math'] },
+      }),
+    };
+
+    try {
+      unzenWebpackLoader.call(context, source);
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+
+      const [error] = callback.mock.calls[0]!;
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe('dependency registration failed');
       expect(callback.mock.calls[0]).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
