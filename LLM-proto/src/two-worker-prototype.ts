@@ -88,6 +88,7 @@ interface TwoWorkerPrototypeRunnerDependencies {
 
 const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
+const MAX_PROTOTYPE_ALLOWLIST_ENTRIES = 1024;
 const NativeUint8Array = Uint8Array;
 const typedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype) as object;
 const typedArrayBufferGetter = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer')?.get;
@@ -99,10 +100,22 @@ export class AllowlistedPrototypeTransport {
   private readonly allowedOrigins: readonly string[];
 
   constructor(allowedOrigins: readonly string[]) {
-    if (!Array.isArray(allowedOrigins)) {
+    if (!isPrototypeArray(allowedOrigins)) {
       throw new Error('prototype allowedOrigins must be an array');
     }
-    const canonicalOrigins = (allowedOrigins as readonly unknown[]).map((value, index) => {
+
+    const length = readPrototypeArrayLength(
+      allowedOrigins,
+      'prototype allowedOrigins',
+      MAX_PROTOTYPE_ALLOWLIST_ENTRIES,
+    );
+    const canonicalOrigins: string[] = [];
+    for (let index = 0; index < length; index++) {
+      const value = readPrototypeProperty(
+        allowedOrigins as unknown as object,
+        index,
+        `prototype allowlist URL at index ${index}`,
+      );
       const validatedValue = validatePrototypeUrlString(
         value,
         `prototype allowlist URL at index ${index}`,
@@ -116,8 +129,8 @@ export class AllowlistedPrototypeTransport {
       if (parsed.origin === 'null') {
         throw new Error(`Prototype allowlist URL must have a network origin: ${validatedValue}`);
       }
-      return parsed.origin;
-    });
+      canonicalOrigins.push(parsed.origin);
+    }
     this.allowedOrigins = Object.freeze([...new Set(canonicalOrigins)]);
   }
 
@@ -182,17 +195,24 @@ export class SimulatedPrototypeWorker {
 
   constructor(options: PrototypeWorkerOptions) {
     assertPrototypeWorkerOptionsContainer(options);
-    const id = workerId(options.id);
-    const segmentIndex = validatePrototypeSegmentIndex(options.segmentIndex);
+    const optionsObject = options as unknown as object;
+    const id = workerId(readPrototypeProperty(optionsObject, 'id', 'prototype worker id') as string);
+    const segmentIndex = validatePrototypeSegmentIndex(
+      readPrototypeProperty(optionsObject, 'segmentIndex', 'prototype worker segmentIndex'),
+    );
     const webgpuAdapter = validatePrototypeNonEmptyString(
-      options.webgpuAdapter,
+      readPrototypeProperty(optionsObject, 'webgpuAdapter', 'prototype worker webgpuAdapter'),
       'prototype worker webgpuAdapter',
     );
     const vramMB = validatePrototypePositiveFiniteNumber(
-      options.vramMB,
+      readPrototypeProperty(optionsObject, 'vramMB', 'prototype worker vramMB'),
       'prototype worker vramMB',
     );
-    const failFirstRun = options.failFirstRun;
+    const failFirstRun = readPrototypeProperty(
+      optionsObject,
+      'failFirstRun',
+      'prototype worker failFirstRun',
+    );
     if (failFirstRun !== undefined && typeof failFirstRun !== 'boolean') {
       throw new Error('prototype worker failFirstRun must be a boolean when provided');
     }
@@ -307,12 +327,19 @@ export class TwoWorkerPrototypeRunner {
 
   async run(options: TwoWorkerPrototypeOptions): Promise<PrototypeRunReport> {
     assertTwoWorkerPrototypeOptionsContainer(options);
-    const prompt = validatePrototypePrompt(options.prompt);
-    const coordinatorUrlInput = options.coordinatorUrl;
+    const optionsObject = options as unknown as object;
+    const prompt = validatePrototypePrompt(
+      readPrototypeProperty(optionsObject, 'prompt', 'two-worker prototype prompt'),
+    );
+    const coordinatorUrlInput = readPrototypeProperty(
+      optionsObject,
+      'coordinatorUrl',
+      'prototype coordinatorUrl',
+    );
     const coordinatorUrl = coordinatorUrlInput === undefined
       ? DEFAULT_COORDINATOR_URL
       : validatePrototypeNetworkUrl(coordinatorUrlInput, 'prototype coordinatorUrl');
-    const cdnUrlInput = options.cdnUrl;
+    const cdnUrlInput = readPrototypeProperty(optionsObject, 'cdnUrl', 'prototype cdnUrl');
     const cdnUrl = cdnUrlInput === undefined
       ? DEFAULT_CDN_URL
       : validatePrototypeNetworkUrl(cdnUrlInput, 'prototype cdnUrl');
@@ -448,10 +475,55 @@ function makePrototypeCheckpoint(
   };
 }
 
+function isPrototypeArray(value: unknown): boolean {
+  try {
+    return Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function isPrototypeInstanceOf(value: unknown, constructor: Function): boolean {
+  try {
+    return value instanceof (constructor as new (...args: never[]) => object);
+  } catch {
+    return false;
+  }
+}
+
+function readPrototypeProperty(
+  container: object,
+  key: PropertyKey,
+  label: string,
+): unknown {
+  try {
+    return (container as Record<PropertyKey, unknown>)[key];
+  } catch {
+    throw new Error(`${label} could not be read`);
+  }
+}
+
+function readPrototypeArrayLength(
+  value: readonly unknown[],
+  label: string,
+  maxLength: number,
+): number {
+  const length = readPrototypeProperty(value as unknown as object, 'length', `${label} length`);
+  if (
+    typeof length !== 'number'
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > maxLength
+  ) {
+    throw new Error(`${label} length must be a safe integer between 0 and ${maxLength}`);
+  }
+  return length;
+}
+
 function assertPrototypeWorkerOptionsContainer(
   options: unknown,
 ): asserts options is PrototypeWorkerOptions {
-  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+  if (typeof options !== 'object' || options === null || isPrototypeArray(options)) {
     throw new Error('prototype worker options must be a non-null object');
   }
 }
@@ -460,31 +532,38 @@ function validateSegmentExecutionInput(
   input: unknown,
   segmentIndex: 0 | 1,
 ): ValidatedSegmentExecutionInput {
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+  if (typeof input !== 'object' || input === null || isPrototypeArray(input)) {
     throw new Error('prototype worker execution input must be a non-null object');
   }
 
-  const candidate = input as Record<string, unknown>;
-  const requestId = inferenceRequestId(candidate.requestId as string);
-  const prompt = validatePrototypePrompt(candidate.prompt);
+  const inputObject = input as object;
+  const requestId = inferenceRequestId(
+    readPrototypeProperty(inputObject, 'requestId', 'prototype worker requestId') as string,
+  );
+  const prompt = validatePrototypePrompt(
+    readPrototypeProperty(inputObject, 'prompt', 'prototype worker prompt'),
+  );
   const coordinatorUrl = validatePrototypeNetworkUrl(
-    candidate.coordinatorUrl,
+    readPrototypeProperty(inputObject, 'coordinatorUrl', 'prototype worker coordinatorUrl'),
     'prototype worker coordinatorUrl',
   );
-  const cdnUrl = validatePrototypeNetworkUrl(candidate.cdnUrl, 'prototype worker cdnUrl');
-  const transport = candidate.transport;
-  if (!(transport instanceof AllowlistedPrototypeTransport)) {
+  const cdnUrl = validatePrototypeNetworkUrl(
+    readPrototypeProperty(inputObject, 'cdnUrl', 'prototype worker cdnUrl'),
+    'prototype worker cdnUrl',
+  );
+  const transport = readPrototypeProperty(inputObject, 'transport', 'prototype worker transport');
+  if (!isPrototypeInstanceOf(transport, AllowlistedPrototypeTransport)) {
     throw new Error('prototype worker transport must be an AllowlistedPrototypeTransport');
   }
 
   let checkpointHiddenStates: Uint8Array | undefined;
   if (segmentIndex === 1) {
-    const checkpoint = candidate.checkpoint;
-    if (typeof checkpoint !== 'object' || checkpoint === null || Array.isArray(checkpoint)) {
+    const checkpoint = readPrototypeProperty(inputObject, 'checkpoint', 'prototype segment 1 checkpoint');
+    if (typeof checkpoint !== 'object' || checkpoint === null || isPrototypeArray(checkpoint)) {
       throw new Error('prototype segment 1 requires a checkpoint object');
     }
     const hiddenStates = snapshotPrototypeUint8Array(
-      (checkpoint as Record<string, unknown>).hiddenStates,
+      readPrototypeProperty(checkpoint, 'hiddenStates', 'prototype segment 1 checkpoint hiddenStates'),
     );
     if (!hiddenStates) {
       throw new Error('prototype segment 1 checkpoint hiddenStates must be a Uint8Array');
@@ -498,7 +577,7 @@ function validateSegmentExecutionInput(
     checkpointHiddenStates,
     coordinatorUrl,
     cdnUrl,
-    transport,
+    transport: transport as AllowlistedPrototypeTransport,
   };
 }
 
@@ -539,36 +618,58 @@ function validateTwoWorkerPrototypeRunnerDependencies(
   if (options === undefined) {
     return {};
   }
-  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+  if (typeof options !== 'object' || options === null || isPrototypeArray(options)) {
     throw new Error('two-worker prototype runner options must be a non-null object when provided');
   }
 
-  const dependencies = options as Record<string, unknown>;
-  const transport = dependencies.transport;
-  if (transport !== undefined && !(transport instanceof AllowlistedPrototypeTransport)) {
+  const optionsObject = options as object;
+  const transport = readPrototypeProperty(
+    optionsObject,
+    'transport',
+    'two-worker prototype runner transport',
+  );
+  if (transport !== undefined && !isPrototypeInstanceOf(transport, AllowlistedPrototypeTransport)) {
     throw new Error('two-worker prototype runner transport must be an AllowlistedPrototypeTransport');
   }
 
-  const segment0 = dependencies.segment0;
-  if (segment0 !== undefined && !(segment0 instanceof SimulatedPrototypeWorker)) {
+  const segment0 = readPrototypeProperty(
+    optionsObject,
+    'segment0',
+    'two-worker prototype runner segment0',
+  );
+  if (segment0 !== undefined && !isPrototypeInstanceOf(segment0, SimulatedPrototypeWorker)) {
     throw new Error('two-worker prototype runner segment0 must be a SimulatedPrototypeWorker');
   }
 
-  const segment1Primary = dependencies.segment1Primary;
-  if (segment1Primary !== undefined && !(segment1Primary instanceof SimulatedPrototypeWorker)) {
+  const segment1Primary = readPrototypeProperty(
+    optionsObject,
+    'segment1Primary',
+    'two-worker prototype runner segment1Primary',
+  );
+  if (
+    segment1Primary !== undefined
+    && !isPrototypeInstanceOf(segment1Primary, SimulatedPrototypeWorker)
+  ) {
     throw new Error('two-worker prototype runner segment1Primary must be a SimulatedPrototypeWorker');
   }
 
-  const segment1Standby = dependencies.segment1Standby;
-  if (segment1Standby !== undefined && !(segment1Standby instanceof SimulatedPrototypeWorker)) {
+  const segment1Standby = readPrototypeProperty(
+    optionsObject,
+    'segment1Standby',
+    'two-worker prototype runner segment1Standby',
+  );
+  if (
+    segment1Standby !== undefined
+    && !isPrototypeInstanceOf(segment1Standby, SimulatedPrototypeWorker)
+  ) {
     throw new Error('two-worker prototype runner segment1Standby must be a SimulatedPrototypeWorker');
   }
 
   return {
-    transport,
-    segment0,
-    segment1Primary,
-    segment1Standby,
+    transport: transport as AllowlistedPrototypeTransport | undefined,
+    segment0: segment0 as SimulatedPrototypeWorker | undefined,
+    segment1Primary: segment1Primary as SimulatedPrototypeWorker | undefined,
+    segment1Standby: segment1Standby as SimulatedPrototypeWorker | undefined,
   };
 }
 
@@ -577,7 +678,12 @@ function assertPrototypeRunnerWorkerRole(
   expectedSegmentIndex: 0 | 1,
   role: 'segment0' | 'segment1Primary' | 'segment1Standby',
 ): void {
-  if (worker.segmentIndex !== expectedSegmentIndex) {
+  const segmentIndex = readPrototypeProperty(
+    worker as unknown as object,
+    'segmentIndex',
+    `two-worker prototype runner ${role} segmentIndex`,
+  );
+  if (segmentIndex !== expectedSegmentIndex) {
     throw new Error(
       `two-worker prototype runner ${role} must target segment ${expectedSegmentIndex}`,
     );
@@ -587,7 +693,7 @@ function assertPrototypeRunnerWorkerRole(
 function assertTwoWorkerPrototypeOptionsContainer(
   options: unknown,
 ): asserts options is TwoWorkerPrototypeOptions {
-  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+  if (typeof options !== 'object' || options === null || isPrototypeArray(options)) {
     throw new Error('two-worker prototype run options must be a non-null object');
   }
 }
