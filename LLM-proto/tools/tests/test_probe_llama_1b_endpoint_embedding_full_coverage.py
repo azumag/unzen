@@ -105,7 +105,10 @@ class EndpointEmbeddingFullCoveragePreflightTest(unittest.TestCase):
 
     def test_full_coverage_failure_precedes_source_work(self) -> None:
         tiles = self._execution_tiles()
+        bytes_per_row = probe.HIDDEN_SIZE * probe.FLOAT32_BYTES
         tiles[0]["endRowExclusive"] = 8_000
+        tiles[0]["physicalSlices"][0]["rowCount"] = 8_000  # type: ignore[index]
+        tiles[0]["physicalSlices"][0]["byteLength"] = 8_000 * bytes_per_row  # type: ignore[index]
         tiles[1]["startRow"] = 8_001
 
         with (
