@@ -444,19 +444,33 @@ interface ResultIdentitySnapshot {
   readonly valid: boolean;
 }
 
+function readUntrustedField(
+  source: Record<string, unknown>,
+  key: string,
+): unknown {
+  try {
+    return source[key];
+  } catch {
+    // Caller/worker-thrown values remain opaque. Undefined is intentionally
+    // fed to the existing core validator so it keeps ownership of the public
+    // protocol diagnostic for the reached field.
+    return undefined;
+  }
+}
+
 function snapshotResultIdentity(identity: unknown): ResultIdentitySnapshot {
-  if (!isRecord(identity)) return { identity, valid: false };
+  if (!isRecord(identity)) return { identity: undefined, valid: false };
 
   const owned: Record<string, unknown> = {};
   for (const field of ['requestId', 'attemptId', 'leaseId', 'workerId', 'workerGeneration'] as const) {
-    const value = identity[field];
+    const value = readUntrustedField(identity, field);
     owned[field] = value;
     if (typeof value !== 'string' || value.trim().length === 0) {
       return { identity: owned, valid: false };
     }
   }
 
-  const segmentIndex = identity.segmentIndex;
+  const segmentIndex = readUntrustedField(identity, 'segmentIndex');
   owned.segmentIndex = segmentIndex;
   if (
     typeof segmentIndex !== 'number'
@@ -469,35 +483,61 @@ function snapshotResultIdentity(identity: unknown): ResultIdentitySnapshot {
   return { identity: owned as unknown as ResultIdentity, valid: true };
 }
 
-function snapshotDurableFinalOutput(output: unknown): ExecutionResult['output'] {
-  // Preserve the core validator's existing malformed-container diagnostics.
-  if (!isRecord(output)) return output as ExecutionResult['output'];
+function malformedFinalOutput(tokens: unknown = undefined): ExecutionResult['output'] {
+  return {
+    tokens: tokens as readonly number[],
+    text: undefined as unknown as string,
+  };
+}
 
-  const tokensValue = output.tokens;
-  if (!Array.isArray(tokensValue)) {
-    return {
-      tokens: tokensValue as unknown as readonly number[],
-      text: undefined as unknown as string,
-    };
+function snapshotDurableFinalOutput(output: unknown): ExecutionResult['output'] {
+  // Preserve the core validator's malformed-container diagnostic while never
+  // handing a revoked/hostile container back across the runtime boundary.
+  if (!isRecord(output)) return undefined as unknown as ExecutionResult['output'];
+
+  const tokensValue = readUntrustedField(output, 'tokens');
+  let tokensAreArray = false;
+  try {
+    tokensAreArray = Array.isArray(tokensValue);
+  } catch {
+    return malformedFinalOutput();
+  }
+  if (!tokensAreArray) return malformedFinalOutput(tokensValue);
+
+  const tokenArray = tokensValue as unknown[];
+  let tokenCount: unknown;
+  try {
+    tokenCount = tokenArray.length;
+  } catch {
+    return malformedFinalOutput();
+  }
+  if (
+    typeof tokenCount !== 'number'
+    || !Number.isSafeInteger(tokenCount)
+    || tokenCount < 0
+    || tokenCount > 0xFFFF_FFFF
+  ) {
+    return malformedFinalOutput();
   }
 
   // Avoid caller-controlled iteration. Read each element once and validate the
   // same captured primitive before deciding whether the legacy validator would
   // have progressed far enough to touch `text`.
-  const tokenCount = tokensValue.length;
   const ownedTokens: unknown[] = [];
   for (let index = 0; index < tokenCount; index += 1) {
-    const token = tokensValue[index];
+    let token: unknown;
+    try {
+      token = tokenArray[index];
+    } catch {
+      token = undefined;
+    }
     ownedTokens.push(token);
     if (typeof token !== 'number' || !Number.isSafeInteger(token) || token < 0) {
-      return {
-        tokens: ownedTokens as unknown as readonly number[],
-        text: undefined as unknown as string,
-      };
+      return malformedFinalOutput(ownedTokens as unknown as readonly number[]);
     }
   }
 
-  const textValue = output.text;
+  const textValue = readUntrustedField(output, 'text');
   return {
     tokens: ownedTokens as unknown as readonly number[],
     text: textValue as string,
@@ -640,10 +680,11 @@ function snapshotDurableCheckpoint(checkpoint: unknown): ExecutionResult['checkp
 }
 
 function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
-  // Let the existing core validator retain its exact malformed-top-level error.
-  if (!isRecord(result)) return result as ExecutionResult;
+  // Let the existing core validator retain its exact malformed-top-level error
+  // without handing it a revoked Proxy that could make Array.isArray throw.
+  if (!isRecord(result)) return undefined as unknown as ExecutionResult;
 
-  const identityValue = result.identity;
+  const identityValue = readUntrustedField(result, 'identity');
   const identitySnapshot = snapshotResultIdentity(identityValue);
   if (!identitySnapshot.valid) {
     return {
@@ -652,7 +693,7 @@ function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
     };
   }
 
-  const processingTimeMsValue = result.processingTimeMs;
+  const processingTimeMsValue = readUntrustedField(result, 'processingTimeMs');
   if (
     typeof processingTimeMsValue !== 'number'
     || !Number.isFinite(processingTimeMsValue)
@@ -677,14 +718,14 @@ function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
     processingTimeMs: processingTimeMsValue,
     get output() {
       if (!outputRead) {
-        outputValue = snapshotDurableFinalOutput(result.output);
+        outputValue = snapshotDurableFinalOutput(readUntrustedField(result, 'output'));
         outputRead = true;
       }
       return outputValue as ExecutionResult['output'];
     },
     get checkpoint() {
       if (!checkpointRead) {
-        checkpointValue = snapshotDurableCheckpoint(result.checkpoint);
+        checkpointValue = snapshotDurableCheckpoint(readUntrustedField(result, 'checkpoint'));
         checkpointRead = true;
       }
       return checkpointValue as ExecutionResult['checkpoint'];
@@ -693,10 +734,10 @@ function snapshotDurableExecutionResult(result: unknown): ExecutionResult {
 }
 
 function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
-  // Let the existing core validator retain its exact malformed-top-level error.
-  if (!isRecord(failure)) return failure as ExecutionFailure;
+  // Keep malformed/revoked roots inside the stable core diagnostic path.
+  if (!isRecord(failure)) return undefined as unknown as ExecutionFailure;
 
-  const identityValue = failure.identity;
+  const identityValue = readUntrustedField(failure, 'identity');
   const identitySnapshot = snapshotResultIdentity(identityValue);
   if (!identitySnapshot.valid) {
     return {
@@ -706,7 +747,7 @@ function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
     };
   }
 
-  const codeValue = failure.code;
+  const codeValue = readUntrustedField(failure, 'code');
   if (typeof codeValue !== 'string' || classifyErrorCode(codeValue) === undefined) {
     return {
       identity: identitySnapshot.identity as ResultIdentity,
@@ -715,7 +756,7 @@ function snapshotDurableExecutionFailure(failure: unknown): ExecutionFailure {
     };
   }
 
-  const messageValue = failure.message;
+  const messageValue = readUntrustedField(failure, 'message');
   return {
     identity: identitySnapshot.identity as ResultIdentity,
     code: codeValue as ExecutionFailure['code'],
