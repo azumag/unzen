@@ -213,6 +213,7 @@ def _route_probe_tokens(
     tiles: list[object],
     *,
     physical_artifact_count: int = 4,
+    physical_artifact_bytes: dict[int,int] | None = None,
 ) -> list[tuple[dict[str,object],int,int,int,int,list[int]]]:
     """Snapshot valid tile ranges/slices and require exact routing for every probe token."""
     if (
@@ -221,6 +222,17 @@ def _route_probe_tokens(
         or physical_artifact_count <= 0
     ):
         raise RuntimeError("physical artifact count invalid")
+    if physical_artifact_bytes is not None:
+        if not isinstance(physical_artifact_bytes,dict):
+            raise RuntimeError("physical artifact byte table invalid")
+        if set(physical_artifact_bytes) != set(range(physical_artifact_count)):
+            raise RuntimeError("physical artifact byte table incomplete")
+        if any(
+            not isinstance(value,int) or isinstance(value,bool) or value <= 0
+            for value in physical_artifact_bytes.values()
+        ):
+            raise RuntimeError("physical artifact byte table invalid")
+
     assignments=[0]*len(TOKEN_IDS)
     routed: list[tuple[dict[str,object],int,int,int,int,list[int]]]=[]
     for tile in tiles:
@@ -234,7 +246,8 @@ def _route_probe_tokens(
         slices=tile.get("physicalSlices")
         if not isinstance(slices,list) or len(slices)!=1 or not isinstance(slices[0],dict):
             raise RuntimeError("preferred tile slice drift")
-        ai=slices[0].get("physicalArtifactIndex")
+        physical_slice=slices[0]
+        ai=physical_slice.get("physicalArtifactIndex")
         if (
             not isinstance(ai,int)
             or isinstance(ai,bool)
@@ -242,10 +255,50 @@ def _route_probe_tokens(
             or ai >= physical_artifact_count
         ):
             raise RuntimeError("physical artifact index drift")
+
+        execution_tile=tile
+        if physical_artifact_bytes is not None:
+            row_count=physical_slice.get("rowCount")
+            artifact_byte_offset=physical_slice.get("artifactByteOffset")
+            byte_length=physical_slice.get("byteLength")
+            if (
+                not isinstance(row_count,int)
+                or isinstance(row_count,bool)
+                or row_count <= 0
+                or not isinstance(artifact_byte_offset,int)
+                or isinstance(artifact_byte_offset,bool)
+                or artifact_byte_offset < 0
+                or not isinstance(byte_length,int)
+                or isinstance(byte_length,bool)
+                or byte_length <= 0
+            ):
+                raise RuntimeError("physical slice geometry invalid")
+            expected_rows=end-start
+            if row_count != expected_rows:
+                raise RuntimeError("physical slice row count drift")
+            expected_bytes=row_count*HIDDEN_SIZE*FLOAT32_BYTES
+            if byte_length != expected_bytes:
+                raise RuntimeError("physical slice byte length drift")
+            if artifact_byte_offset + byte_length > physical_artifact_bytes[ai]:
+                raise RuntimeError("physical slice exceeds physical artifact bytes")
+            execution_tile={
+                "tileIndex":ti,
+                "startRow":start,
+                "endRowExclusive":end,
+                "physicalSlices":[
+                    {
+                        "physicalArtifactIndex":ai,
+                        "rowCount":row_count,
+                        "artifactByteOffset":artifact_byte_offset,
+                        "byteLength":byte_length,
+                    }
+                ],
+            }
+
         positions=[pos for pos,tok in enumerate(TOKEN_IDS) if start <= tok < end]
         for position in positions:
             assignments[position]+=1
-        routed.append((tile,ti,start,end,ai,positions))
+        routed.append((execution_tile,ti,start,end,ai,positions))
     if any(count != 1 for count in assignments):
         raise RuntimeError("execution tile routing must cover every probe token exactly once")
     return routed
@@ -264,7 +317,11 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
     cand=cand[0]; tiles=cand.get("executionTiles"); physical=cand.get("physicalArtifacts")
     if not isinstance(tiles,list) or len(tiles)!=8 or not isinstance(physical,list) or len(physical)!=4: raise RuntimeError("4-way/8-tile geometry drift")
     physical_by_index=_snapshot_physical_artifacts(physical,expected_count=len(physical))
-    routed_tiles=_route_probe_tokens(tiles,physical_artifact_count=len(physical_by_index))
+    routed_tiles=_route_probe_tokens(
+        tiles,
+        physical_artifact_count=len(physical_by_index),
+        physical_artifact_bytes=physical_by_index,
+    )
 
     source_path,source_offset,source_length=_source_embedding_contract(source_model,layout)
     source_fd,opened=_open_pinned_source_external_data(source_path)
