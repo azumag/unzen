@@ -146,6 +146,81 @@ describe('SegmentedModelManifest', () => {
     ).toThrow(message as string);
   });
 
+  it('fails closed on a revoked top-level bundle array', () => {
+    const { proxy, revoke } = Proxy.revocable([graphComponent], {});
+    revoke();
+
+    expect(() =>
+      canonicalSegmentArtifactBundleFields(
+        proxy as unknown as readonly SegmentArtifactComponent[],
+      ),
+    ).toThrow('segment artifact bundle components must be a non-empty array');
+  });
+
+  it('fails closed on throwing bundle length and numeric-index reads', () => {
+    const lengthFailure = new Proxy([graphComponent], {
+      get(target, property, receiver) {
+        if (property === 'length') throw new Error('hostile length');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(() => canonicalSegmentArtifactBundleFields(lengthFailure))
+      .toThrow('segment artifact bundle components must be a non-empty array');
+
+    const indexFailure = new Proxy([graphComponent], {
+      get(target, property, receiver) {
+        if (property === '0') throw new Error('hostile index');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(() => canonicalSegmentArtifactBundleFields(indexFailure))
+      .toThrow('segment artifact bundle component 0 could not be read');
+  });
+
+  it('captures bundle membership without invoking caller iterators', () => {
+    const components = [graphComponent] as SegmentArtifactComponent[] & {
+      entries: () => never;
+    };
+    components.entries = () => {
+      throw new Error('caller entries must not run');
+    };
+    Object.defineProperty(components, Symbol.iterator, {
+      configurable: true,
+      get: () => {
+        throw new Error('caller iterator must not be read');
+      },
+    });
+
+    expect(canonicalSegmentArtifactBundleFields(components)).toEqual([
+      {
+        role: graphComponent.role,
+        path: graphComponent.path,
+        byteSize: graphComponent.byteSize,
+        sha256: graphComponent.sha256,
+        contentType: graphComponent.contentType,
+      },
+    ]);
+  });
+
+  it('fails closed on revoked or throwing component records', () => {
+    const { proxy, revoke } = Proxy.revocable({ ...graphComponent }, {});
+    revoke();
+    expect(() =>
+      canonicalSegmentArtifactBundleFields([
+        proxy as unknown as SegmentArtifactComponent,
+      ]),
+    ).toThrow('segment artifact bundle component 0 must be an object');
+
+    const throwingRole = new Proxy({ ...graphComponent }, {
+      get(target, property, receiver) {
+        if (property === 'role') throw new Error('hostile role');
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(() => canonicalSegmentArtifactBundleFields([throwingRole]))
+      .toThrow("segment artifact bundle component 0 role must be 'graph' or 'external-data'");
+  });
+
   it('rejects duplicate component paths before canonical sorting', () => {
     expect(() =>
       canonicalSegmentArtifactBundleFields([
