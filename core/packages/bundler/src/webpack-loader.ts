@@ -29,6 +29,26 @@ export interface UnzenWebpackLoaderContext {
 }
 
 /**
+ * Normalize loader/tool failures without invoking coercion hooks on an
+ * arbitrary object/function thrown across the build-tool boundary.
+ */
+function normalizeWebpackLoaderError(error: unknown): Error {
+  // `instanceof` can itself invoke a Proxy's [[GetPrototypeOf]] trap. Keep
+  // classification bounded so a revoked/hostile Proxy cannot replace the
+  // intended loader diagnostic with its own exception.
+  try {
+    if (error instanceof Error) return error;
+  } catch {
+    // Fall through to the non-Error object/function bucket below.
+  }
+  if (error === null) return new Error('null');
+  if (typeof error === 'object' || typeof error === 'function') {
+    return new Error('Unzen webpack loader failed with a non-Error value');
+  }
+  return new Error(String(error));
+}
+
+/**
  * webpack calls loaders with a resource-bound `this` context. The loader uses
  * callback form so it can return the transformed code and source map together,
  * matching webpack's documented loader interface.
@@ -64,13 +84,13 @@ export function unzenWebpackLoader(
           }
           outputMap = sourceMapEnabled ? result.map : undefined;
         } catch (error) {
-          callback(error instanceof Error ? error : new Error(String(error)));
+          callback(normalizeWebpackLoaderError(error));
           return;
         }
         callback(null, result.code, outputMap, meta);
       },
       (error: unknown) => {
-        callback(error instanceof Error ? error : new Error(String(error)));
+        callback(normalizeWebpackLoaderError(error));
       },
     );
     return undefined;
