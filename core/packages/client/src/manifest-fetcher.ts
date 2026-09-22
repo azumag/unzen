@@ -56,6 +56,44 @@ interface InflightManifestRequest {
   waiters: number;
 }
 
+/** Bounded identity check for client-owned catch-path errors. */
+function isManifestClientError(
+  error: unknown,
+): error is UnzenNetworkError | UnzenCancelledError {
+  try {
+    return error instanceof UnzenNetworkError || error instanceof UnzenCancelledError;
+  } catch {
+    return false;
+  }
+}
+
+/** Normalize an arbitrary rejection value without invoking object coercion. */
+function describeManifestFetchFailure(error: unknown): string {
+  if (error === null) return 'null';
+
+  const kind = typeof error;
+  if (kind !== 'object' && kind !== 'function') {
+    return String(error);
+  }
+  if (kind === 'function') return 'Unknown error';
+
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    return 'Unknown error';
+  }
+  if (!isError) return 'Unknown error';
+
+  let message: unknown;
+  try {
+    message = (error as Error).message;
+  } catch {
+    return 'Unknown error';
+  }
+  return typeof message === 'string' ? message : 'Unknown error';
+}
+
 function copyMoonBitAbi(abi: MoonBitAbi): MoonBitAbi {
   const paramCount = abi.params.length;
   const params = new Array<MoonBitAbi['params'][number]>(paramCount);
@@ -297,8 +335,9 @@ export class ManifestFetcher {
 
       return manifest;
     } catch (error) {
-      // Re-throw UnzenNetworkError as-is
-      if (error instanceof UnzenNetworkError || error instanceof UnzenCancelledError) {
+      // Preserve existing client errors without trusting arbitrary Proxy
+      // prototype traversal in instanceof.
+      if (isManifestClientError(error)) {
         throw error;
       }
 
@@ -306,9 +345,9 @@ export class ManifestFetcher {
         throw new UnzenCancelledError('Manifest fetch cancelled');
       }
 
-      // Wrap other errors as network error
+      // Wrap other failures without invoking object/function coercion hooks.
       throw new UnzenNetworkError(
-        `Failed to fetch manifest: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to fetch manifest: ${describeManifestFetchFailure(error)}`
       );
     }
   }
