@@ -255,6 +255,33 @@ function submissionSignalError(message: string): UnzenError {
   return new UnzenError(message, ErrorCode.ProtocolViolation);
 }
 
+function readDurableSubmissionOptionField(
+  options: Record<string, unknown>,
+  field: 'idempotencyKey' | 'signal' | 'timeoutMs',
+): unknown {
+  try {
+    return options[field];
+  } catch {
+    throw new UnzenError(
+      `submission option ${field} could not be read`,
+      ErrorCode.ProtocolViolation,
+    );
+  }
+}
+
+function readSubmissionSignalField(
+  signal: Record<string, unknown>,
+  field: 'aborted' | 'addEventListener' | 'removeEventListener',
+): unknown {
+  try {
+    return signal[field];
+  } catch {
+    throw submissionSignalError(
+      'submission signal must expose boolean aborted and event-listener methods',
+    );
+  }
+}
+
 function captureSubmissionSignalSurface(
   signal: unknown,
 ): CapturedSubmissionSignalSurface | undefined {
@@ -263,9 +290,9 @@ function captureSubmissionSignalSurface(
     throw submissionSignalError('submission signal must be an AbortSignal-compatible object');
   }
 
-  const aborted = signal.aborted;
-  const addEventListener = signal.addEventListener;
-  const removeEventListener = signal.removeEventListener;
+  const aborted = readSubmissionSignalField(signal, 'aborted');
+  const addEventListener = readSubmissionSignalField(signal, 'addEventListener');
+  const removeEventListener = readSubmissionSignalField(signal, 'removeEventListener');
   if (
     typeof aborted !== 'boolean'
     || typeof addEventListener !== 'function'
@@ -371,10 +398,11 @@ function snapshotDurableSubmissionOptions(
 
   // submit() historically uses normal property lookup. Detach the top-level
   // envelope once so later validation, idempotency checks and signal bridging
-  // all operate on the same captured option identities.
-  const idempotencyKeyValue = options.idempotencyKey;
-  const signalValue = options.signal;
-  const timeoutMsValue = options.timeoutMs;
+  // all operate on the same captured option identities. Inaccessible getters
+  // fail closed without exposing or coercing the caller-thrown value.
+  const idempotencyKeyValue = readDurableSubmissionOptionField(options, 'idempotencyKey');
+  const signalValue = readDurableSubmissionOptionField(options, 'signal');
+  const timeoutMsValue = readDurableSubmissionOptionField(options, 'timeoutMs');
 
   if (
     timeoutMsValue !== undefined
