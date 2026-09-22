@@ -225,6 +225,9 @@ export class AdaptiveChunkDispatcher {
     const longLivedWorkerMs = longLivedWorkerMsInput === undefined
       ? DEFAULT_LONG_LIVED_WORKER_MS
       : longLivedWorkerMsInput;
+    if (typeof longLivedWorkerMs !== 'number') {
+      throw new Error('longLivedWorkerMs must be a finite non-negative number');
+    }
     assertFiniteNonNegative('longLivedWorkerMs', longLivedWorkerMs);
     const configuredVramLimitMBInput = readRuntimeField(
       runtimeOptions,
