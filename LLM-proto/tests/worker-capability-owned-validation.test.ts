@@ -148,6 +148,32 @@ describe('worker capability owned validation', () => {
     expect(modalitiesReads).toBe(1);
   });
 
+  it('fails closed when the routing request container is a revoked Proxy', () => {
+    const { proxy, revoke } = Proxy.revocable(request(), {});
+    revoke();
+
+    expect(
+      capabilityMatchesRequest(capability(), proxy as unknown as InferenceRequest),
+    ).toBe(false);
+  });
+
+  it('fails closed when a routing request field accessor throws', () => {
+    const source = { ...request() } as Record<string, unknown>;
+    let reads = 0;
+    Object.defineProperty(source, 'maxTokens', {
+      enumerable: true,
+      get: () => {
+        reads++;
+        throw new Error('untrusted accessor failure');
+      },
+    });
+
+    expect(
+      capabilityMatchesRequest(capability(), source as unknown as InferenceRequest),
+    ).toBe(false);
+    expect(reads).toBe(1);
+  });
+
   it('captures supported schema policy array entries once', () => {
     const versions: unknown[] = [CAPABILITY_SCHEMA_VERSION];
     let reads = 0;
