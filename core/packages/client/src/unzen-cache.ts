@@ -34,8 +34,9 @@ function snapshotRegistrationOptions(value: unknown): UnzenCacheWorkerRegistrati
   let rawWorkerUrl: unknown;
   let scope: unknown;
   try {
-    rawWorkerUrl = value.workerUrl;
-    scope = value.scope;
+    const record = value as Record<string, unknown>;
+    rawWorkerUrl = record.workerUrl;
+    scope = record.scope;
   } catch {
     throw new TypeError('Unzen cache worker options could not be read');
   }
