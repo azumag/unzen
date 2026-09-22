@@ -33,22 +33,31 @@ type RoutingRequestEnvelope = Pick<
   'protocolVersion' | 'maxTokens' | 'requiresStreaming'
 >;
 
+/** Classify the caller-owned request container without leaking revoked-Proxy failures. */
+function isRoutingRequestObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Capture each caller-owned routing field once, then validate and route only
  * from that owned state. Accessor/Proxy-backed requests therefore cannot pass
  * validation with one value and influence routing with a later re-read.
  */
 function validatedRoutingRequestEnvelope(value: unknown): RoutingRequestEnvelope | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  if (!isRoutingRequestObject(value)) return undefined;
 
   let protocolVersion: unknown;
   let maxTokens: unknown;
   let requiresStreaming: unknown;
   try {
-    const request = value as Record<string, unknown>;
-    protocolVersion = request.protocolVersion;
-    maxTokens = request.maxTokens;
-    requiresStreaming = request.requiresStreaming;
+    protocolVersion = value.protocolVersion;
+    maxTokens = value.maxTokens;
+    requiresStreaming = value.requiresStreaming;
   } catch {
     return undefined;
   }
