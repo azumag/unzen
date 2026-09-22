@@ -57,6 +57,7 @@ import {
   snapshotMoonBitExecutionOptions,
 } from './moonbit-call';
 import { normalizeMoonBitCacheLimit } from './moonbit-cache';
+import { isNonArrayObject } from './option-container';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
 
@@ -127,7 +128,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
   private disposed = false;
 
   constructor(options: MoonBitSandboxOptions = {}) {
-    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    if (!isNonArrayObject(options)) {
       throw new TypeError('MoonBit sandbox options must be an object');
     }
     let imports: WebAssembly.Imports | undefined;

@@ -1,5 +1,6 @@
 import { MAX_FUNCTION_PAYLOAD_BYTES, type MoonBitAbi } from '@unzen/shared';
 import { snapshotAbortSignalInput } from './abort';
+import { isNonArrayObject } from './option-container';
 
 export interface MoonBitExecutionOptionsSnapshot {
   readonly signal?: AbortSignal;
@@ -25,7 +26,7 @@ export function snapshotMoonBitExecutionOptions(
   if (value === undefined) {
     return { signalInitiallyAborted: false, exportName: 'run' };
   }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayObject(value)) {
     throw new Error('MoonBit execution options must be an object');
   }
 

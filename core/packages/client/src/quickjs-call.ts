@@ -5,6 +5,7 @@ import {
   MAX_FUNCTION_PAYLOAD_BYTES,
 } from '@unzen/shared';
 import { snapshotAbortSignalInput } from './abort';
+import { isNonArrayObject } from './option-container';
 
 export interface QuickJsCallSnapshot {
   readonly code: string;
@@ -21,7 +22,7 @@ export function snapshotQuickJsExecutionOptions(
   value: unknown,
 ): QuickJsExecutionOptionsSnapshot {
   if (value === undefined) return { signalInitiallyAborted: false };
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayObject(value)) {
     throw new Error('QuickJS execution options must be an object');
   }
 

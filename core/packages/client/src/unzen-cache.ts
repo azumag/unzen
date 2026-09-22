@@ -5,6 +5,7 @@ import {
   UNZEN_CODE_CACHE_NAME,
   type UnzenCodeCacheStorage,
 } from './unzen-cache-worker';
+import { isNonArrayObject } from './option-container';
 
 export interface UnzenCacheWorkerOptions {
   /** Same-origin classic Service Worker bundle. Defaults to `/unzen-cache-worker.js`. */
@@ -26,7 +27,7 @@ interface UnzenCacheWorkerRegistrationSnapshot {
 }
 
 function snapshotRegistrationOptions(value: unknown): UnzenCacheWorkerRegistrationSnapshot {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayObject(value)) {
     throw new TypeError('Unzen cache worker options must be an object');
   }
 
