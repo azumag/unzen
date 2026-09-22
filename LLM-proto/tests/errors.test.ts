@@ -64,6 +64,60 @@ describe('errors', () => {
       expect(errorCodeOf(new UnzenError('m', ErrorCode.DeadlineExceeded)))
         .toBe(ErrorCode.DeadlineExceeded);
     });
+
+    it('preserves a proxy-wrapped UnzenError when its code is readable', () => {
+      const error = new Proxy(new UnzenError('m', ErrorCode.ProtocolViolation), {});
+      expect(errorCodeOf(error)).toBe(ErrorCode.ProtocolViolation);
+      expect(classifyError(error)).toBe(ErrorCode.ProtocolViolation);
+    });
+
+    it('fails closed on a revoked thrown value', () => {
+      const { proxy, revoke } = Proxy.revocable(new Error('hidden'), {});
+      revoke();
+
+      expect(() => errorCodeOf(proxy)).not.toThrow();
+      expect(errorCodeOf(proxy)).toBeUndefined();
+      expect(() => classifyError(proxy)).not.toThrow();
+      expect(classifyError(proxy)).toBe(ErrorCode.RuntimeTransient);
+    });
+
+    it('fails closed when AbortError name access throws', () => {
+      const error = Object.create(null) as { name?: string };
+      Object.defineProperty(error, 'name', {
+        get() {
+          throw new Error('hostile name getter');
+        },
+      });
+
+      expect(() => classifyError(error)).not.toThrow();
+      expect(classifyError(error)).toBe(ErrorCode.RuntimeTransient);
+    });
+
+    it('fails closed when a proxy-wrapped UnzenError code read throws', () => {
+      const error = new Proxy(new UnzenError('hidden', ErrorCode.InvalidInput), {
+        get(target, property, receiver) {
+          if (property === 'code') throw new Error('hostile code getter');
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      expect(errorCodeOf(error)).toBeUndefined();
+      expect(classifyError(error)).toBe(ErrorCode.RuntimeTransient);
+    });
+
+    it('fails closed when a proxy-wrapped AbortSignal aborted read throws', () => {
+      const controller = new AbortController();
+      controller.abort();
+      const signal = new Proxy(controller.signal, {
+        get(target, property, receiver) {
+          if (property === 'aborted') throw new Error('hostile aborted getter');
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      expect(() => classifyError(signal)).not.toThrow();
+      expect(classifyError(signal)).toBe(ErrorCode.RuntimeTransient);
+    });
   });
 
   describe('isCancellation', () => {
