@@ -269,6 +269,38 @@ describe('DurableCoordinator hostile execution result/failure boundary', () => {
     expect(coercions).toBe(0);
   });
 
+  it.each([
+    ['null', null],
+    ['array', []],
+  ])('preserves the existing malformed final-output diagnostic for %s', async (_name, output) => {
+    const { coord, repo } = coordinator();
+    const identity = placeRunning(coord, repo);
+
+    await expect(coord.acceptResult({
+      identity,
+      processingTimeMs: 1,
+      output: output as never,
+    })).resolves.toEqual({
+      kind: 'protocol-violation',
+      message: 'final output must be a non-null, non-array object',
+    });
+  });
+
+  it('preserves valid final-result behavior', async () => {
+    const { coord, repo } = coordinator();
+    const identity = placeRunning(coord, repo);
+
+    await expect(coord.acceptResult({
+      identity,
+      processingTimeMs: 1,
+      output: { tokens: [1, 2], text: 'ok' },
+    })).resolves.toMatchObject({
+      kind: 'accepted',
+      isFinal: true,
+      output: { tokens: [1, 2], text: 'ok' },
+    });
+  });
+
   it('keeps intermediate checkpoint access lazy when final output is not reached', async () => {
     const { coord, repo } = coordinator(new InMemoryRepository(), 2);
     const identity = placeRunning(coord, repo, 2);
