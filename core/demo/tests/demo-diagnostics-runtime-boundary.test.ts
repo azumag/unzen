@@ -114,7 +114,7 @@ describe('demo diagnostics runtime boundary', () => {
 
   it('reads diagnostics fields once for one summary operation', () => {
     const reads = new Map<string, number>();
-    const source = validDiagnostics();
+    const source: Record<string, unknown> = validDiagnostics();
     const diagnostics = {};
     for (const field of [
       'executionId',
