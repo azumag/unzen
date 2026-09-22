@@ -45,6 +45,12 @@ export type RegisterWorkerOutcome =
       readonly generation: WorkerGeneration;
     };
 
+interface ValidatedWorkerRegistration {
+  readonly workerId: WorkerId;
+  readonly tier: WorkerTier;
+  readonly vramMB: number;
+}
+
 /** Structured error: state mutation from an unknown worker. */
 export class UnknownWorkerError extends UnzenError {
   constructor(workerId: WorkerId) {
@@ -72,18 +78,18 @@ export class WorkerRegistry {
     connectionId: string,
     now = Date.now(),
   ): RegisterWorkerOutcome {
-    this.assertValidRegistration(registration, connectionId);
+    const validatedRegistration = this.snapshotValidRegistration(registration, connectionId);
     this.assertValidAbsoluteTime(now, 'registration');
 
-    const existing = this.store.getWorker(registration.workerId);
+    const existing = this.store.getWorker(validatedRegistration.workerId);
 
     // Same connection re-registers (e.g. capability refresh): keep the
     // generation so a network hiccup does not churn generations.
     if (existing && existing.connectionId === connectionId) {
       const updated: WorkerRecord = {
         ...existing,
-        tier: registration.tier,
-        vramMB: registration.vramMB,
+        tier: validatedRegistration.tier,
+        vramMB: validatedRegistration.vramMB,
         stage: existing.stage === WorkerStageValue.Revoked ? WorkerStageValue.Idle : existing.stage,
       };
       this.store.putWorker(updated);
@@ -95,7 +101,7 @@ export class WorkerRegistry {
     // issue a new generation — never a silent overwrite.
     if (existing) {
       this.revoke(existing, now);
-      const record = this.buildRecord(registration, connectionId, now);
+      const record = this.buildRecord(validatedRegistration, connectionId, now);
       this.store.putWorker(record);
       return {
         kind: 'reconnected',
@@ -104,7 +110,7 @@ export class WorkerRegistry {
       };
     }
 
-    const record = this.buildRecord(registration, connectionId, now);
+    const record = this.buildRecord(validatedRegistration, connectionId, now);
     this.store.putWorker(record);
     return { kind: 'created', generation: record.generation };
   }
@@ -238,46 +244,63 @@ export class WorkerRegistry {
   }
 
   /**
-   * Validate the runtime registration envelope before any durable state or
-   * generation ownership can change. TypeScript types do not protect decoded
-   * WebSocket / JSON payloads.
+   * Validate and detach the runtime registration envelope before any durable
+   * state or generation ownership can change. TypeScript types do not protect
+   * decoded WebSocket / JSON payloads or direct runtime callers.
    */
-  private assertValidRegistration(
+  private snapshotValidRegistration(
     registration: { readonly workerId: WorkerId; readonly tier: WorkerTier; readonly vramMB: number },
     connectionId: string,
-  ): void {
-    if (
-      typeof registration !== 'object' ||
-      registration === null ||
-      Array.isArray(registration)
-    ) {
+  ): ValidatedWorkerRegistration {
+    let isArray = false;
+    if (typeof registration === 'object' && registration !== null) {
+      try {
+        isArray = Array.isArray(registration);
+      } catch {
+        throw new Error('worker registration must be a non-null object');
+      }
+    }
+    if (typeof registration !== 'object' || registration === null || isArray) {
       throw new Error('worker registration must be a non-null object');
     }
 
-    if (
-      typeof registration.workerId !== 'string' ||
-      registration.workerId.trim().length === 0
-    ) {
+    const runtimeRegistration = registration as unknown as Record<string, unknown>;
+    const workerIdValue = readRegistrationField(runtimeRegistration, 'workerId');
+    if (typeof workerIdValue !== 'string' || workerIdValue.trim().length === 0) {
       throw new Error('workerId must be a non-empty string');
     }
 
+    const tierValue = readRegistrationField(runtimeRegistration, 'tier');
     if (
-      registration.tier !== WorkerTier.TIER_1 &&
-      registration.tier !== WorkerTier.TIER_2 &&
-      registration.tier !== WorkerTier.TIER_3
+      tierValue !== WorkerTier.TIER_1 &&
+      tierValue !== WorkerTier.TIER_2 &&
+      tierValue !== WorkerTier.TIER_3
     ) {
-      throw new Error(`worker tier must be 1, 2, or 3; found ${String(registration.tier)}`);
+      throw new Error(
+        `worker tier must be 1, 2, or 3; found ${describeRegistrationValue(tierValue)}`,
+      );
     }
 
-    if (!Number.isFinite(registration.vramMB) || registration.vramMB <= 0) {
+    const vramMBValue = readRegistrationField(runtimeRegistration, 'vramMB');
+    if (
+      typeof vramMBValue !== 'number' ||
+      !Number.isFinite(vramMBValue) ||
+      vramMBValue <= 0
+    ) {
       throw new Error(
-        `worker vramMB must be a positive finite number; found ${String(registration.vramMB)}`,
+        `worker vramMB must be a positive finite number; found ${describeRegistrationValue(vramMBValue)}`,
       );
     }
 
     if (typeof connectionId !== 'string' || connectionId.trim().length === 0) {
       throw new Error('connectionId must be a non-empty string');
     }
+
+    return Object.freeze({
+      workerId: workerIdValue as WorkerId,
+      tier: tierValue,
+      vramMB: vramMBValue,
+    });
   }
 
   /** Validate heartbeat identity before lookup or structured diagnostic interpolation. */
@@ -385,7 +408,7 @@ export class WorkerRegistry {
   }
 
   private buildRecord(
-    registration: { workerId: WorkerId; tier: WorkerTier; vramMB: number },
+    registration: ValidatedWorkerRegistration,
     connectionId: string,
     now: number,
   ): WorkerRecord {
@@ -410,5 +433,27 @@ export class WorkerRegistry {
     // through to the new generation at the same worker key.
     this.revokedGenerations.set(record.generation, { ...record });
     this.store.deleteWorker(record.workerId);
+  }
+}
+
+function readRegistrationField(
+  registration: Record<string, unknown>,
+  field: 'workerId' | 'tier' | 'vramMB',
+): unknown {
+  try {
+    return registration[field];
+  } catch {
+    throw new Error(`worker registration ${field} could not be read`);
+  }
+}
+
+function describeRegistrationValue(value: unknown): string {
+  if (value === null) return 'null';
+  const kind = typeof value;
+  if (kind === 'object' || kind === 'function') return 'unknown';
+  try {
+    return String(value);
+  } catch {
+    return 'unknown';
   }
 }
