@@ -5,6 +5,7 @@ import {
   MAX_FUNCTION_PAYLOAD_BYTES,
 } from '@unzen/shared';
 import { snapshotAbortSignalInput } from './abort';
+import { isArrayContainer, readArrayIndex, readArrayLength } from './array-container';
 import { isNonArrayObject } from './option-container';
 
 export interface QuickJsCallSnapshot {
@@ -59,11 +60,15 @@ export function snapshotQuickJsCall(code: unknown, args: unknown): QuickJsCallSn
   if (code.trim().length === 0) {
     throw new Error('QuickJS code must be a non-empty string');
   }
-  if (!Array.isArray(args)) {
+  if (!isArrayContainer(args)) {
     throw new Error('QuickJS arguments must be an array');
   }
 
-  const argumentCount: unknown = args.length;
+  const lengthRead = readArrayLength(args);
+  if (!lengthRead.ok) {
+    throw new Error('QuickJS arguments could not be read');
+  }
+  const argumentCount = lengthRead.value;
   if (
     typeof argumentCount !== 'number'
     || !Number.isSafeInteger(argumentCount)
@@ -73,12 +78,17 @@ export function snapshotQuickJsCall(code: unknown, args: unknown): QuickJsCallSn
     throw new Error(`QuickJS supports at most ${MAX_EXECUTION_ARGUMENTS} arguments`);
   }
 
+  const indexedSnapshot = new Array<unknown>(argumentCount);
+  for (let index = 0; index < argumentCount; index += 1) {
+    const read = readArrayIndex(args, index);
+    if (!read.ok) {
+      throw new Error('QuickJS arguments could not be read');
+    }
+    indexedSnapshot[index] = read.value;
+  }
+
   let serialized: string;
   try {
-    const indexedSnapshot = new Array<unknown>(argumentCount);
-    for (let index = 0; index < argumentCount; index += 1) {
-      indexedSnapshot[index] = args[index];
-    }
     const candidate = JSON.stringify(indexedSnapshot);
     if (typeof candidate !== 'string') {
       throw new Error('serialization returned no payload');

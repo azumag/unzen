@@ -6,6 +6,8 @@
  * contract. Note: numeric exports still accept strings via WebAssembly's
  * implicit ToNumber conversion (e.g. fibonacci("10") → 55).
  */
+import { isArrayContainer } from './array-container';
+
 export function isSupportedScalar(value: unknown): boolean {
   return (
     typeof value === 'number'
@@ -26,7 +28,7 @@ export function isSupportedScalar(value: unknown): boolean {
 export function describeMoonbitArgError(prefix: string, arg: unknown): string {
   const type = typeof arg;
   const isNull = arg === null;
-  const isArray = Array.isArray(arg);
+  const isArray = isArrayContainer(arg);
   if (isNull || type === 'undefined') {
     return `${prefix} (got ${isNull ? 'null' : 'undefined'})`;
   }
