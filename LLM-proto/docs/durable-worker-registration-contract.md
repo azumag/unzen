@@ -9,6 +9,8 @@ Before the registry reads registration fields or mutates durable routing state, 
 - `vramMB` is finite and greater than zero.
 - `connectionId` is a non-empty, non-whitespace string.
 
+The public `DurableCoordinator.registerWorker()` wrapper also treats property access itself as untrusted runtime work. `workerId`, `tier`, and `vramMB` keep their historical normal property lookup semantics, including inherited values, but each reached field is read exactly once. If a getter or Proxy `get` trap throws, the caller-thrown value is neither stringified nor coerced; registration fails immediately with that field's existing `ErrorCode.ProtocolViolation` diagnostic. Later registration fields are not read after the inaccessible field, and no worker state has been mutated yet.
+
 Validation happens before existing-worker lookup, capability refresh, revocation, generation creation, or repository writes. Consequently, a rejected malformed envelope cannot trigger incidental field-access failures after state has changed, a rejected same-connection refresh cannot poison an existing worker's tier/VRAM, and a rejected reconnect cannot revoke the currently valid generation.
 
 Valid registration semantics are unchanged:
