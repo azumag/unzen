@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { UnzenFunctionError, UnzenRuntimeError } from '@unzen/shared';
 import { QuickJSRuntime } from '../src/quickjs-runtime';
 
+function runtimeThrowingOnContextCreation(failure: unknown): QuickJSRuntime {
+  const runtime = new QuickJSRuntime();
+  Object.defineProperty(runtime, 'quickJS', {
+    value: {
+      newContext: vi.fn(() => {
+        throw failure;
+      }),
+    },
+    configurable: true,
+  });
+  return runtime;
+}
+
 function runtimeThrowingFromHost(failure: unknown): {
   runtime: QuickJSRuntime;
   dispose: ReturnType<typeof vi.fn>;
@@ -30,6 +43,16 @@ function revokedFailure(): object {
 }
 
 describe('QuickJSRuntime host/runtime error boundary', () => {
+  it('fails closed when context creation throws a revoked value', async () => {
+    const runtime = runtimeThrowingOnContextCreation(revokedFailure());
+
+    await expect(runtime.execute('function run() { return 1; }', []))
+      .rejects.toEqual(expect.objectContaining({
+        name: 'UnzenFunctionError',
+        message: 'Function execution failed: Unknown error',
+      }));
+  });
+
   it('fails closed on revoked host failures and still disposes the context', async () => {
     const { runtime, dispose } = runtimeThrowingFromHost(revokedFailure());
 
