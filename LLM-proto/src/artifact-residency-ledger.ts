@@ -125,6 +125,9 @@ export class ArtifactResidencyLedger {
       nonArray: 'segment configs must be an array',
       unreadableLength: 'segment configs length could not be read',
       unreadableElement: (position) => `segment config at position ${position} could not be read`,
+      expectedLength: this.segmentCount,
+      lengthMismatch: (length) =>
+        `segment config count ${length} does not match artifact count ${this.segmentCount}`,
     });
 
     // This method is a public trust boundary too: callers can bypass the
@@ -136,13 +139,6 @@ export class ArtifactResidencyLedger {
         cloneAndValidateSegmentConfig(segment, arrayIndex),
       ),
     );
-
-    if (validatedSegments.length !== this.segmentCount) {
-      throw new Error(
-        `segment config count ${validatedSegments.length} ` +
-        `does not match artifact count ${this.segmentCount}`,
-      );
-    }
 
     const byIndex = new Map(validatedSegments.map((segment) => [segment.index, segment]));
     for (let index = 0; index < this.segmentCount; index++) {
@@ -726,6 +722,8 @@ interface ArrayCaptureDiagnostics {
   readonly nonArray: string;
   readonly unreadableLength: string;
   readonly unreadableElement: (position: number) => string;
+  readonly expectedLength?: number;
+  readonly lengthMismatch?: (length: number) => string;
 }
 
 /**
@@ -755,6 +753,12 @@ function captureArrayByNumericIndex(
   }
   if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) {
     throw new Error(diagnostics.unreadableLength);
+  }
+  if (diagnostics.expectedLength !== undefined && length !== diagnostics.expectedLength) {
+    throw new Error(
+      diagnostics.lengthMismatch?.(length) ??
+        `${diagnostics.unreadableLength}: expected length ${diagnostics.expectedLength}`,
+    );
   }
 
   const captured: unknown[] = [];
