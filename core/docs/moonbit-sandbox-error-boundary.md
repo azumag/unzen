@@ -24,3 +24,9 @@ The worker executor also bounds its preservation checks. Ordinary `UnzenCancelle
 Live structural `AbortSignal` reads are normalized at the same boundary. A signal whose state or subscription surface becomes unreadable after its initial snapshot settles through the documented runtime-error path instead of leaking a caller/native exception. This does not change cancellation precedence for a normal aborted signal.
 
 Worker queue ordering, generation teardown/restart, hard timeouts, protocol validation, module fetch deduplication/cache behavior, integrity validation, and public API semantics are unchanged.
+
+## Worker script
+
+The dedicated MoonBit worker applies the same bounded diagnostic rule before constructing protocol error responses. Request/call normalization, compile/instantiate, argument/result bridge, executed-export, and top-level unexpected failures therefore cannot trigger a second exception merely because a thrown object is revoked or has hostile coercion hooks.
+
+The wire classification is unchanged: compile/instantiate/marshal/unmarshal failures remain `runtime_error`, while a user export throw remains `function_error`. Ordinary `Error` and primitive diagnostics stay readable; other object/function values collapse to `Unknown error`. Request/generation correlation, compiled-module LRU behavior, ABI handling, protocol schema, and main-thread retry/cancellation semantics are unaffected.
