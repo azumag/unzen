@@ -61,6 +61,21 @@ describe('demo diagnostics runtime boundary', () => {
     expect(normalizeAttempts(attempts)).toEqual([]);
   });
 
+  it('rejects a synthetic oversized attempts length before allocation or iteration', () => {
+    let indexReads = 0;
+    const attempts = new Proxy([], {
+      get(target, property, receiver) {
+        if (property === 'length') return 10_000;
+        if (typeof property === 'string' && /^\d+$/.test(property)) indexReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(isExecutionDiagnostics(validDiagnostics({ attempts }))).toBe(false);
+    expect(normalizeAttempts(attempts)).toEqual([]);
+    expect(indexReads).toBe(0);
+  });
+
   it('does not invoke caller map or iterator hooks while normalizing attempts', () => {
     const calls: string[] = [];
     const attempts = [{ kind: 'server', durationMs: 4, outcome: 'failed' }];
