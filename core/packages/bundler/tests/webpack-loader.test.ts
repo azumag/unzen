@@ -179,6 +179,38 @@ describe('unzenWebpackLoader', () => {
     }
   });
 
+  it('normalizes revoked Proxy failures without leaking instanceof errors', async () => {
+    const { root, source } = createDependencyBundlingFixture(
+      'unzen-webpack-loader-revoked-error-',
+    );
+    const callback = vi.fn();
+    const { proxy, revoke } = Proxy.revocable(new Error('hidden failure'), {});
+    revoke();
+    const context: UnzenWebpackLoaderContext = {
+      resourcePath: join(root, 'functions.ts'),
+      callback: vi.fn(),
+      async: () => callback,
+      addDependency() {
+        throw proxy;
+      },
+      getOptions: () => ({
+        dependencyBundling: { allowedModules: ['unzen-safe-math'] },
+      }),
+    };
+
+    try {
+      unzenWebpackLoader.call(context, source);
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+
+      const [error] = callback.mock.calls[0]!;
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe('Unzen webpack loader failed with a non-Error value');
+      expect(callback.mock.calls[0]).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('preserves primitive non-Error addDependency failure text', async () => {
     const { root, source } = createDependencyBundlingFixture(
       'unzen-webpack-loader-primitive-error-',
