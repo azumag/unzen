@@ -305,10 +305,25 @@ export class AdaptiveChunkDispatcher {
 
   registerWorker(registration: AdaptiveWorkerRegistration): void {
     assertAdaptiveWorkerRegistrationContainer(registration);
-    const id = workerId(registration.id);
-    const tier = registration.tier;
+    const runtimeRegistration = registration as unknown as Record<string, unknown>;
+    const idInput = readRuntimeField(
+      runtimeRegistration,
+      'id',
+      'adaptive worker registration id could not be read',
+    );
+    const id = workerId(idInput as string);
+    const tier = readRuntimeField(
+      runtimeRegistration,
+      'tier',
+      'adaptive worker registration tier could not be read',
+    ) as WorkerTier;
     assertWorkerTier(tier);
-    const telemetry = snapshotWorkerTelemetry(registration.telemetry);
+    const telemetryInput = readRuntimeField(
+      runtimeRegistration,
+      'telemetry',
+      'adaptive worker registration telemetry could not be read',
+    ) as WorkerTelemetry;
+    const telemetry = snapshotWorkerTelemetry(telemetryInput);
     this.validateTelemetry(telemetry);
     const cacheHits = this.validateAndSynchronizeCacheResidency(id, telemetry);
     this.workers.set(id, {
@@ -925,7 +940,7 @@ function isNonNullNonArrayObject(value: unknown): value is Record<string, unknow
 function assertAdaptiveWorkerRegistrationContainer(
   value: unknown,
 ): asserts value is AdaptiveWorkerRegistration {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonNullNonArrayObject(value)) {
     throw new Error('adaptive worker registration must be a non-null object');
   }
 }
