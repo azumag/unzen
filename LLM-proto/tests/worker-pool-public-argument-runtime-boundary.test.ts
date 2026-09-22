@@ -59,6 +59,7 @@ describe('WorkerPool public numeric argument runtime boundary', () => {
   it('does not coerce a hostile segmentIndex value before busy-state mutation', () => {
     const coercions = { count: 0 };
     const pool = poolWithWorker();
+    const before = pool.get(workerId('worker-a'));
 
     expect(() => pool.markBusy(
       workerId('worker-a'),
@@ -66,10 +67,10 @@ describe('WorkerPool public numeric argument runtime boundary', () => {
     )).toThrow('segmentIndex must be a non-negative safe integer; found unknown');
 
     expect(coercions.count).toBe(0);
-    expect(pool.get(workerId('worker-a'))).toMatchObject({
-      status: WorkerStatus.IDLE,
-      currentSegment: undefined,
-    });
+    const after = pool.get(workerId('worker-a'));
+    expect(after).toBe(before);
+    expect(after?.status).toBe(WorkerStatus.IDLE);
+    expect(after?.currentSegment).toBeUndefined();
   });
 
   it('preserves useful primitive diagnostics', () => {
