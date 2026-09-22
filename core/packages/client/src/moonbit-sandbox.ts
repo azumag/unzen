@@ -57,6 +57,10 @@ import {
   snapshotMoonBitExecutionOptions,
 } from './moonbit-call';
 import { normalizeMoonBitCacheLimit } from './moonbit-cache';
+import {
+  describeMoonBitFailure,
+  isMoonBitCancelledFailure,
+} from './moonbit-error-boundary';
 import { isNonArrayObject } from './option-container';
 import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
@@ -170,7 +174,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     try {
       signalSnapshot = snapshotMoonBitAbortSignal(signal);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     if (signalSnapshot.initiallyAborted) {
       throw new UnzenCancelledError('Execution cancelled by caller');
@@ -183,7 +187,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     try {
       moduleUrl = normalizeMoonBitModuleUrl(code);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     if (expectedHash !== undefined && !isValidUnzenContentHash(expectedHash)) {
       throw new UnzenNetworkError('Invalid MoonBit module hash in manifest');
@@ -272,7 +276,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     try {
       executionOptions = snapshotMoonBitExecutionOptions(options);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     if (executionOptions.signalInitiallyAborted) {
       throw new UnzenCancelledError('Execution cancelled by caller');
@@ -285,7 +289,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     try {
       call = snapshotMoonBitCall(args, executionOptions.moonbitAbi);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
 
     let prepared: PreparedMoonBitModule;
@@ -294,7 +298,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       try {
         moduleUrl = normalizeMoonBitModuleUrl(code);
       } catch (error) {
-        throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+        throw new UnzenRuntimeError(describeMoonBitFailure(error));
       }
       prepared = await this.prepare(
         moduleUrl,
@@ -320,11 +324,11 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
         ? await raceWithAbort(instantiate, executionOptions.signal)
         : await instantiate;
     } catch (error) {
-      if (error instanceof UnzenCancelledError) {
+      if (isMoonBitCancelledFailure(error)) {
         throw new UnzenCancelledError('Execution was cancelled');
       }
       throw new UnzenRuntimeError(
-        `Failed to instantiate MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to instantiate MoonBit module: ${describeMoonBitFailure(error)}`,
       );
     }
     // The instantiate await can be slow (wasm compile). A cancel that arrived
@@ -343,9 +347,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
     try {
       marshalledArgs = marshalMoonBitArguments(instance, call.args, call.abi);
     } catch (error) {
-      throw new UnzenRuntimeError(
-        error instanceof Error ? error.message : String(error),
-      );
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
     throwIfAborted(executionOptions.signal);
 
@@ -354,14 +356,14 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       result = (target as (...a: unknown[]) => unknown)(...marshalledArgs);
     } catch (error) {
       throw new UnzenFunctionError(
-        `MoonBit function execution failed: ${error instanceof Error ? error.message : String(error)}`,
+        `MoonBit function execution failed: ${describeMoonBitFailure(error)}`,
       );
     }
 
     try {
       return unmarshalMoonBitResult(instance, result, call.abi);
     } catch (error) {
-      throw new UnzenRuntimeError(error instanceof Error ? error.message : String(error));
+      throw new UnzenRuntimeError(describeMoonBitFailure(error));
     }
   }
 
@@ -411,7 +413,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
         throw new UnzenRuntimeError('MoonBit module fetch aborted');
       }
       throw new UnzenNetworkError(
-        `Failed to fetch MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to fetch MoonBit module: ${describeMoonBitFailure(error)}`,
       );
     }
     if (!response.ok) {
@@ -433,7 +435,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
         throw new UnzenRuntimeError('MoonBit module fetch aborted');
       }
       throw new UnzenNetworkError(
-        `Failed to read MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to read MoonBit module: ${describeMoonBitFailure(error)}`,
       );
     }
     // The shared request may have been aborted (last waiter left / dispose)
@@ -444,9 +446,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       try {
         await assertUnzenContentIntegrity(bytes, expectedHash);
       } catch (error) {
-        throw new UnzenNetworkError(
-          error instanceof Error ? error.message : String(error),
-        );
+        throw new UnzenNetworkError(describeMoonBitFailure(error));
       }
       throwIfAborted(signal);
     }
@@ -463,7 +463,7 @@ export class MoonBitSandboxExecutor implements SandboxExecutor {
       compiled = await compileMoonBitModule(bytes, this.importedStringConstants);
     } catch (error) {
       throw new UnzenRuntimeError(
-        `Failed to compile MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to compile MoonBit module: ${describeMoonBitFailure(error)}`,
       );
     }
     throwIfAborted(signal);
