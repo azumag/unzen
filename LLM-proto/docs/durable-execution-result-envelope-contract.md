@@ -14,13 +14,15 @@ Before request lookup, lease matching, cancellation handling, suppression record
 
 Malformed values such as `Symbol`, arrays, objects, numeric strings, `NaN`, infinities, fractional indices, unsafe integers, and empty identifiers therefore fail closed as an intentional `protocol-violation` rather than escaping into property-access or string-coercion exceptions.
 
+Both the public `DurableCoordinator` wrapper and the separately exported direct durable-core class snapshot the reached result identity fields in fail-fast order. Throwing getters, revoked nested Proxies, and hostile Proxy traps are converted to stable malformed values for the implementation's existing diagnostics; caller-thrown values are never stringified or coerced. Once an earlier field is rejected, later identity fields are not read.
+
 The pull execution loop never trusts a rejected result for worker isolation or attempt accounting. When result validation fails, those actions use the coordinator-owned `ExecutionAssignment` identity instead.
 
 ## Checkpoint boundary
 
 Intermediate results still use `validateCheckpointEnvelope()` as the authoritative checkpoint runtime/integrity gate. Before the asynchronous integrity validation begins, the public wrapper snapshots the declared checkpoint metadata but deliberately does not clone the payload bytes. At the durable-core boundary, a payload that merely satisfies `instanceof Uint8Array` is not sufficient: it must also be a genuine TypedArray view with the required internal slots. Proxy-wrapped typed arrays therefore fail closed as `checkpoint payload must be a Uint8Array` instead of leaking a native TypedArray `TypeError`.
 
-The separately exported direct durable-core class retains a narrow trust-boundary shim because tests and integrations can invoke it without passing through the public `DurableCoordinator` snapshot layer. That shim bounds its own `Array.isArray()` probes for the result and checkpoint containers and its lazy `checkpoint` / `payload` reads. Revoked Proxies and throwing checkpoint/payload accessors are converted to stable malformed sentinels that flow through the implementation's existing result/checkpoint diagnostics; caller-thrown values are discarded without stringification or coercion. The checkpoint read remains lazy and memoized, so a final result never touches a hostile checkpoint accessor merely because the shim is present.
+The separately exported direct durable-core class retains a trust-boundary shim because tests and integrations can invoke it without passing through the public wrapper. In addition to snapshotting the root result, identity, and `processingTimeMs` fields, that shim bounds its checkpoint container `Array.isArray()` probe and its lazy `checkpoint` / `payload` reads. Revoked Proxies and throwing checkpoint/payload accessors are converted to stable malformed sentinels that flow through the implementation's existing result/checkpoint diagnostics; caller-thrown values are discarded without stringification or coercion. The checkpoint read remains lazy and memoized, so a final result never touches a hostile checkpoint accessor merely because the shim is present.
 
 For a genuine `Uint8Array` (including subclasses), the core boundary reads `buffer`, `byteOffset`, and `byteLength` through the intrinsic TypedArray accessors and creates only a zero-copy base `Uint8Array` view. Caller-defined `byteLength`, iterator, `slice()`, or species hooks therefore cannot influence the pre-copy budget decision or run before it. The implementation then snapshots the configured `maxCheckpointBytes` ceiling, first requires that ceiling to be a non-negative safe integer, and compares the intrinsic payload byte length with that validated ceiling before allocating an ownership copy.
 
@@ -41,10 +43,14 @@ A final result must carry an output object whose:
 - every token is a non-negative safe integer;
 - `text` is a runtime string.
 
-The coordinator copies the validated token array before `commitCompletion()`, so durable completion state does not retain the executor-owned array reference.
+The public wrapper and direct-core shim keep final output lazy until the implementation reaches the final-result branch. When reached, they snapshot the output container, `tokens`, token-array length and numeric slots, and `text` without invoking caller-controlled iteration. A revoked output/token container or throwing getter therefore fails through the established final-output diagnostics; invalid token capture stops before `text` is inspected. The implementation then copies the validated token array before `commitCompletion()`, so durable completion state does not retain the executor-owned array reference.
 
 Malformed final output returns `protocol-violation` without committing completion or reclaiming the active lease through the completion path.
 
-## Failure and evidence boundary
+## Failure boundary
+
+`handleWorkerFailure()` treats its failure envelope with the same ownership discipline. The direct-core shim snapshots the root container, result identity, failure code, and message in the implementation's fail-fast order. Inaccessible identity/code/message fields are represented as stable malformed values, later fields are not touched after an earlier rejection, and caller-thrown values are never coerced. The implementation remains authoritative for the existing `execution failure ...` diagnostics and for retry, lease reclaim, and worker-isolation policy.
+
+## Evidence boundary
 
 These checks harden the durable coordinator's runtime trust boundary only. They do not provide new evidence for real Llama-3.2-1B q4 WebGPU execution, physical GPU working-set measurements, real multi-browser checkpoint relay, or worker-loss resume in issue #167, and they do not change the production/HOLD scope of issue #158.
