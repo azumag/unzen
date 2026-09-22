@@ -24,6 +24,10 @@ export const ErrorCategory = Object.freeze({
   UNKNOWN: 'unknown',
 });
 
+// Diagnostics describe one execution. Keep malformed runtime containers from
+// making the demo allocate or iterate an attacker-sized synthetic attempt list.
+const MAX_RENDERED_DIAGNOSTIC_ATTEMPTS = 1024;
+
 /**
  * Classify a stable error code into a demo error category.
  * 'input_error' is a demo-local code produced when validation rejects inputs
@@ -125,7 +129,12 @@ function snapshotAttempts(attempts) {
   } catch {
     return null;
   }
-  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) {
+  if (
+    typeof length !== 'number'
+    || !Number.isSafeInteger(length)
+    || length < 0
+    || length > MAX_RENDERED_DIAGNOSTIC_ATTEMPTS
+  ) {
     return null;
   }
 
