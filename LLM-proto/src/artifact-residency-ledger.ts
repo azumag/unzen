@@ -111,7 +111,7 @@ export class ArtifactResidencyLedger {
   getArtifact(segmentIndex: number): SegmentArtifact {
     const artifact = this.artifactsByIndex.get(segmentIndex);
     if (!artifact) {
-      throw new Error(`unknown segment ${segmentIndex}`);
+      throw new Error(`unknown segment ${describeRuntimeValue(segmentIndex)}`);
     }
     return artifact;
   }
@@ -362,7 +362,7 @@ export class ArtifactResidencyLedger {
       endSegment >= this.segmentCount
     ) {
       throw new Error(
-        `invalid segment range ${startSegment}..${endSegment}; ` +
+        `invalid segment range ${describeRuntimeValue(startSegment)}..${describeRuntimeValue(endSegment)}; ` +
         `expected 0..${this.segmentCount - 1}`,
       );
     }
@@ -794,4 +794,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   } catch {
     return false;
   }
+}
+
+function describeRuntimeValue(value: unknown): string {
+  if (value === null) return 'null';
+  const kind = typeof value;
+  if (kind === 'object' || kind === 'function') return 'unknown';
+  return String(value);
 }
