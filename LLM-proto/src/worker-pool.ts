@@ -348,7 +348,7 @@ export class WorkerPool {
   private assertValidVramRequirement(requiredVramMB: number): void {
     if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
       throw new Error(
-        `requiredVramMB must be a positive finite number; found ${String(requiredVramMB)}`,
+        `requiredVramMB must be a positive finite number; found ${describeRuntimeValue(requiredVramMB)}`,
       );
     }
   }
@@ -357,7 +357,7 @@ export class WorkerPool {
   private assertValidHeartbeatTimeout(timeoutMs: number): void {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new Error(
-        `timeoutMs must be a positive finite number; found ${String(timeoutMs)}`,
+        `timeoutMs must be a positive finite number; found ${describeRuntimeValue(timeoutMs)}`,
       );
     }
   }
@@ -366,7 +366,7 @@ export class WorkerPool {
   private assertValidSegmentIndex(segmentIndex: number): void {
     if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) {
       throw new Error(
-        `segmentIndex must be a non-negative safe integer; found ${String(segmentIndex)}`,
+        `segmentIndex must be a non-negative safe integer; found ${describeRuntimeValue(segmentIndex)}`,
       );
     }
   }
