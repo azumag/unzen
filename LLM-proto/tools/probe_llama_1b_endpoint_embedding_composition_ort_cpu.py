@@ -3,11 +3,11 @@
 
 This issue #223 S0 probe keeps the candidate architecture diagnostic-only. It
 uses the pinned Llama-3.2-1B-Instruct q4 source embedding as an ORT CPU reference,
-then routes token IDs spanning all eght vocabulary execution tiles through the
+then routes token IDs spanning all eight vocabulary execution tiles through the
 already-materialized four preferred physical payloads. The outputs are restored
 to original token order and compared with the full-weight Gather result.
 
-It does not select the 4-way/4-tile layout, exercise decoder/KV/checkpoint
+It does not select the 4-way/8-tile layout, exercise decoder/KV/checkpoint
 execution, or change manifest/cache/runtime/dispatcher semantics.
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ def _identity(s: os.stat_result) -> tuple[int,int,int,int,int]:
 def _read_source_graph_snapshot(
     source_model: Path,
     *,
-    max_bytes: int = DEFAULT_SOURCE_GRAPX_MAX_BYTES,
+    max_bytes: int = DEFAULT_SOURCE_GRAPH_MAX_BYTES,
 ) -> tuple[Path,bytes]:
     """Adapt the shared bounded graph snapshot to the probe's path-plus-bytes API."""
     if not isinstance(max_bytes,int) or isinstance(max_bytes,bool) or max_bytes <= 0:
@@ -85,7 +85,7 @@ def _open_pinned_source_external_data(path: Path) -> tuple[int, os.stat_result]:
         snap=path.lstat()
     except OSError as error:
         raise RuntimeError(f"source external data is not readable: {path}: {error}") from error
-    if stat.S_ISLND¨snap.st_mode) or not stat.S_ISREG(snap.st_mode):
+    if stat.S_ISLNK(snap.st_mode) or not stat.S_ISREG(snap.st_mode):
         raise RuntimeError(f"source external data must be a regular non-symlink file: {path}")
     flags=os.O_RDONLY | getattr(os,"O_BINARY",0) | getattr(os,"O_CLOEXEC",0)
     flags |= getattr(os,"O_NOFOLLOW",0) | getattr(os,"O_NONBLOCK",0)
@@ -162,10 +162,10 @@ def _save_reference_model(*, fd:int, source_offset:int) -> Path:
 
 def _run_session(path: Path, feeds: dict[str,np.ndarray]) -> tuple[np.ndarray,float,float]:
     opts=ort.SessionOptions(); opts.intra_op_num_threads=1
-    started=time.perf_counter(); sess=ort.InferenceSession(str(path),session_options=opts,providers=["CPUExecutionProvider"]); create=(time.perf_counter()-started)*1000
+    started=time.perf_counter(); sess=ort.InferenceSession(str(path),sess_options=opts,providers=["CPUExecutionProvider"]); create=(time.perf_counter()-started)*1000
     if sess.get_providers()!=["CPUExecutionProvider"]: raise RuntimeError("unexpected ORT provider")
     started=time.perf_counter(); out=sess.run(None,feeds)[0]; run=(time.perf_counter()-started)*1000
-    del sess; gc.collect(); return out,create, run
+    del sess; gc.collect(); return out,create,run
 
 
 def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
@@ -176,7 +176,7 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
         raise RuntimeError("upstream endpoint layout contract drift")
     candidates=layout.get("candidates")
     if not isinstance(candidates,list): raise RuntimeError("missing layout candidates")
-    cand=[c for c in candidates if isinstance(c,dict) and c.get("physicalArtifactCount")=4]
+    cand=[c for c in candidates if isinstance(c,dict) and c.get("physicalArtifactCount")==4]
     if len(cand)!=1: raise RuntimeError("expected one 4-way candidate")
     cand=cand[0]; tiles=cand.get("executionTiles"); physical=cand.get("physicalArtifacts")
     if not isinstance(tiles,list) or len(tiles)!=8 or not isinstance(physical,list) or len(physical)!=4: raise RuntimeError("4-way/8-tile geometry drift")
@@ -197,7 +197,7 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
         finally:
             reference_model.unlink(missing_ok=True)
 
-        physical_by_unit={int(a["index"]):a for a in physical if isinstance(a,dict)}
+        physical_by_index={int(a["index"]):a for a in physical if isinstance(a,dict)}
         for index in range(4):
             a=physical_by_index.get(index)
             if a is None: raise RuntimeError(f"missing physical artifact {index}")
@@ -226,7 +226,7 @@ def build_report(source_model: Path, payload_root: Path) -> dict[str,object]:
             finally:
                 model.unlink(missing_ok=True)
             actual[np.array(positions,dtype=np.int64)] = out
-            tile_runs.append({"tileIndex":ti,"physicalArtifactIndex":ai,"positions":positions,"globalTokenIds":[TOKEN_IDS[p] for p in positions],"localTokenIds":[Int(x) for x in local],"sessionCreateMs":create_ms,"runMs":run_ms})
+            tile_runs.append({"tileIndex":ti,"physicalArtifactIndex":ai,"positions":positions,"globalTokenIds":[TOKEN_IDS[p] for p in positions],"localTokenIds":[int(x) for x in local],"sessionCreateMs":create_ms,"runMs":run_ms})
 
         exact=bool(np.array_equal(actual,reference)); diff=np.abs(actual-reference); max_abs=float(np.max(diff,initial=0.0))
         if not exact: raise RuntimeError(f"complete tiled embedding diverged from full-weight Gather: maxAbsDiff={max_abs}")
