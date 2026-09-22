@@ -43,6 +43,7 @@ import {
   snapshotMoonBitCall,
   unmarshalMoonBitResult,
 } from '../moonbit-array-bridge';
+import { describeMoonBitFailure } from '../moonbit-error-boundary';
 
 /** Worker state — holds the content-identity compiled module cache. */
 export interface MoonbitWorkerState {
@@ -149,7 +150,7 @@ export async function handleMoonbitWorkerMessage(
     } catch (error) {
       postRejectedMessage(
         msg,
-        error instanceof Error ? error.message : String(error),
+        describeMoonBitFailure(error),
         postMessage,
       );
       return;
@@ -206,7 +207,7 @@ async function handleMoonbitExecute(
         false,
         msg.generationId,
         undefined,
-        `Failed to compile MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to compile MoonBit module: ${describeMoonBitFailure(error)}`,
         'runtime_error',
       ));
       return;
@@ -222,7 +223,7 @@ async function handleMoonbitExecute(
       false,
       msg.generationId,
       undefined,
-      `Failed to instantiate MoonBit module: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to instantiate MoonBit module: ${describeMoonBitFailure(error)}`,
       'runtime_error',
     ));
     return;
@@ -250,7 +251,7 @@ async function handleMoonbitExecute(
       false,
       msg.generationId,
       undefined,
-      error instanceof Error ? error.message : String(error),
+      describeMoonBitFailure(error),
       'runtime_error',
     ));
     return;
@@ -265,7 +266,7 @@ async function handleMoonbitExecute(
       false,
       msg.generationId,
       undefined,
-      `MoonBit function execution failed: ${error instanceof Error ? error.message : String(error)}`,
+      `MoonBit function execution failed: ${describeMoonBitFailure(error)}`,
       'function_error',
     ));
     return;
@@ -285,7 +286,7 @@ async function handleMoonbitExecute(
       false,
       msg.generationId,
       undefined,
-      error instanceof Error ? error.message : String(error),
+      describeMoonBitFailure(error),
       'runtime_error',
     ));
   }
@@ -323,7 +324,7 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
     // worker silently.
     handleMoonbitWorkerMessage(event, workerState, self.postMessage.bind(self))
       .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = describeMoonBitFailure(error);
         postRejectedMessage(event.data, message, self.postMessage.bind(self));
       });
   };
