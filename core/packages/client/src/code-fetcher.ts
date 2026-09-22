@@ -36,6 +36,7 @@ import {
   throwIfAborted,
 } from './abort';
 import { assertUnzenContentIntegrity } from './content-integrity';
+import { isNonArrayObject } from './option-container';
 import { cancelResponseBody, readBoundedResponseBytes } from './response-body';
 
 interface InflightCodeRequest {
@@ -103,7 +104,7 @@ export class CodeFetcher {
    * May be used in Phase 2+ for relative URL resolution.
    */
   constructor(endpoint: string, options: CodeFetcherOptions = {}) {
-    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    if (!isNonArrayObject(options)) {
       throw new TypeError('CodeFetcher options must be an object');
     }
     let maxCacheBytes: unknown;
