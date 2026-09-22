@@ -49,6 +49,41 @@ function describeValue(value: unknown): string {
   return typeof value;
 }
 
+/** Format arbitrary bridge failures without invoking object/function coercion. */
+function describeBridgeFailure(error: unknown): string {
+  if (error === null) return 'null';
+
+  const kind = typeof error;
+  if (kind !== 'object' && kind !== 'function') {
+    return String(error);
+  }
+  if (kind === 'function') return 'Unknown error';
+
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    return 'Unknown error';
+  }
+  if (!isError) return 'Unknown error';
+
+  let message: unknown;
+  try {
+    message = (error as Error).message;
+  } catch {
+    return 'Unknown error';
+  }
+  return typeof message === 'string' ? message : 'Unknown error';
+}
+
+/** Describe an invalid bridge return value without coercing objects/functions. */
+function describeBridgeValue(value: unknown): string {
+  if (value === null) return 'null';
+  const kind = typeof value;
+  if (kind === 'object' || kind === 'function') return kind;
+  return String(value);
+}
+
 function assertArrayElement(type: MoonBitArrayAbiType, value: unknown, path: string): void {
   if (type === 'i32[]') {
     if (
@@ -278,7 +313,7 @@ export function marshalMoonBitArguments(
     } catch (error) {
       throw new Error(
         `MoonBit ${type} bridge failed while copying argument ${argIndex}: `
-        + `${error instanceof Error ? error.message : String(error)}`,
+        + describeBridgeFailure(error),
       );
     }
     return handle;
@@ -314,7 +349,7 @@ export function unmarshalMoonBitResult(
   } catch (error) {
     throw new Error(
       `MoonBit ${type} bridge failed while reading result length: `
-      + `${error instanceof Error ? error.message : String(error)}`,
+      + describeBridgeFailure(error),
     );
   }
   if (
@@ -324,7 +359,7 @@ export function unmarshalMoonBitResult(
     || length > MAX_MOONBIT_ARRAY_ELEMENTS
   ) {
     throw new Error(
-      `MoonBit ${type} bridge returned invalid result length ${String(length)} `
+      `MoonBit ${type} bridge returned invalid result length ${describeBridgeValue(length)} `
       + `(max ${MAX_MOONBIT_ARRAY_ELEMENTS})`,
     );
   }
@@ -339,7 +374,7 @@ export function unmarshalMoonBitResult(
   } catch (error) {
     throw new Error(
       `MoonBit ${type} bridge failed while copying result: `
-      + `${error instanceof Error ? error.message : String(error)}`,
+      + describeBridgeFailure(error),
     );
   }
   return values;
