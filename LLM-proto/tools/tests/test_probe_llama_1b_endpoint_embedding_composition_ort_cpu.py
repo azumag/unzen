@@ -36,6 +36,24 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
             multi_segment_onnx.DEFAULT_SOURCE_GRAPH_MAX_BYTES,
         )
 
+    def test_source_graph_snapshot_delegates_bytes_to_shared_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"model.onnx"
+            path.write_bytes(b"pathname-bytes-must-not-be-read-by-wrapper")
+            resolved=path.resolve()
+            payload=b"shared-captured-source-graph"
+
+            with mock.patch.object(
+                probe,
+                "_read_shared_source_graph_snapshot",
+                return_value=(payload,"digest-is-owned-by-shared-reader"),
+            ) as shared_reader:
+                reported_path,observed=probe._read_source_graph_snapshot(path,max_bytes=123)
+
+            self.assertEqual(reported_path,resolved)
+            self.assertEqual(observed,payload)
+            shared_reader.assert_called_once_with(resolved,max_bytes=123)
+
     def test_source_graph_snapshot_returns_regular_file_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/"model.onnx"
@@ -46,6 +64,54 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
 
             self.assertEqual(resolved,path.resolve())
             self.assertEqual(observed,payload)
+
+    def test_source_graph_snapshot_preserves_stable_symlink_path_semantics(self) -> None:
+        if not hasattr(os,"symlink"):
+            self.skipTest("symlink is unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            target=root/"model-real.onnx"
+            requested=root/"model.onnx"
+            target.write_bytes(b"stable-source-graph")
+            try:
+                requested.symlink_to(target.name)
+            except OSError as error:
+                self.skipTest(f"symlink creation is unavailable: {error}")
+
+            resolved,observed=probe._read_source_graph_snapshot(requested)
+
+            self.assertEqual(resolved,target.resolve())
+            self.assertEqual(observed,b"stable-source-graph")
+
+    def test_source_graph_snapshot_rejects_requested_symlink_retarget(self) -> None:
+        if not hasattr(os,"symlink"):
+            self.skipTest("symlink is unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            original=root/"original.onnx"
+            replacement=root/"replacement.onnx"
+            requested=root/"model.onnx"
+            original.write_bytes(b"original")
+            replacement.write_bytes(b"replacement")
+            try:
+                requested.symlink_to(original.name)
+            except OSError as error:
+                self.skipTest(f"symlink creation is unavailable: {error}")
+
+            def retarget_after_capture(source: Path, *, max_bytes: int) -> tuple[bytes,str]:
+                self.assertEqual(source,original.resolve())
+                self.assertEqual(max_bytes,probe.DEFAULT_SOURCE_GRAPH_MAX_BYTES)
+                requested.unlink()
+                requested.symlink_to(replacement.name)
+                return b"captured-original","digest"
+
+            with mock.patch.object(
+                probe,
+                "_read_shared_source_graph_snapshot",
+                side_effect=retarget_after_capture,
+            ):
+                with self.assertRaisesRegex(RuntimeError,"path changed after reading"):
+                    probe._read_source_graph_snapshot(requested)
 
     def test_source_graph_snapshot_rejects_invalid_ceiling_before_filesystem_work(self) -> None:
         missing=Path("/definitely/not/a/real/unzen-model.onnx")
@@ -60,7 +126,7 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
             path.write_bytes(b"x"*17)
 
             with mock.patch.object(probe.os,"open",side_effect=AssertionError("open must not run")):
-                with self.assertRaisesRegex(RuntimeError,"source graph exceeds 16 bytes"):
+                with self.assertRaisesRegex(RuntimeError,"source model graph exceeds 16 bytes"):
                     probe._read_source_graph_snapshot(path,max_bytes=16)
 
     def test_source_graph_snapshot_rejects_replacement_between_stat_and_open(self) -> None:
@@ -81,7 +147,7 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
                 return real_open(raw_path,flags,*args,**kwargs)
 
             with mock.patch.object(probe.os,"open",side_effect=replacing_open):
-                with self.assertRaisesRegex(RuntimeError,"changed while opening"):
+                with self.assertRaisesRegex(RuntimeError,"changed between path check and open"):
                     probe._read_source_graph_snapshot(path)
             self.assertTrue(replaced)
 
@@ -91,7 +157,7 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
             path=Path(tmp)/"model.onnx"
             os.mkfifo(path)
 
-            with self.assertRaisesRegex(RuntimeError,"must be a regular file"):
+            with self.assertRaisesRegex(RuntimeError,"must resolve to a regular file"):
                 probe._read_source_graph_snapshot(path)
 
 if __name__=='__main__': unittest.main()
