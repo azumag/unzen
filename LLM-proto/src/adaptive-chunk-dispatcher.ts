@@ -136,6 +136,7 @@ const DEFAULT_LOAD_BUDGET_RATIO = 0.03;
 const DEFAULT_LONG_LIVED_WORKER_MS = 30 * 60 * 1000;
 const DEFAULT_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const MAX_ARRAY_LENGTH = 0xffff_ffff;
 
 export class AdaptiveChunkDispatcher {
   private readonly workers = new Map<WorkerId, AdaptiveWorkerState>();
@@ -153,11 +154,19 @@ export class AdaptiveChunkDispatcher {
 
   constructor(options: AdaptiveChunkDispatcherOptions) {
     assertAdaptiveChunkDispatcherOptionsContainer(options);
-    const segmentInput = options.segments as unknown;
-    if (!Array.isArray(segmentInput)) {
+    const runtimeOptions = options as unknown as Record<string, unknown>;
+    const segmentInput = readRuntimeField(
+      runtimeOptions,
+      'segments',
+      'AdaptiveChunkDispatcher segments could not be read',
+    );
+    if (!isArrayWithoutThrow(segmentInput)) {
       throw new Error('AdaptiveChunkDispatcher segments must be an array');
     }
-    const segmentCount = segmentInput.length;
+    const segmentCount = readArrayLength(
+      segmentInput,
+      'AdaptiveChunkDispatcher segments length could not be read',
+    );
     if (segmentCount === 0) {
       throw new Error('AdaptiveChunkDispatcher requires at least one segment');
     }
@@ -167,7 +176,11 @@ export class AdaptiveChunkDispatcher {
     // slot while an earlier segment is being validated.
     const segmentEntries: unknown[] = new Array(segmentCount);
     for (let index = 0; index < segmentCount; index++) {
-      segmentEntries[index] = segmentInput[index];
+      segmentEntries[index] = readArrayIndex(
+        segmentInput,
+        index,
+        `AdaptiveChunkDispatcher segment ${index} could not be read`,
+      );
     }
 
     const segments = Object.freeze(
@@ -801,6 +814,67 @@ export class AdaptiveChunkDispatcher {
   }
 }
 
+function isArrayWithoutThrow(value: unknown): value is readonly unknown[] {
+  try {
+    return Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function readRuntimeField(
+  container: Record<string, unknown>,
+  field: string,
+  failureMessage: string,
+): unknown {
+  try {
+    return container[field];
+  } catch {
+    throw new Error(failureMessage);
+  }
+}
+
+function readArrayLength(value: readonly unknown[], failureMessage: string): number {
+  let length: unknown;
+  try {
+    length = value.length;
+  } catch {
+    throw new Error(failureMessage);
+  }
+  if (
+    typeof length !== 'number' ||
+    !Number.isInteger(length) ||
+    length < 0 ||
+    length > MAX_ARRAY_LENGTH
+  ) {
+    throw new Error(failureMessage);
+  }
+  return length;
+}
+
+function readArrayIndex(
+  value: readonly unknown[],
+  index: number,
+  failureMessage: string,
+): unknown {
+  try {
+    return value[index];
+  } catch {
+    throw new Error(failureMessage);
+  }
+}
+
+function isNonNullNonArrayObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
 function assertAdaptiveWorkerRegistrationContainer(
   value: unknown,
 ): asserts value is AdaptiveWorkerRegistration {
@@ -812,18 +886,22 @@ function assertAdaptiveWorkerRegistrationContainer(
 function assertAdaptiveChunkDispatcherOptionsContainer(
   value: unknown,
 ): asserts value is AdaptiveChunkDispatcherOptions {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonNullNonArrayObject(value)) {
     throw new Error('AdaptiveChunkDispatcher options must be a non-null object');
   }
 }
 
 function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): SegmentConfig {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonNullNonArrayObject(value)) {
     throw new Error(`AdaptiveChunkDispatcher segment ${arrayIndex} must be an object`);
   }
-  const segment = value as Record<string, unknown>;
+  const segment = value;
 
-  const index = segment.index;
+  const index = readRuntimeField(
+    segment,
+    'index',
+    `AdaptiveChunkDispatcher segment ${arrayIndex} index could not be read`,
+  );
   if (
     typeof index !== 'number' ||
     !Number.isSafeInteger(index) ||
@@ -840,7 +918,11 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
     );
   }
 
-  const layerStart = segment.layerStart;
+  const layerStart = readRuntimeField(
+    segment,
+    'layerStart',
+    `AdaptiveChunkDispatcher segment ${arrayIndex} layerStart could not be read`,
+  );
   if (
     typeof layerStart !== 'number' ||
     !Number.isSafeInteger(layerStart) ||
@@ -851,7 +933,11 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
     );
   }
 
-  const layerEnd = segment.layerEnd;
+  const layerEnd = readRuntimeField(
+    segment,
+    'layerEnd',
+    `AdaptiveChunkDispatcher segment ${arrayIndex} layerEnd could not be read`,
+  );
   if (
     typeof layerEnd !== 'number' ||
     !Number.isSafeInteger(layerEnd) ||
@@ -863,14 +949,22 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
     );
   }
 
-  const modelWeightHash = segment.modelWeightHash;
+  const modelWeightHash = readRuntimeField(
+    segment,
+    'modelWeightHash',
+    `AdaptiveChunkDispatcher segment ${arrayIndex} modelWeightHash could not be read`,
+  );
   if (typeof modelWeightHash !== 'string' || modelWeightHash.trim().length === 0) {
     throw new Error(
       `AdaptiveChunkDispatcher segment ${arrayIndex} modelWeightHash must be a non-empty string`,
     );
   }
 
-  const estimatedVramMB = segment.estimatedVramMB;
+  const estimatedVramMB = readRuntimeField(
+    segment,
+    'estimatedVramMB',
+    `AdaptiveChunkDispatcher segment ${arrayIndex} estimatedVramMB could not be read`,
+  );
   if (
     typeof estimatedVramMB !== 'number' ||
     !Number.isFinite(estimatedVramMB) ||
