@@ -30,6 +30,68 @@ import { isAbortError, snapshotAbortSignalInput, throwIfAborted } from './abort'
 import { normalizeUnzenEndpoint } from './endpoint';
 import { cancelResponseBody, readBoundedJsonResponse, ResponseBodyLimitError } from './response-body';
 
+/** Bounded identity check for catch-path values that may be hostile Proxies. */
+function isFallbackClientError(
+  error: unknown,
+): error is UnzenCancelledError | UnzenFunctionError | UnzenNetworkError {
+  try {
+    return (
+      error instanceof UnzenCancelledError
+      || error instanceof UnzenFunctionError
+      || error instanceof UnzenNetworkError
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Bounded identity check for response-body limit failures. */
+function isResponseBodyLimitFailure(error: unknown): error is ResponseBodyLimitError {
+  try {
+    return error instanceof ResponseBodyLimitError;
+  } catch {
+    return false;
+  }
+}
+
+/** Preserve the normal limit diagnostic without trusting a Proxy message trap. */
+function describeResponseBodyLimitFailure(error: ResponseBodyLimitError): string {
+  try {
+    return typeof error.message === 'string'
+      ? error.message
+      : `Fallback response exceeds ${MAX_EXECUTION_RESPONSE_BYTES} bytes`;
+  } catch {
+    return `Fallback response exceeds ${MAX_EXECUTION_RESPONSE_BYTES} bytes`;
+  }
+}
+
+/** Normalize an arbitrary rejection value without invoking object coercion. */
+function describeFallbackFailure(error: unknown): string {
+  if (error === null) return 'null';
+
+  const kind = typeof error;
+  if (kind !== 'object' && kind !== 'function') {
+    return String(error);
+  }
+  if (kind === 'function') return 'Unknown error';
+
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    return 'Unknown error';
+  }
+  if (!isError) return 'Unknown error';
+
+  let message: unknown;
+  try {
+    message = (error as Error).message;
+  } catch {
+    return 'Unknown error';
+  }
+  return typeof message === 'string' ? message : 'Unknown error';
+}
+
 export class FallbackHandler {
   /**
    * Server endpoint URL (e.g., "https://example.com")
@@ -156,8 +218,8 @@ export class FallbackHandler {
         if (isAbortError(error) || requestSignal?.aborted) {
           throw new UnzenCancelledError('Execution cancelled by caller');
         }
-        if (error instanceof ResponseBodyLimitError) {
-          throw new UnzenNetworkError(error.message);
+        if (isResponseBodyLimitFailure(error)) {
+          throw new UnzenNetworkError(describeResponseBodyLimitFailure(error));
         }
         // Response body not parseable as JSON → network/infrastructure error
         throw new UnzenNetworkError(
@@ -197,12 +259,9 @@ export class FallbackHandler {
 
       return data.result;
     } catch (error) {
-      // Re-throw UnzenFunctionError and UnzenNetworkError as-is
-      if (
-        error instanceof UnzenCancelledError ||
-        error instanceof UnzenFunctionError ||
-        error instanceof UnzenNetworkError
-      ) {
+      // Re-throw ordinary client errors as-is. The identity check is bounded
+      // because a revoked Proxy may throw during instanceof.
+      if (isFallbackClientError(error)) {
         throw error;
       }
 
@@ -212,10 +271,10 @@ export class FallbackHandler {
         throw new UnzenCancelledError('Execution cancelled by caller');
       }
 
-      // Wrap other errors (fetch failure, JSON parse error, etc.) as network error
-      // These are infrastructure errors, not user code errors
+      // Wrap other infrastructure failures without invoking object/function
+      // coercion hooks on arbitrary rejection values.
       throw new UnzenNetworkError(
-        `Failed to execute fallback: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to execute fallback: ${describeFallbackFailure(error)}`
       );
     }
   }
