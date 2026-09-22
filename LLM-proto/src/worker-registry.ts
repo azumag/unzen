@@ -375,7 +375,7 @@ export class WorkerRegistry {
   private assertValidAbsoluteTime(now: number, operation: string): void {
     if (!Number.isFinite(now) || now < 0) {
       throw new Error(
-        `${operation} now must be a non-negative finite number; found ${String(now)}`,
+        `${operation} now must be a non-negative finite number; found ${describeRegistrationValue(now)}`,
       );
     }
   }
@@ -384,7 +384,7 @@ export class WorkerRegistry {
   private assertValidVramRequirement(requiredVramMB: number): void {
     if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
       throw new Error(
-        `requiredVramMB must be a positive finite number; found ${String(requiredVramMB)}`,
+        `requiredVramMB must be a positive finite number; found ${describeRegistrationValue(requiredVramMB)}`,
       );
     }
   }
@@ -393,7 +393,7 @@ export class WorkerRegistry {
   private assertValidHeartbeatTimeout(timeoutMs: number): void {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new Error(
-        `timeoutMs must be a positive finite number; found ${String(timeoutMs)}`,
+        `timeoutMs must be a positive finite number; found ${describeRegistrationValue(timeoutMs)}`,
       );
     }
   }
@@ -402,7 +402,7 @@ export class WorkerRegistry {
   private assertValidSegmentIndex(segmentIndex: number): void {
     if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) {
       throw new Error(
-        `segmentIndex must be a non-negative safe integer; found ${String(segmentIndex)}`,
+        `segmentIndex must be a non-negative safe integer; found ${describeRegistrationValue(segmentIndex)}`,
       );
     }
   }
