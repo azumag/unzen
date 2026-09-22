@@ -19,7 +19,11 @@ const executor: DurableSegmentExecutor = {
   },
 };
 
-async function fixture(usePublicBoundary: boolean, maxCheckpointBytes = 2) {
+async function fixture(
+  usePublicBoundary: boolean,
+  maxCheckpointBytes = 2,
+  segmentIndex = 0,
+) {
   const repo = new InMemoryRepository();
   const manifest = createFixtureModelManifest({ totalSegments: 2 });
   const options = { allowFixtureManifest: true, maxCheckpointBytes } as const;
@@ -34,7 +38,7 @@ async function fixture(usePublicBoundary: boolean, maxCheckpointBytes = 2) {
     leaseId: generateLeaseId(),
     workerId: workerId('worker-a'),
     workerGeneration: generateWorkerGeneration(),
-    segmentIndex: 0,
+    segmentIndex,
   };
   const createdAt = Date.now();
   repo.createRequest({
@@ -42,7 +46,7 @@ async function fixture(usePublicBoundary: boolean, maxCheckpointBytes = 2) {
     prompt: 'oversized-checkpoint',
     stage: 'accepted',
     createdAt,
-    currentSegment: 0,
+    currentSegment: segmentIndex,
     totalSegments: 2,
     manifestDigest: manifest.manifestDigest,
     retryCount: 0,
@@ -98,6 +102,17 @@ function withCheckpointPayload(result: ExecutionResult, payload: Uint8Array): Ex
       ...result.checkpoint!,
       payload,
     },
+  };
+}
+
+function hostileThrownValue() {
+  return {
+    toString: vi.fn(() => {
+      throw new Error('hostile thrown value must not be stringified');
+    }),
+    [Symbol.toPrimitive]: vi.fn(() => {
+      throw new Error('hostile thrown value must not be coerced');
+    }),
   };
 }
 
@@ -171,6 +186,113 @@ describe.each([
 
     expect(digestSpy).not.toHaveBeenCalled();
     expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+  });
+});
+
+describe('direct durable core checkpoint shim runtime boundary', () => {
+  it('rejects a revoked result Proxy without leaking Array.isArray errors', async () => {
+    const f = await fixture(false, 64);
+    const revocable = Proxy.revocable(f.result, {});
+    revocable.revoke();
+
+    await expect(
+      f.coord.acceptResult(revocable.proxy, f.createdAt),
+    ).resolves.toEqual({
+      kind: 'protocol-violation',
+      message: 'execution result must be a non-null, non-array object',
+    });
+  });
+
+  it('rejects a revoked checkpoint Proxy with the existing checkpoint-object diagnostic', async () => {
+    const f = await fixture(false, 64);
+    const revocable = Proxy.revocable(f.result.checkpoint!, {});
+    revocable.revoke();
+
+    await expect(
+      f.coord.acceptResult({ ...f.result, checkpoint: revocable.proxy }, f.createdAt),
+    ).resolves.toEqual({
+      kind: 'checkpoint-rejected',
+      message: 'checkpoint envelope must be an object',
+    });
+
+    expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+  });
+
+  it('treats a throwing checkpoint getter as missing without coercing the thrown value', async () => {
+    const f = await fixture(false, 64);
+    const thrown = hostileThrownValue();
+    let reads = 0;
+    const result = { ...f.result };
+    Object.defineProperty(result, 'checkpoint', {
+      configurable: true,
+      get() {
+        reads += 1;
+        throw thrown;
+      },
+    });
+
+    await expect(
+      f.coord.acceptResult(result, f.createdAt),
+    ).resolves.toEqual({
+      kind: 'protocol-violation',
+      message: 'intermediate segment produced no checkpoint',
+    });
+
+    expect(reads).toBe(1);
+    expect(thrown.toString).not.toHaveBeenCalled();
+    expect(thrown[Symbol.toPrimitive]).not.toHaveBeenCalled();
+    expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+  });
+
+  it('rejects a throwing payload getter without coercing the thrown value', async () => {
+    const f = await fixture(false, 64);
+    const thrown = hostileThrownValue();
+    let reads = 0;
+    const checkpoint = { ...f.result.checkpoint! };
+    Object.defineProperty(checkpoint, 'payload', {
+      configurable: true,
+      get() {
+        reads += 1;
+        throw thrown;
+      },
+    });
+
+    await expect(
+      f.coord.acceptResult({ ...f.result, checkpoint }, f.createdAt),
+    ).resolves.toEqual({
+      kind: 'checkpoint-rejected',
+      message: 'checkpoint payload must be a Uint8Array',
+    });
+
+    expect(reads).toBe(1);
+    expect(thrown.toString).not.toHaveBeenCalled();
+    expect(thrown[Symbol.toPrimitive]).not.toHaveBeenCalled();
+    expect(f.repo.getCheckpoint(f.requestId, 0)).toBeUndefined();
+  });
+
+  it('does not inspect checkpoint accessors for a final result', async () => {
+    const f = await fixture(false, 64, 1);
+    let reads = 0;
+    const result: ExecutionResult = {
+      identity: f.result.identity,
+      processingTimeMs: 1,
+      output: { tokens: [7], text: 'done' },
+    };
+    Object.defineProperty(result, 'checkpoint', {
+      configurable: true,
+      get() {
+        reads += 1;
+        throw new Error('final result checkpoint must remain lazy');
+      },
+    });
+
+    await expect(f.coord.acceptResult(result, f.createdAt)).resolves.toEqual({
+      kind: 'accepted',
+      isFinal: true,
+      output: { tokens: [7], text: 'done' },
+    });
+
+    expect(reads).toBe(0);
   });
 });
 
