@@ -1,6 +1,15 @@
-import { UnzenCancelledError } from '@unzen/shared';
+import {
+  UnzenCancelledError,
+  UnzenNetworkError,
+  UnzenRuntimeError,
+} from '@unzen/shared';
 
 const UNKNOWN_MOONBIT_FAILURE = 'Unknown error';
+
+function isObjectLike(value: unknown): value is object | ((...args: never[]) => unknown) {
+  const kind = typeof value;
+  return value !== null && (kind === 'object' || kind === 'function');
+}
 
 /**
  * Format an arbitrary caught value without invoking object/function coercion.
@@ -35,14 +44,41 @@ export function describeMoonBitFailure(error: unknown): string {
   return typeof message === 'string' ? message : UNKNOWN_MOONBIT_FAILURE;
 }
 
-/** Bound cancellation identity checks against revoked/hostile Proxies. */
-export function isMoonBitCancelledFailure(error: unknown): boolean {
-  if (error === null) return false;
-  const kind = typeof error;
-  if (kind !== 'object' && kind !== 'function') return false;
+/** Bound ordinary Error identity checks against revoked/hostile Proxies. */
+export function isMoonBitErrorFailure(error: unknown): error is Error {
+  if (!isObjectLike(error)) return false;
+  try {
+    return error instanceof Error;
+  } catch {
+    return false;
+  }
+}
 
+/** Bound cancellation identity checks against revoked/hostile Proxies. */
+export function isMoonBitCancelledFailure(error: unknown): error is UnzenCancelledError {
+  if (!isObjectLike(error)) return false;
   try {
     return error instanceof UnzenCancelledError;
+  } catch {
+    return false;
+  }
+}
+
+/** Bound network-error identity checks against revoked/hostile Proxies. */
+export function isMoonBitNetworkFailure(error: unknown): error is UnzenNetworkError {
+  if (!isObjectLike(error)) return false;
+  try {
+    return error instanceof UnzenNetworkError;
+  } catch {
+    return false;
+  }
+}
+
+/** Bound runtime-error identity checks against revoked/hostile Proxies. */
+export function isMoonBitRuntimeFailure(error: unknown): error is UnzenRuntimeError {
+  if (!isObjectLike(error)) return false;
+  try {
+    return error instanceof UnzenRuntimeError;
   } catch {
     return false;
   }
