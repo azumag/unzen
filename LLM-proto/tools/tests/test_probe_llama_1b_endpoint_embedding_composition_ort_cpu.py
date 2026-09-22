@@ -8,6 +8,7 @@ from unittest import mock
 
 TOOLS=Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path: sys.path.insert(0,str(TOOLS))
+import multi_segment_onnx
 import probe_llama_1b_endpoint_embedding_composition_ort_cpu as probe
 
 class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
@@ -29,6 +30,12 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
         self.assertEqual(probe.REPORT_SCHEMA_VERSION,"1.0.0")
         self.assertEqual(probe.PINNED_ORT_VERSION,"1.22.0")
 
+    def test_source_graph_snapshot_uses_multi_segment_default_ceiling(self) -> None:
+        self.assertEqual(
+            probe.DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+            multi_segment_onnx.DEFAULT_SOURCE_GRAPH_MAX_BYTES,
+        )
+
     def test_source_graph_snapshot_returns_regular_file_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/"model.onnx"
@@ -39,6 +46,22 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
 
             self.assertEqual(resolved,path.resolve())
             self.assertEqual(observed,payload)
+
+    def test_source_graph_snapshot_rejects_invalid_ceiling_before_filesystem_work(self) -> None:
+        missing=Path("/definitely/not/a/real/unzen-model.onnx")
+        for malformed in (True,0,-1,1.5,"16"):
+            with self.subTest(max_bytes=malformed):
+                with self.assertRaisesRegex(ValueError,"max_bytes must be a positive integer"):
+                    probe._read_source_graph_snapshot(missing,max_bytes=malformed)  # type: ignore[arg-type]
+
+    def test_source_graph_snapshot_rejects_oversized_file_before_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"model.onnx"
+            path.write_bytes(b"x"*17)
+
+            with mock.patch.object(probe.os,"open",side_effect=AssertionError("open must not run")):
+                with self.assertRaisesRegex(RuntimeError,"source graph exceeds 16 bytes"):
+                    probe._read_source_graph_snapshot(path,max_bytes=16)
 
     def test_source_graph_snapshot_rejects_replacement_between_stat_and_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
