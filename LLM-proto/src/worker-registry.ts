@@ -277,7 +277,7 @@ export class WorkerRegistry {
       tierValue !== WorkerTier.TIER_3
     ) {
       throw new Error(
-        `worker tier must be 1, 2, or 3; found ${describeRegistrationValue(tierValue)}`,
+        `worker tier must be 1, 2, or 3; found ${describeRuntimeValue(tierValue)}`,
       );
     }
 
@@ -288,7 +288,7 @@ export class WorkerRegistry {
       vramMBValue <= 0
     ) {
       throw new Error(
-        `worker vramMB must be a positive finite number; found ${describeRegistrationValue(vramMBValue)}`,
+        `worker vramMB must be a positive finite number; found ${describeRuntimeValue(vramMBValue)}`,
       );
     }
 
@@ -375,7 +375,7 @@ export class WorkerRegistry {
   private assertValidAbsoluteTime(now: number, operation: string): void {
     if (!Number.isFinite(now) || now < 0) {
       throw new Error(
-        `${operation} now must be a non-negative finite number; found ${describeRegistrationValue(now)}`,
+        `${operation} now must be a non-negative finite number; found ${describeRuntimeValue(now)}`,
       );
     }
   }
@@ -384,7 +384,7 @@ export class WorkerRegistry {
   private assertValidVramRequirement(requiredVramMB: number): void {
     if (!Number.isFinite(requiredVramMB) || requiredVramMB <= 0) {
       throw new Error(
-        `requiredVramMB must be a positive finite number; found ${describeRegistrationValue(requiredVramMB)}`,
+        `requiredVramMB must be a positive finite number; found ${describeRuntimeValue(requiredVramMB)}`,
       );
     }
   }
@@ -393,7 +393,7 @@ export class WorkerRegistry {
   private assertValidHeartbeatTimeout(timeoutMs: number): void {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new Error(
-        `timeoutMs must be a positive finite number; found ${describeRegistrationValue(timeoutMs)}`,
+        `timeoutMs must be a positive finite number; found ${describeRuntimeValue(timeoutMs)}`,
       );
     }
   }
@@ -402,7 +402,7 @@ export class WorkerRegistry {
   private assertValidSegmentIndex(segmentIndex: number): void {
     if (!Number.isSafeInteger(segmentIndex) || segmentIndex < 0) {
       throw new Error(
-        `segmentIndex must be a non-negative safe integer; found ${describeRegistrationValue(segmentIndex)}`,
+        `segmentIndex must be a non-negative safe integer; found ${describeRuntimeValue(segmentIndex)}`,
       );
     }
   }
@@ -447,7 +447,7 @@ function readRegistrationField(
   }
 }
 
-function describeRegistrationValue(value: unknown): string {
+function describeRuntimeValue(value: unknown): string {
   if (value === null) return 'null';
   const kind = typeof value;
   if (kind === 'object' || kind === 'function') return 'unknown';
