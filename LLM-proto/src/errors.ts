@@ -127,8 +127,21 @@ export function classifyErrorCode(code: string): ErrorCode | undefined {
 
 /** Best-effort extraction of a taxonomy code from any thrown value. */
 export function errorCodeOf(error: unknown): ErrorCode | undefined {
-  if (error instanceof UnzenError) return error.code;
-  return undefined;
+  let isUnzenError = false;
+  try {
+    isUnzenError = error instanceof UnzenError;
+  } catch {
+    return undefined;
+  }
+  if (!isUnzenError) return undefined;
+
+  let code: unknown;
+  try {
+    code = (error as UnzenError).code;
+  } catch {
+    return undefined;
+  }
+  return typeof code === 'string' ? classifyErrorCode(code) : undefined;
 }
 
 /**
@@ -137,7 +150,8 @@ export function errorCodeOf(error: unknown): ErrorCode | undefined {
  * timeout-vs-cancel distinction is preserved at the Coordinator boundary.
  */
 export function classifyError(error: unknown): ErrorCode {
-  if (error instanceof UnzenError) return error.code;
+  const code = errorCodeOf(error);
+  if (code !== undefined) return code;
   if (isAbortLike(error)) return ErrorCode.UserCancellation;
   return ErrorCode.RuntimeTransient;
 }
@@ -145,12 +159,28 @@ export function classifyError(error: unknown): ErrorCode {
 /** True when the thrown value is an AbortError / aborted signal. */
 function isAbortLike(error: unknown): boolean {
   if (typeof error === 'object' && error !== null) {
-    const candidate = error as { name?: unknown; aborted?: unknown };
-    if (candidate.name === 'AbortError') return true;
+    try {
+      const candidate = error as { name?: unknown };
+      if (candidate.name === 'AbortError') return true;
+    } catch {
+      // Continue to the AbortSignal check. A hostile name accessor must not
+      // escape error classification or suppress a genuine signal check.
+    }
   }
-  // An AbortSignal itself can be thrown / passed.
-  if (error instanceof AbortSignal) return error.aborted;
-  return false;
+
+  let isAbortSignal = false;
+  try {
+    isAbortSignal = error instanceof AbortSignal;
+  } catch {
+    return false;
+  }
+  if (!isAbortSignal) return false;
+
+  try {
+    return (error as AbortSignal).aborted === true;
+  } catch {
+    return false;
+  }
 }
 
 // --- Policy helpers ---
