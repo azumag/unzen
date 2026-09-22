@@ -67,6 +67,31 @@ function hostileThrownValue(onCoercion: () => void): object {
   };
 }
 
+function hostileTierValue(kind: 'object' | 'function', onCoercion: () => void): object {
+  const value = kind === 'function' ? function hostileTier() {} : {};
+  Object.defineProperties(value, {
+    [Symbol.toPrimitive]: {
+      value() {
+        onCoercion();
+        throw new Error('must not coerce invalid tier');
+      },
+    },
+    valueOf: {
+      value() {
+        onCoercion();
+        throw new Error('must not valueOf invalid tier');
+      },
+    },
+    toString: {
+      value() {
+        onCoercion();
+        throw new Error('must not stringify invalid tier');
+      },
+    },
+  });
+  return value;
+}
+
 describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
   it.each([
     null,
@@ -225,6 +250,46 @@ describe('AdaptiveChunkDispatcher worker registration runtime envelope', () => {
     expect(report.assignments).toHaveLength(1);
     expect(report.assignments[0].tier).toBe(WorkerTier.TIER_2);
   });
+
+  it.each(['object', 'function'] as const)(
+    'rejects an invalid %s tier without caller-controlled coercion',
+    (kind) => {
+      const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+      let coercions = 0;
+      const tier = hostileTierValue(kind, () => { coercions += 1; });
+
+      expect(() => dispatcher.registerWorker({
+        id: `hostile-${kind}-tier-worker`,
+        tier: tier as unknown as WorkerTier,
+        telemetry: baseTelemetry,
+      })).toThrow(/worker tier must be one of 1, 2, or 3; received unknown/);
+      expect(coercions).toBe(0);
+      expect(() => dispatcher.run(`after-hostile-${kind}-tier`)).toThrow(
+        /No eligible adaptive worker/,
+      );
+    },
+  );
+
+  it.each([
+    [0, '0'],
+    [4, '4'],
+    ['invalid-tier', 'invalid-tier'],
+    [null, 'null'],
+    [undefined, 'undefined'],
+    [Symbol('tier'), 'Symbol(tier)'],
+  ] as const)(
+    'preserves useful primitive invalid tier diagnostic for %s',
+    (tier, expectedDiagnostic) => {
+      const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+      expect(() => dispatcher.registerWorker({
+        id: 'primitive-invalid-tier-worker',
+        tier: tier as unknown as WorkerTier,
+        telemetry: baseTelemetry,
+      })).toThrow(
+        `worker tier must be one of 1, 2, or 3; received ${expectedDiagnostic}`,
+      );
+    },
+  );
 
   it('rejects an invalid tier before replacing worker or manifest-backed residency state', () => {
     const { artifact, segment } = manifestBackedFixture();
