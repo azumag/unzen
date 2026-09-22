@@ -41,6 +41,23 @@ const malformedTelemetryCases: readonly [unknown, RegExp][] = [
   }, /cacheArtifacts\[0\]\.sha256 must be a string/],
 ];
 
+function hostileThrownValue(onCoercion: () => void): object {
+  return {
+    [Symbol.toPrimitive]() {
+      onCoercion();
+      throw new Error('must not coerce telemetry failure');
+    },
+    valueOf() {
+      onCoercion();
+      throw new Error('must not valueOf telemetry failure');
+    },
+    toString() {
+      onCoercion();
+      throw new Error('must not stringify telemetry failure');
+    },
+  };
+}
+
 describe('AdaptiveChunkDispatcher telemetry container validation', () => {
   it.each(malformedTelemetryCases)(
     'rejects malformed telemetry before registration state is created',
@@ -207,5 +224,153 @@ describe('AdaptiveChunkDispatcher telemetry container validation', () => {
     });
 
     expect(dispatcher.run('detached-cache-hit-membership').assignments[0].cacheHit).toBe(true);
+  });
+
+  it('fails closed on revoked telemetry and nested runtime containers', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+
+    const telemetry = Proxy.revocable({ ...baseTelemetry }, {});
+    telemetry.revoke();
+    expect(() => dispatcher.registerWorker({
+      id: 'revoked-telemetry-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: telemetry.proxy as WorkerTelemetry,
+    })).toThrow(/worker telemetry must be a non-null object/);
+
+    const cacheHits = Proxy.revocable([0], {});
+    cacheHits.revoke();
+    expect(() => dispatcher.registerWorker({
+      id: 'revoked-cache-hits-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: { ...baseTelemetry, cacheHits: cacheHits.proxy },
+    })).toThrow(/worker telemetry cacheHits must be an array/);
+
+    const cacheArtifacts = Proxy.revocable([] as CachedArtifactIdentity[], {});
+    cacheArtifacts.revoke();
+    expect(() => dispatcher.registerWorker({
+      id: 'revoked-cache-artifacts-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: { ...baseTelemetry, cacheArtifacts: cacheArtifacts.proxy },
+    })).toThrow(/worker telemetry cacheArtifacts must be an array when present/);
+
+    const identity = Proxy.revocable({
+      segmentIndex: 0,
+      sha256: 'a'.repeat(64),
+    }, {});
+    identity.revoke();
+    expect(() => dispatcher.registerWorker({
+      id: 'revoked-cache-artifact-identity-worker',
+      tier: WorkerTier.TIER_2,
+      telemetry: {
+        ...baseTelemetry,
+        cacheArtifacts: [identity.proxy as CachedArtifactIdentity],
+      },
+    })).toThrow(/worker telemetry cacheArtifacts\[0\] must be a non-null object/);
+  });
+
+  it.each([
+    ['cacheHits', /worker telemetry cacheHits could not be read/],
+    ['cacheArtifacts', /worker telemetry cacheArtifacts could not be read/],
+    ['uptimeMs', /worker telemetry uptimeMs could not be read/],
+    ['vramFreeMB', /worker telemetry vramFreeMB could not be read/],
+    ['gpuBusyRatio', /worker telemetry gpuBusyRatio could not be read/],
+    ['cpuBusyRatio', /worker telemetry cpuBusyRatio could not be read/],
+    ['tokensPerSecond', /worker telemetry tokensPerSecond could not be read/],
+    ['checkpointBytesPerSecond', /worker telemetry checkpointBytesPerSecond could not be read/],
+    ['failureRate', /worker telemetry failureRate could not be read/],
+    ['heartbeatJitterMs', /worker telemetry heartbeatJitterMs could not be read/],
+  ] as const)(
+    'bounds a throwing telemetry %s accessor without coercion',
+    (field, expectedError) => {
+      const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+      let coercions = 0;
+      const thrown = hostileThrownValue(() => { coercions += 1; });
+      const telemetry = { ...baseTelemetry } as WorkerTelemetry;
+      Object.defineProperty(telemetry, field, {
+        configurable: true,
+        get() {
+          throw thrown;
+        },
+      });
+
+      expect(() => dispatcher.registerWorker({
+        id: `throwing-${field}-worker`,
+        tier: WorkerTier.TIER_2,
+        telemetry,
+      })).toThrow(expectedError);
+      expect(coercions).toBe(0);
+    },
+  );
+
+  it.each([
+    ['segmentIndex', /worker telemetry cacheArtifacts\[0\]\.segmentIndex could not be read/],
+    ['sha256', /worker telemetry cacheArtifacts\[0\]\.sha256 could not be read/],
+  ] as const)(
+    'bounds a throwing cache-artifact %s accessor without coercion',
+    (field, expectedError) => {
+      const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+      let coercions = 0;
+      const thrown = hostileThrownValue(() => { coercions += 1; });
+      const identity: Record<string, unknown> = {
+        segmentIndex: 0,
+        sha256: 'a'.repeat(64),
+      };
+      Object.defineProperty(identity, field, {
+        configurable: true,
+        get() {
+          throw thrown;
+        },
+      });
+
+      expect(() => dispatcher.registerWorker({
+        id: `throwing-cache-artifact-${field}-worker`,
+        tier: WorkerTier.TIER_2,
+        telemetry: {
+          ...baseTelemetry,
+          cacheArtifacts: [identity as unknown as CachedArtifactIdentity],
+        },
+      })).toThrow(expectedError);
+      expect(coercions).toBe(0);
+    },
+  );
+
+  it('preserves last-known-good state after revoked heartbeat and re-registration telemetry', () => {
+    const dispatcher = new AdaptiveChunkDispatcher({ segments: makeSegments(1) });
+    const worker = workerId('stable-revoked-telemetry-worker');
+    dispatcher.registerWorker({ id: worker, tier: WorkerTier.TIER_2, telemetry: baseTelemetry });
+
+    for (const operation of ['heartbeat', 'registration'] as const) {
+      const cacheHits = Proxy.revocable([0], {});
+      cacheHits.revoke();
+      const rejectedTelemetry = {
+        ...baseTelemetry,
+        cacheHits: cacheHits.proxy,
+        gpuBusyRatio: 1,
+        cpuBusyRatio: 1,
+      } as WorkerTelemetry;
+
+      if (operation === 'heartbeat') {
+        expect(() => dispatcher.updateHeartbeat(worker, rejectedTelemetry)).toThrow(
+          /worker telemetry cacheHits must be an array/,
+        );
+      } else {
+        expect(() => dispatcher.registerWorker({
+          id: worker,
+          tier: WorkerTier.TIER_3,
+          telemetry: rejectedTelemetry,
+        })).toThrow(/worker telemetry cacheHits must be an array/);
+      }
+
+      const report = dispatcher.run(`after-revoked-${operation}`);
+      expect(report.assignments[0]).toMatchObject({
+        workerId: worker,
+        tier: WorkerTier.TIER_2,
+        cacheHit: true,
+        loadReadings: {
+          gpuBusyRatio: baseTelemetry.gpuBusyRatio,
+          cpuBusyRatio: baseTelemetry.cpuBusyRatio,
+        },
+      });
+    }
   });
 });
