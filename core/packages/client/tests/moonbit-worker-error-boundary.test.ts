@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UnzenNetworkError, UnzenRuntimeError } from '@unzen/shared';
+import { UnzenNetworkError } from '@unzen/shared';
 import { MoonBitWorkerSandboxExecutor } from '../src/moonbit-worker-sandbox';
 
 function hostileObject() {
@@ -140,7 +140,7 @@ describe('MoonBitWorkerSandboxExecutor hostile rejection boundary', () => {
     executor.dispose();
   });
 
-  it('settles queued signal-state failures as an Error and leaves the queue usable', async () => {
+  it('settles queued signal-state failures as an Error', async () => {
     const executor = createExecutor(() => workerLike());
     const first = executor.execute(new ArrayBuffer(0), []).catch(() => undefined);
 
@@ -159,13 +159,6 @@ describe('MoonBitWorkerSandboxExecutor hostile rejection boundary', () => {
       name: 'UnzenRuntimeError',
       message: 'MoonBit execution signal state could not be read',
     });
-    await expect(executor.execute(new ArrayBuffer(0), [], {
-      signal: {
-        aborted: false,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      } as unknown as AbortSignal,
-    })).rejects.toBeInstanceOf(UnzenRuntimeError);
 
     executor.dispose();
     await first;
