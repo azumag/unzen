@@ -38,6 +38,50 @@ import type { ExecuteOptions, SandboxExecutor } from './sandbox-executor';
 export type { SandboxExecutor } from './sandbox-executor';
 
 /**
+ * Preserve known client control errors without trusting arbitrary catch values
+ * to support prototype traversal. A revoked Proxy can throw from instanceof.
+ */
+function isSandboxControlError(
+  error: unknown,
+): error is UnzenFunctionError | UnzenCancelledError {
+  try {
+    return error instanceof UnzenFunctionError || error instanceof UnzenCancelledError;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build a useful failure message without invoking object/function conversion
+ * hooks. Error identity and message reads are bounded for hostile Proxies.
+ */
+function describeSandboxFailure(error: unknown): string {
+  if (error === null) return 'null';
+
+  const kind = typeof error;
+  if (kind !== 'object' && kind !== 'function') {
+    return String(error);
+  }
+  if (kind === 'function') return 'Unknown error';
+
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    return 'Unknown error';
+  }
+  if (!isError) return 'Unknown error';
+
+  let message: unknown;
+  try {
+    message = (error as Error).message;
+  } catch {
+    return 'Unknown error';
+  }
+  return typeof message === 'string' ? message : 'Unknown error';
+}
+
+/**
  * MockSandboxExecutor - Node.js vm-based implementation for testing
  *
  * WARNING: This is NOT secure and should ONLY be used for testing.
@@ -91,7 +135,7 @@ export class MockSandboxExecutor implements SandboxExecutor {
     try {
       executionOptions = snapshotQuickJsExecutionOptions(options);
     } catch (error) {
-      throw new UnzenFunctionError(error instanceof Error ? error.message : String(error));
+      throw new UnzenFunctionError(describeSandboxFailure(error));
     }
     // Honour caller cancellation even for the synchronous mock executor:
     // a request that was already aborted must not start executing.
@@ -137,14 +181,14 @@ export class MockSandboxExecutor implements SandboxExecutor {
       return result;
     } catch (error) {
       // Wrap all errors as UnzenFunctionError
-      // Rationale: Execution errors are user code errors, not runtime errors
-      if (error instanceof UnzenFunctionError || error instanceof UnzenCancelledError) {
+      // Rationale: Execution errors are user code errors, not runtime errors.
+      // Bound the identity check because a revoked Proxy can throw from
+      // prototype traversal during instanceof.
+      if (isSandboxControlError(error)) {
         throw error;
       }
 
-      throw new UnzenFunctionError(
-        error instanceof Error ? error.message : String(error)
-      );
+      throw new UnzenFunctionError(describeSandboxFailure(error));
     }
   }
 
