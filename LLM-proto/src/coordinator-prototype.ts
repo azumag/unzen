@@ -80,6 +80,7 @@ interface WorkerLossSelectorSnapshot {
 
 const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
+const UNKNOWN_COORDINATOR_FAILURE = 'Unknown error';
 
 export function createDefaultCoordinatorPrototypeManifest(): CoordinatorPrototypeManifest {
   const segments = buildCoordinatorPrototypeSegments(6);
@@ -131,6 +132,9 @@ export function runCoordinatorPrototype(
   manifest: CoordinatorPrototypeManifest,
 ): CoordinatorPrototypeReport {
   const workerLossSelector = snapshotWorkerLossSelector(manifest);
+  // requestId is caller-owned input. Capture it once so dispatch, fallback
+  // reporting, and the returned report cannot observe different accessor values.
+  const requestId = manifest.requestId;
   const coordinatorUrl = manifest.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
   const cdnUrl = manifest.cdnUrl ?? DEFAULT_CDN_URL;
   const eligibility = computeWorkerEligibility(manifest);
@@ -158,11 +162,11 @@ export function runCoordinatorPrototype(
   let dispatcherReport: AdaptiveDispatcherRunReport;
   let failureReason: string | undefined;
   try {
-    dispatcherReport = dispatcher.run(manifest.requestId);
+    dispatcherReport = dispatcher.run(requestId);
   } catch (error) {
-    failureReason = error instanceof Error ? error.message : String(error);
+    failureReason = formatCoordinatorFailureReason(error);
     dispatcherReport = {
-      requestId: manifest.requestId,
+      requestId,
       assignments: [],
       skippedWorkers: [],
       transport: {
@@ -189,7 +193,7 @@ export function runCoordinatorPrototype(
   const completed = finalSegment === manifest.segments.length - 1 && !failureReason;
 
   return {
-    requestId: manifest.requestId,
+    requestId,
     status: completed ? 'pass' : 'fail',
     requestLifecycle: {
       accepted: true,
@@ -253,6 +257,39 @@ function snapshotWorkerLossSelector(
     lostWorkerId,
     lostAfterAssignmentIndex,
   });
+}
+
+function formatCoordinatorFailureReason(error: unknown): string {
+  const valueType = typeof error;
+  if (
+    error === null ||
+    valueType === 'undefined' ||
+    valueType === 'string' ||
+    valueType === 'number' ||
+    valueType === 'boolean' ||
+    valueType === 'bigint' ||
+    valueType === 'symbol'
+  ) {
+    return String(error);
+  }
+
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    return UNKNOWN_COORDINATOR_FAILURE;
+  }
+  if (!isError) {
+    return UNKNOWN_COORDINATOR_FAILURE;
+  }
+
+  let message: unknown;
+  try {
+    message = (error as Error).message;
+  } catch {
+    return UNKNOWN_COORDINATOR_FAILURE;
+  }
+  return typeof message === 'string' ? message : UNKNOWN_COORDINATOR_FAILURE;
 }
 
 function prototypeWorker(
