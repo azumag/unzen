@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AdaptiveChunkDispatcher } from '../src/adaptive-chunk-dispatcher.js';
 import {
   createDefaultCoordinatorPrototypeManifest,
   runCoordinatorPrototype,
 } from '../src/coordinator-prototype.js';
 
+const originalDispatcherRun = AdaptiveChunkDispatcher.prototype.run;
+
 describe('Coordinator prototype failure-reporting boundary', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    AdaptiveChunkDispatcher.prototype.run = originalDispatcherRun;
   });
 
   it('snapshots requestId once for dispatch, fallback reporting, and the returned report', () => {
@@ -20,10 +22,10 @@ describe('Coordinator prototype failure-reporting boundary', () => {
         return requestIdReads === 1 ? 'stable-request-id' : 'mutated-request-id';
       },
     });
-    vi.spyOn(AdaptiveChunkDispatcher.prototype, 'run').mockImplementation((requestId) => {
+    AdaptiveChunkDispatcher.prototype.run = function (requestId: string) {
       expect(requestId).toBe('stable-request-id');
       throw new Error('dispatcher failed');
-    });
+    };
 
     const report = runCoordinatorPrototype(manifest);
 
@@ -37,9 +39,9 @@ describe('Coordinator prototype failure-reporting boundary', () => {
     const revocable = Proxy.revocable({}, {});
     const failure = revocable.proxy;
     revocable.revoke();
-    vi.spyOn(AdaptiveChunkDispatcher.prototype, 'run').mockImplementation(() => {
+    AdaptiveChunkDispatcher.prototype.run = function () {
       throw failure;
-    });
+    };
 
     const report = runCoordinatorPrototype(createDefaultCoordinatorPrototypeManifest());
 
@@ -64,9 +66,9 @@ describe('Coordinator prototype failure-reporting boundary', () => {
         throw new Error('toString must not run');
       },
     };
-    vi.spyOn(AdaptiveChunkDispatcher.prototype, 'run').mockImplementation(() => {
+    AdaptiveChunkDispatcher.prototype.run = function () {
       throw failure;
-    });
+    };
 
     const report = runCoordinatorPrototype(createDefaultCoordinatorPrototypeManifest());
 
@@ -91,9 +93,9 @@ describe('Coordinator prototype failure-reporting boundary', () => {
         return Reflect.get(target, property, receiver);
       },
     });
-    vi.spyOn(AdaptiveChunkDispatcher.prototype, 'run').mockImplementation(() => {
+    AdaptiveChunkDispatcher.prototype.run = function () {
       throw failure;
-    });
+    };
 
     const report = runCoordinatorPrototype(createDefaultCoordinatorPrototypeManifest());
 
@@ -103,9 +105,9 @@ describe('Coordinator prototype failure-reporting boundary', () => {
   });
 
   it('preserves an ordinary Error message', () => {
-    vi.spyOn(AdaptiveChunkDispatcher.prototype, 'run').mockImplementation(() => {
+    AdaptiveChunkDispatcher.prototype.run = function () {
       throw new Error('ordinary dispatcher failure');
-    });
+    };
 
     const report = runCoordinatorPrototype(createDefaultCoordinatorPrototypeManifest());
 
@@ -119,9 +121,9 @@ describe('Coordinator prototype failure-reporting boundary', () => {
     [null, 'null'],
     [undefined, 'undefined'],
   ] as const)('preserves safe primitive failure diagnostics for %p', (failure, expected) => {
-    vi.spyOn(AdaptiveChunkDispatcher.prototype, 'run').mockImplementation(() => {
+    AdaptiveChunkDispatcher.prototype.run = function () {
       throw failure;
-    });
+    };
 
     const report = runCoordinatorPrototype(createDefaultCoordinatorPrototypeManifest());
 
