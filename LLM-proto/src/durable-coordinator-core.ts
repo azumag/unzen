@@ -53,9 +53,18 @@ function stableUint8ArrayView(value: unknown): unknown {
 }
 
 function checkpointWithStablePayload(checkpoint: unknown): unknown {
-  if (typeof checkpoint !== 'object' || checkpoint === null || Array.isArray(checkpoint)) {
-    return checkpoint;
+  if (typeof checkpoint !== 'object' || checkpoint === null) return checkpoint;
+
+  let checkpointIsArray: boolean;
+  try {
+    checkpointIsArray = Array.isArray(checkpoint);
+  } catch {
+    // A revoked checkpoint Proxy cannot safely cross into the implementation's
+    // own Array.isArray/property checks. Preserve the existing malformed-object
+    // path with a stable sentinel instead of leaking the native TypeError.
+    return null;
   }
+  if (checkpointIsArray) return checkpoint;
 
   let payloadCaptured = false;
   let payloadValue: unknown;
@@ -65,7 +74,15 @@ function checkpointWithStablePayload(checkpoint: unknown): unknown {
     get(source, property) {
       if (property !== 'payload') return Reflect.get(source, property, source);
       if (!payloadCaptured) {
-        payloadValue = stableUint8ArrayView(Reflect.get(source, property, source));
+        let rawPayload: unknown;
+        try {
+          rawPayload = Reflect.get(source, property, source);
+        } catch {
+          // Keep caller-thrown values opaque and feed a stable malformed value
+          // into the existing Uint8Array rejection path.
+          rawPayload = invalidCheckpointPayload;
+        }
+        payloadValue = stableUint8ArrayView(rawPayload);
         payloadCaptured = true;
       }
       return payloadValue;
@@ -74,7 +91,17 @@ function checkpointWithStablePayload(checkpoint: unknown): unknown {
 }
 
 function resultWithStableCheckpointPayload(result: ExecutionResult): ExecutionResult {
-  if (typeof result !== 'object' || result === null || Array.isArray(result)) return result;
+  if (typeof result !== 'object' || result === null) return result;
+
+  let resultIsArray: boolean;
+  try {
+    resultIsArray = Array.isArray(result);
+  } catch {
+    // The implementation's top-level result validator already owns the public
+    // malformed-result diagnostic; replace only the unsafe revoked container.
+    return null as unknown as ExecutionResult;
+  }
+  if (resultIsArray) return result;
 
   let checkpointCaptured = false;
   let checkpointValue: unknown;
@@ -84,7 +111,15 @@ function resultWithStableCheckpointPayload(result: ExecutionResult): ExecutionRe
     get(source, property) {
       if (property !== 'checkpoint') return Reflect.get(source, property, source);
       if (!checkpointCaptured) {
-        checkpointValue = checkpointWithStablePayload(Reflect.get(source, property, source));
+        let rawCheckpoint: unknown;
+        try {
+          rawCheckpoint = Reflect.get(source, property, source);
+        } catch {
+          // An inaccessible checkpoint is equivalent to a missing checkpoint
+          // for the implementation's existing intermediate-result taxonomy.
+          rawCheckpoint = undefined;
+        }
+        checkpointValue = checkpointWithStablePayload(rawCheckpoint);
         checkpointCaptured = true;
       }
       return checkpointValue;
@@ -98,7 +133,9 @@ function resultWithStableCheckpointPayload(result: ExecutionResult): ExecutionRe
  * The implementation keeps the authoritative ordering: identity/lease/final
  * branch first, then checkpoint byte ceiling, then ownership copy/digest. This
  * shim only canonicalizes a genuine Uint8Array to a zero-copy base view at the
- * exact moment the intermediate-checkpoint path first reads it.
+ * exact moment the intermediate-checkpoint path first reads it, while bounding
+ * the result/checkpoint shape probes and lazy checkpoint/payload reads needed
+ * to reach that canonicalization safely.
  */
 export class DurableCoordinator extends DurableCoordinatorImplementation {
   override async acceptResult(
