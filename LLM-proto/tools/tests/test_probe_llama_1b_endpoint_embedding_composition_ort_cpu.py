@@ -19,6 +19,7 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
                 "tileIndex": index,
                 "startRow": index*tile_rows,
                 "endRowExclusive": (index+1)*tile_rows,
+                "physicalSlices": [{"physicalArtifactIndex": index//2}],
             }
             for index in range(8)
         ]
@@ -36,9 +37,10 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
         routed=probe._route_probe_tokens(self._execution_tiles())
 
         self.assertEqual(len(routed),8)
-        positions=[position for _,_,_,_,tile_positions in routed for position in tile_positions]
+        positions=[position for _,_,_,_,_,tile_positions in routed for position in tile_positions]
         self.assertEqual(sorted(positions),list(range(len(probe.TOKEN_IDS))))
         self.assertEqual(len(positions),len(set(positions)))
+        self.assertEqual([physical for _,_,_,_,physical,_ in routed],[0,0,1,1,2,2,3,3])
 
     def test_token_routing_preflight_rejects_gap(self) -> None:
         tiles=self._execution_tiles()
@@ -74,6 +76,40 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
                 tiles[0]["endRowExclusive"]=end
                 with self.assertRaisesRegex(RuntimeError,"tile row range invalid"):
                     probe._route_probe_tokens(tiles)
+
+    def test_token_routing_preflight_rejects_invalid_physical_slices(self) -> None:
+        malformed=(
+            None,
+            [],
+            [{"physicalArtifactIndex":0},{"physicalArtifactIndex":1}],
+            ["not-an-object"],
+        )
+        for slices in malformed:
+            with self.subTest(slices=slices):
+                tiles=self._execution_tiles()
+                tiles[0]["physicalSlices"]=slices
+                with self.assertRaisesRegex(RuntimeError,"preferred tile slice drift"):
+                    probe._route_probe_tokens(tiles)
+
+    def test_token_routing_preflight_rejects_invalid_physical_artifact_indexes(self) -> None:
+        malformed=(True,-1,4,1.5,"0",None)
+        for index in malformed:
+            with self.subTest(index=index):
+                tiles=self._execution_tiles()
+                slices=tiles[0]["physicalSlices"]
+                self.assertIsInstance(slices,list)
+                slices[0]["physicalArtifactIndex"]=index  # type: ignore[index]
+                with self.assertRaisesRegex(RuntimeError,"physical artifact index drift"):
+                    probe._route_probe_tokens(tiles)
+
+    def test_token_routing_preflight_rejects_invalid_physical_artifact_count(self) -> None:
+        for count in (True,0,-1,1.5,"4"):
+            with self.subTest(count=count):
+                with self.assertRaisesRegex(RuntimeError,"physical artifact count invalid"):
+                    probe._route_probe_tokens(
+                        self._execution_tiles(),
+                        physical_artifact_count=count,  # type: ignore[arg-type]
+                    )
 
     def test_source_weight_geometry_is_exact_float32_vocab_matrix(self) -> None:
         self.assertEqual(probe.SOURCE_WEIGHT_BYTES, probe.VOCAB_ROWS*probe.HIDDEN_SIZE*probe.FLOAT32_BYTES)
