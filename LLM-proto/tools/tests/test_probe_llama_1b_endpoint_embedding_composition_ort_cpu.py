@@ -24,6 +24,27 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
             for index in range(8)
         ]
 
+    def _physical_artifacts(self) -> list[dict[str,object]]:
+        return [
+            {"index":index,"byteLength":262_668_288}
+            for index in range(4)
+        ]
+
+    def _layout(self, *, physical: list[object] | None = None) -> dict[str,object]:
+        return {
+            "kind": probe.layout_probe.REPORT_KIND,
+            "schemaVersion": probe.layout_probe.REPORT_SCHEMA_VERSION,
+            "status": "pass",
+            "decisionStatus": "diagnostic-only",
+            "candidates": [
+                {
+                    "physicalArtifactCount": 4,
+                    "executionTiles": self._execution_tiles(),
+                    "physicalArtifacts": self._physical_artifacts() if physical is None else physical,
+                }
+            ],
+        }
+
     def test_token_ids_cover_every_execution_tile_and_boundaries(self) -> None:
         self.assertEqual(probe.TOKEN_IDS[0],0)
         self.assertEqual(probe.TOKEN_IDS[-1],probe.VOCAB_ROWS-1)
@@ -32,6 +53,68 @@ class EndpointEmbeddingCompositionContractTest(unittest.TestCase):
             start=tile*tile_rows; end=(tile+1)*tile_rows-1
             self.assertIn(start,probe.TOKEN_IDS)
             self.assertIn(end,probe.TOKEN_IDS)
+
+    def test_physical_artifact_preflight_snapshots_indexed_byte_lengths(self) -> None:
+        self.assertEqual(
+            probe._snapshot_physical_artifacts(self._physical_artifacts()),
+            {0:262_668_288,1:262_668_288,2:262_668_288,3:262_668_288},
+        )
+
+    def test_physical_artifact_preflight_rejects_non_object_entry(self) -> None:
+        physical: list[object]=self._physical_artifacts()
+        physical[0]="not-an-object"
+        with self.assertRaisesRegex(RuntimeError,"physical artifact must be object"):
+            probe._snapshot_physical_artifacts(physical)
+
+    def test_physical_artifact_preflight_rejects_invalid_indexes(self) -> None:
+        malformed=(None,True,-1,4,1.5,"0")
+        for index in malformed:
+            with self.subTest(index=index):
+                physical=self._physical_artifacts()
+                physical[0]["index"]=index
+                with self.assertRaisesRegex(RuntimeError,"physical artifact index invalid"):
+                    probe._snapshot_physical_artifacts(physical)
+
+    def test_physical_artifact_preflight_rejects_duplicate_index(self) -> None:
+        physical=self._physical_artifacts()
+        physical[1]["index"]=0
+        with self.assertRaisesRegex(RuntimeError,"duplicate physical artifact index 0"):
+            probe._snapshot_physical_artifacts(physical)
+
+    def test_physical_artifact_preflight_rejects_invalid_byte_lengths(self) -> None:
+        malformed=(None,True,0,-1,1.5,"262668288")
+        for byte_length in malformed:
+            with self.subTest(byte_length=byte_length):
+                physical=self._physical_artifacts()
+                physical[0]["byteLength"]=byte_length
+                with self.assertRaisesRegex(RuntimeError,"physical artifact 0 byte length invalid"):
+                    probe._snapshot_physical_artifacts(physical)
+
+    def test_physical_artifact_preflight_rejects_count_drift(self) -> None:
+        with self.assertRaisesRegex(RuntimeError,"physical artifact count drift"):
+            probe._snapshot_physical_artifacts(self._physical_artifacts()[:-1])
+        for count in (True,0,-1,1.5,"4"):
+            with self.subTest(count=count):
+                with self.assertRaisesRegex(RuntimeError,"physical artifact count invalid"):
+                    probe._snapshot_physical_artifacts(
+                        self._physical_artifacts(),
+                        expected_count=count,  # type: ignore[arg-type]
+                    )
+
+    def test_build_report_rejects_physical_descriptor_before_source_work(self) -> None:
+        physical=self._physical_artifacts()
+        physical[0]["index"]="0"
+        with (
+            mock.patch.object(probe.layout_probe,"build_report",return_value=self._layout(physical=physical)),
+            mock.patch.object(
+                probe,
+                "_source_embedding_contract",
+                side_effect=AssertionError("source work must not run"),
+            ) as source_contract,
+        ):
+            with self.assertRaisesRegex(RuntimeError,"physical artifact index invalid"):
+                probe.build_report(Path("unused-model.onnx"),Path("unused-payloads"))
+        source_contract.assert_not_called()
 
     def test_token_routing_preflight_covers_every_probe_position_once(self) -> None:
         routed=probe._route_probe_tokens(self._execution_tiles())
