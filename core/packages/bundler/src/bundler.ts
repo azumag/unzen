@@ -159,6 +159,24 @@ function isWithinDirectory(filePath: string, directory: string): boolean {
   return filePath === directory || filePath.startsWith(`${directory}/`);
 }
 
+/** Classify caller-owned array containers without leaking revoked-Proxy errors. */
+function isArrayContainer(value: unknown, errorMessage: string): boolean {
+  try {
+    return Array.isArray(value);
+  } catch {
+    throw new TypeError(errorMessage);
+  }
+}
+
+/** Render invalid primitive config values without invoking caller-owned coercion hooks. */
+function describeInvalidConfigValue(value: unknown): string {
+  if (value === null) return 'null';
+  const kind = typeof value;
+  if (kind === 'object') return '[object]';
+  if (kind === 'function') return '[function]';
+  return String(value);
+}
+
 export function normalizeMaxBundleSize(value: unknown): number {
   if (value === undefined) return DEFAULT_MAX_BUNDLE_SIZE_BYTES;
   if (
@@ -168,7 +186,7 @@ export function normalizeMaxBundleSize(value: unknown): number {
     || value > MAX_FUNCTION_PAYLOAD_BYTES
   ) {
     throw new Error(
-      `Invalid maxBundleSize ${String(value)}: `
+      `Invalid maxBundleSize ${describeInvalidConfigValue(value)}: `
       + 'maxBundleSize must be a positive integer no greater than '
       + `${MAX_FUNCTION_PAYLOAD_BYTES}`,
     );
@@ -178,13 +196,14 @@ export function normalizeMaxBundleSize(value: unknown): number {
 
 /** Validate and copy a whitelist without invoking its array iterator. */
 export function snapshotAllowedModules(value: unknown): string[] {
-  if (!Array.isArray(value)) {
+  if (!isArrayContainer(value, 'allowedModules could not be read')) {
     throw new TypeError('allowedModules must be an array');
   }
 
+  const allowedModules = value as unknown[];
   let patternCount: unknown;
   try {
-    patternCount = value.length;
+    patternCount = allowedModules.length;
   } catch {
     throw new TypeError('allowedModules could not be read');
   }
@@ -200,26 +219,24 @@ export function snapshotAllowedModules(value: unknown): string[] {
   }
 
   const snapshot = new Array<string>(patternCount);
-  try {
-    for (let index = 0; index < patternCount; index += 1) {
-      const pattern = value[index];
-      if (
-        typeof pattern !== 'string'
-        || pattern.length === 0
-        || Buffer.byteLength(pattern, 'utf8') > MAX_ALLOWED_MODULE_PATTERN_BYTES
-      ) {
-        throw new TypeError(
-          `allowedModules[${index}] must be a non-empty string no larger than `
-          + `${MAX_ALLOWED_MODULE_PATTERN_BYTES} bytes`,
-        );
-      }
-      snapshot[index] = pattern;
+  for (let index = 0; index < patternCount; index += 1) {
+    let pattern: unknown;
+    try {
+      pattern = allowedModules[index];
+    } catch {
+      throw new TypeError('allowedModules could not be read');
     }
-  } catch (error) {
-    if (error instanceof TypeError && error.message.startsWith('allowedModules[')) {
-      throw error;
+    if (
+      typeof pattern !== 'string'
+      || pattern.length === 0
+      || Buffer.byteLength(pattern, 'utf8') > MAX_ALLOWED_MODULE_PATTERN_BYTES
+    ) {
+      throw new TypeError(
+        `allowedModules[${index}] must be a non-empty string no larger than `
+        + `${MAX_ALLOWED_MODULE_PATTERN_BYTES} bytes`,
+      );
     }
-    throw new TypeError('allowedModules could not be read');
+    snapshot[index] = pattern;
   }
   return snapshot;
 }
@@ -232,7 +249,11 @@ interface BundleOptionsSnapshot {
 }
 
 function snapshotBundleOptions(value: unknown): BundleOptionsSnapshot {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== 'object'
+    || value === null
+    || isArrayContainer(value, 'Bundle options must be an object')
+  ) {
     throw new TypeError('Bundle options must be an object');
   }
 
