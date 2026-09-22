@@ -87,7 +87,13 @@ function snapshotExecution(
   if (code.trim().length === 0) {
     throw new UnzenFunctionError('QuickJS code must be a non-empty string');
   }
-  if (!Array.isArray(args)) {
+  let argsIsArray: boolean;
+  try {
+    argsIsArray = Array.isArray(args);
+  } catch {
+    throw new UnzenFunctionError('QuickJS arguments must be an array');
+  }
+  if (!argsIsArray) {
     throw new UnzenFunctionError('QuickJS arguments must be an array');
   }
 
