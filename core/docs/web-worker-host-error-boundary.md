@@ -13,7 +13,7 @@ The executor keeps the existing public taxonomy:
 
 A caller-provided `createWorker` factory is wrapped at the shared worker-executor boundary. The wrapper snapshots the minimal `postMessage` / `terminate` method surface once, forwards `onmessage` / `onerror` assignment to the underlying Worker, and bounds failures from factory invocation, handler configuration, `postMessage`, and termination.
 
-Ordinary `Error` instances with a safely readable string `message` keep their identity. Primitive thrown values retain their useful textual diagnostic. Other object/function values, revoked Proxies, throwing prototype checks, and throwing/non-string `message` accessors collapse to an owned `Error('Unknown error')`. Diagnostic normalization never calls caller-owned `Symbol.toPrimitive`, `valueOf`, or `toString`.
+Ordinary `Error` instances with a safely readable string `message` contribute that message to a new executor-owned `Error`; the caller-owned error object itself is never propagated across the boundary. Primitive thrown values retain their useful textual diagnostic. Other object/function values, revoked Proxies, throwing prototype checks, and throwing/non-string `message` accessors collapse to an owned `Error('Unknown error')`. Diagnostic normalization never calls caller-owned `Symbol.toPrimitive`, `valueOf`, or `toString`.
 
 The default browser `new Worker(...)` factory is not wrapped; browser-native failures already enter the executor as ordinary platform exceptions. The bounded facade is specifically for the injectable caller-owned Worker boundary.
 
