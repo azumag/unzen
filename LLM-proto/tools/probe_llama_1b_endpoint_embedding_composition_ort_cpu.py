@@ -249,7 +249,9 @@ def _route_probe_tokens(
         if ti != tile_position:
             raise RuntimeError("execution tile index must match canonical list position")
         if start != expected_start:
-            raise RuntimeError("execution tile ranges must be ordered and contiguous")
+            raise RuntimeError(
+                "execution tile ranges must be ordered and contiguous before checking they cover every probe token exactly once"
+            )
         expected_start=end
         slices=tile.get("physicalSlices")
         if not isinstance(slices,list) or len(slices)!=1 or not isinstance(slices[0],dict):
