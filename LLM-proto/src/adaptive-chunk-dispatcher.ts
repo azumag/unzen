@@ -1032,46 +1032,75 @@ function validateAdaptiveSegmentConfig(value: unknown, arrayIndex: number): Segm
 }
 
 function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
-  if (typeof telemetry !== 'object' || telemetry === null || Array.isArray(telemetry)) {
+  if (!isNonNullNonArrayObject(telemetry)) {
     throw new Error('worker telemetry must be a non-null object');
   }
 
   const runtimeTelemetry = telemetry as unknown as Record<string, unknown>;
-  const cacheHitsInput = runtimeTelemetry.cacheHits;
-  if (!Array.isArray(cacheHitsInput)) {
+  const cacheHitsInput = readRuntimeField(
+    runtimeTelemetry,
+    'cacheHits',
+    'worker telemetry cacheHits could not be read',
+  );
+  if (!isArrayWithoutThrow(cacheHitsInput)) {
     throw new Error('worker telemetry cacheHits must be an array');
   }
-  const cacheHitCount = cacheHitsInput.length;
+  const cacheHitCount = readArrayLength(
+    cacheHitsInput,
+    'worker telemetry cacheHits length could not be read',
+  );
   const cacheHits: number[] = new Array(cacheHitCount);
   for (let index = 0; index < cacheHitCount; index++) {
-    cacheHits[index] = cacheHitsInput[index] as number;
+    cacheHits[index] = readArrayIndex(
+      cacheHitsInput,
+      index,
+      `worker telemetry cacheHits[${index}] could not be read`,
+    ) as number;
   }
 
-  const cacheArtifactsInput = runtimeTelemetry.cacheArtifacts;
+  const cacheArtifactsInput = readRuntimeField(
+    runtimeTelemetry,
+    'cacheArtifacts',
+    'worker telemetry cacheArtifacts could not be read',
+  );
   let cacheArtifacts: readonly CachedArtifactIdentity[] | undefined;
   if (cacheArtifactsInput !== undefined) {
-    if (!Array.isArray(cacheArtifactsInput)) {
+    if (!isArrayWithoutThrow(cacheArtifactsInput)) {
       throw new Error('worker telemetry cacheArtifacts must be an array when present');
     }
 
-    const cacheArtifactCount = cacheArtifactsInput.length;
+    const cacheArtifactCount = readArrayLength(
+      cacheArtifactsInput,
+      'worker telemetry cacheArtifacts length could not be read',
+    );
     const cacheArtifactEntries: unknown[] = new Array(cacheArtifactCount);
     for (let index = 0; index < cacheArtifactCount; index++) {
-      cacheArtifactEntries[index] = cacheArtifactsInput[index];
+      cacheArtifactEntries[index] = readArrayIndex(
+        cacheArtifactsInput,
+        index,
+        `worker telemetry cacheArtifacts[${index}] could not be read`,
+      );
     }
 
     const ownedCacheArtifacts: CachedArtifactIdentity[] = new Array(cacheArtifactCount);
     for (let index = 0; index < cacheArtifactCount; index++) {
       const identity = cacheArtifactEntries[index];
-      if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
+      if (!isNonNullNonArrayObject(identity)) {
         throw new Error(`worker telemetry cacheArtifacts[${index}] must be a non-null object`);
       }
-      const runtimeIdentity = identity as Record<string, unknown>;
-      const segmentIndex = runtimeIdentity.segmentIndex;
+      const segmentIndex = readRuntimeField(
+        identity,
+        'segmentIndex',
+        `worker telemetry cacheArtifacts[${index}].segmentIndex could not be read`,
+      );
       if (typeof segmentIndex !== 'number') {
         throw new Error(`worker telemetry cacheArtifacts[${index}].segmentIndex must be a number`);
       }
-      const sha256 = runtimeIdentity.sha256;
+      const sha256 = readRuntimeField(
+        identity,
+        'sha256',
+        `worker telemetry cacheArtifacts[${index}].sha256 could not be read`,
+      );
       if (typeof sha256 !== 'string') {
         throw new Error(`worker telemetry cacheArtifacts[${index}].sha256 must be a string`);
       }
@@ -1080,14 +1109,46 @@ function snapshotWorkerTelemetry(telemetry: WorkerTelemetry): WorkerTelemetry {
     cacheArtifacts = Object.freeze(ownedCacheArtifacts);
   }
 
-  const uptimeMs = runtimeTelemetry.uptimeMs as number;
-  const vramFreeMB = runtimeTelemetry.vramFreeMB as number;
-  const gpuBusyRatio = runtimeTelemetry.gpuBusyRatio as number;
-  const cpuBusyRatio = runtimeTelemetry.cpuBusyRatio as number;
-  const tokensPerSecond = runtimeTelemetry.tokensPerSecond as number;
-  const checkpointBytesPerSecond = runtimeTelemetry.checkpointBytesPerSecond as number;
-  const failureRate = runtimeTelemetry.failureRate as number;
-  const heartbeatJitterMs = runtimeTelemetry.heartbeatJitterMs as number;
+  const uptimeMs = readRuntimeField(
+    runtimeTelemetry,
+    'uptimeMs',
+    'worker telemetry uptimeMs could not be read',
+  ) as number;
+  const vramFreeMB = readRuntimeField(
+    runtimeTelemetry,
+    'vramFreeMB',
+    'worker telemetry vramFreeMB could not be read',
+  ) as number;
+  const gpuBusyRatio = readRuntimeField(
+    runtimeTelemetry,
+    'gpuBusyRatio',
+    'worker telemetry gpuBusyRatio could not be read',
+  ) as number;
+  const cpuBusyRatio = readRuntimeField(
+    runtimeTelemetry,
+    'cpuBusyRatio',
+    'worker telemetry cpuBusyRatio could not be read',
+  ) as number;
+  const tokensPerSecond = readRuntimeField(
+    runtimeTelemetry,
+    'tokensPerSecond',
+    'worker telemetry tokensPerSecond could not be read',
+  ) as number;
+  const checkpointBytesPerSecond = readRuntimeField(
+    runtimeTelemetry,
+    'checkpointBytesPerSecond',
+    'worker telemetry checkpointBytesPerSecond could not be read',
+  ) as number;
+  const failureRate = readRuntimeField(
+    runtimeTelemetry,
+    'failureRate',
+    'worker telemetry failureRate could not be read',
+  ) as number;
+  const heartbeatJitterMs = readRuntimeField(
+    runtimeTelemetry,
+    'heartbeatJitterMs',
+    'worker telemetry heartbeatJitterMs could not be read',
+  ) as number;
 
   return Object.freeze({
     uptimeMs,
