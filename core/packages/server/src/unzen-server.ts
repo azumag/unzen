@@ -78,6 +78,21 @@ const FILE_READ_CHUNK_BYTES = 64 * 1024;
 
 class BoundedFileLimitError extends Error {}
 
+/**
+ * Classify caller-owned option containers without leaking native revoked-Proxy
+ * failures. Array.isArray() normally has no user-observable traps, but it throws
+ * for revoked proxies; those inputs belong to the same public "must be an object"
+ * validation bucket as arrays and non-objects.
+ */
+function isNonArrayObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
 /** Compile only, without invoking caller code, to verify standalone syntax. */
 function isStandaloneFunctionExpression(source: string): boolean {
   try {
@@ -204,7 +219,7 @@ function assertValidTimeout(timeout: unknown): asserts timeout is number | undef
 
 function snapshotFunctionOptions(value: unknown): UnzenFunctionOptions {
   if (value === undefined) return {};
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayObject(value)) {
     throw new TypeError('Unzen function options must be an object');
   }
   let timeout: unknown;
@@ -234,7 +249,7 @@ interface MoonBitDefinitionOptionsSnapshot {
 
 function snapshotMoonBitDefinitionOptions(value: unknown): MoonBitDefinitionOptionsSnapshot {
   if (value === undefined) return {};
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isNonArrayObject(value)) {
     throw new TypeError('MoonBit definition options must be an object');
   }
   let exportName: unknown;
@@ -295,7 +310,7 @@ export class UnzenServer {
    * @param config - Server configuration
    */
   constructor(config: UnzenServerConfig = {}) {
-    if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+    if (!isNonArrayObject(config)) {
       throw new TypeError('UnzenServer baseUrl configuration must be an object');
     }
     let configuredBaseUrl: unknown;
