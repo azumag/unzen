@@ -119,7 +119,7 @@ describe('DurableCoordinator hostile execution result/failure boundary', () => {
     const revoked = Proxy.revocable({}, {});
     revoked.revoke();
 
-    await expect(coord.handleWorkerResult(revoked.proxy as never)).resolves.toMatchObject({
+    await expect(coord.acceptResult(revoked.proxy as never)).resolves.toMatchObject({
       kind: 'protocol-violation',
     });
   });
@@ -139,7 +139,7 @@ describe('DurableCoordinator hostile execution result/failure boundary', () => {
       },
     };
 
-    await expect(coord.handleWorkerResult(result as never)).resolves.toMatchObject({
+    await expect(coord.acceptResult(result as never)).resolves.toMatchObject({
       kind: 'protocol-violation',
     });
     expect(processingReads).toBe(0);
@@ -162,25 +162,19 @@ describe('DurableCoordinator hostile execution result/failure boundary', () => {
       processingTimeMs: 1,
     };
 
-    await expect(coord.handleWorkerResult(result as never)).resolves.toMatchObject({
+    await expect(coord.acceptResult(result as never)).resolves.toMatchObject({
       kind: 'protocol-violation',
     });
     expect(attemptReads).toBe(0);
   });
 
   it('fails closed on a throwing processingTimeMs getter before branch payload access', async () => {
-    const { coord } = coordinator();
+    const { coord, repo } = coordinator();
+    const identity = placeRunning(coord, repo);
     let outputReads = 0;
     let checkpointReads = 0;
     const result = {
-      identity: {
-        requestId: generateRequestId(),
-        attemptId: generateAttemptId(),
-        leaseId: generateLeaseId(),
-        workerId: workerId('hostile-processing-worker'),
-        workerGeneration: 'generation-1',
-        segmentIndex: 0,
-      },
+      identity,
       get processingTimeMs() {
         throw new Error('hostile processingTimeMs');
       },
@@ -194,7 +188,7 @@ describe('DurableCoordinator hostile execution result/failure boundary', () => {
       },
     };
 
-    await expect(coord.handleWorkerResult(result as never)).resolves.toMatchObject({
+    await expect(coord.acceptResult(result as never)).resolves.toMatchObject({
       kind: 'protocol-violation',
     });
     expect(outputReads).toBe(0);
