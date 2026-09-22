@@ -2,7 +2,9 @@
 
 `tools/probe_llama_1b_endpoint_embedding_composition_ort_cpu.py` compares a full tied-weight embedding `Gather` with the diagnostic 8-tile / 4-physical-payload composition used while advancing #167.
 
-Before source external-data is opened or any ORT session is created, the probe now snapshots each execution tile's `tileIndex`, `startRow`, and `endRowExclusive` and preflights routing for the pinned `TOKEN_IDS` set. Every tile range must be a non-empty half-open range inside `[0, VOCAB_ROWS)`, and every pinned probe token must belong to exactly one tile. A routing gap or overlap therefore fails as a topology-contract error before `np.empty_like(reference)` can contain an unwritten row or a later tile can overwrite a position written by an earlier tile.
+Before source external-data is opened or any ORT session is created, the probe snapshots each execution tile's `tileIndex`, `startRow`, `endRowExclusive`, and single `physicalArtifactIndex`, then preflights routing for the pinned `TOKEN_IDS` set. Every tile range must be a non-empty half-open range inside `[0, VOCAB_ROWS)`, every pinned probe token must belong to exactly one tile, and each tile must contain exactly one object-valued physical slice whose artifact index is a non-bool integer inside the already-pinned four-artifact set. Routing gaps, overlaps, malformed slices, and out-of-range physical indexes therefore fail as deterministic topology-contract errors before source external-data, payload, or ORT work begins.
+
+The execution phase reuses the preflight snapshots rather than rereading the tile's physical-slice routing. This keeps malformed physical routing from surfacing later as a raw mapping lookup error after expensive reference/payload work has already occurred.
 
 The preflight does not select or redesign the endpoint layout. The existing upstream 4-physical / 8-tile candidate, payload identities, ORT execution, exact-equality comparison, and report schema remain unchanged. It only turns malformed diagnostic routing into a deterministic fail-closed condition at the earliest local boundary.
 
