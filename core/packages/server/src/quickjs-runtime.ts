@@ -31,6 +31,10 @@ import {
   UnzenRuntimeError,
   type ExecutionOptions,
 } from '@unzen/shared';
+import {
+  describeQuickJsRuntimeFailure,
+  isKnownQuickJsRuntimeError,
+} from './quickjs-runtime-error-boundary';
 
 interface QuickJSExecutionSnapshot {
   code: string;
@@ -201,9 +205,18 @@ export class QuickJSRuntime {
 
     const execution = snapshotExecution(code, args, options);
 
-    // Create a fresh context for this execution
-    // This ensures complete isolation between executions
-    const context = this.quickJS.newContext();
+    // Create a fresh context for this execution. Context creation itself is a
+    // host/runtime boundary and can fail before there is anything to dispose.
+    let context: ReturnType<QuickJSWASMModule['newContext']>;
+    try {
+      context = this.quickJS.newContext();
+    } catch (error) {
+      if (isKnownQuickJsRuntimeError(error)) {
+        throw error;
+      }
+      const errorMessage = describeQuickJsRuntimeFailure(error);
+      throw new UnzenFunctionError(`Function execution failed: ${errorMessage}`);
+    }
 
     try {
       // Set memory limit to 16MB (design.md §3.3)
@@ -282,13 +295,14 @@ export class QuickJSRuntime {
 
       return value;
     } catch (error) {
-      // Re-throw our custom errors as-is
-      if (error instanceof UnzenRuntimeError || error instanceof UnzenFunctionError) {
+      // Re-throw our custom errors as-is, but bound the identity checks because
+      // arbitrary host/runtime failures can be revoked or hostile Proxies.
+      if (isKnownQuickJsRuntimeError(error)) {
         throw error;
       }
 
-      // Wrap unknown errors
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Wrap unknown host/runtime errors without invoking object/function coercion.
+      const errorMessage = describeQuickJsRuntimeFailure(error);
       throw new UnzenFunctionError(`Function execution failed: ${errorMessage}`);
     } finally {
       // Clean up context resources
