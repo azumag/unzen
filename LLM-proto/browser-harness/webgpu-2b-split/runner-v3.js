@@ -126,7 +126,7 @@ async function loadManifest(signal) {
   throwIfAborted(signal);
   const manifestDigest = await sha256Bytes(bytes);
   throwIfAborted(signal);
-  const manifest = JSON.parse(new TextDecoder().decode(bytes));
+  const manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   if (manifest.kind !== 'unzen-real-two-segment-onnx') {
     throw new Error(`unexpected split manifest kind: ${manifest.kind}`);
   }

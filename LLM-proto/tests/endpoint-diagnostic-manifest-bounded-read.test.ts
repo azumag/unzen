@@ -26,6 +26,37 @@ describe('endpoint diagnostic manifest bounded read', () => {
     expect(value).toEqual({ status: 'pass' });
   });
 
+  it('preserves the existing UTF-8 BOM behavior', async () => {
+    const json = new TextEncoder().encode('{"status":"pass"}');
+    const bytes = new Uint8Array(3 + json.byteLength);
+    bytes.set([0xef, 0xbb, 0xbf]);
+    bytes.set(json, 3);
+
+    const value = await readEndpointDiagnosticManifestResponse(
+      new Response(bytes, {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    expect(value).toEqual({ status: 'pass' });
+  });
+
+  it('rejects malformed UTF-8 before replacement decoding can yield valid JSON', async () => {
+    const prefix = new TextEncoder().encode('{"status":"');
+    const suffix = new TextEncoder().encode('"}');
+    const bytes = new Uint8Array(prefix.byteLength + 2 + suffix.byteLength);
+    bytes.set(prefix, 0);
+    bytes.set([0xc3, 0x28], prefix.byteLength);
+    bytes.set(suffix, prefix.byteLength + 2);
+
+    await expect(
+      readEndpointDiagnosticManifestResponse(
+        new Response(bytes, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
   it('rejects an oversized declared manifest before JSON parsing', async () => {
     const response = new Response('{"status":"pass"}', {
       headers: {
