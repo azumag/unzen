@@ -46,14 +46,66 @@ function sameFileIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+function normalizeOutputEntries(outputEntries) {
+  if (!Array.isArray(outputEntries) || outputEntries.length === 0) {
+    throw new Error('outputEntries must contain at least one cancellation RSS output');
+  }
+  return outputEntries.map((entry) => {
+    if (
+      !entry
+      || typeof entry !== 'object'
+      || typeof entry.label !== 'string'
+      || entry.label.trim() === ''
+      || typeof entry.path !== 'string'
+      || entry.path.trim() === ''
+    ) {
+      throw new Error('each cancellation RSS output entry must have a non-empty label and path');
+    }
+    const path = resolve(entry.path);
+    const pathSnapshot = existingPathSnapshot(path);
+    if (pathSnapshot?.isSymbolicLink()) {
+      throw new Error(`${entry.label} must not be an existing symlink`);
+    }
+    return {
+      label: entry.label,
+      path,
+      canonicalDestination: canonicalOutputDestination(path),
+      targetSnapshot: pathSnapshot === null ? null : existingTargetSnapshot(path),
+    };
+  });
+}
+
+function assertOutputsDoNotAliasEachOther(outputs) {
+  for (let index = 0; index < outputs.length; index += 1) {
+    const output = outputs[index];
+    for (let earlierIndex = 0; earlierIndex < index; earlierIndex += 1) {
+      const earlier = outputs[earlierIndex];
+      if (
+        output.path === earlier.path
+        || (
+          output.canonicalDestination !== null
+          && earlier.canonicalDestination !== null
+          && output.canonicalDestination === earlier.canonicalDestination
+        )
+        || (
+          output.targetSnapshot !== null
+          && earlier.targetSnapshot !== null
+          && sameFileIdentity(output.targetSnapshot, earlier.targetSnapshot)
+        )
+      ) {
+        throw new Error(`${output.label} must not alias output ${earlier.label}`);
+      }
+    }
+  }
+}
+
 export function assertCancellationRssOutputPathsDoNotAliasInputs(
   config,
   preflightReport,
   outputEntries,
 ) {
-  if (!Array.isArray(outputEntries) || outputEntries.length === 0) {
-    throw new Error('outputEntries must contain at least one cancellation RSS output');
-  }
+  const outputs = normalizeOutputEntries(outputEntries);
+  assertOutputsDoNotAliasEachOther(outputs);
 
   const inputEntries = [
     { path: resolve(config.preflightReport), label: 'PREFLIGHT_REPORT' },
@@ -74,39 +126,26 @@ export function assertCancellationRssOutputPathsDoNotAliasInputs(
     stat: existingTargetSnapshot(entry.path),
   }));
 
-  for (const entry of outputEntries) {
-    if (!entry || typeof entry !== 'object' || typeof entry.label !== 'string' || !entry.label) {
-      throw new Error('each cancellation RSS output entry must have a non-empty label');
-    }
-    const resolvedOutputPath = resolve(entry.path);
-    const inputLabel = inputPaths.get(resolvedOutputPath);
+  for (const output of outputs) {
+    const inputLabel = inputPaths.get(output.path);
     if (inputLabel) {
-      throw new Error(`${entry.label} must not alias validated input ${inputLabel}`);
+      throw new Error(`${output.label} must not alias validated input ${inputLabel}`);
     }
 
-    const outputPathSnapshot = existingPathSnapshot(resolvedOutputPath);
-    if (outputPathSnapshot?.isSymbolicLink()) {
-      throw new Error(`${entry.label} must not be an existing symlink`);
-    }
-
-    const canonicalDestination = canonicalOutputDestination(resolvedOutputPath);
-    const outputTargetSnapshot = outputPathSnapshot === null
-      ? null
-      : existingTargetSnapshot(resolvedOutputPath);
     for (const input of inputFilesystemIdentities) {
       if (
-        canonicalDestination !== null
+        output.canonicalDestination !== null
         && input.realPath !== null
-        && canonicalDestination === input.realPath
+        && output.canonicalDestination === input.realPath
       ) {
-        throw new Error(`${entry.label} must not alias validated input ${input.label}`);
+        throw new Error(`${output.label} must not alias validated input ${input.label}`);
       }
       if (
-        outputTargetSnapshot !== null
+        output.targetSnapshot !== null
         && input.stat !== null
-        && sameFileIdentity(outputTargetSnapshot, input.stat)
+        && sameFileIdentity(output.targetSnapshot, input.stat)
       ) {
-        throw new Error(`${entry.label} must not alias validated input ${input.label}`);
+        throw new Error(`${output.label} must not alias validated input ${input.label}`);
       }
     }
   }
