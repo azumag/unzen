@@ -10,11 +10,16 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  assertEvidenceOutputPathIdentity,
+  cleanupReservedEvidenceOutput,
+  reserveEvidenceOutput,
+} from './capture_endpoint_embedding_webgpu_runtime.mjs';
 import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -435,19 +440,24 @@ async function runCapture({
   if (!['darwin', 'linux'].includes(platform())) {
     throw new Error('process RSS capture supports only macOS/Linux ps semantics');
   }
-  mkdirSync(dirname(outputPath), { recursive: true });
-  const profileDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-poststage-rss-'));
-  await assertPortAvailable(serverPort, 'harness server');
-  await assertPortAvailable(debugPort, 'Chrome DevTools');
 
-  const server = spawn(process.execPath, [HARNESS_SERVER], {
-    cwd: LLM_PROTO_ROOT,
-    env: { ...process.env, DATA_DIR: dataDir, PORT: String(serverPort) },
-    stdio: 'ignore',
-  });
+  let outputFd;
+  let outputCommitted = false;
+  let profileDir;
+  let server;
   let chrome;
   let cdp;
   try {
+    outputFd = reserveEvidenceOutput(outputPath);
+    await assertPortAvailable(serverPort, 'harness server');
+    await assertPortAvailable(debugPort, 'Chrome DevTools');
+    profileDir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-poststage-rss-'));
+    server = spawn(process.execPath, [HARNESS_SERVER], {
+      cwd: LLM_PROTO_ROOT,
+      env: { ...process.env, DATA_DIR: dataDir, PORT: String(serverPort) },
+      stdio: 'ignore',
+    });
+
     const harnessUrl = `http://127.0.0.1:${serverPort}/`;
     const harnessResponse = await waitFor(harnessUrl, 10000, 'harness server');
     if (server.exitCode !== null) throw new Error(`harness server exited early with ${server.exitCode}`);
@@ -661,14 +671,21 @@ async function runCapture({
         'This diagnostic does not select 4-way physical payloads, 8-way execution, or production cache/runtime/dispatcher policy.',
       ],
     };
-    writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+    writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+    fsyncSync(outputFd);
+    assertEvidenceOutputPathIdentity(outputFd, outputPath);
+    outputCommitted = true;
     return evidence;
   } finally {
     cdp?.close();
     if (chrome && !chrome.killed) chrome.kill('SIGTERM');
-    if (!server.killed) server.kill('SIGTERM');
+    if (server && !server.killed) server.kill('SIGTERM');
     await sleep(250);
-    rmSync(profileDir, { recursive: true, force: true });
+    if (profileDir) rmSync(profileDir, { recursive: true, force: true });
+    if (outputFd !== undefined) {
+      cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted);
+      try { closeSync(outputFd); } catch {}
+    }
   }
 }
 
