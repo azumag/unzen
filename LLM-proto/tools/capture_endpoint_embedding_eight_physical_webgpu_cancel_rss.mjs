@@ -16,11 +16,20 @@ import { platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  validateEndpointEmbeddingEightPhysicalPreflightReport,
+} from '../browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js';
+import {
+  assertCancellationRssOutputPathsDoNotAliasInputs,
+} from './cancellation_rss_output_alias_guard.mjs';
+import {
   mergeMinimum,
   mergePeak,
   parsePsRows,
   summarizeProcessRows,
 } from './capture_endpoint_poststage_webgpu_process_rss.mjs';
+import {
+  readRegularJsonFile,
+} from './preflight_endpoint_embedding_eight_physical_bundle.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const LLM_PROTO_ROOT = resolve(SCRIPT_DIR, '..');
@@ -258,10 +267,21 @@ function compactPeakMap(phasePeaks) {
   return [...phasePeaks.entries()].map(([phase, peak]) => ({ phase, ...peak }));
 }
 
+export async function preflightCancellationRssCapture(config) {
+  const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(
+    await readRegularJsonFile(config.preflightReport),
+  );
+  assertCancellationRssOutputPathsDoNotAliasInputs(config, preflight, [
+    { label: 'OUTPUT_JSON', path: config.outputPath },
+  ]);
+  return preflight;
+}
+
 async function runCapture(config) {
   if (!['darwin', 'linux'].includes(platform())) {
     throw new Error('process RSS capture supports only macOS/Linux ps semantics');
   }
+  await preflightCancellationRssCapture(config);
   mkdirSync(dirname(config.outputPath), { recursive: true });
   const profileDir = mkdtempSync(join(tmpdir(), 'unzen-eight-physical-cancel-rss-'));
   await assertPortAvailable(config.serverPort, 'harness server');
