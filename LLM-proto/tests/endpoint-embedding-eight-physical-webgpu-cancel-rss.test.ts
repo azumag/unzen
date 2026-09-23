@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   classifyCancellationObservation,
@@ -72,6 +73,31 @@ describe('8-physical WebGPU cancellation RSS capture configuration', () => {
       { UNZEN_HARNESS_PORT: '12021', UNZEN_CDP_PORT: '12021' },
     )).toThrow(/must be distinct/);
     expect(() => parseCancelCaptureArgs(['data', 'preflight', 'graph', 'output'], {})).toThrow(/usage:/);
+  });
+
+  it('validates direct output aliases before any capture side effect', () => {
+    const source = readFileSync(
+      new URL('../tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs', import.meta.url),
+      'utf8',
+    );
+    const preflightStart = source.indexOf('export async function preflightCancellationRssCapture');
+    const read = source.indexOf('await readRegularJsonFile(config.preflightReport)', preflightStart);
+    const validate = source.indexOf('validateEndpointEmbeddingEightPhysicalPreflightReport(', preflightStart);
+    const guard = source.indexOf('assertCancellationRssOutputPathsDoNotAliasInputs(config, preflight', preflightStart);
+    const runStart = source.indexOf('async function runCapture(config)');
+    const preflightCall = source.indexOf('await preflightCancellationRssCapture(config);', runStart);
+    const mkdir = source.indexOf('mkdirSync(dirname(config.outputPath)', runStart);
+    const profile = source.indexOf('mkdtempSync(', runStart);
+    const server = source.indexOf('const server = spawn(process.execPath', runStart);
+    expect(preflightStart).toBeGreaterThanOrEqual(0);
+    expect(validate).toBeGreaterThanOrEqual(preflightStart);
+    expect(read).toBeGreaterThan(validate);
+    expect(guard).toBeGreaterThan(read);
+    expect(runStart).toBeGreaterThan(guard);
+    expect(preflightCall).toBeGreaterThan(runStart);
+    expect(mkdir).toBeGreaterThan(preflightCall);
+    expect(profile).toBeGreaterThan(mkdir);
+    expect(server).toBeGreaterThan(profile);
   });
 });
 
