@@ -268,7 +268,7 @@ it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope
   expect(source).toContain('writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\\n`)');
   expect(source).toContain('fsyncSync(outputFd)');
   expect(reservationSource).toContain('if (outputCommitted || !evidenceOutputPathMatchesFd(outputFd, outputPath)) return false;');
-  expect(reservationSource).toContain('try { unlinkSync(outputPath); } catch {}');
+  expect(reservationSource).toContain('unlinkSync(outputPath);');
   expect(source).toContain("evidenceLevel: 'captured-browser-runtime'");
   expect(source.indexOf("await assertPortAvailable(serverPort, 'harness')"))
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
