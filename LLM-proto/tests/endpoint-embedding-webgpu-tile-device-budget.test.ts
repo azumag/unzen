@@ -100,6 +100,42 @@ describe('endpoint embedding WebGPU execution-tile device budget', () => {
     expect(analysis.physicalArtifactSingleBindingDiagnostic.status).toBe('fail');
   });
 
+  it('snapshots accessor-backed adapter limits once for both diagnostics', () => {
+    const reads = {
+      maxBufferSize: 0,
+      maxStorageBufferBindingSize: 0,
+    };
+    const adapterLimits = Object.defineProperties({}, {
+      maxBufferSize: {
+        enumerable: true,
+        get() {
+          reads.maxBufferSize += 1;
+          return reads.maxBufferSize === 1 ? MAX_TILE_BYTES : 1;
+        },
+      },
+      maxStorageBufferBindingSize: {
+        enumerable: true,
+        get() {
+          reads.maxStorageBufferBindingSize += 1;
+          return reads.maxStorageBufferBindingSize === 1 ? MAX_TILE_BYTES : 1;
+        },
+      },
+    });
+
+    const analysis = evaluateEndpointEmbeddingWebGpuTileDeviceBudget(adapterLimits);
+
+    expect(reads).toEqual({
+      maxBufferSize: 1,
+      maxStorageBufferBindingSize: 1,
+    });
+    expect(analysis.checks.maxBufferSize.availableBytes).toBe(MAX_TILE_BYTES);
+    expect(analysis.checks.maxStorageBufferBindingSize.availableBytes).toBe(MAX_TILE_BYTES);
+    expect(analysis.physicalArtifactSingleBindingDiagnostic.checks.maxBufferSize.availableBytes)
+      .toBe(MAX_TILE_BYTES);
+    expect(analysis.physicalArtifactSingleBindingDiagnostic.checks.maxStorageBufferBindingSize.availableBytes)
+      .toBe(MAX_TILE_BYTES);
+  });
+
   it.each([
     ['missing maxBufferSize', { maxStorageBufferBindingSize: MAX_TILE_BYTES }],
     ['zero storage-binding limit', { maxBufferSize: MAX_TILE_BYTES, maxStorageBufferBindingSize: 0 }],
