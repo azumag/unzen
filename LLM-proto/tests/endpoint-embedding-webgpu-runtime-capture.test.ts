@@ -257,15 +257,18 @@ describe('offline captured endpoint embedding evidence verifier', () => {
 
 it('keeps the capture helper isolated-profile, WebGPU-enabled, captured-envelope-validated, and reserved-output-only for evidence', () => {
   const source = readFileSync(new URL('../tools/capture_endpoint_embedding_webgpu_runtime.mjs', import.meta.url), 'utf8');
+  const reservationSource = readFileSync(new URL('../tools/evidence_output_reservation.mjs', import.meta.url), 'utf8');
   expect(source).toContain("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))");
   expect(source).toContain("'--enable-unsafe-webgpu'");
-  expect(source).toContain("openSync(outputPath, 'wx', 0o600)");
+  expect(source).toContain("from './evidence_output_reservation.mjs';");
+  expect(reservationSource).toContain("openSync(outputPath, 'wx', 0o600)");
   expect(source).toContain('validateCapturedEndpointEmbeddingRuntimeEvidence(evidence)');
   expect(source).toContain('validateEndpointEmbeddingWebGpuDeviceContextFields(evidence)');
   expect(source).toContain("cdpUserAgent: version['User-Agent']");
   expect(source).toContain('writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\\n`)');
   expect(source).toContain('fsyncSync(outputFd)');
-  expect(source).toContain('if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }');
+  expect(reservationSource).toContain('if (outputCommitted || !evidenceOutputPathMatchesFd(outputFd, outputPath)) return false;');
+  expect(reservationSource).toContain('try { unlinkSync(outputPath); } catch {}');
   expect(source).toContain("evidenceLevel: 'captured-browser-runtime'");
   expect(source.indexOf("await assertPortAvailable(serverPort, 'harness')"))
     .toBeLessThan(source.indexOf("mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-webgpu-'))"));
