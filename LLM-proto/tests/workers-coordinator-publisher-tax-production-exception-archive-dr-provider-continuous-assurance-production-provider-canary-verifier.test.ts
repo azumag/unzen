@@ -42,6 +42,47 @@ function artifactRecord(p: any) {
   });
 }
 
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
+}
+
+function malformedArtifactBytes(p: any): Uint8Array {
+  const base = artifactRecord(p);
+  return concatBytes(
+    new TextEncoder().encode(`${base.slice(0, -1)},"note":"`),
+    Uint8Array.of(0xc3, 0x28),
+    new TextEncoder().encode('"}'),
+  );
+}
+
+function bomArtifactBytes(p: any): Uint8Array {
+  return concatBytes(Uint8Array.of(0xef, 0xbb, 0xbf), new TextEncoder().encode(artifactRecord(p)));
+}
+
+function artifactEnvelope(p: any, sha: string) {
+  return {
+    evidenceKind: PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_PROVIDER_CANARY_EVIDENCE_KIND,
+    readinessStatus: 'production-candidate', runId: p.canaryRunId, artifact: { sha256: sha }, payload: p,
+    verification: { verifier: VERIFIER.verifierName, version: VERIFIER.verifierVersion, verifiedAt: new Date(p.completedAtMs + 1000).toISOString(), result: 'pass' },
+  };
+}
+
+async function verifyArtifactBytes(p: any, bytes: Uint8Array) {
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  p.artifactLocator = 'r2://x'; p.artifactSha256 = sha;
+  return handleProductionProviderCanaryVerifierRequest(new Request('https://verifier.internal/verify/artifact', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      envelope: artifactEnvelope(p, sha), actualSha256: sha, artifactContent: { kind: 'bytes', bytes: Array.from(bytes) },
+    }),
+  }), VERIFIER);
+}
+
 async function capture(p: any, sha: string) {
   return handleProductionProviderCanaryVerifierRequest(new Request('https://verifier.internal/verify/capture', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
@@ -63,8 +104,7 @@ describe('production provider canary independent verifier', () => {
   it('re-verifies the exact artifact bytes and envelope attestation', async () => {
     const p = payload(); const artifact = artifactRecord(p); const sha = createHash('sha256').update(artifact).digest('hex');
     p.artifactLocator = 'r2://x'; p.artifactSha256 = sha;
-    const verifiedAt = new Date(p.completedAtMs + 1000).toISOString();
-    const envelope = { evidenceKind: PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_PROVIDER_CANARY_EVIDENCE_KIND, readinessStatus: 'production-candidate', runId: p.canaryRunId, artifact: { sha256: sha }, payload: p, verification: { verifier: VERIFIER.verifierName, version: VERIFIER.verifierVersion, verifiedAt, result: 'pass' } };
+    const envelope = artifactEnvelope(p, sha);
     const response = await handleProductionProviderCanaryVerifierRequest(new Request('https://verifier.internal/verify/artifact', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ envelope, actualSha256: sha, artifactContent: { kind: 'utf8', content: artifact } }),
     }), VERIFIER);
@@ -72,10 +112,26 @@ describe('production provider canary independent verifier', () => {
     expect(await response.json()).toMatchObject({ result: 'pass' });
   });
 
+  it('rejects malformed UTF-8 artifact JSON after digest verification', async () => {
+    const p = payload();
+    const bytes = malformedArtifactBytes(p);
+    expect(() => JSON.parse(new TextDecoder().decode(bytes))).not.toThrow();
+    const response = await verifyArtifactBytes(p, bytes);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ reason: 'provider-canary-artifact-json-invalid' });
+  });
+
+  it('preserves UTF-8 BOM compatibility for artifact JSON', async () => {
+    const p = payload();
+    const response = await verifyArtifactBytes(p, bomArtifactBytes(p));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ result: 'pass' });
+  });
+
   it('rejects artifact digest tampering', async () => {
     const p = payload(); const artifact = artifactRecord(p); const sha = createHash('sha256').update(artifact).digest('hex');
     p.artifactLocator = 'r2://x'; p.artifactSha256 = sha;
-    const envelope = { evidenceKind: PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_PROVIDER_CANARY_EVIDENCE_KIND, readinessStatus: 'production-candidate', runId: p.canaryRunId, artifact: { sha256: sha }, payload: p, verification: { verifier: VERIFIER.verifierName, version: VERIFIER.verifierVersion, verifiedAt: new Date(p.completedAtMs + 1000).toISOString(), result: 'pass' } };
+    const envelope = artifactEnvelope(p, sha);
     const response = await handleProductionProviderCanaryVerifierRequest(new Request('https://verifier.internal/verify/artifact', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ envelope, actualSha256: sha, artifactContent: { kind: 'utf8', content: `${artifact}tampered` } }),
     }), VERIFIER);
