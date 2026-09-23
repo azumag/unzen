@@ -172,6 +172,36 @@ describe('8-physical endpoint embedding bundle preflight', () => {
     }
   });
 
+  it('bounds JSON reads before allocating the whole file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'unzen-eight-physical-preflight-json-limit-'));
+    try {
+      const target = join(dir, 'manifest.json');
+      await writeFile(target, Buffer.alloc(33, 0x20));
+      await expect(readRegularJsonFile(target, 32)).rejects.toThrow(/exceeds 32 byte JSON limit/);
+      expect(ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT.jsonMaximumBytes).toBe(16 * 1024 * 1024);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed UTF-8 before JSON parsing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'unzen-eight-physical-preflight-json-utf8-'));
+    try {
+      const target = join(dir, 'manifest.json');
+      await writeFile(target, Buffer.from([0x7b, 0x22, 0xc3, 0x28, 0x22, 0x7d]));
+      await expect(readRegularJsonFile(target, 32)).rejects.toThrow(/must contain valid UTF-8/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid JSON byte ceilings before filesystem access', async () => {
+    const missing = join(tmpdir(), 'unzen-eight-physical-preflight-missing.json');
+    await expect(readRegularJsonFile(missing, 0)).rejects.toThrow(
+      /JSON maximumBytes must be a positive safe integer/,
+    );
+  });
+
   it('requires a real payload directory and rejects a symlinked directory', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'unzen-eight-physical-preflight-dir-'));
     try {
