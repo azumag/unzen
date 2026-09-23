@@ -25,14 +25,14 @@ function validateBoundaryTensorWire(tensor, index, expectedType) {
   if (!tensor || typeof tensor !== 'object' || Array.isArray(tensor)) {
     throw new Error(`Coordinator checkpoint boundary tensor ${index} must be an object`);
   }
+  const elementBytes = TENSOR_TYPE_BYTES[tensor.type];
+  if (!elementBytes) {
+    throw new Error(`Coordinator checkpoint boundary tensor ${index} has unsupported type: ${String(tensor.type)}`);
+  }
   if (tensor.type !== expectedType) {
     throw new Error(
       `Coordinator checkpoint boundary tensor ${index} type does not match manifest: expected=${expectedType}, actual=${String(tensor.type)}`,
     );
-  }
-  const elementBytes = TENSOR_TYPE_BYTES[tensor.type];
-  if (!elementBytes) {
-    throw new Error(`Coordinator checkpoint boundary tensor ${index} has unsupported type: ${String(tensor.type)}`);
   }
   if (!Array.isArray(tensor.dims) || tensor.dims.length === 0 || tensor.dims.length > 8) {
     throw new Error(`Coordinator checkpoint boundary tensor ${index} has invalid dims`);
