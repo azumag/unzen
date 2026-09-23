@@ -36,7 +36,7 @@ describe('browser split runtime validation', () => {
     }, manifest)).not.toThrow();
   });
 
-  it('rejects duplicate, missing, and unexpected boundary names', () => {
+  it('rejects duplicate, missing, unexpected, and oversized boundary names', () => {
     expect(() => validateCheckpointBoundaryNames({
       tensors: [tensorWire('boundary-a'), tensorWire('boundary-a')],
     }, manifest)).toThrow(/duplicate/);
@@ -44,6 +44,15 @@ describe('browser split runtime validation', () => {
       tensors: [tensorWire('boundary-a'), tensorWire('other')],
     }, manifest)).toThrow(/do not match manifest/);
     expect(() => validateCheckpointBoundaryNames({ tensors: [tensorWire('boundary-a')] }, manifest)).toThrow(/exactly two/);
+    const oversizedName = 'x'.repeat(1025);
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [tensorWire(oversizedName), tensorWire('boundary-b')],
+    }, {
+      boundary: {
+        dtype: 'float32',
+        tensors: [{ name: oversizedName }, { name: 'boundary-b' }],
+      },
+    })).toThrow(/invalid boundary tensor name/);
   });
 
   it('rejects unsupported or manifest-mismatched boundary tensor types', () => {
@@ -52,7 +61,7 @@ describe('browser split runtime validation', () => {
         tensorWire('boundary-a', { type: 'complex64' }),
         tensorWire('boundary-b'),
       ],
-    }, manifest)).toThrow(/type|unsupported/);
+    }, manifest)).toThrow(/unsupported type/);
     expect(() => validateCheckpointBoundaryNames({
       tensors: [
         tensorWire('boundary-a', {
@@ -65,10 +74,13 @@ describe('browser split runtime validation', () => {
     }, manifest)).toThrow(/does not match manifest/);
   });
 
-  it('rejects malformed, overflowing, and byte-inconsistent boundary tensor shapes', () => {
+  it('rejects malformed, over-ranked, overflowing, and byte-inconsistent boundary tensor shapes', () => {
     expect(() => validateCheckpointBoundaryNames({
       tensors: [tensorWire('boundary-a', { dims: [1, 0, 4] }), tensorWire('boundary-b')],
     }, manifest)).toThrow(/invalid dimension/);
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [tensorWire('boundary-a', { dims: new Array(9).fill(1) }), tensorWire('boundary-b')],
+    }, manifest)).toThrow(/invalid dims/);
     expect(() => validateCheckpointBoundaryNames({
       tensors: [
         tensorWire('boundary-a', { dims: [Number.MAX_SAFE_INTEGER, 2] }),
