@@ -4,7 +4,7 @@ import {
   MAX_HOST_TIMER_DELAY_MS,
   delayWithSignal,
   ownSession,
-  waitForCheckpointBounded,
+  waitForCheckpointBounded as waitForCheckpointBoundedImpl,
 } from '../browser-harness/webgpu-2b-split/execution-lifecycle.js';
 
 function response(status: number, value: unknown = {}) {
@@ -13,6 +13,13 @@ function response(status: number, value: unknown = {}) {
     ok: status >= 200 && status < 300,
     json: async () => value,
   };
+}
+
+function waitForCheckpointBounded(options: Parameters<typeof waitForCheckpointBoundedImpl>[0]) {
+  return waitForCheckpointBoundedImpl({
+    ...options,
+    readCheckpointResponse: async (checkpointResponse: ReturnType<typeof response>) => checkpointResponse.json(),
+  });
 }
 
 describe('browser execution lifecycle', () => {
