@@ -79,6 +79,10 @@ const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(
   await readNonSymlinkJson(PREFLIGHT_REPORT, 'PREFLIGHT_REPORT'),
 );
 const preflightBody = Buffer.from(`${JSON.stringify(preflight)}\n`, 'utf8');
+const declaredDataFiles = new Set([
+  preflight.graph.file,
+  ...preflight.payloads.map((payload) => payload.file),
+]);
 await requireNonSymlinkFile(GRAPH_PATH, 'GRAPH_PATH');
 if (basename(GRAPH_PATH) !== preflight.graph.file) {
   throw new Error(`GRAPH_PATH basename must be ${preflight.graph.file}`);
@@ -103,8 +107,11 @@ const server = createServer(async (req, res) => {
       selectedRoot = dirname(GRAPH_PATH);
       relativePath = basename(GRAPH_PATH);
     } else if (url.pathname.startsWith('/data/')) {
-      selectedRoot = DATA_DIR;
       relativePath = url.pathname.slice('/data/'.length);
+      if (!declaredDataFiles.has(relativePath)) {
+        throw new Error('data route is not declared by preflight');
+      }
+      selectedRoot = DATA_DIR;
     } else if (url.pathname.startsWith('/webgpu-2b-split/')) {
       selectedRoot = SHARED_SPLIT_ROOT;
       relativePath = url.pathname.slice('/webgpu-2b-split/'.length);

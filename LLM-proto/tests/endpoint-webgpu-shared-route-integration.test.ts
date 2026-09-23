@@ -18,6 +18,7 @@ const EIGHT_PHYSICAL_TILE_BYTES = 131_334_144;
 const EIGHT_PHYSICAL_ROWS_PER_TILE = 16_032;
 const EIGHT_PHYSICAL_GRAPH_FILE = 'embedding-offset-0.onnx';
 const EIGHT_PHYSICAL_GRAPH_SHA256 = '70a56611e458eb6af8333329424756275aa5ad6b08467fa51912532867b6ce50';
+const EIGHT_PHYSICAL_UNLISTED_FILE = 'unlisted-local-note.txt';
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -85,6 +86,7 @@ async function serverEnvironment(
   const graphPath = join(dataDir, EIGHT_PHYSICAL_GRAPH_FILE);
   const preflightPath = join(dataDir, 'preflight.json');
   await writeFile(graphPath, new Uint8Array(260));
+  await writeFile(join(dataDir, EIGHT_PHYSICAL_UNLISTED_FILE), 'must not be served\n');
 
   const payloads = Array.from({ length: 8 }, (_, index) => ({
     index,
@@ -169,6 +171,20 @@ describe('endpoint WebGPU shared-module server routes', () => {
           expect(response.status, `${harness} ${pathname}`).toBe(200);
           expect(response.headers.get('content-type')).toContain('text/javascript');
           expect((await response.text()).length).toBeGreaterThan(0);
+        }
+
+        if (harness === 'endpoint-embedding-eight-physical-webgpu') {
+          const preflightResponse = await fetch(`${origin}/data/preflight.json`, { cache: 'no-store' });
+          expect(preflightResponse.status).toBe(200);
+          const graphResponse = await fetch(`${origin}/data/${EIGHT_PHYSICAL_GRAPH_FILE}`, { cache: 'no-store' });
+          expect(graphResponse.status).toBe(200);
+          expect((await graphResponse.arrayBuffer()).byteLength).toBe(260);
+
+          const unlistedResponse = await fetch(
+            `${origin}/data/${EIGHT_PHYSICAL_UNLISTED_FILE}`,
+            { cache: 'no-store' },
+          );
+          expect(unlistedResponse.status).toBe(404);
         }
       } finally {
         await stopProcess(child);
