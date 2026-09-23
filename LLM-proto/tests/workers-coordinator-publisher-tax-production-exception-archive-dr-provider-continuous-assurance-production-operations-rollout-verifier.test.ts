@@ -61,6 +61,12 @@ function stable(value: unknown): string {
   return JSON.stringify(sort(value));
 }
 
+function captureBody() {
+  return { evidenceKind: PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_OPERATIONS_ROLLOUT_PHASE_EVIDENCE_KIND,
+    runId: 'rollout-1:1:observe-only', requestedReadinessStatus: 'production-approved', artifactSha256: 'a'.repeat(64),
+    payload: payload(), authorization: authorization(), actionReceipts: receipts() };
+}
+
 function artifactRecord(body: any) {
   return { schema: 'unzen-continuous-assurance-production-rollout-phase-v1', runId: body.runId,
     authorization: body.authorization, payload: body.payload, actionReceipts: body.actionReceipts };
@@ -80,6 +86,14 @@ function malformedArtifactBytes(body: any): Uint8Array {
   const content = stable(artifactRecord(body));
   return concatBytes(
     new TextEncoder().encode(`${content.slice(0, -1)},"note":"`),
+    Uint8Array.of(0xc3, 0x28),
+    new TextEncoder().encode('"}'),
+  );
+}
+
+function malformedRequestBytes(): Uint8Array {
+  return concatBytes(
+    new TextEncoder().encode('{"note":"'),
     Uint8Array.of(0xc3, 0x28),
     new TextEncoder().encode('"}'),
   );
@@ -108,9 +122,7 @@ async function verifyArtifactBytes(body: any, bytes: Uint8Array) {
 }
 
 async function capture() {
-  const body = { evidenceKind: PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_OPERATIONS_ROLLOUT_PHASE_EVIDENCE_KIND,
-    runId: 'rollout-1:1:observe-only', requestedReadinessStatus: 'production-approved', artifactSha256: 'a'.repeat(64),
-    payload: payload(), authorization: authorization(), actionReceipts: receipts() };
+  const body = captureBody();
   const response = await handleProductionOperationsRolloutVerifierRequest(new Request('https://rollout-verifier.internal/verify/capture', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   }), VERIFIER);
@@ -122,6 +134,26 @@ describe('production operations rollout verifier', () => {
     const { response } = await capture();
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ result: 'pass', readinessStatus: 'production-approved', runId: 'rollout-1:1:observe-only' });
+  });
+
+  it('rejects malformed UTF-8 request JSON before semantic verification', async () => {
+    const bytes = malformedRequestBytes();
+    expect(() => JSON.parse(new TextDecoder().decode(bytes))).not.toThrow();
+    const response = await handleProductionOperationsRolloutVerifierRequest(new Request('https://rollout-verifier.internal/verify/capture', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: bytes,
+    }), VERIFIER);
+    expect(response.status).toBe(400);
+    expect(await response.json()).not.toHaveProperty('reason');
+  });
+
+  it('preserves UTF-8 BOM compatibility for request JSON', async () => {
+    const body = captureBody();
+    const bytes = concatBytes(Uint8Array.of(0xef, 0xbb, 0xbf), new TextEncoder().encode(JSON.stringify(body)));
+    const response = await handleProductionOperationsRolloutVerifierRequest(new Request('https://rollout-verifier.internal/verify/capture', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: bytes,
+    }), VERIFIER);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ result: 'pass' });
   });
 
   it('rejects an artifact digest mismatch', async () => {
