@@ -112,7 +112,7 @@ export function readStableRegularUtf8FileWithReader(filePath, label, readFromFd)
     }
 
     const pathAfter = requireRegularPathSnapshot(resolvedPath, label);
-    if (!sameFileIdentity(fdAfter, pathAfter)) {
+    if (!sameSnapshot(fdAfter, pathAfter)) {
       throw new Error(`${label} path identity changed while reading`);
     }
 
