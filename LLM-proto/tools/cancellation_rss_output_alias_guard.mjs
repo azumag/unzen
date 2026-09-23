@@ -38,8 +38,20 @@ function existingRealPath(path) {
 }
 
 function canonicalOutputDestination(path) {
-  const parent = existingRealPath(dirname(path));
-  return parent === null ? null : resolve(parent, basename(path));
+  let current = resolve(path);
+  const missingSuffix = [];
+
+  while (true) {
+    const realPath = existingRealPath(current);
+    if (realPath !== null) {
+      return resolve(realPath, ...missingSuffix.reverse());
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return null;
+    missingSuffix.push(basename(current));
+    current = parent;
+  }
 }
 
 function sameFileIdentity(left, right) {

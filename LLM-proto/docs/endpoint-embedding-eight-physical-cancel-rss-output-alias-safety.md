@@ -4,7 +4,7 @@ Both the direct cancellation RSS capture and the provenance-bound wrapper must n
 
 The direct `capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs` path loads and validates `PREFLIGHT_REPORT` before creating the output directory, allocating a temporary Chrome profile, probing ports, launching the harness server, or launching Chrome. It then applies the same shared alias policy used by `capture_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs` to `OUTPUT_JSON`.
 
-The bound wrapper applies that shared policy to both `CANCELLATION_OUTPUT_JSON` and `BOUND_OUTPUT_JSON` after the preflight report is loaded and validated, but before the bound sidecar is reserved or the browser child capture is launched. In addition to the existing lexical-distinct check, the shared guard rejects those two outputs when they are already the same file or when their existing parent directories canonicalize two otherwise different path strings onto the same destination. This includes two still-missing output files reached through real versus symlinked parent directories.
+The bound wrapper applies that shared policy to both `CANCELLATION_OUTPUT_JSON` and `BOUND_OUTPUT_JSON` after the preflight report is loaded and validated, but before the bound sidecar is reserved or the browser child capture is launched. In addition to the existing lexical-distinct check, the shared guard rejects those two outputs when they are already the same file or when their filesystem destinations canonicalize onto the same path through the nearest existing ancestor. This includes two still-missing output files reached through real versus symlinked parent paths even when one or more intermediate parent directories have not been created yet.
 
 The guarded inputs are:
 
@@ -16,7 +16,10 @@ The shared guard first rejects exact normalized aliases. It then performs bounde
 
 - an existing final output symlink is rejected rather than allowing pathname-based publication to follow it;
 - existing paths with the same `dev` + `ino` identity are rejected, covering hard-link aliases;
-- each existing output parent directory is canonicalized, so an output reached through a symlinked parent cannot silently resolve onto a validated input or the wrapper's other output destination.
+- each output destination is canonicalized by walking upward to its nearest existing ancestor, resolving that ancestor, and appending the still-missing suffix, so real and symlinked path spellings cannot converge only after recursive parent creation;
+- the same canonical destination is compared with validated input real paths when those inputs exist.
+
+The guard itself does not create any output directory or file while performing this preflight.
 
 This prevents either a direct raw capture or the bound wrapper's raw child capture from accidentally replacing a preflight report, executable graph, or prepared payload after that input has already been validated for the run. It also prevents the raw child from pathname-writing through an alternate parent onto the file descriptor that the wrapper has reserved for the bound sidecar. Keeping these checks in `tools/cancellation_rss_output_alias_guard.mjs` means the direct and bound paths do not maintain separate filesystem policies.
 
