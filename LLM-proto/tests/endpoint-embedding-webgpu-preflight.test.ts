@@ -223,8 +223,9 @@ it('keeps the real preflight bound to a stable pinned manifest, selected Chrome,
   expect(source).toContain('for (const artifact of EXPECTED.physicalArtifacts)');
   expect(source).toContain("decisionStatus: 'diagnostic-only'");
   expect(source).toContain('does not constitute browser/WebGPU execution evidence');
-  expect(source.indexOf("readStableRegularUtf8File(manifestPath, 'manifest.json')"))
-    .toBeLessThan(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)'));
-  expect(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)'))
-    .toBeLessThan(source.indexOf('Object.entries(EXPECTED.graphVariants)'));
+  const preflightStart = source.indexOf('export async function preflightEndpointEmbeddingWebGpuCapture');
+  expect(source.indexOf('readPinnedManifest(resolvedDataDir)', preflightStart))
+    .toBeLessThan(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)', preflightStart));
+  expect(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)', preflightStart))
+    .toBeLessThan(source.indexOf('Object.entries(EXPECTED.graphVariants)', preflightStart));
 });
