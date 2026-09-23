@@ -10,11 +10,12 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const LLM_PROTO_ROOT = resolve(SCRIPT_DIR, '..');
@@ -216,6 +217,11 @@ function sameProcessIdentitySet(leftRows, rightRows) {
   return leftRows.every((row) => rightByPid.get(row.pid) === row.command);
 }
 
+export function readFootprintJsonReport(reportPath) {
+  const { text } = readStableRegularUtf8File(reportPath, 'macOS footprint JSON report');
+  return JSON.parse(text);
+}
+
 function footprintSnapshot(rootPid) {
   if (platform() !== 'darwin') return null;
   let lastError = null;
@@ -242,7 +248,7 @@ function footprintSnapshot(rootPid) {
         lastError = new Error('Chrome process identity set changed during footprint capture');
         continue;
       }
-      const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+      const report = readFootprintJsonReport(reportPath);
       const summary = summarizeFootprintReport(rootPid, after.psRows, report);
       return {
         captureDurationMs: Date.now() - startedAt,

@@ -46,6 +46,12 @@ node tools/capture_endpoint_poststage_webgpu_process_rss.mjs \
   /tmp/endpoint-poststage-webgpu-process-rss.json
 ```
 
+## macOS footprint report snapshot
+
+After `/usr/bin/footprint` finishes writing its generated JSON and the Chrome process identity set is rechecked, the report is read through the shared `readStableRegularUtf8File()` boundary before `JSON.parse()` and `summarizeFootprintReport()` run. The report must remain one regular file, the final path must not be a symlink, pathname/descriptor identity and size/timestamps must stay stable while reading, UTF-8 decoding is fatal on malformed bytes, and the shared 16 MiB maximum applies. This keeps a generated report from being consumed through an unbounded path read or from silently changing between process-identity validation and summary construction.
+
+The existing three-attempt process-churn retry remains unchanged. A malformed, oversized, non-regular, symlinked, or concurrently replaced report fails that attempt; the change is host-side evidence-capture hardening only and does not promote the resulting RSS or physical-footprint observation to stronger readiness evidence.
+
 ## Evidence boundary
 
 Passing configuration validation establishes only that the capture parameters are structurally usable. The resulting RSS and macOS physical-footprint observations remain diagnostic OS metrics. They do not directly measure ORT/WebGPU/Metal allocations, prove allocator reclamation, establish a leak-free provider contract, or approve a production browser resource profile. The broader interpretation and committed measurements remain documented in [`endpoint-layout-candidate-probe.md`](./endpoint-layout-candidate-probe.md).
