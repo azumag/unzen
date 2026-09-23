@@ -37,6 +37,86 @@ describe('endpoint embedding WebGPU lightweight host probe result', () => {
     expect(validateEndpointEmbeddingWebGpuHostProbeResult(result)).toBe(result);
   });
 
+  it('snapshots accessor-backed adapter/device limits once before comparing them', () => {
+    const result: any = validResult();
+    const adapterReads = {
+      object: 0,
+      maxBufferSize: 0,
+      maxStorageBufferBindingSize: 0,
+      maxComputeWorkgroupStorageSize: 0,
+    };
+    const deviceReads = {
+      object: 0,
+      maxBufferSize: 0,
+      maxStorageBufferBindingSize: 0,
+      maxComputeWorkgroupStorageSize: 0,
+    };
+    const adapterFirst = {
+      maxBufferSize: 1_073_741_824,
+      maxStorageBufferBindingSize: 1_073_741_824,
+      maxComputeWorkgroupStorageSize: 65_536,
+    };
+    const deviceFirst = {
+      maxBufferSize: 268_435_456,
+      maxStorageBufferBindingSize: 134_217_728,
+      maxComputeWorkgroupStorageSize: 32_768,
+    };
+    const adapterLimits = Object.fromEntries(
+      Object.entries(adapterFirst).map(([field, firstValue]) => [
+        field,
+        {
+          enumerable: true,
+          get() {
+            adapterReads[field as keyof typeof adapterReads] += 1;
+            return adapterReads[field as keyof typeof adapterReads] === 1 ? firstValue : 1;
+          },
+        },
+      ]),
+    );
+    const deviceLimits = Object.fromEntries(
+      Object.entries(deviceFirst).map(([field, firstValue]) => [
+        field,
+        {
+          enumerable: true,
+          get() {
+            deviceReads[field as keyof typeof deviceReads] += 1;
+            return deviceReads[field as keyof typeof deviceReads] === 1 ? firstValue : 2_000_000_000;
+          },
+        },
+      ]),
+    );
+    const adapterLimitObject = Object.defineProperties({}, adapterLimits);
+    const deviceLimitObject = Object.defineProperties({}, deviceLimits);
+    Object.defineProperty(result, 'adapterLimits', {
+      enumerable: true,
+      get() {
+        adapterReads.object += 1;
+        return adapterLimitObject;
+      },
+    });
+    Object.defineProperty(result, 'deviceLimits', {
+      enumerable: true,
+      get() {
+        deviceReads.object += 1;
+        return deviceLimitObject;
+      },
+    });
+
+    expect(validateEndpointEmbeddingWebGpuHostProbeResult(result)).toBe(result);
+    expect(adapterReads).toEqual({
+      object: 1,
+      maxBufferSize: 1,
+      maxStorageBufferBindingSize: 1,
+      maxComputeWorkgroupStorageSize: 1,
+    });
+    expect(deviceReads).toEqual({
+      object: 1,
+      maxBufferSize: 1,
+      maxStorageBufferBindingSize: 1,
+      maxComputeWorkgroupStorageSize: 1,
+    });
+  });
+
   it.each([
     ['browser-reported failure', (result: any) => { result.status = 'fail'; result.error = 'WebGPU unavailable'; }],
     ['insecure context', (result: any) => { result.secureContext = false; }],
