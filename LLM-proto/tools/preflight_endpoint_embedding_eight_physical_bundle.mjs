@@ -95,19 +95,19 @@ async function openRegularFileNoFollow(resolvedPath) {
   }
 }
 
-async function requirePathStillMatchesDescriptor(resolvedPath, descriptorStat) {
+async function requirePathStillMatchesDescriptor(resolvedPath, descriptorStat, operation = 'reading') {
   let pathStat;
   try {
     pathStat = await lstat(resolvedPath);
   } catch (error) {
-    throw new Error(`${resolvedPath} path identity changed while reading`, { cause: error });
+    throw new Error(`${resolvedPath} path identity changed while ${operation}`, { cause: error });
   }
   if (
     pathStat.isSymbolicLink()
     || !pathStat.isFile()
     || !sameFileIdentity(pathStat, descriptorStat)
   ) {
-    throw new Error(`${resolvedPath} path identity changed while reading`);
+    throw new Error(`${resolvedPath} path identity changed while ${operation}`);
   }
 }
 
@@ -197,9 +197,10 @@ export async function inspectRegularFile(filePath) {
     }
 
     const after = await handle.stat();
-    if (after.size !== before.size || totalBytes !== before.size) {
+    if (!sameReadSnapshot(after, before) || totalBytes !== before.size) {
       throw new Error(`${resolvedPath} changed while hashing`);
     }
+    await requirePathStillMatchesDescriptor(resolvedPath, after, 'hashing');
     return Object.freeze({
       file: basename(resolvedPath),
       bytes: totalBytes,
