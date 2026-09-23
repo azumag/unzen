@@ -1,5 +1,5 @@
-import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   assertCancellationOutputPathsDoNotAliasInputs,
@@ -24,35 +24,45 @@ function fixture() {
   };
 }
 
+const directAliasCases = [
+  ['raw/preflight', 'cancellationOutputPath', 'preflightReport', 'PREFLIGHT_REPORT'],
+  ['raw/graph', 'cancellationOutputPath', 'graphPath', 'GRAPH_PATH'],
+  ['bound/preflight', 'boundOutputPath', 'preflightReport', 'PREFLIGHT_REPORT'],
+  ['bound/graph', 'boundOutputPath', 'graphPath', 'GRAPH_PATH'],
+] as const;
+
+const payloadAliasCases = [
+  ['raw', 'cancellationOutputPath'],
+  ['bound', 'boundOutputPath'],
+] as const;
+
 describe('8-physical cancellation RSS output/input alias guard', () => {
   it('accepts ordinary output paths', () => {
     const { config, preflight } = fixture();
     expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).not.toThrow();
   });
 
-  it.each([
-    ['raw/preflight', 'cancellationOutputPath', 'preflightReport', 'PREFLIGHT_REPORT'],
-    ['raw/graph', 'cancellationOutputPath', 'graphPath', 'GRAPH_PATH'],
-    ['bound/preflight', 'boundOutputPath', 'preflightReport', 'PREFLIGHT_REPORT'],
-    ['bound/graph', 'boundOutputPath', 'graphPath', 'GRAPH_PATH'],
-  ])('rejects %s aliasing', (_name, outputKey, inputKey, inputLabel) => {
-    const { config, preflight } = fixture();
-    config[outputKey] = config[inputKey];
-    expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
-      `must not alias validated input ${inputLabel}`,
-    );
-  });
+  it.each(directAliasCases)(
+    'rejects %s aliasing',
+    (_name, outputKey, inputKey, inputLabel) => {
+      const { config, preflight } = fixture();
+      config[outputKey] = config[inputKey];
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        `must not alias validated input ${inputLabel}`,
+      );
+    },
+  );
 
-  it.each([
-    ['raw', 'cancellationOutputPath'],
-    ['bound', 'boundOutputPath'],
-  ])('rejects %s output aliasing a declared payload', (_name, outputKey) => {
-    const { config, preflight } = fixture();
-    config[outputKey] = resolve(config.dataDir, preflight.payloads[1].file);
-    expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
-      'must not alias validated input preflight.payloads[1]',
-    );
-  });
+  it.each(payloadAliasCases)(
+    'rejects %s output aliasing a declared payload',
+    (_name, outputKey) => {
+      const { config, preflight } = fixture();
+      config[outputKey] = resolve(config.dataDir, preflight.payloads[1].file);
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        'must not alias validated input preflight.payloads[1]',
+      );
+    },
+  );
 
   it('runs the guard before output reservation or child capture', () => {
     const source = readFileSync(
