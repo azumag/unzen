@@ -11,9 +11,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   parseChromeVersion,
+  preflightEndpointEmbeddingWebGpuCapture,
   validateChromeHostProbeIdentity,
   verifyPreparedFileIdentity,
 } from '../tools/preflight_endpoint_embedding_webgpu_capture.mjs';
+import { DEFAULT_MAX_STABLE_UTF8_BYTES } from '../tools/read_stable_regular_utf8_file.mjs';
 
 function sha256(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
@@ -110,6 +112,24 @@ describe('endpoint embedding WebGPU capture preflight file identity', () => {
   });
 });
 
+describe('endpoint embedding WebGPU capture preflight manifest snapshot', () => {
+  it('rejects an oversized manifest before any Chrome invocation', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-preflight-manifest-test-'));
+    try {
+      writeFileSync(
+        join(dir, 'manifest.json'),
+        Buffer.alloc(DEFAULT_MAX_STABLE_UTF8_BYTES + 1, 0x20),
+      );
+      await expect(preflightEndpointEmbeddingWebGpuCapture({
+        dataDir: dir,
+        chromeBinary: '/definitely/not/invoked',
+      })).rejects.toThrow(`manifest.json exceeds ${DEFAULT_MAX_STABLE_UTF8_BYTES} byte limit`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('endpoint embedding WebGPU capture preflight Chrome parsing', () => {
   it('extracts the exact four-part Chrome version while retaining raw product identity', () => {
     expect(parseChromeVersion('Google Chrome 152.0.7977.83\n')).toEqual({
@@ -190,17 +210,22 @@ describe('endpoint embedding WebGPU capture preflight Chrome/host-probe binding'
   });
 });
 
-it('keeps the real preflight bound to the pinned manifest, selected Chrome, and every prepared graph/payload', () => {
+it('keeps the real preflight bound to a stable pinned manifest, selected Chrome, and every prepared graph/payload', () => {
   const source = readFileSync(
     new URL('../tools/preflight_endpoint_embedding_webgpu_capture.mjs', import.meta.url),
     'utf8',
   );
+  expect(source).toContain("readStableRegularUtf8File(manifestPath, 'manifest.json')");
+  expect(source).not.toContain("readFileSync(manifestPath");
   expect(source).toContain('validateEndpointEmbeddingWebGpuManifest(manifest)');
   expect(source).toContain('validateChromeHostProbeIdentity(chrome, hostProbe)');
   expect(source).toContain('Object.entries(EXPECTED.graphVariants)');
   expect(source).toContain('for (const artifact of EXPECTED.physicalArtifacts)');
   expect(source).toContain("decisionStatus: 'diagnostic-only'");
   expect(source).toContain('does not constitute browser/WebGPU execution evidence');
-  expect(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)'))
-    .toBeLessThan(source.indexOf('Object.entries(EXPECTED.graphVariants)'));
+  const preflightStart = source.indexOf('export async function preflightEndpointEmbeddingWebGpuCapture');
+  expect(source.indexOf('readPinnedManifest(resolvedDataDir)', preflightStart))
+    .toBeLessThan(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)', preflightStart));
+  expect(source.indexOf('validateChromeHostProbeIdentity(chrome, hostProbe)', preflightStart))
+    .toBeLessThan(source.indexOf('Object.entries(EXPECTED.graphVariants)', preflightStart));
 });

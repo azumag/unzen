@@ -2,7 +2,7 @@
 /** Preflight the pinned endpoint embedding ORT Web/WebGPU capture inputs. */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, lstatSync, readFileSync } from 'node:fs';
+import { createReadStream, lstatSync } from 'node:fs';
 import { platform } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import {
   validateEndpointEmbeddingWebGpuManifest,
 } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
 import { probeEndpointEmbeddingWebGpuHost } from './probe_endpoint_embedding_webgpu_host.mjs';
+import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 const EXPECTED = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
 const DEFAULT_DEVICE_BUDGET_LIMIT_FIELDS = [
@@ -194,12 +195,8 @@ export function probeChromeVersion(chromeBinary = defaultChromeBinary()) {
 
 function readPinnedManifest(dataDir) {
   const manifestPath = join(dataDir, 'manifest.json');
-  const beforeStat = requireRegularFile(manifestPath, 'manifest.json');
-  const before = snapshotIdentity(beforeStat);
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  const afterStat = requireRegularFile(manifestPath, 'manifest.json');
-  const after = snapshotIdentity(afterStat);
-  if (!sameIdentity(before, after)) throw new Error('manifest.json changed while reading');
+  const { text } = readStableRegularUtf8File(manifestPath, 'manifest.json');
+  const manifest = JSON.parse(text);
   validateEndpointEmbeddingWebGpuManifest(manifest);
   return manifest;
 }
