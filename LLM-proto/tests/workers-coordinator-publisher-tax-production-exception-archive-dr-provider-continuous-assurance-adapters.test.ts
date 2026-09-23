@@ -50,6 +50,37 @@ function adapterRequest(path: string, body: unknown, key?: string) {
   return new Request(`https://adapter.internal${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
 }
 
+function adapterByteRequest(path: string, body: Uint8Array, key?: string) {
+  const headers = new Headers({ 'content-type': 'application/json' });
+  if (key) headers.set('x-unzen-idempotency-key', key);
+  return new Request(`https://adapter.internal${path}`, { method: 'POST', headers, body });
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.byteLength;
+  }
+  return output;
+}
+
+function malformedUtf8Json(prefix: string, suffix: string): Uint8Array {
+  return concatBytes(
+    new TextEncoder().encode(prefix),
+    Uint8Array.of(0xc3, 0x28),
+    new TextEncoder().encode(suffix),
+  );
+}
+
+function utf8BomJson(value: unknown): Uint8Array {
+  return concatBytes(
+    Uint8Array.of(0xef, 0xbb, 0xbf),
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+}
+
 function cycleDraft() {
   return {
     providerName: 'provider', accountId: 'acct-1', primaryStorageId: 'primary-1', backupStorageId: 'backup-1',
@@ -96,6 +127,56 @@ describe('continuous assurance adapter runtimes', () => {
       { apiBaseUrl: 'https://provider.example', apiToken: 'x', fetcher: async () => Response.json({}, { status: 503 }) },
     );
     expect(failed.status).toBe(503);
+  });
+
+  it('rejects malformed UTF-8 in inbound adapter JSON before provider side effects', async () => {
+    const key = 'cycle-4:provider-invalid-utf8';
+    let called = false;
+    const response = await handleContinuousAssuranceProviderAdapterRequest(
+      adapterByteRequest('/provider/audit', malformedUtf8Json('{"note":"', '"}'), key),
+      {
+        apiBaseUrl: 'https://provider.example/api', apiToken: 'x',
+        fetcher: async () => {
+          called = true;
+          return Response.json({});
+        },
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'json-body-invalid' });
+    expect(called).toBe(false);
+  });
+
+  it('rejects malformed UTF-8 in upstream adapter JSON before payload validation', async () => {
+    const key = 'cycle-4:provider-upstream-invalid-utf8';
+    const response = await handleContinuousAssuranceProviderAdapterRequest(
+      adapterRequest('/provider/audit', {}, key),
+      {
+        apiBaseUrl: 'https://provider.example/api', apiToken: 'x',
+        fetcher: async () => new Response(malformedUtf8Json(
+          '{"auditStreamId":"audit-',
+          `","auditCursorStart":"a","auditCursorEnd":"b","providerAuditRecordIds":[],"observedAtMs":${BASE + 1_000}}`,
+        ), { status: 200, headers: { 'content-type': 'application/json' } }),
+      },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: 'upstream-json-body-invalid' });
+  });
+
+  it('preserves UTF-8 BOM JSON compatibility for inbound and upstream adapter bodies', async () => {
+    const key = 'cycle-4:provider-bom-json';
+    const response = await handleContinuousAssuranceProviderAdapterRequest(
+      adapterByteRequest('/provider/audit', utf8BomJson({}), key),
+      {
+        apiBaseUrl: 'https://provider.example/api', apiToken: 'x',
+        fetcher: async () => new Response(utf8BomJson({
+          auditStreamId: 'audit-1', auditCursorStart: 'a', auditCursorEnd: 'b',
+          providerAuditRecordIds: [], observedAtMs: BASE + 1_000,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ auditStreamId: 'audit-1' });
   });
 
   it('archives, captures, loads and independently re-verifies cycle evidence', async () => {
