@@ -110,7 +110,7 @@ function validatePayload(payload: Record<string, unknown>, runId: string): strin
 
 function validateArtifactRecord(bytes: Uint8Array, payload: ProductionProviderCanaryPayload): string | undefined {
   let value: unknown;
-  try { value = JSON.parse(new TextDecoder().decode(bytes)); } catch { return 'provider-canary-artifact-json-invalid'; }
+  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { return 'provider-canary-artifact-json-invalid'; }
   if (!record(value) || value.schema !== 'unzen-continuous-assurance-production-provider-canary-v1') return 'provider-canary-artifact-schema-invalid';
   if (value.canaryRunId !== payload.canaryRunId ||
     stable(value.authorization) !== stable(payload.authorization) ||

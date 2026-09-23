@@ -61,6 +61,52 @@ function stable(value: unknown): string {
   return JSON.stringify(sort(value));
 }
 
+function artifactRecord(body: any) {
+  return { schema: 'unzen-continuous-assurance-production-rollout-phase-v1', runId: body.runId,
+    authorization: body.authorization, payload: body.payload, actionReceipts: body.actionReceipts };
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
+}
+
+function malformedArtifactBytes(body: any): Uint8Array {
+  const content = stable(artifactRecord(body));
+  return concatBytes(
+    new TextEncoder().encode(`${content.slice(0, -1)},"note":"`),
+    Uint8Array.of(0xc3, 0x28),
+    new TextEncoder().encode('"}'),
+  );
+}
+
+function bomArtifactBytes(body: any): Uint8Array {
+  return concatBytes(Uint8Array.of(0xef, 0xbb, 0xbf), new TextEncoder().encode(stable(artifactRecord(body))));
+}
+
+function artifactEnvelope(body: any, sha: string) {
+  return { schemaVersion: '1.0.0', evidenceKind: body.evidenceKind, evidenceLevel: 'captured-and-verified', readinessStatus: 'production-approved',
+    producer: { name: 'controller', version: '1.0.0', commitSha: 'a'.repeat(40) }, runId: body.runId,
+    capturedAt: new Date(body.payload.completedAtMs).toISOString(), environment: { runtime: 'cloudflare-workers', runtimeVersion: 'managed', executionSurface: 'rollout' },
+    artifact: { locator: 'r2://continuous-assurance-evidence/test.json', sha256: sha },
+    verification: { verifier: VERIFIER.verifierName, version: VERIFIER.verifierVersion, verifiedAt: new Date(body.payload.completedAtMs + 1_000).toISOString(), result: 'pass' },
+    redaction: { applied: true }, payload: body.payload };
+}
+
+async function verifyArtifactBytes(body: any, bytes: Uint8Array) {
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  return handleProductionOperationsRolloutVerifierRequest(new Request('https://rollout-verifier.internal/verify/artifact', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      envelope: artifactEnvelope(body, sha), actualSha256: sha, artifactContent: { kind: 'bytes', bytes: Array.from(bytes) },
+    }),
+  }), VERIFIER);
+}
+
 async function capture() {
   const body = { evidenceKind: PUBLISHER_TAX_EXCEPTION_ARCHIVE_DR_PROVIDER_CONTINUOUS_ASSURANCE_PRODUCTION_OPERATIONS_ROLLOUT_PHASE_EVIDENCE_KIND,
     runId: 'rollout-1:1:observe-only', requestedReadinessStatus: 'production-approved', artifactSha256: 'a'.repeat(64),
@@ -80,21 +126,30 @@ describe('production operations rollout verifier', () => {
 
   it('rejects an artifact digest mismatch', async () => {
     const { body } = await capture();
-    const artifactRecord = { schema: 'unzen-continuous-assurance-production-rollout-phase-v1', runId: body.runId,
-      authorization: body.authorization, payload: body.payload, actionReceipts: body.actionReceipts };
-    const content = stable(artifactRecord);
+    const content = stable(artifactRecord(body));
     const sha = createHash('sha256').update(content).digest('hex');
-    const envelope = { schemaVersion: '1.0.0', evidenceKind: body.evidenceKind, evidenceLevel: 'captured-and-verified', readinessStatus: 'production-approved',
-      producer: { name: 'controller', version: '1.0.0', commitSha: 'a'.repeat(40) }, runId: body.runId,
-      capturedAt: new Date(body.payload.completedAtMs).toISOString(), environment: { runtime: 'cloudflare-workers', runtimeVersion: 'managed', executionSurface: 'rollout' },
-      artifact: { locator: 'r2://continuous-assurance-evidence/test.json', sha256: sha },
-      verification: { verifier: VERIFIER.verifierName, version: VERIFIER.verifierVersion, verifiedAt: new Date(body.payload.completedAtMs + 1_000).toISOString(), result: 'pass' },
-      redaction: { applied: true }, payload: body.payload };
+    const envelope = artifactEnvelope(body, sha);
     const response = await handleProductionOperationsRolloutVerifierRequest(new Request('https://rollout-verifier.internal/verify/artifact', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ envelope, actualSha256: 'f'.repeat(64), artifactContent: { kind: 'utf8', content } }),
     }), VERIFIER);
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ reason: 'production-rollout-artifact-digest-invalid' });
+  });
+
+  it('rejects malformed UTF-8 artifact JSON after digest verification', async () => {
+    const { body } = await capture();
+    const bytes = malformedArtifactBytes(body);
+    expect(() => JSON.parse(new TextDecoder().decode(bytes))).not.toThrow();
+    const response = await verifyArtifactBytes(body, bytes);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ reason: 'production-rollout-artifact-json-invalid' });
+  });
+
+  it('preserves UTF-8 BOM compatibility for artifact JSON', async () => {
+    const { body } = await capture();
+    const response = await verifyArtifactBytes(body, bomArtifactBytes(body));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ result: 'pass' });
   });
 
   it('rejects action receipt binding drift', async () => {
