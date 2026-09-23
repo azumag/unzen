@@ -160,6 +160,45 @@ describe('8-physical cancellation RSS output/input alias guard', () => {
     }
   });
 
+  it('rejects missing outputs below a missing parent that converge through a symlinked ancestor', () => {
+    const { root, config, preflight } = filesystemFixture();
+    try {
+      const realOutputRoot = join(root, 'real-output-root');
+      const aliasOutputRoot = join(root, 'alias-output-root');
+      const missingNestedDir = join(realOutputRoot, 'nested');
+      mkdirSync(realOutputRoot);
+      symlinkSync(realOutputRoot, aliasOutputRoot, 'dir');
+      config.cancellationOutputPath = join(aliasOutputRoot, 'nested', 'cancel-rss.json');
+      config.boundOutputPath = join(realOutputRoot, 'nested', 'cancel-rss.json');
+
+      expect(existsSync(missingNestedDir)).toBe(false);
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        'BOUND_OUTPUT_JSON must not alias output CANCELLATION_OUTPUT_JSON',
+      );
+      expect(existsSync(missingNestedDir)).toBe(false);
+      expect(existsSync(config.cancellationOutputPath)).toBe(false);
+      expect(existsSync(config.boundOutputPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts distinct missing outputs below missing parents', () => {
+    const { root, config, preflight } = filesystemFixture();
+    try {
+      const firstParent = join(root, 'missing-a');
+      const secondParent = join(root, 'missing-b');
+      config.cancellationOutputPath = join(firstParent, 'cancel-rss.json');
+      config.boundOutputPath = join(secondParent, 'cancel-rss.json');
+
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).not.toThrow();
+      expect(existsSync(firstParent)).toBe(false);
+      expect(existsSync(secondParent)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps overwrite compatibility for an unrelated existing regular output', () => {
     const { root, config, preflight } = filesystemFixture();
     try {
