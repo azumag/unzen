@@ -17,6 +17,15 @@ export function validateCanaryUrl(value) {
   return url;
 }
 
+function cancelUnreadResponseBody(response, reason) {
+  try {
+    const cancellation = response.body?.cancel(reason);
+    void cancellation?.catch(() => {});
+  } catch {
+    // Releasing an unread error body is best-effort and must not mask the HTTP error.
+  }
+}
+
 async function readCanaryJsonBounded(response) {
   if (!response.body) {
     throw new Error('Wasm canary response body is missing.');
@@ -62,7 +71,10 @@ async function readCanaryJsonBounded(response) {
   }
 }
 
-export async function checkRemoteCanary(urlValue, { fetchImpl = fetch, samples = 4 } = {}) {
+export async function checkRemoteCanary(
+  urlValue,
+  { fetchImpl = fetch, samples = 4, now = () => performance.now() } = {},
+) {
   const url = validateCanaryUrl(urlValue);
   if (!Number.isSafeInteger(samples) || samples < 1 || samples > 20) {
     throw new Error('samples must be an integer between 1 and 20.');
@@ -70,14 +82,14 @@ export async function checkRemoteCanary(urlValue, { fetchImpl = fetch, samples =
 
   const results = [];
   for (let sample = 0; sample < samples; sample += 1) {
-    const startedAt = performance.now();
+    const startedAt = now();
     const response = await fetchImpl(url, {
       method: 'GET',
       headers: { accept: 'application/json' },
       redirect: 'error',
     });
-    const elapsedMs = performance.now() - startedAt;
     if (!response.ok) {
+      cancelUnreadResponseBody(response, `Wasm canary returned HTTP ${response.status}.`);
       throw new Error(`Wasm canary returned HTTP ${response.status}.`);
     }
     const payload = await readCanaryJsonBounded(response);
@@ -85,6 +97,7 @@ export async function checkRemoteCanary(urlValue, { fetchImpl = fetch, samples =
     if (validation.status !== 'valid') {
       throw new Error(`Wasm canary contract failed: ${JSON.stringify(validation)}`);
     }
+    const elapsedMs = now() - startedAt;
     results.push({ sample: sample + 1, elapsedMs });
   }
 
