@@ -14,9 +14,8 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
-  mkdirSync,
+  fsyncSync,
   mkdtempSync,
-  openSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -35,6 +34,11 @@ import {
   readStableCancellationRssEvidence,
   validateCancellationRssEvidence,
 } from './verify_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs';
+import {
+  assertEvidenceOutputPathIdentity,
+  cleanupReservedEvidenceOutput,
+  reserveEvidenceOutput,
+} from './evidence_output_reservation.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const CAPTURE_SCRIPT = resolve(
@@ -155,11 +159,6 @@ function parseArgs(argv) {
   };
 }
 
-function reserveExclusiveOutput(outputPath) {
-  mkdirSync(dirname(outputPath), { recursive: true });
-  return openSync(outputPath, 'wx', 0o600);
-}
-
 export async function runBoundCancellationRssCapture(argv, env = process.env) {
   const config = parseArgs(argv);
   const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(
@@ -167,7 +166,7 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
   );
   endpointEmbeddingEightPhysicalPreflightIdentity(preflight);
   const preflightDigest = canonicalJsonSha256(preflight);
-  const boundFd = reserveExclusiveOutput(config.boundOutputPath);
+  const boundFd = reserveEvidenceOutput(config.boundOutputPath);
   let boundOutputCommitted = false;
   let boundFdOpen = true;
   let snapshotDir = null;
@@ -204,13 +203,16 @@ export async function runBoundCancellationRssCapture(argv, env = process.env) {
     const cancellation = readStableCancellationRssEvidence(config.cancellationOutputPath);
     const bound = buildBoundCancellationRssEvidence(cancellation, snapshotAfter);
     writeFileSync(boundFd, `${JSON.stringify(bound, null, 2)}\n`, 'utf8');
-    closeSync(boundFd);
-    boundFdOpen = false;
+    fsyncSync(boundFd);
+    assertEvidenceOutputPathIdentity(boundFd, config.boundOutputPath);
     boundOutputCommitted = true;
     return bound;
   } finally {
-    if (boundFdOpen) closeSync(boundFd);
-    if (!boundOutputCommitted) rmSync(config.boundOutputPath, { force: true });
+    if (boundFdOpen) {
+      cleanupReservedEvidenceOutput(boundFd, config.boundOutputPath, boundOutputCommitted);
+      closeSync(boundFd);
+      boundFdOpen = false;
+    }
     if (snapshotDir !== null) rmSync(snapshotDir, { recursive: true, force: true });
   }
 }
