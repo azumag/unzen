@@ -5,7 +5,7 @@ import { readResponseBytesBounded } from './artifact-cache.js';
 // boundary, not a model-artifact or production runtime budget.
 export const ENDPOINT_DIAGNOSTIC_MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
 
-const utf8Decoder = new TextDecoder();
+const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 export async function readEndpointDiagnosticManifestResponse(
   response,
