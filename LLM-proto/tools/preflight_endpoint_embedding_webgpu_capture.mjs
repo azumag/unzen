@@ -114,21 +114,23 @@ export function validateChromeHostProbeIdentity(chrome, hostProbe) {
   if (!chrome || typeof chrome !== 'object' || Array.isArray(chrome)) {
     throw new Error('Chrome executable identity must be an object');
   }
-  if (typeof chrome.version !== 'string' || !/^\d+\.\d+\.\d+\.\d+$/.test(chrome.version)) {
+  const chromeVersion = chrome.version;
+  if (typeof chromeVersion !== 'string' || !/^\d+\.\d+\.\d+\.\d+$/.test(chromeVersion)) {
     throw new Error('Chrome executable identity must contain a four-part version');
   }
   if (!hostProbe || typeof hostProbe !== 'object' || Array.isArray(hostProbe)) {
     throw new Error('WebGPU host probe identity must be an object');
   }
-  if (typeof hostProbe.userAgent !== 'string' || hostProbe.userAgent.trim().length === 0) {
+  const userAgent = hostProbe.userAgent;
+  if (typeof userAgent !== 'string' || userAgent.trim().length === 0) {
     throw new Error('WebGPU host probe userAgent must be a non-empty string');
   }
-  const userAgentMatch = hostProbe.userAgent.match(/(?:HeadlessChrome|Chrome)\/(\d+)\./);
+  const userAgentMatch = userAgent.match(/(?:HeadlessChrome|Chrome)\/(\d+)\./);
   if (!userAgentMatch) {
     throw new Error('WebGPU host probe userAgent must identify Chrome/HeadlessChrome with a major version');
   }
 
-  const executableMajor = Number(chrome.version.split('.')[0]);
+  const executableMajor = Number(chromeVersion.split('.')[0]);
   const hostProbeMajor = Number(userAgentMatch[1]);
   if (!Number.isSafeInteger(executableMajor) || !Number.isSafeInteger(hostProbeMajor)) {
     throw new Error('Chrome executable/host-probe major version is invalid');
