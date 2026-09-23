@@ -6,6 +6,7 @@ import {
   loadVerifiedArtifact,
   readResponseBytesBounded,
 } from './artifact-cache.js';
+import { readCheckpointRelayReceipt } from './checkpoint-receipt.js';
 import {
   planSegmentArtifactBudget,
   verifyActualSegmentArtifactBudget,
@@ -382,7 +383,7 @@ async function runSegment0(manifest, manifestDigest, signal) {
     });
     throwIfAborted(signal);
     if (!response.ok) throw new Error(`checkpoint relay failed: ${response.status}`);
-    const receipt = await response.json();
+    const receipt = await readCheckpointRelayReceipt(response, { signal });
     throwIfAborted(signal);
     if (receipt.manifestDigest !== manifestDigest || !receipt.checkpointId || !receipt.checkpointDigest) {
       throw new Error('Coordinator checkpoint receipt is not bound to the loaded manifest');
