@@ -164,6 +164,7 @@ describe('endpoint WebGPU shared-module server routes', () => {
         const sharedModules = [
           '/webgpu-2b-split/artifact-cache.js',
           '/webgpu-2b-split/artifact-budget.js',
+          '/webgpu-2b-split/diagnostic-manifest.js',
           '/webgpu-2b-split/execution-lifecycle.js',
         ];
         for (const pathname of sharedModules) {
