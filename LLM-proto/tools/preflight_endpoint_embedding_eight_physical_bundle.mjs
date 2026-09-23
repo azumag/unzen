@@ -64,6 +64,17 @@ export function calculateEndpointEmbeddingPayloadSetSha256(artifacts) {
   return createHash('sha256').update(canonicalJson(artifacts), 'utf8').digest('hex');
 }
 
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameReadSnapshot(left, right) {
+  return sameFileIdentity(left, right)
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
 async function openRegularFileNoFollow(resolvedPath) {
   const pathStat = await lstat(resolvedPath);
   if (pathStat.isSymbolicLink()) throw new Error(`${resolvedPath} must not be a symbolic link`);
@@ -74,13 +85,29 @@ async function openRegularFileNoFollow(resolvedPath) {
   try {
     const before = await handle.stat();
     if (!before.isFile()) throw new Error(`${resolvedPath} must remain a regular file`);
-    if (before.dev !== pathStat.dev || before.ino !== pathStat.ino) {
+    if (!sameFileIdentity(before, pathStat)) {
       throw new Error(`${resolvedPath} changed before open`);
     }
     return { handle, before };
   } catch (error) {
     await handle.close();
     throw error;
+  }
+}
+
+async function requirePathStillMatchesDescriptor(resolvedPath, descriptorStat) {
+  let pathStat;
+  try {
+    pathStat = await lstat(resolvedPath);
+  } catch (error) {
+    throw new Error(`${resolvedPath} path identity changed while reading`, { cause: error });
+  }
+  if (
+    pathStat.isSymbolicLink()
+    || !pathStat.isFile()
+    || !sameFileIdentity(pathStat, descriptorStat)
+  ) {
+    throw new Error(`${resolvedPath} path identity changed while reading`);
   }
 }
 
@@ -222,9 +249,10 @@ export async function readRegularJsonFile(
     }
 
     const after = await handle.stat();
-    if (after.size !== before.size || totalBytes !== before.size) {
+    if (!sameReadSnapshot(after, before) || totalBytes !== before.size) {
       throw new Error(`${resolvedPath} changed while reading`);
     }
+    await requirePathStillMatchesDescriptor(resolvedPath, after);
 
     const text = decodeFatalUtf8(Buffer.concat(chunks, totalBytes), resolvedPath);
     return JSON.parse(text);
