@@ -1,4 +1,5 @@
 import {
+  existsSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
@@ -132,6 +133,28 @@ describe('8-physical cancellation RSS output/input alias guard', () => {
       expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
         'CANCELLATION_OUTPUT_JSON must not alias validated input preflight.payloads[0]',
       );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects two missing outputs that canonicalize to one destination', () => {
+    const { root, config, preflight } = filesystemFixture();
+    try {
+      const realOutputDir = join(root, 'real-output');
+      const aliasOutputDir = join(root, 'alias-output');
+      mkdirSync(realOutputDir);
+      symlinkSync(realOutputDir, aliasOutputDir, 'dir');
+      config.cancellationOutputPath = join(aliasOutputDir, 'cancel-rss.json');
+      config.boundOutputPath = join(realOutputDir, 'cancel-rss.json');
+
+      expect(existsSync(config.cancellationOutputPath)).toBe(false);
+      expect(existsSync(config.boundOutputPath)).toBe(false);
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        'BOUND_OUTPUT_JSON must not alias output CANCELLATION_OUTPUT_JSON',
+      );
+      expect(existsSync(config.cancellationOutputPath)).toBe(false);
+      expect(existsSync(config.boundOutputPath)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
