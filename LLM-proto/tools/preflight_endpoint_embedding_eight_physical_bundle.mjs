@@ -105,7 +105,7 @@ async function requirePathStillMatchesDescriptor(resolvedPath, descriptorStat, o
   if (
     pathStat.isSymbolicLink()
     || !pathStat.isFile()
-    || !sameFileIdentity(pathStat, descriptorStat)
+    || !sameReadSnapshot(pathStat, descriptorStat)
   ) {
     throw new Error(`${resolvedPath} path identity changed while ${operation}`);
   }
