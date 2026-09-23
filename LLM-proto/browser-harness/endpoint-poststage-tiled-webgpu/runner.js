@@ -1,6 +1,7 @@
 import { validateEndpointPoststageWebGpuManifest } from './contract.js';
 import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from '../webgpu-2b-split/artifact-budget.js';
 import { readResponseBytesBounded } from '../webgpu-2b-split/artifact-cache.js';
+import { readEndpointDiagnosticManifestResponse } from '../webgpu-2b-split/diagnostic-manifest.js';
 
 const statusEl = document.querySelector('#status');
 const reportEl = document.querySelector('#report');
@@ -224,7 +225,7 @@ async function main() {
   setStatus('loading and validating pinned manifest');
   const manifestResponse = await fetch('./data/manifest.json', { cache: 'no-store' });
   if (!manifestResponse.ok) throw new Error(`manifest fetch failed: ${manifestResponse.status}`);
-  const manifest = await manifestResponse.json();
+  const manifest = await readEndpointDiagnosticManifestResponse(manifestResponse);
   validateEndpointPoststageWebGpuManifest(manifest);
 
   const [residualFixture, updateFixture, referenceNormFixture, referenceLogitsFixture] = await Promise.all([
