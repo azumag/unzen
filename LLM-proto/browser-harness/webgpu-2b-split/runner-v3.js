@@ -7,6 +7,7 @@ import {
   readResponseBytesBounded,
 } from './artifact-cache.js';
 import { readCheckpointRelayReceipt } from './checkpoint-receipt.js';
+import { readResultAcceptanceReceipt } from './result-acceptance-receipt.js';
 import {
   planSegmentArtifactBudget,
   verifyActualSegmentArtifactBudget,
@@ -95,7 +96,7 @@ async function adapterInfo() {
       vendor: adapter.info?.vendor ?? '',
       architecture: adapter.info?.architecture ?? '',
       description: adapter.info?.description ?? '',
-      isFallbackAdapter: adapter.isFallbackAdapter ?? false,
+      isFallbackAdapter: adapter.info?.isFallbackAdapter ?? false,
     };
   } catch (error) {
     return { error: String(error) };
@@ -485,7 +486,7 @@ async function runSegment1(manifest, manifestDigest, signal) {
     });
     throwIfAborted(signal);
     if (!response.ok) throw new Error(`result upload failed: ${response.status}`);
-    const accepted = await response.json();
+    const accepted = await readResultAcceptanceReceipt(response, { signal });
     throwIfAborted(signal);
     if (accepted.profileIsolationConfirmed !== true) {
       throw new Error('Coordinator did not confirm browser profile isolation');
