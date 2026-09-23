@@ -1,5 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   assertCancellationOutputPathsDoNotAliasInputs,
@@ -20,6 +29,32 @@ function fixture() {
         { file: 'payload-0000.bin' },
         { file: 'payload-0001.bin' },
       ],
+    },
+  };
+}
+
+function filesystemFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'unzen-cancel-rss-alias-test-'));
+  const dataDir = join(root, 'data');
+  mkdirSync(dataDir);
+  const preflightReport = join(root, 'preflight.json');
+  const graphPath = join(root, 'embedding-offset-0.onnx');
+  const payloadPath = join(dataDir, 'payload-0000.bin');
+  writeFileSync(preflightReport, '{}\n');
+  writeFileSync(graphPath, 'graph');
+  writeFileSync(payloadPath, 'payload');
+  return {
+    root,
+    payloadPath,
+    config: {
+      dataDir,
+      preflightReport,
+      graphPath,
+      cancellationOutputPath: join(root, 'cancel-rss.json'),
+      boundOutputPath: join(root, 'cancel-rss-bound.json'),
+    },
+    preflight: {
+      payloads: [{ file: 'payload-0000.bin' }],
     },
   };
 }
@@ -63,6 +98,54 @@ describe('8-physical cancellation RSS output/input alias guard', () => {
       );
     },
   );
+
+  it('rejects an existing final-output symlink before child capture', () => {
+    const { root, config, preflight } = filesystemFixture();
+    try {
+      symlinkSync(config.graphPath, config.cancellationOutputPath);
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        'CANCELLATION_OUTPUT_JSON must not be an existing symlink',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a hard-link output alias of a validated payload', () => {
+    const { root, payloadPath, config, preflight } = filesystemFixture();
+    try {
+      linkSync(payloadPath, config.cancellationOutputPath);
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        'CANCELLATION_OUTPUT_JSON must not alias validated input preflight.payloads[0]',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an output reached through a symlinked parent directory', () => {
+    const { root, config, preflight } = filesystemFixture();
+    try {
+      const aliasDataDir = join(root, 'alias-data');
+      symlinkSync(config.dataDir, aliasDataDir, 'dir');
+      config.cancellationOutputPath = join(aliasDataDir, 'payload-0000.bin');
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).toThrow(
+        'CANCELLATION_OUTPUT_JSON must not alias validated input preflight.payloads[0]',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps overwrite compatibility for an unrelated existing regular output', () => {
+    const { root, config, preflight } = filesystemFixture();
+    try {
+      writeFileSync(config.cancellationOutputPath, 'old diagnostic output');
+      expect(() => assertCancellationOutputPathsDoNotAliasInputs(config, preflight)).not.toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it('runs the guard before output reservation or child capture', () => {
     const source = readFileSync(
