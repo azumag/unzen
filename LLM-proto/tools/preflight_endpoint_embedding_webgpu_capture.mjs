@@ -2,7 +2,8 @@
 /** Preflight the pinned endpoint embedding ORT Web/WebGPU capture inputs. */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, lstatSync } from 'node:fs';
+import { constants, lstatSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ import { probeEndpointEmbeddingWebGpuHost } from './probe_endpoint_embedding_web
 import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 const EXPECTED = ENDPOINT_EMBEDDING_WEBGPU_EXPECTED;
+const PREPARED_HASH_BUFFER_BYTES = 1024 * 1024;
 const DEFAULT_DEVICE_BUDGET_LIMIT_FIELDS = [
   'maxBufferSize',
   'maxStorageBufferBindingSize',
@@ -51,15 +53,33 @@ function requireDataDirectory(path) {
   return stat;
 }
 
-async function sha256File(path) {
+async function hashPreparedFileHandle(handle, opened, path, label) {
   const digest = createHash('sha256');
-  await new Promise((resolvePromise, reject) => {
-    const stream = createReadStream(path);
-    stream.on('data', (chunk) => digest.update(chunk));
-    stream.once('error', reject);
-    stream.once('end', resolvePromise);
-  });
-  return digest.digest('hex');
+  const buffer = Buffer.allocUnsafe(PREPARED_HASH_BUFFER_BYTES);
+  let totalBytes = 0;
+  while (true) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    digest.update(buffer.subarray(0, bytesRead));
+    totalBytes += bytesRead;
+  }
+
+  const afterStat = await handle.stat();
+  if (!afterStat.isFile()) throw new Error(`${label} must remain a regular file`);
+  const after = snapshotIdentity(afterStat);
+  if (!sameIdentity(opened, after) || totalBytes !== opened.size) {
+    throw new Error(`${label} changed while hashing`);
+  }
+
+  const pathAfter = snapshotIdentity(requireRegularFile(path, label));
+  if (!sameIdentity(after, pathAfter)) {
+    throw new Error(`${label} path identity changed while hashing`);
+  }
+
+  return {
+    bytes: totalBytes,
+    sha256: digest.digest('hex'),
+  };
 }
 
 export async function verifyPreparedFileIdentity(path, expected, label = basename(path)) {
@@ -81,19 +101,28 @@ export async function verifyPreparedFileIdentity(path, expected, label = basenam
     throw new Error(`${label} byte length mismatch: expected ${expectedBytes}, got ${before.size}`);
   }
 
-  const sha256 = await sha256File(path);
-  const afterStat = requireRegularFile(path, label);
-  const after = snapshotIdentity(afterStat);
-  if (!sameIdentity(before, after)) throw new Error(`${label} changed while hashing`);
-  if (sha256 !== expectedSha256) {
-    throw new Error(`${label} SHA-256 mismatch: expected ${expectedSha256}, got ${sha256}`);
-  }
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const openedStat = await handle.stat();
+    if (!openedStat.isFile()) throw new Error(`${label} must remain a regular file`);
+    const opened = snapshotIdentity(openedStat);
+    if (!sameIdentity(before, opened)) {
+      throw new Error(`${label} changed before hashing`);
+    }
 
-  return {
-    fileName: basename(path),
-    bytes: before.size,
-    sha256,
-  };
+    const { bytes, sha256 } = await hashPreparedFileHandle(handle, opened, path, label);
+    if (sha256 !== expectedSha256) {
+      throw new Error(`${label} SHA-256 mismatch: expected ${expectedSha256}, got ${sha256}`);
+    }
+
+    return {
+      fileName: basename(path),
+      bytes,
+      sha256,
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 export function parseChromeVersion(versionOutput) {
