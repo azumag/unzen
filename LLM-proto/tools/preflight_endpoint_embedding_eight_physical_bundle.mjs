@@ -4,19 +4,24 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
   ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED,
   buildEndpointEmbeddingEightPhysicalRuntimePlan,
 } from '../browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js';
+import { DEFAULT_MAX_STABLE_UTF8_BYTES } from './read_stable_regular_utf8_file.mjs';
 
 export const ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT = Object.freeze({
   kind: 'unzen-pinned-llama-1b-endpoint-embedding-eight-physical-bundle-preflight',
   schemaVersion: '1.0.0',
   hashBufferBytes: 1024 * 1024,
+  jsonReadBufferBytes: 64 * 1024,
+  jsonMaximumBytes: DEFAULT_MAX_STABLE_UTF8_BYTES,
 });
 
 const CANONICAL_SHA256 = /^[0-9a-f]{64}$/;
+const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 function requireObject(value, field) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -76,6 +81,21 @@ async function openRegularFileNoFollow(resolvedPath) {
   } catch (error) {
     await handle.close();
     throw error;
+  }
+}
+
+function requireJsonMaximumBytes(value) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('JSON maximumBytes must be a positive safe integer');
+  }
+  return value;
+}
+
+function decodeFatalUtf8(bytes, resolvedPath) {
+  try {
+    return FATAL_UTF8_DECODER.decode(bytes);
+  } catch (error) {
+    throw new Error(`${resolvedPath} must contain valid UTF-8`, { cause: error });
   }
 }
 
@@ -163,15 +183,50 @@ export async function inspectRegularFile(filePath) {
   }
 }
 
-export async function readRegularJsonFile(filePath) {
+export async function readRegularJsonFile(
+  filePath,
+  maximumBytes = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT.jsonMaximumBytes,
+) {
+  const boundedMaximumBytes = requireJsonMaximumBytes(maximumBytes);
   const resolvedPath = resolve(filePath);
   const { handle, before } = await openRegularFileNoFollow(resolvedPath);
   try {
-    const text = await handle.readFile({ encoding: 'utf8' });
+    if (before.size > boundedMaximumBytes) {
+      throw new Error(`${resolvedPath} exceeds ${boundedMaximumBytes} byte JSON limit`);
+    }
+
+    const chunks = [];
+    let totalBytes = 0;
+    const buffer = Buffer.allocUnsafe(Math.min(
+      ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT.jsonReadBufferBytes,
+      boundedMaximumBytes,
+    ));
+    while (totalBytes < boundedMaximumBytes) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, boundedMaximumBytes - totalBytes),
+        null,
+      );
+      if (bytesRead === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      totalBytes += bytesRead;
+    }
+
+    if (totalBytes === boundedMaximumBytes) {
+      const probe = Buffer.allocUnsafe(1);
+      const { bytesRead } = await handle.read(probe, 0, 1, null);
+      if (bytesRead !== 0) {
+        throw new Error(`${resolvedPath} exceeds ${boundedMaximumBytes} byte JSON limit`);
+      }
+    }
+
     const after = await handle.stat();
-    if (after.size !== before.size || Buffer.byteLength(text, 'utf8') !== before.size) {
+    if (after.size !== before.size || totalBytes !== before.size) {
       throw new Error(`${resolvedPath} changed while reading`);
     }
+
+    const text = decodeFatalUtf8(Buffer.concat(chunks, totalBytes), resolvedPath);
     return JSON.parse(text);
   } finally {
     await handle.close();
