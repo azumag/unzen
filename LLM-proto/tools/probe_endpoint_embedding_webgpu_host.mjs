@@ -37,13 +37,14 @@ function requirePositiveSafeInteger(value, label) {
   return value;
 }
 
-function validateLimits(value, label) {
+function snapshotLimits(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
   }
-  for (const field of LIMIT_FIELDS) {
-    requirePositiveSafeInteger(value[field], `${label}.${field}`);
-  }
+  return Object.fromEntries(LIMIT_FIELDS.map((field) => [
+    field,
+    requirePositiveSafeInteger(value[field], `${label}.${field}`),
+  ]));
 }
 
 export function validateEndpointEmbeddingWebGpuHostProbeResult(result) {
@@ -70,10 +71,10 @@ export function validateEndpointEmbeddingWebGpuHostProbeResult(result) {
     }
   }
 
-  validateLimits(result.adapterLimits, 'WebGPU host probe adapterLimits');
-  validateLimits(result.deviceLimits, 'WebGPU host probe deviceLimits');
+  const adapterLimits = snapshotLimits(result.adapterLimits, 'WebGPU host probe adapterLimits');
+  const deviceLimits = snapshotLimits(result.deviceLimits, 'WebGPU host probe deviceLimits');
   for (const field of LIMIT_FIELDS) {
-    if (result.deviceLimits[field] > result.adapterLimits[field]) {
+    if (deviceLimits[field] > adapterLimits[field]) {
       throw new Error(`WebGPU host probe deviceLimits.${field} exceeds adapter limit`);
     }
   }
