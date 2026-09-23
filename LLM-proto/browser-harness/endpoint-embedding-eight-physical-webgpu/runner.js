@@ -1,6 +1,7 @@
 import { buildEndpointEmbeddingEightPhysicalBrowserPlan } from './contract.js';
 import { compareFloat32Bytes } from './comparison.js';
 import { ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES } from './preflight-budget.js';
+import { parseEndpointEmbeddingEightPhysicalPreflightBytes } from './preflight-json.js';
 import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from '../webgpu-2b-split/artifact-budget.js';
 import { readResponseBytesBounded } from '../webgpu-2b-split/artifact-cache.js';
 
@@ -172,7 +173,7 @@ async function main() {
     maxBytes: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES,
     url: './data/preflight.json',
   });
-  const preflight = JSON.parse(new TextDecoder().decode(preflightBytes));
+  const preflight = parseEndpointEmbeddingEightPhysicalPreflightBytes(preflightBytes);
   const plan = buildEndpointEmbeddingEightPhysicalBrowserPlan(preflight);
 
   setStatus('loading and verifying pinned zero-offset graph');
