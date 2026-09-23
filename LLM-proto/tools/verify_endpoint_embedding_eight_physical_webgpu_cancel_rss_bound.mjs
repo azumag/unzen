@@ -7,7 +7,7 @@ import {
   fstatSync,
   lstatSync,
   openSync,
-  readFileSync,
+  readSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import {
 import { readStableCancellationRssEvidence } from './verify_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs';
 
 const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
+const READ_CHUNK_BYTES = 64 * 1024;
 
 function requireObject(value, label) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -65,10 +66,22 @@ export function readStableBoundJsonFile(path, label = 'JSON input', { maxBytes =
       throw new Error(`${label} pathname identity changed before read`);
     }
 
-    const bytes = readFileSync(fd);
-    if (bytes.byteLength !== Number(beforeFdStat.size)) {
+    const initialSize = Number(beforeFdStat.size);
+    const chunks = [];
+    let totalBytes = 0;
+    while (totalBytes <= initialSize) {
+      const remaining = initialSize + 1 - totalBytes;
+      if (remaining <= 0) break;
+      const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, remaining));
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes !== initialSize) {
       throw new Error(`${label} size changed while reading`);
     }
+    const bytes = Buffer.concat(chunks, totalBytes);
 
     const afterFdStat = fstatSync(fd, { bigint: true });
     const afterPathStat = lstatSync(resolved, { bigint: true });
