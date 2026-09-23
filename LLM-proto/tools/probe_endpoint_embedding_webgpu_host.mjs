@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_TIMEOUT_MS = 15000;
+const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const LIMIT_FIELDS = [
   'maxBufferSize',
   'maxStorageBufferBindingSize',
@@ -21,6 +22,16 @@ export function createEndpointEmbeddingWebGpuHostProbeChallenge() {
     probePath: `/probe/${token}`,
     resultPath: `/result/${token}`,
   };
+}
+
+export function parseEndpointEmbeddingWebGpuHostProbeResultBytes(bytes) {
+  let text;
+  try {
+    text = FATAL_UTF8_DECODER.decode(bytes);
+  } catch {
+    throw new Error('WebGPU host probe result is not valid UTF-8');
+  }
+  return JSON.parse(text);
 }
 
 function requireNonEmptyString(value, label) {
@@ -216,7 +227,7 @@ export async function probeEndpointEmbeddingWebGpuHost({ chromeBinary, timeoutMs
       request.on('error', settleReject);
       request.on('end', () => {
         try {
-          const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          const result = parseEndpointEmbeddingWebGpuHostProbeResultBytes(Buffer.concat(chunks));
           response.writeHead(204, { 'cache-control': 'no-store' });
           response.end();
           settleResolve(result);
