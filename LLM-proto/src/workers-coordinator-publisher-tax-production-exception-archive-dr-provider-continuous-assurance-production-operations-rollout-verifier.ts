@@ -80,7 +80,7 @@ async function verifyArtifact(input: unknown, options: ProductionOperationsRollo
   const bytes = artifactBytes(input.artifactContent);
   if (await sha256(bytes) !== expectedSha256) return fail(options, 'production-rollout-artifact-digest-mismatch');
   let artifact: unknown;
-  try { artifact = JSON.parse(new TextDecoder().decode(bytes)); } catch { return fail(options, 'production-rollout-artifact-json-invalid'); }
+  try { artifact = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { return fail(options, 'production-rollout-artifact-json-invalid'); }
   if (!record(artifact) || artifact.schema !== 'unzen-continuous-assurance-production-rollout-phase-v1' ||
     !record(artifact.payload) || !record(artifact.authorization) || !Array.isArray(artifact.actionReceipts)) {
     return fail(options, 'production-rollout-artifact-schema-invalid');
