@@ -97,7 +97,7 @@ async function adapterInfo() {
       vendor: adapter.info?.vendor ?? '',
       architecture: adapter.info?.architecture ?? '',
       description: adapter.info?.description ?? '',
-      isFallbackAdapter: adapter.info?.isFallbackAdapter ?? false,
+      isFallbackAdapter: adapter.isFallbackAdapter ?? false,
     };
   } catch (error) {
     return { error: String(error) };
