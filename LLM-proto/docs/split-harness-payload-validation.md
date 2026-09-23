@@ -2,6 +2,12 @@
 
 The localhost two-browser WebGPU harness treats checkpoint and result payloads as evidence, so transport success alone is not enough for a `pass` result.
 
+## JSON request transport boundary
+
+Coordinator JSON requests are collected under the existing 16 MiB body ceiling and then decoded as UTF-8 with fatal error handling before `JSON.parse()` runs. Malformed UTF-8 is rejected with HTTP 400 before worker registration, checkpoint storage, result storage, or other route-specific state mutation. Valid non-ASCII UTF-8 continues to use the same route and payload-validation semantics; an empty request body still maps to `{}` before normal field validation.
+
+This boundary prevents the runtime from silently replacing malformed byte sequences with U+FFFD and then accepting the normalized text as evidence-bearing JSON. It does not change route schemas, checkpoint/result binding, or the 16 MiB transport ceiling.
+
 ## Checkpoint boundary
 
 `POST /api/runs/:runId/checkpoint` accepts exactly two boundary tensors. Each tensor must have:

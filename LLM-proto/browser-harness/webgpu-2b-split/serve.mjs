@@ -28,6 +28,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_PORT = Number(process.env.PORT ?? 8791);
 const MODELS_DIR = process.env.MODELS_DIR ? resolve(process.env.MODELS_DIR) : undefined;
 const MAX_JSON_BYTES = 16 * 1024 * 1024;
+const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const PROFILE_PROBE_COOKIE = 'unzen_profile_probe';
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 const TENSOR_TYPE_BYTES = Object.freeze({
@@ -83,7 +84,12 @@ async function readJson(req) {
     }
     chunks.push(chunk);
   }
-  const text = Buffer.concat(chunks).toString('utf8');
+  let text;
+  try {
+    text = FATAL_UTF8_DECODER.decode(Buffer.concat(chunks));
+  } catch {
+    throw new Error('request body is not valid UTF-8');
+  }
   return text ? JSON.parse(text) : {};
 }
 
