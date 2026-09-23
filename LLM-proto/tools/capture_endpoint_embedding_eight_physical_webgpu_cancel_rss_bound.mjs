@@ -159,12 +159,37 @@ function parseArgs(argv) {
   };
 }
 
+export function assertCancellationOutputPathsDoNotAliasInputs(config, preflightReport) {
+  const inputPaths = new Map([
+    [resolve(config.preflightReport), 'PREFLIGHT_REPORT'],
+    [resolve(config.graphPath), 'GRAPH_PATH'],
+  ]);
+  for (let index = 0; index < preflightReport.payloads.length; index += 1) {
+    const payload = preflightReport.payloads[index];
+    inputPaths.set(
+      resolve(config.dataDir, payload.file),
+      `preflight.payloads[${index}]`,
+    );
+  }
+
+  for (const [label, outputPath] of [
+    ['CANCELLATION_OUTPUT_JSON', config.cancellationOutputPath],
+    ['BOUND_OUTPUT_JSON', config.boundOutputPath],
+  ]) {
+    const inputLabel = inputPaths.get(resolve(outputPath));
+    if (inputLabel) {
+      throw new Error(`${label} must not alias validated input ${inputLabel}`);
+    }
+  }
+}
+
 export async function runBoundCancellationRssCapture(argv, env = process.env) {
   const config = parseArgs(argv);
   const preflight = validateEndpointEmbeddingEightPhysicalPreflightReport(
     await readRegularJsonFile(config.preflightReport),
   );
   endpointEmbeddingEightPhysicalPreflightIdentity(preflight);
+  assertCancellationOutputPathsDoNotAliasInputs(config, preflight);
   const preflightDigest = canonicalJsonSha256(preflight);
   const boundFd = reserveEvidenceOutput(config.boundOutputPath);
   let boundOutputCommitted = false;
