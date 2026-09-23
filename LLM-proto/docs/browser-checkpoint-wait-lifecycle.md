@@ -24,6 +24,16 @@ The default clock remains `Date.now()`. Callers may inject another millisecond c
 
 `waitForCheckpointBounded()` applies the same host-timer domain to `pollIntervalMs`, except that polling requires a strictly positive interval. Invalid polling intervals are rejected before the first checkpoint fetch.
 
+## Checkpoint response payload contract
+
+A successful checkpoint poll no longer calls `Response.json()` directly. The segment-1 runner supplies `readCheckpointPayloadResponse()` to `waitForCheckpointBounded()`, so the response body is streamed through the shared bounded byte reader before UTF-8 decoding or JSON parsing. Malformed UTF-8 is rejected with fatal decoding and an oversized body is cancelled/released by the same reader contract used for other browser transport boundaries.
+
+The byte ceiling is derived from the local Coordinator transport contract rather than from an arbitrary tensor-size guess. The Coordinator currently accepts at most `16 MiB` for one JSON request body. The stored checkpoint reuses that accepted request payload and adds only Coordinator-owned binding metadata (run/worker identity, checkpoint id/digest, relay flags, tensor-byte total and timestamp). The browser therefore allows the `16 MiB` request ceiling plus a dedicated `4 KiB` generated-metadata envelope, exported as `COORDINATOR_CHECKPOINT_RESPONSE_MAX_BYTES` by `checkpoint-transport-contract.js`.
+
+The `4 KiB` envelope is a compatibility contract, not spare unbounded capacity. If Coordinator-generated checkpoint metadata grows beyond it, the transport constant and its tests must be changed deliberately. This keeps the successful checkpoint read bounded without forcing the actual tensor payload into the much smaller `16 KiB` metadata-receipt limits used by checkpoint/result acknowledgements.
+
+`waitForCheckpointBounded()` snapshots the supplied checkpoint response reader before polling begins. This keeps the successful-body policy stable across asynchronous fetch/sleep boundaries and prevents a caller from swapping an accepted reader implementation after the wait starts.
+
 ## Abort race and cleanup containment
 
 A checkpoint delay checks `signal.aborted` before creating the timer, installs its abort listener, and then re-checks `signal.aborted`. This closes the check-then-listen window where an AbortSignal could otherwise flip after the first check but before listener installation and leave a cancelled wait sleeping until the timer fired.
