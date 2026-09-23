@@ -62,25 +62,30 @@ async function sha256File(path) {
 }
 
 export async function verifyPreparedFileIdentity(path, expected, label = basename(path)) {
-  if (!expected || !Number.isSafeInteger(expected.bytes) || expected.bytes < 0) {
+  if (!expected) {
     throw new Error(`${label} expected byte length is invalid`);
   }
-  if (typeof expected.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(expected.sha256)) {
+  const expectedBytes = expected.bytes;
+  const expectedSha256 = expected.sha256;
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0) {
+    throw new Error(`${label} expected byte length is invalid`);
+  }
+  if (typeof expectedSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(expectedSha256)) {
     throw new Error(`${label} expected SHA-256 is invalid`);
   }
 
   const beforeStat = requireRegularFile(path, label);
   const before = snapshotIdentity(beforeStat);
-  if (before.size !== expected.bytes) {
-    throw new Error(`${label} byte length mismatch: expected ${expected.bytes}, got ${before.size}`);
+  if (before.size !== expectedBytes) {
+    throw new Error(`${label} byte length mismatch: expected ${expectedBytes}, got ${before.size}`);
   }
 
   const sha256 = await sha256File(path);
   const afterStat = requireRegularFile(path, label);
   const after = snapshotIdentity(afterStat);
   if (!sameIdentity(before, after)) throw new Error(`${label} changed while hashing`);
-  if (sha256 !== expected.sha256) {
-    throw new Error(`${label} SHA-256 mismatch: expected ${expected.sha256}, got ${sha256}`);
+  if (sha256 !== expectedSha256) {
+    throw new Error(`${label} SHA-256 mismatch: expected ${expectedSha256}, got ${sha256}`);
   }
 
   return {
