@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 /** Capture the diagnostic-only endpoint embedding ORT Web/WebGPU runtime report. */
 import { spawn } from 'node:child_process';
-import { closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENDPOINT_EMBEDDING_WEBGPU_EXPECTED } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
+import {
+  assertEvidenceOutputPathIdentity,
+  cleanupReservedEvidenceOutput,
+  reserveEvidenceOutput,
+} from './evidence_output_reservation.mjs';
 import { parseChromeVersion, preflightEndpointEmbeddingWebGpuCapture } from './preflight_endpoint_embedding_webgpu_capture.mjs';
+
+export {
+  assertEvidenceOutputPathIdentity,
+  cleanupReservedEvidenceOutput,
+  reserveEvidenceOutput,
+} from './evidence_output_reservation.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SCRIPT_DIR, '..');
@@ -201,38 +212,6 @@ export function validateCapturedEndpointEmbeddingRuntimeEvidence(evidence) {
 
 export function assertDistinctCapturePorts(serverPort, debugPort) {
   if (serverPort === debugPort) throw new Error('harness and DevTools ports must be distinct');
-}
-
-export function reserveEvidenceOutput(outputPath) {
-  mkdirSync(dirname(outputPath), { recursive: true });
-  return openSync(outputPath, 'wx', 0o600);
-}
-
-function evidenceOutputPathMatchesFd(outputFd, outputPath) {
-  let fdStat;
-  let pathStat;
-  try {
-    fdStat = fstatSync(outputFd, { bigint: true });
-    pathStat = lstatSync(outputPath, { bigint: true });
-  } catch {
-    return false;
-  }
-  return fdStat.isFile()
-    && pathStat.isFile()
-    && fdStat.dev === pathStat.dev
-    && fdStat.ino === pathStat.ino;
-}
-
-export function assertEvidenceOutputPathIdentity(outputFd, outputPath) {
-  if (!evidenceOutputPathMatchesFd(outputFd, outputPath)) {
-    throw new Error('evidence output path identity changed after reservation');
-  }
-}
-
-export function cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted) {
-  if (outputCommitted || !evidenceOutputPathMatchesFd(outputFd, outputPath)) return false;
-  if (!outputCommitted) { try { unlinkSync(outputPath); } catch {} }
-  return true;
 }
 
 class CdpClient {

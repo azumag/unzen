@@ -19,7 +19,7 @@ import {
   assertEvidenceOutputPathIdentity,
   cleanupReservedEvidenceOutput,
   reserveEvidenceOutput,
-} from './capture_endpoint_embedding_webgpu_runtime.mjs';
+} from './evidence_output_reservation.mjs';
 import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
