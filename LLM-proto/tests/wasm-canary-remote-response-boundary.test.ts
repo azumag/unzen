@@ -54,4 +54,64 @@ describe('remote Wasm canary response boundary', () => {
     expect(report.status).toBe('pass');
     expect(report.samples).toHaveLength(1);
   });
+
+  it('measures elapsed time after the bounded response body has been consumed', async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ status: 'pass', ...WASM_CANARY_CONTRACT }));
+    let bodyRead = false;
+    let readCount = 0;
+    const response = {
+      ok: true,
+      status: 200,
+      body: {
+        getReader() {
+          return {
+            async read() {
+              readCount += 1;
+              if (readCount === 1) {
+                bodyRead = true;
+                return { value: bytes, done: false };
+              }
+              return { value: undefined, done: true };
+            },
+            releaseLock() {},
+          };
+        },
+      },
+    } as unknown as Response;
+    let clockCalls = 0;
+
+    const report = await checkRemoteCanary(CANARY_URL, {
+      samples: 1,
+      fetchImpl: (async () => response) as typeof fetch,
+      now: () => {
+        clockCalls += 1;
+        if (clockCalls === 2) expect(bodyRead).toBe(true);
+        return clockCalls === 1 ? 100 : 175;
+      },
+    });
+
+    expect(report.samples).toEqual([{ sample: 1, elapsedMs: 75 }]);
+    expect(clockCalls).toBe(2);
+  });
+
+  it('best-effort cancels an unread non-success response body', async () => {
+    let cancelled = false;
+    const response = {
+      ok: false,
+      status: 503,
+      body: {
+        cancel() {
+          cancelled = true;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as Response;
+
+    await expect(checkRemoteCanary(CANARY_URL, {
+      samples: 1,
+      fetchImpl: (async () => response) as typeof fetch,
+    })).rejects.toThrow('Wasm canary returned HTTP 503.');
+
+    expect(cancelled).toBe(true);
+  });
 });
