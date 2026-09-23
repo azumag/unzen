@@ -29,6 +29,10 @@ export function assertEvidenceOutputPathIdentity(outputFd, outputPath) {
 
 export function cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted) {
   if (outputCommitted || !evidenceOutputPathMatchesFd(outputFd, outputPath)) return false;
-  try { unlinkSync(outputPath); } catch {}
-  return true;
+  try {
+    unlinkSync(outputPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
