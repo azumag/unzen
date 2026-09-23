@@ -80,7 +80,7 @@ export function validateCheckpointBoundaryNames(checkpoint, manifest) {
     throw new Error('manifest must declare a supported boundary dtype');
   }
   const actualNames = checkpoint.tensors.map((wire) => wire?.name);
-  if (actualNames.some((name) => typeof name !== 'string' || name.length === 0)) {
+  if (actualNames.some((name) => typeof name !== 'string' || name.length === 0 || name.length > 1024)) {
     throw new Error('Coordinator checkpoint contains an invalid boundary tensor name');
   }
   if (new Set(actualNames).size !== actualNames.length) {
