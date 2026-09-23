@@ -39,6 +39,40 @@ describe('endpoint embedding WebGPU capture preflight file identity', () => {
     }
   });
 
+  it('snapshots accessor-backed expected bytes and digest once before filesystem work', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-preflight-test-'));
+    const path = join(dir, 'payload.bin');
+    const content = Buffer.from('stable expectation snapshot');
+    const reads = { bytes: 0, sha256: 0 };
+    const expected = Object.defineProperties({}, {
+      bytes: {
+        enumerable: true,
+        get() {
+          reads.bytes += 1;
+          return reads.bytes === 1 ? content.length : content.length + 1;
+        },
+      },
+      sha256: {
+        enumerable: true,
+        get() {
+          reads.sha256 += 1;
+          return reads.sha256 === 1 ? sha256(content) : '0'.repeat(64);
+        },
+      },
+    });
+    try {
+      writeFileSync(path, content);
+      await expect(verifyPreparedFileIdentity(path, expected, 'test payload')).resolves.toEqual({
+        fileName: 'payload.bin',
+        bytes: content.length,
+        sha256: sha256(content),
+      });
+      expect(reads).toEqual({ bytes: 1, sha256: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed on byte-length or digest drift', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-embedding-preflight-test-'));
     const path = join(dir, 'payload.bin');
