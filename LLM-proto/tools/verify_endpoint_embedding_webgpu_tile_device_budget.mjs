@@ -24,9 +24,16 @@ function maximumBytes(values, label) {
   return Math.max(...values.map((value, index) => requirePositiveSafeInteger(value, `${label}[${index}]`)));
 }
 
+function snapshotRequiredAdapterLimits(adapterLimits) {
+  return Object.fromEntries(REQUIRED_LIMIT_FIELDS.map((field) => [
+    field,
+    requirePositiveSafeInteger(adapterLimits[field], `adapterLimits.${field}`),
+  ]));
+}
+
 function buildLimitChecks(adapterLimits, requiredBytes) {
   return Object.fromEntries(REQUIRED_LIMIT_FIELDS.map((field) => {
-    const availableBytes = requirePositiveSafeInteger(adapterLimits[field], `adapterLimits.${field}`);
+    const availableBytes = adapterLimits[field];
     const headroomBytes = availableBytes - requiredBytes;
     return [field, {
       availableBytes,
@@ -45,6 +52,7 @@ export function evaluateEndpointEmbeddingWebGpuTileDeviceBudget(adapterLimits) {
   if (!adapterLimits || typeof adapterLimits !== 'object' || Array.isArray(adapterLimits)) {
     throw new Error('adapterLimits must be an object');
   }
+  const capturedAdapterLimits = snapshotRequiredAdapterLimits(adapterLimits);
 
   const maximumExecutionTileBytes = maximumBytes(
     EXPECTED.tiles.map((tile) => tile.byteLength),
@@ -55,9 +63,12 @@ export function evaluateEndpointEmbeddingWebGpuTileDeviceBudget(adapterLimits) {
     'physical artifact byte lengths',
   );
 
-  const checks = buildLimitChecks(adapterLimits, maximumExecutionTileBytes);
+  const checks = buildLimitChecks(capturedAdapterLimits, maximumExecutionTileBytes);
   const status = checksPass(checks) ? 'pass' : 'fail';
-  const physicalArtifactSingleBindingChecks = buildLimitChecks(adapterLimits, maximumPhysicalArtifactBytes);
+  const physicalArtifactSingleBindingChecks = buildLimitChecks(
+    capturedAdapterLimits,
+    maximumPhysicalArtifactBytes,
+  );
   const physicalArtifactSingleBindingStatus = checksPass(physicalArtifactSingleBindingChecks) ? 'pass' : 'fail';
 
   return {
