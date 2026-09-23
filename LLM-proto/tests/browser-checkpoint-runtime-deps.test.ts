@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { waitForCheckpointBounded } from '../browser-harness/webgpu-2b-split/execution-lifecycle.js';
+import { waitForCheckpointBounded as waitForCheckpointBoundedImpl } from '../browser-harness/webgpu-2b-split/execution-lifecycle.js';
 
 function okResponse(value: unknown = {}) {
   return {
@@ -15,6 +15,13 @@ function missingResponse() {
     ok: false,
     json: async () => ({}),
   };
+}
+
+function waitForCheckpointBounded(options: Parameters<typeof waitForCheckpointBoundedImpl>[0]) {
+  return waitForCheckpointBoundedImpl({
+    ...options,
+    readCheckpointResponse: async (checkpointResponse: ReturnType<typeof okResponse>) => checkpointResponse.json(),
+  });
 }
 
 describe('browser checkpoint wait runtime dependency preflight', () => {
