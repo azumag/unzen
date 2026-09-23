@@ -89,7 +89,7 @@ If Phase B is later authorized and the isolated canary is deployed, the response
 node tools/check_wasm_canary_remote.mjs https://<isolated-canary>.<subdomain>.workers.dev/
 ```
 
-The checker rejects HTTP, embedded URL credentials, and non-`workers.dev` hosts. It performs repeated GETs, validates every response against the pinned contract, and records per-request elapsed time. Those measurements remain diagnostic and must not be interpreted as a stable performance ranking without repeated controlled sampling.
+The checker rejects HTTP, embedded URL credentials, and non-`workers.dev` hosts. It performs repeated GETs, validates every response against the pinned contract, and records per-request elapsed time. Each successful HTTP response is read incrementally with a hard 64 KiB ceiling, decoded with fatal UTF-8 semantics, and only then parsed as JSON. Oversized responses, malformed UTF-8, and malformed JSON fail before contract validation; valid UTF-8 BOM responses remain compatible. Those measurements remain diagnostic and must not be interpreted as a stable performance ranking without repeated controlled sampling.
 
 ## Cleanup
 
