@@ -390,6 +390,241 @@ def _execute_tile(
         gc.collect()
 
 
+def _preflight_five_way_cpu_geometry(
+    layout: dict[str, object], *, tile_indices: list[int] | None
+) -> tuple[
+    int,
+    list[int],
+    list[dict[str, object]],
+    list[dict[str, int]],
+    dict[str, object],
+]:
+    """Validate and snapshot CPU crossing-tile geometry before any pinned payload I/O."""
+
+    row_bytes = _required_int(layout.get("rowBytes"), field="rowBytes", minimum=1)
+    if row_bytes % FLOAT32_BYTES != 0:
+        raise RuntimeError("pinned endpoint rowBytes must describe float32 rows")
+    hidden_size = row_bytes // FLOAT32_BYTES
+
+    source_identity = layout.get("pinnedSourceExternalDataIdentity")
+    if not isinstance(source_identity, dict):
+        raise RuntimeError("pinnedSourceExternalDataIdentity must be an object")
+    source_bytes = _required_int(
+        source_identity.get("bytes"), field="pinned source bytes", minimum=1
+    )
+    source_sha256 = source_identity.get("sha256")
+    if not isinstance(source_sha256, str) or len(source_sha256) != 64:
+        raise RuntimeError("pinned source SHA-256 must be a 64-character string")
+    source_identity_snapshot = dict(source_identity)
+
+    candidates = layout.get("candidates")
+    if not isinstance(candidates, list):
+        raise RuntimeError("endpoint layout candidates must be an array")
+    selected_candidates = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+        and isinstance(candidate.get("physicalArtifactCount"), int)
+        and not isinstance(candidate.get("physicalArtifactCount"), bool)
+        and candidate.get("physicalArtifactCount") == PHYSICAL_ARTIFACT_COUNT
+    ]
+    if len(selected_candidates) != 1:
+        raise RuntimeError("expected exactly one pinned 5-way candidate")
+    candidate = selected_candidates[0]
+    tiles = candidate.get("executionTiles")
+    physical = candidate.get("physicalArtifacts")
+    if not isinstance(tiles, list) or len(tiles) != EXECUTION_TILE_COUNT:
+        raise RuntimeError("pinned 5-way candidate must expose exactly eight execution tiles")
+    if not isinstance(physical, list) or len(physical) != PHYSICAL_ARTIFACT_COUNT:
+        raise RuntimeError("pinned 5-way candidate must expose exactly five physical artifacts")
+
+    physical_by_index: dict[int, dict[str, int]] = {}
+    for artifact in physical:
+        if not isinstance(artifact, dict):
+            raise RuntimeError("physical artifact entry must be an object")
+        index = _required_int(artifact.get("index"), field="physical artifact index")
+        if index >= PHYSICAL_ARTIFACT_COUNT:
+            raise RuntimeError(f"physical artifact index {index} is outside the pinned 5-way layout")
+        if index in physical_by_index:
+            raise RuntimeError(f"duplicate physical artifact index {index}")
+        byte_length = _required_int(
+            artifact.get("byteLength"), field=f"physical artifact {index} byteLength", minimum=1
+        )
+        source_offset = _required_int(
+            artifact.get("sourceOffsetBytes"),
+            field=f"physical artifact {index} sourceOffsetBytes",
+        )
+        source_end = _required_int(
+            artifact.get("sourceEndOffsetBytesExclusive"),
+            field=f"physical artifact {index} sourceEndOffsetBytesExclusive",
+            minimum=1,
+        )
+        if source_end - source_offset != byte_length or source_end > source_bytes:
+            raise RuntimeError(
+                f"physical artifact {index} source range does not match byteLength"
+            )
+        physical_by_index[index] = {
+            "index": index,
+            "byteLength": byte_length,
+            "sourceOffsetBytes": source_offset,
+            "sourceEndOffsetBytesExclusive": source_end,
+        }
+    if set(physical_by_index) != set(range(PHYSICAL_ARTIFACT_COUNT)):
+        raise RuntimeError("pinned 5-way physical artifact indices must be canonical")
+
+    crossing_indices: list[int] = []
+    for position, tile in enumerate(tiles):
+        if not isinstance(tile, dict):
+            raise RuntimeError(f"execution tile {position} must be an object")
+        tile_index = _required_int(tile.get("tileIndex"), field=f"tile[{position}].tileIndex")
+        if tile_index != position:
+            raise RuntimeError(f"execution tile index contract drift at {position}")
+        physical_count = _required_int(
+            tile.get("physicalArtifactCount"),
+            field=f"tile[{position}].physicalArtifactCount",
+            minimum=1,
+        )
+        if physical_count == 2:
+            crossing_indices.append(position)
+    if len(crossing_indices) != 4:
+        raise RuntimeError(
+            f"pinned 5-way candidate boundary-crossing count drift: expected 4, got {len(crossing_indices)}"
+        )
+
+    selected_indices = list(crossing_indices) if tile_indices is None else list(tile_indices)
+    if not selected_indices:
+        raise RuntimeError("at least one boundary-crossing execution tile must be selected")
+    if len(set(selected_indices)) != len(selected_indices):
+        raise RuntimeError("execution tile selection must not contain duplicates")
+
+    selected_tiles: list[dict[str, object]] = []
+    required_indices: set[int] = set()
+    for tile_index in selected_indices:
+        if not isinstance(tile_index, int) or isinstance(tile_index, bool):
+            raise RuntimeError("execution tile index must be an integer")
+        if tile_index not in crossing_indices:
+            raise RuntimeError(
+                f"execution tile {tile_index} is not a pinned 5-way boundary-crossing tile"
+            )
+        tile = tiles[tile_index]
+        start_row = _required_int(tile.get("startRow"), field=f"tile[{tile_index}].startRow")
+        end_row = _required_int(
+            tile.get("endRowExclusive"),
+            field=f"tile[{tile_index}].endRowExclusive",
+            minimum=1,
+        )
+        row_count = _required_int(
+            tile.get("rowCount"), field=f"tile[{tile_index}].rowCount", minimum=1
+        )
+        byte_length = _required_int(
+            tile.get("byteLength"), field=f"tile[{tile_index}].byteLength", minimum=1
+        )
+        if end_row <= start_row or row_count != end_row - start_row:
+            raise RuntimeError(f"tile {tile_index} row geometry is invalid")
+        if byte_length != row_count * row_bytes:
+            raise RuntimeError(f"tile {tile_index} byte geometry is invalid")
+
+        slices = tile.get("physicalSlices")
+        if not isinstance(slices, list) or len(slices) != 2:
+            raise RuntimeError(
+                f"tile {tile_index} boundary crossing must expose exactly two physical slices"
+            )
+        slice_snapshots: list[dict[str, int]] = []
+        for slice_index, physical_slice in enumerate(slices):
+            if not isinstance(physical_slice, dict):
+                raise RuntimeError(
+                    f"tile[{tile_index}].physicalSlices[{slice_index}] must be an object"
+                )
+            artifact_index = _required_int(
+                physical_slice.get("physicalArtifactIndex"),
+                field=f"tile[{tile_index}].physicalSlices[{slice_index}].physicalArtifactIndex",
+            )
+            artifact = physical_by_index.get(artifact_index)
+            if artifact is None:
+                raise RuntimeError(
+                    f"tile {tile_index} references unknown physical artifact {artifact_index}"
+                )
+            slice_start = _required_int(
+                physical_slice.get("startRow"),
+                field=f"tile[{tile_index}].physicalSlices[{slice_index}].startRow",
+            )
+            slice_end = _required_int(
+                physical_slice.get("endRowExclusive"),
+                field=f"tile[{tile_index}].physicalSlices[{slice_index}].endRowExclusive",
+                minimum=1,
+            )
+            slice_rows = _required_int(
+                physical_slice.get("rowCount"),
+                field=f"tile[{tile_index}].physicalSlices[{slice_index}].rowCount",
+                minimum=1,
+            )
+            artifact_offset = _required_int(
+                physical_slice.get("artifactByteOffset"),
+                field=f"tile[{tile_index}].physicalSlices[{slice_index}].artifactByteOffset",
+            )
+            slice_bytes = _required_int(
+                physical_slice.get("byteLength"),
+                field=f"tile[{tile_index}].physicalSlices[{slice_index}].byteLength",
+                minimum=1,
+            )
+            if slice_end <= slice_start or slice_rows != slice_end - slice_start:
+                raise RuntimeError(f"tile {tile_index} slice {slice_index} row geometry is invalid")
+            if slice_bytes != slice_rows * row_bytes:
+                raise RuntimeError(f"tile {tile_index} slice {slice_index} byte geometry is invalid")
+            if artifact_offset + slice_bytes > artifact["byteLength"]:
+                raise RuntimeError(
+                    f"tile {tile_index} slice {slice_index} exceeds physical artifact {artifact_index}"
+                )
+            slice_snapshots.append(
+                {
+                    "physicalArtifactIndex": artifact_index,
+                    "startRow": slice_start,
+                    "endRowExclusive": slice_end,
+                    "rowCount": slice_rows,
+                    "artifactByteOffset": artifact_offset,
+                    "byteLength": slice_bytes,
+                }
+            )
+            required_indices.add(artifact_index)
+
+        first, second = slice_snapshots
+        if first["physicalArtifactIndex"] == second["physicalArtifactIndex"]:
+            raise RuntimeError(f"tile {tile_index} must cross two distinct physical artifacts")
+        if (
+            first["startRow"] != start_row
+            or first["endRowExclusive"] != second["startRow"]
+            or second["endRowExclusive"] != end_row
+        ):
+            raise RuntimeError(
+                f"tile {tile_index} physical slices must be row-contiguous and cover the tile exactly"
+            )
+        if first["rowCount"] + second["rowCount"] != row_count:
+            raise RuntimeError(f"tile {tile_index} slice rows do not reconstruct tile rows")
+        if first["byteLength"] + second["byteLength"] != byte_length:
+            raise RuntimeError(f"tile {tile_index} slice bytes do not reconstruct tile bytes")
+
+        selected_tiles.append(
+            {
+                "tileIndex": tile_index,
+                "physicalArtifactCount": 2,
+                "startRow": start_row,
+                "endRowExclusive": end_row,
+                "rowCount": row_count,
+                "byteLength": byte_length,
+                "physicalSlices": slice_snapshots,
+            }
+        )
+
+    required_physical = [dict(physical_by_index[index]) for index in sorted(required_indices)]
+    return (
+        hidden_size,
+        crossing_indices,
+        selected_tiles,
+        required_physical,
+        source_identity_snapshot,
+    )
+
+
 def build_report(
     source_model_path: Path,
     source_external_data_path: Path,
@@ -417,89 +652,18 @@ def build_report(
     if layout.get("decisionStatus") != "diagnostic-only":
         raise RuntimeError("endpoint layout report must remain diagnostic-only")
 
-    row_bytes = layout.get("rowBytes")
-    if (
-        not isinstance(row_bytes, int)
-        or isinstance(row_bytes, bool)
-        or row_bytes <= 0
-        or row_bytes % FLOAT32_BYTES != 0
-    ):
-        raise RuntimeError("pinned endpoint rowBytes must describe float32 rows")
-    hidden_size = row_bytes // FLOAT32_BYTES
+    (
+        hidden_size,
+        crossing_indices,
+        selected_tiles,
+        required_physical,
+        source_identity,
+    ) = _preflight_five_way_cpu_geometry(layout, tile_indices=tile_indices)
+    source_bytes = source_identity["bytes"]
+    source_sha256 = source_identity["sha256"]
+    if not isinstance(source_bytes, int) or not isinstance(source_sha256, str):
+        raise AssertionError("preflight must snapshot pinned source identity")
 
-    candidates = layout.get("candidates")
-    if not isinstance(candidates, list):
-        raise RuntimeError("endpoint layout candidates must be an array")
-    selected_candidates = [
-        candidate
-        for candidate in candidates
-        if isinstance(candidate, dict)
-        and candidate.get("physicalArtifactCount") == PHYSICAL_ARTIFACT_COUNT
-    ]
-    if len(selected_candidates) != 1:
-        raise RuntimeError("expected exactly one pinned 5-way candidate")
-    candidate = selected_candidates[0]
-    tiles = candidate.get("executionTiles")
-    physical = candidate.get("physicalArtifacts")
-    if not isinstance(tiles, list) or len(tiles) != EXECUTION_TILE_COUNT:
-        raise RuntimeError("pinned 5-way candidate must expose exactly eight execution tiles")
-    if not isinstance(physical, list) or len(physical) != PHYSICAL_ARTIFACT_COUNT:
-        raise RuntimeError("pinned 5-way candidate must expose exactly five physical artifacts")
-
-    crossing_indices = [
-        index
-        for index, tile in enumerate(tiles)
-        if isinstance(tile, dict) and tile.get("physicalArtifactCount") == 2
-    ]
-    if len(crossing_indices) != 4:
-        raise RuntimeError(
-            f"pinned 5-way candidate boundary-crossing count drift: expected 4, got {len(crossing_indices)}"
-        )
-    selected_indices = crossing_indices if tile_indices is None else tile_indices
-    if not selected_indices:
-        raise RuntimeError("at least one boundary-crossing execution tile must be selected")
-    if len(set(selected_indices)) != len(selected_indices):
-        raise RuntimeError("execution tile selection must not contain duplicates")
-
-    selected_tiles: list[dict[str, object]] = []
-    for tile_index in selected_indices:
-        if not isinstance(tile_index, int) or isinstance(tile_index, bool):
-            raise RuntimeError("execution tile index must be an integer")
-        if tile_index not in crossing_indices:
-            raise RuntimeError(
-                f"execution tile {tile_index} is not a pinned 5-way boundary-crossing tile"
-            )
-        tile = tiles[tile_index]
-        if not isinstance(tile, dict) or tile.get("tileIndex") != tile_index:
-            raise RuntimeError(f"execution tile index contract drift at {tile_index}")
-        selected_tiles.append(tile)
-
-    physical_by_index: dict[int, dict[str, object]] = {}
-    for artifact in physical:
-        if not isinstance(artifact, dict):
-            raise RuntimeError("physical artifact entry must be an object")
-        index = _required_int(artifact.get("index"), field="physical artifact index")
-        if index in physical_by_index:
-            raise RuntimeError(f"duplicate physical artifact index {index}")
-        physical_by_index[index] = artifact
-
-    required_indices = sorted(
-        {
-            int(physical_slice["physicalArtifactIndex"])
-            for tile in selected_tiles
-            for physical_slice in tile["physicalSlices"]
-        }
-    )
-
-    source_identity = layout.get("pinnedSourceExternalDataIdentity")
-    if not isinstance(source_identity, dict):
-        raise RuntimeError("pinnedSourceExternalDataIdentity must be an object")
-    source_bytes = _required_int(
-        source_identity.get("bytes"), field="pinned source bytes", minimum=1
-    )
-    source_sha256 = source_identity.get("sha256")
-    if not isinstance(source_sha256, str) or len(source_sha256) != 64:
-        raise RuntimeError("pinned source SHA-256 must be a 64-character string")
     source_fd, verified_source, source_pinned_identity = preferred_probe._open_pinned_payload(
         source_external_data_path,
         expected_bytes=source_bytes,
@@ -510,26 +674,11 @@ def build_report(
     verified_payloads: list[dict[str, object]] = []
     pinned_payloads: dict[int, tuple[int, Path, tuple[int, int, int, int, int]]] = {}
     try:
-        for index in required_indices:
-            artifact = physical_by_index.get(index)
-            if artifact is None:
-                raise RuntimeError(f"execution tile references unknown physical artifact {index}")
-            byte_length = _required_int(
-                artifact.get("byteLength"), field=f"physical artifact {index} byteLength", minimum=1
-            )
-            source_offset = _required_int(
-                artifact.get("sourceOffsetBytes"),
-                field=f"physical artifact {index} sourceOffsetBytes",
-            )
-            source_end = _required_int(
-                artifact.get("sourceEndOffsetBytesExclusive"),
-                field=f"physical artifact {index} sourceEndOffsetBytesExclusive",
-                minimum=1,
-            )
-            if source_end - source_offset != byte_length or source_end > source_bytes:
-                raise RuntimeError(
-                    f"physical artifact {index} source range does not match byteLength"
-                )
+        for artifact in required_physical:
+            index = artifact["index"]
+            byte_length = artifact["byteLength"]
+            source_offset = artifact["sourceOffsetBytes"]
+            source_end = artifact["sourceEndOffsetBytesExclusive"]
             expected_sha256 = _sha256_fd_range(
                 source_fd, offset=source_offset, length=byte_length
             )
@@ -570,9 +719,7 @@ def build_report(
                 "schemaVersion": layout.get("schemaVersion"),
             },
             "sourceGraphSha256": layout.get("sourceGraphSha256"),
-            "pinnedSourceExternalDataIdentity": layout.get(
-                "pinnedSourceExternalDataIdentity"
-            ),
+            "pinnedSourceExternalDataIdentity": source_identity,
             "physicalArtifactCount": PHYSICAL_ARTIFACT_COUNT,
             "executionTileCount": EXECUTION_TILE_COUNT,
             "boundaryCrossingTileIndices": crossing_indices,
