@@ -33,6 +33,8 @@ describe('browser split manifest bounded read', () => {
     expect(body).toContain('maxBytes: MAX_SPLIT_MANIFEST_BYTES,');
     expect(body).toContain('url: manifestUrl,');
     expect(body).toContain('signal,');
+    expect(body).toContain("JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))");
+    expect(body).not.toContain('new TextDecoder().decode(bytes)');
     expect(body).not.toContain('response.arrayBuffer()');
   });
 
