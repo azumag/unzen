@@ -4,9 +4,22 @@ import {
   validateCheckpointBoundaryNames,
 } from '../browser-harness/webgpu-2b-split/runtime-validation.js';
 
+function tensorWire(name: string, overrides: Record<string, unknown> = {}) {
+  const bytes = 32;
+  return {
+    name,
+    type: 'float32',
+    dims: [1, 2, 4],
+    bytes,
+    base64: Buffer.alloc(bytes).toString('base64'),
+    ...overrides,
+  };
+}
+
 describe('browser split runtime validation', () => {
   const manifest = {
     boundary: {
+      dtype: 'float32',
       tensors: [
         { name: 'boundary-a' },
         { name: 'boundary-b' },
@@ -14,23 +27,80 @@ describe('browser split runtime validation', () => {
     },
   };
 
-  it('accepts the exact manifest boundary names independent of relay order', () => {
+  it('accepts the exact manifest boundary tensors independent of relay order', () => {
     expect(() => validateCheckpointBoundaryNames({
       tensors: [
-        { name: 'boundary-b' },
-        { name: 'boundary-a' },
+        tensorWire('boundary-b'),
+        tensorWire('boundary-a'),
       ],
     }, manifest)).not.toThrow();
   });
 
   it('rejects duplicate, missing, and unexpected boundary names', () => {
     expect(() => validateCheckpointBoundaryNames({
-      tensors: [{ name: 'boundary-a' }, { name: 'boundary-a' }],
+      tensors: [tensorWire('boundary-a'), tensorWire('boundary-a')],
     }, manifest)).toThrow(/duplicate/);
     expect(() => validateCheckpointBoundaryNames({
-      tensors: [{ name: 'boundary-a' }, { name: 'other' }],
+      tensors: [tensorWire('boundary-a'), tensorWire('other')],
     }, manifest)).toThrow(/do not match manifest/);
-    expect(() => validateCheckpointBoundaryNames({ tensors: [{ name: 'boundary-a' }] }, manifest)).toThrow(/exactly two/);
+    expect(() => validateCheckpointBoundaryNames({ tensors: [tensorWire('boundary-a')] }, manifest)).toThrow(/exactly two/);
+  });
+
+  it('rejects unsupported or manifest-mismatched boundary tensor types', () => {
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [
+        tensorWire('boundary-a', { type: 'complex64' }),
+        tensorWire('boundary-b'),
+      ],
+    }, manifest)).toThrow(/type|unsupported/);
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [
+        tensorWire('boundary-a', {
+          type: 'float64',
+          bytes: 64,
+          base64: Buffer.alloc(64).toString('base64'),
+        }),
+        tensorWire('boundary-b'),
+      ],
+    }, manifest)).toThrow(/does not match manifest/);
+  });
+
+  it('rejects malformed, overflowing, and byte-inconsistent boundary tensor shapes', () => {
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [tensorWire('boundary-a', { dims: [1, 0, 4] }), tensorWire('boundary-b')],
+    }, manifest)).toThrow(/invalid dimension/);
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [
+        tensorWire('boundary-a', { dims: [Number.MAX_SAFE_INTEGER, 2] }),
+        tensorWire('boundary-b'),
+      ],
+    }, manifest)).toThrow(/overflows/);
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [tensorWire('boundary-a', { bytes: 31 }), tensorWire('boundary-b')],
+    }, manifest)).toThrow(/declared byte length mismatch/);
+  });
+
+  it('rejects malformed or length-mismatched base64 before reconstruction', () => {
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [tensorWire('boundary-a', { base64: '!!!!' }), tensorWire('boundary-b')],
+    }, manifest)).toThrow(/invalid base64/);
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [
+        tensorWire('boundary-a', { base64: Buffer.alloc(28).toString('base64') }),
+        tensorWire('boundary-b'),
+      ],
+    }, manifest)).toThrow(/encoded byte length mismatch/);
+  });
+
+  it('rejects an unsupported manifest boundary dtype before trusting relay tensors', () => {
+    expect(() => validateCheckpointBoundaryNames({
+      tensors: [tensorWire('boundary-a'), tensorWire('boundary-b')],
+    }, {
+      boundary: {
+        dtype: 'complex64',
+        tensors: manifest.boundary.tensors,
+      },
+    })).toThrow(/supported boundary dtype/);
   });
 
   it('returns the final-position argmax for finite logits', () => {
