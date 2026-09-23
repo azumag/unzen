@@ -122,10 +122,12 @@ export function delayWithSignal(ms, signal) {
 
 /**
  * Poll a Coordinator-owned checkpoint with both explicit cancellation and an
- * absolute max wait. `fetchCheckpoint` should return a Response-like object.
+ * absolute max wait. `fetchCheckpoint` should return a Response-like object,
+ * while `readCheckpointResponse` owns the successful response-body contract.
  */
 export async function waitForCheckpointBounded({
   fetchCheckpoint,
+  readCheckpointResponse,
   signal,
   timeoutMs,
   pollIntervalMs = 500,
@@ -139,6 +141,10 @@ export async function waitForCheckpointBounded({
     { allowZero: false },
   );
   const stableFetchCheckpoint = requireFunction(fetchCheckpoint, 'checkpoint fetch');
+  const stableReadCheckpointResponse = requireFunction(
+    readCheckpointResponse,
+    'checkpoint response reader',
+  );
   const stableSleep = requireFunction(sleep, 'checkpoint sleep');
   // Fail closed on an already-aborted or malformed caller-owned signal before
   // invoking the clock or any polling dependency. The loop repeats this check
@@ -168,7 +174,9 @@ export async function waitForCheckpointBounded({
     throwIfAborted(signal);
     if (response.status !== 404) {
       if (!response.ok) throw new Error(`checkpoint fetch failed: ${response.status}`);
-      return response.json();
+      const checkpoint = await stableReadCheckpointResponse(response, signal);
+      throwIfAborted(signal);
+      return checkpoint;
     }
     const remaining = stableTimeoutMs - elapsedSinceStart();
     if (remaining <= 0) throw new CheckpointWaitTimeoutError(stableTimeoutMs);

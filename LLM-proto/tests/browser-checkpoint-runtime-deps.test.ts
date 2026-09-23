@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { waitForCheckpointBounded } from '../browser-harness/webgpu-2b-split/execution-lifecycle.js';
+import { waitForCheckpointBounded as waitForCheckpointBoundedImpl } from '../browser-harness/webgpu-2b-split/execution-lifecycle.js';
 
 function okResponse(value: unknown = {}) {
   return {
@@ -17,6 +17,13 @@ function missingResponse() {
   };
 }
 
+function waitForCheckpointBounded(options: Parameters<typeof waitForCheckpointBoundedImpl>[0]) {
+  return waitForCheckpointBoundedImpl({
+    ...options,
+    readCheckpointResponse: async (checkpointResponse: ReturnType<typeof okResponse>) => checkpointResponse.json(),
+  });
+}
+
 describe('browser checkpoint wait runtime dependency preflight', () => {
   it('rejects a malformed fetch dependency before clock, sleep, or poll work', async () => {
     const now = vi.fn(() => 1_000);
@@ -31,6 +38,25 @@ describe('browser checkpoint wait runtime dependency preflight', () => {
     })).rejects.toThrow('checkpoint fetch must be a function');
 
     expect(now).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed checkpoint response reader before clock, sleep, or poll work', async () => {
+    const now = vi.fn(() => 1_000);
+    const fetchCheckpoint = vi.fn(async () => okResponse());
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCheckpointBoundedImpl({
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      now,
+      fetchCheckpoint,
+      sleep,
+      readCheckpointResponse: null as unknown as (response: ReturnType<typeof okResponse>) => Promise<unknown>,
+    })).rejects.toThrow('checkpoint response reader must be a function');
+
+    expect(now).not.toHaveBeenCalled();
+    expect(fetchCheckpoint).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
   });
 
