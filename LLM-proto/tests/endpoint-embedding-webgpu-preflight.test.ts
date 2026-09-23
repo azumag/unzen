@@ -148,6 +148,29 @@ describe('endpoint embedding WebGPU capture preflight Chrome/host-probe binding'
     }, hostProbe)).toBe(hostProbe);
   });
 
+  it('snapshots accessor-backed Chrome version and host-probe user agent once', () => {
+    const reads = { version: 0, userAgent: 0 };
+    const chrome = Object.defineProperty({}, 'version', {
+      enumerable: true,
+      get() {
+        reads.version += 1;
+        if (reads.version > 1) throw new Error('Chrome version was re-read');
+        return '152.0.7977.83';
+      },
+    });
+    const hostProbe = Object.defineProperty({}, 'userAgent', {
+      enumerable: true,
+      get() {
+        reads.userAgent += 1;
+        if (reads.userAgent > 1) throw new Error('host-probe userAgent was re-read');
+        return 'Mozilla/5.0 AppleWebKit/537.36 HeadlessChrome/152.0.0.0 Safari/537.36';
+      },
+    });
+
+    expect(validateChromeHostProbeIdentity(chrome, hostProbe)).toBe(hostProbe);
+    expect(reads).toEqual({ version: 1, userAgent: 1 });
+  });
+
   it('fails closed before payload hashing when the launched host-probe Chrome major drifts', () => {
     expect(() => validateChromeHostProbeIdentity({
       raw: 'Google Chrome 152.0.7977.83',
