@@ -2,7 +2,7 @@
 
 Status: **diagnostic-only / host-side evidence reliability**. This contract does not promote endpoint readiness or count as new real-model, physical WebGPU, distinct-browser relay/latency, worker-loss/resume, or residency evidence.
 
-`tools/capture_endpoint_poststage_webgpu_process_rss.mjs` now uses the same descriptor-bound evidence-output reservation contract as the endpoint embedding WebGPU capture.
+`tools/capture_endpoint_poststage_webgpu_process_rss.mjs` and the endpoint embedding WebGPU capture share the neutral `tools/evidence_output_reservation.mjs` descriptor-bound reservation helper. The endpoint embedding capture re-exports the established helper names so existing imports remain compatible; this refactor does not change the filesystem contract.
 
 Before creating the temporary Chrome profile or launching the harness/browser, the requested output path is reserved with exclusive creation (`wx`) and mode `0600`. A pre-existing destination is therefore rejected rather than overwritten.
 
