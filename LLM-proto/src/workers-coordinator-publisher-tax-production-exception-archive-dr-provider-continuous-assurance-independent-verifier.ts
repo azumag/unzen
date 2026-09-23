@@ -190,7 +190,7 @@ function validateDeploymentArtifactBinding(
 ): string | undefined {
   let record: unknown;
   try {
-    record = JSON.parse(new TextDecoder().decode(bytes));
+    record = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } catch {
     return 'deployment-canary-artifact-json-invalid';
   }
@@ -277,7 +277,7 @@ async function readJsonBounded(request: Request, maxBytes: number): Promise<unkn
     offset += chunk.byteLength;
   }
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } catch {
     throw new Error('json-body-invalid');
   }
