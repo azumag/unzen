@@ -17,7 +17,9 @@ Use the same preflight-approved real 8-physical bundle required by the isolated 
 - the pinned `embedding-offset-0.onnx` graph,
 - a WebGPU-capable Chrome build.
 
-The harness server remains responsible for validating the preflight snapshot and serving only the approved graph/payload paths.
+Before any capture side effect, the raw capture itself loads and validates the preflight report and rejects an `OUTPUT_JSON` path that aliases the preflight report, graph, or any declared payload. Exact aliases, existing final symlinks, hard-link aliases, and aliases reached through an existing symlinked parent are rejected. The bound wrapper reuses the same shared alias policy for both of its caller-visible output paths. See `docs/endpoint-embedding-eight-physical-cancel-rss-output-alias-safety.md` for the filesystem boundary and its documented same-user race limitation.
+
+The harness server still independently validates the preflight snapshot before serving the approved graph/payload paths.
 
 ## Recommended provenance-bound run
 
@@ -61,7 +63,7 @@ UNZEN_RSS_POST_CANCEL_SETTLE_MS    default 30000; 0 is allowed
 UNZEN_RSS_TIMEOUT_MS               default 180000
 ```
 
-All numeric settings are validated as safe integers before Chrome or the harness is started. The harness and CDP ports must be distinct.
+All numeric settings are validated as safe integers before Chrome or the harness is started. The harness and CDP ports must be distinct. The direct capture also validates `PREFLIGHT_REPORT` and its output/input alias boundary before creating the output directory or temporary Chrome profile, probing ports, or starting either process.
 
 ## Cancellation boundary
 
@@ -77,6 +79,8 @@ Cancellation itself is performed with CDP `Page.navigate` to `about:blank`. This
 
 The capture fails closed instead of emitting cancellation evidence when:
 
+- the preflight report does not satisfy the 8-physical browser contract,
+- `OUTPUT_JSON` aliases the preflight report, graph, or a declared payload under the documented preflight alias checks,
 - the harness reports `status=fail`,
 - the harness reaches `status=pass` before the configured phase is captured,
 - sampling observes a later payload/tile phase, showing that the requested phase was missed,
@@ -85,7 +89,7 @@ The capture fails closed instead of emitting cancellation evidence when:
 - the capture times out,
 - a port or timing setting is malformed.
 
-This prevents a fast successful run or missed sampling window from being mislabeled as cancellation evidence.
+This prevents a fast successful run, missed sampling window, or destructive output-path configuration from being mislabeled as cancellation evidence.
 
 ## Evidence fields
 
@@ -125,6 +129,7 @@ This evidence is intentionally narrower than a production or architecture decisi
 - Chrome may retain renderer processes, driver caches, allocator pages, or shared mappings after the document is destroyed.
 - Reaching or dropping below the initial RSS baseline is useful observational evidence, not proof of exact GPU allocator reclamation.
 - The provenance-bound wrapper binds to a validated preflight snapshot; it does not independently establish that every declared payload was loaded before cancellation.
+- The output/input alias checks are preflight hardening, not race-free adversarial filesystem isolation; #1494 remains a separate policy decision.
 - This does not cover decoder/KV/checkpoint state, full-model equivalence, worker-loss resume, or production layout selection.
 
 A real capture should therefore be attached to #167 as one input alongside normal-completion RSS evidence, GPU-side measurements where available, and later full-model relay/cancellation evidence.
