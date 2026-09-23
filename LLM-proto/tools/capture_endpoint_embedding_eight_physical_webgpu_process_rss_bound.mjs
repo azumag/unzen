@@ -10,9 +10,7 @@ import {
   chmodSync,
   closeSync,
   fsyncSync,
-  mkdirSync,
   mkdtempSync,
-  openSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,6 +24,11 @@ import {
   canonicalJsonSha256,
   endpointEmbeddingEightPhysicalPreflightIdentity,
 } from './capture_endpoint_embedding_eight_physical_webgpu_cancel_rss_bound.mjs';
+import {
+  assertEvidenceOutputPathIdentity,
+  cleanupReservedEvidenceOutput,
+  reserveEvidenceOutput,
+} from './evidence_output_reservation.mjs';
 import { readRegularJsonFile } from './preflight_endpoint_embedding_eight_physical_bundle.mjs';
 import {
   readStableProcessRssEvidence,
@@ -156,11 +159,6 @@ function parseArgs(argv) {
   return config;
 }
 
-function reserveExclusiveOutput(outputPath) {
-  mkdirSync(dirname(outputPath), { recursive: true });
-  return openSync(outputPath, 'wx', 0o600);
-}
-
 function writeCommittedJson(fd, value) {
   writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   fsyncSync(fd);
@@ -182,9 +180,9 @@ export async function runBoundNormalRssCapture(argv, env = process.env) {
   let snapshotDir = null;
 
   try {
-    processFd = reserveExclusiveOutput(config.processRssOutputPath);
+    processFd = reserveEvidenceOutput(config.processRssOutputPath);
     processFdOpen = true;
-    boundFd = reserveExclusiveOutput(config.boundOutputPath);
+    boundFd = reserveEvidenceOutput(config.boundOutputPath);
     boundFdOpen = true;
 
     snapshotDir = mkdtempSync(join(tmpdir(), 'unzen-normal-rss-preflight-'));
@@ -220,18 +218,20 @@ export async function runBoundNormalRssCapture(argv, env = process.env) {
 
     writeCommittedJson(processFd, evidence);
     writeCommittedJson(boundFd, bound);
-    closeSync(processFd);
-    processFdOpen = false;
-    closeSync(boundFd);
-    boundFdOpen = false;
+    assertEvidenceOutputPathIdentity(processFd, config.processRssOutputPath);
+    assertEvidenceOutputPathIdentity(boundFd, config.boundOutputPath);
     outputsCommitted = true;
     return bound;
   } finally {
-    if (processFdOpen) closeSync(processFd);
-    if (boundFdOpen) closeSync(boundFd);
-    if (!outputsCommitted) {
-      rmSync(config.processRssOutputPath, { force: true });
-      rmSync(config.boundOutputPath, { force: true });
+    if (processFdOpen) {
+      cleanupReservedEvidenceOutput(processFd, config.processRssOutputPath, outputsCommitted);
+      closeSync(processFd);
+      processFdOpen = false;
+    }
+    if (boundFdOpen) {
+      cleanupReservedEvidenceOutput(boundFd, config.boundOutputPath, outputsCommitted);
+      closeSync(boundFd);
+      boundFdOpen = false;
     }
     if (snapshotDir !== null) rmSync(snapshotDir, { recursive: true, force: true });
   }
