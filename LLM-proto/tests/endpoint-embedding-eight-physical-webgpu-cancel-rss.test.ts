@@ -1,8 +1,80 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED,
+  ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED,
+} from '../browser-harness/endpoint-embedding-eight-physical-webgpu/contract.js';
 import {
   classifyCancellationObservation,
   parseCancelCaptureArgs,
+  preflightCancellationRssCapture,
 } from '../tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs';
+import {
+  calculateEndpointEmbeddingPayloadSetSha256,
+} from '../tools/preflight_endpoint_embedding_eight_physical_bundle.mjs';
+
+function payloadSha(index: number) {
+  return (index + 1).toString(16).padStart(64, '0');
+}
+
+function validPreflightReport() {
+  const expected = ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_EXPECTED;
+  const payloads = Array.from({ length: expected.candidatePhysicalArtifactCount }, (_, index) => ({
+    index,
+    file: `payload-${String(index).padStart(4, '0')}.bin`,
+    bytes: expected.tileBytes,
+    sha256: payloadSha(index),
+    sourceOffsetBytes: index * expected.tileBytes,
+    sourceEndOffsetBytesExclusive: (index + 1) * expected.tileBytes,
+  }));
+  const runtimePlan = payloads.map((payload, index) => ({
+    tileIndex: index,
+    startRow: index * expected.rowsPerTile,
+    endRowExclusive: (index + 1) * expected.rowsPerTile,
+    physicalArtifactIndex: index,
+    payloadFile: payload.file,
+    expectedPayloadBytes: payload.bytes,
+    expectedPayloadSha256: payload.sha256,
+    sourceOffsetBytes: payload.sourceOffsetBytes,
+    sourceEndOffsetBytesExclusive: payload.sourceEndOffsetBytesExclusive,
+    graphFile: expected.graphFile,
+    expectedGraphBytes: expected.graphBytes,
+    expectedGraphSha256: expected.graphSha256,
+    graphExternalDataPath: expected.graphExternalDataPath,
+    artifactByteOffset: 0,
+    byteLength: expected.tileBytes,
+  }));
+
+  return {
+    kind: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED.preflightKind,
+    schemaVersion: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED.schemaVersion,
+    status: 'pass',
+    decisionStatus: 'diagnostic-only',
+    selectedPhysicalArtifactCount: null,
+    candidatePhysicalArtifactCount: expected.candidatePhysicalArtifactCount,
+    sourceGraphSha256: expected.sourceGraphSha256,
+    sourceExternalData: { ...expected.sourceExternalData },
+    manifestPayloadSetSha256: calculateEndpointEmbeddingPayloadSetSha256(payloads),
+    graph: {
+      file: expected.graphFile,
+      bytes: expected.graphBytes,
+      sha256: expected.graphSha256,
+    },
+    payloads,
+    runtimePlan,
+    evidenceBoundary: ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED.evidenceBoundary,
+    conclusion: 'fixture preflight',
+  };
+}
 
 describe('8-physical WebGPU cancellation RSS capture configuration', () => {
   it('uses isolated defaults and resolves the required paths', () => {
@@ -72,6 +144,52 @@ describe('8-physical WebGPU cancellation RSS capture configuration', () => {
       { UNZEN_HARNESS_PORT: '12021', UNZEN_CDP_PORT: '12021' },
     )).toThrow(/must be distinct/);
     expect(() => parseCancelCaptureArgs(['data', 'preflight', 'graph', 'output'], {})).toThrow(/usage:/);
+  });
+
+  it('rejects a direct OUTPUT_JSON/input alias before creating the output parent', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'unzen-direct-cancel-rss-alias-test-'));
+    try {
+      const dataDir = join(root, 'data');
+      mkdirSync(dataDir);
+      const preflightReport = join(root, 'preflight.json');
+      writeFileSync(preflightReport, `${JSON.stringify(validPreflightReport())}\n`, 'utf8');
+      const outputParent = join(root, 'must-not-be-created');
+      const graphPath = join(outputParent, 'embedding-offset-0.onnx');
+      await expect(preflightCancellationRssCapture({
+        dataDir,
+        preflightReport,
+        graphPath,
+        outputPath: graphPath,
+      })).rejects.toThrow('OUTPUT_JSON must not alias validated input GRAPH_PATH');
+      expect(existsSync(outputParent)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('validates direct output aliases before any capture side effect', () => {
+    const source = readFileSync(
+      new URL('../tools/capture_endpoint_embedding_eight_physical_webgpu_cancel_rss.mjs', import.meta.url),
+      'utf8',
+    );
+    const preflightStart = source.indexOf('export async function preflightCancellationRssCapture');
+    const read = source.indexOf('await readRegularJsonFile(config.preflightReport)', preflightStart);
+    const validate = source.indexOf('validateEndpointEmbeddingEightPhysicalPreflightReport(', preflightStart);
+    const guard = source.indexOf('assertCancellationRssOutputPathsDoNotAliasInputs(config, preflight', preflightStart);
+    const runStart = source.indexOf('async function runCapture(config)');
+    const preflightCall = source.indexOf('await preflightCancellationRssCapture(config);', runStart);
+    const mkdir = source.indexOf('mkdirSync(dirname(config.outputPath)', runStart);
+    const profile = source.indexOf('mkdtempSync(', runStart);
+    const server = source.indexOf('const server = spawn(process.execPath', runStart);
+    expect(preflightStart).toBeGreaterThanOrEqual(0);
+    expect(validate).toBeGreaterThanOrEqual(preflightStart);
+    expect(read).toBeGreaterThan(validate);
+    expect(guard).toBeGreaterThan(read);
+    expect(runStart).toBeGreaterThan(guard);
+    expect(preflightCall).toBeGreaterThan(runStart);
+    expect(mkdir).toBeGreaterThan(preflightCall);
+    expect(profile).toBeGreaterThan(mkdir);
+    expect(server).toBeGreaterThan(profile);
   });
 });
 

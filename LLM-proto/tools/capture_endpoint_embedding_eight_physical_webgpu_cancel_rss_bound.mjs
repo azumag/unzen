@@ -15,15 +15,12 @@ import {
   chmodSync,
   closeSync,
   fsyncSync,
-  lstatSync,
   mkdtempSync,
-  realpathSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_BROWSER_EXPECTED,
@@ -42,6 +39,9 @@ import {
   cleanupReservedEvidenceOutput,
   reserveEvidenceOutput,
 } from './evidence_output_reservation.mjs';
+import {
+  assertCancellationRssOutputPathsDoNotAliasInputs,
+} from './cancellation_rss_output_alias_guard.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const CAPTURE_SCRIPT = resolve(
@@ -162,103 +162,11 @@ function parseArgs(argv) {
   };
 }
 
-function missingPath(error) {
-  return error && typeof error === 'object'
-    && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
-}
-
-function existingPathSnapshot(path) {
-  try {
-    return lstatSync(path, { bigint: true });
-  } catch (error) {
-    if (missingPath(error)) return null;
-    throw error;
-  }
-}
-
-function existingTargetSnapshot(path) {
-  try {
-    return statSync(path, { bigint: true });
-  } catch (error) {
-    if (missingPath(error)) return null;
-    throw error;
-  }
-}
-
-function existingRealPath(path) {
-  try {
-    return realpathSync(path);
-  } catch (error) {
-    if (missingPath(error)) return null;
-    throw error;
-  }
-}
-
-function canonicalOutputDestination(path) {
-  const parent = existingRealPath(dirname(path));
-  return parent === null ? null : resolve(parent, basename(path));
-}
-
-function sameFileIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
 export function assertCancellationOutputPathsDoNotAliasInputs(config, preflightReport) {
-  const inputEntries = [
-    { path: resolve(config.preflightReport), label: 'PREFLIGHT_REPORT' },
-    { path: resolve(config.graphPath), label: 'GRAPH_PATH' },
-  ];
-  for (let index = 0; index < preflightReport.payloads.length; index += 1) {
-    const payload = preflightReport.payloads[index];
-    inputEntries.push({
-      path: resolve(config.dataDir, payload.file),
-      label: `preflight.payloads[${index}]`,
-    });
-  }
-
-  const inputPaths = new Map(inputEntries.map((entry) => [entry.path, entry.label]));
-  const inputFilesystemIdentities = inputEntries.map((entry) => ({
-    ...entry,
-    realPath: existingRealPath(entry.path),
-    stat: existingTargetSnapshot(entry.path),
-  }));
-
-  for (const [label, outputPath] of [
-    ['CANCELLATION_OUTPUT_JSON', config.cancellationOutputPath],
-    ['BOUND_OUTPUT_JSON', config.boundOutputPath],
-  ]) {
-    const resolvedOutputPath = resolve(outputPath);
-    const inputLabel = inputPaths.get(resolvedOutputPath);
-    if (inputLabel) {
-      throw new Error(`${label} must not alias validated input ${inputLabel}`);
-    }
-
-    const outputPathSnapshot = existingPathSnapshot(resolvedOutputPath);
-    if (outputPathSnapshot?.isSymbolicLink()) {
-      throw new Error(`${label} must not be an existing symlink`);
-    }
-
-    const canonicalDestination = canonicalOutputDestination(resolvedOutputPath);
-    const outputTargetSnapshot = outputPathSnapshot === null
-      ? null
-      : existingTargetSnapshot(resolvedOutputPath);
-    for (const input of inputFilesystemIdentities) {
-      if (
-        canonicalDestination !== null
-        && input.realPath !== null
-        && canonicalDestination === input.realPath
-      ) {
-        throw new Error(`${label} must not alias validated input ${input.label}`);
-      }
-      if (
-        outputTargetSnapshot !== null
-        && input.stat !== null
-        && sameFileIdentity(outputTargetSnapshot, input.stat)
-      ) {
-        throw new Error(`${label} must not alias validated input ${input.label}`);
-      }
-    }
-  }
+  return assertCancellationRssOutputPathsDoNotAliasInputs(config, preflightReport, [
+    { label: 'CANCELLATION_OUTPUT_JSON', path: config.cancellationOutputPath },
+    { label: 'BOUND_OUTPUT_JSON', path: config.boundOutputPath },
+  ]);
 }
 
 export async function runBoundCancellationRssCapture(argv, env = process.env) {
