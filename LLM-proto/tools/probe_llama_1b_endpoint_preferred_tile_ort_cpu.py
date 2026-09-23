@@ -63,9 +63,31 @@ def _identity(snapshot: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
+def _validate_pinned_payload_expectations(
+    *, expected_bytes: int, expected_sha256: str
+) -> None:
+    if (
+        not isinstance(expected_bytes, int)
+        or isinstance(expected_bytes, bool)
+        or expected_bytes <= 0
+    ):
+        raise RuntimeError("expected physical payload byte length must be a positive integer")
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise RuntimeError(
+            "expected physical payload SHA-256 must be 64 lowercase hexadecimal characters"
+        )
+
+
 def _open_pinned_payload(
     path: Path, *, expected_bytes: int, expected_sha256: str
 ) -> tuple[int, dict[str, object], tuple[int, int, int, int, int]]:
+    _validate_pinned_payload_expectations(
+        expected_bytes=expected_bytes, expected_sha256=expected_sha256
+    )
     try:
         path_snapshot = path.lstat()
     except FileNotFoundError as exc:
