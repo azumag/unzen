@@ -7,6 +7,7 @@ import {
   readResponseBytesBounded,
 } from './artifact-cache.js';
 import { readCheckpointRelayReceipt } from './checkpoint-receipt.js';
+import { readCheckpointPayloadResponse } from './checkpoint-payload-response.js';
 import { readResultAcceptanceReceipt } from './result-acceptance-receipt.js';
 import {
   planSegmentArtifactBudget,
@@ -96,7 +97,7 @@ async function adapterInfo() {
       vendor: adapter.info?.vendor ?? '',
       architecture: adapter.info?.architecture ?? '',
       description: adapter.info?.description ?? '',
-      isFallbackAdapter: adapter.isFallbackAdapter ?? false,
+      isFallbackAdapter: adapter.info?.isFallbackAdapter ?? false,
     };
   } catch (error) {
     return { error: String(error) };
@@ -404,6 +405,10 @@ async function waitForCheckpoint(signal) {
     fetchCheckpoint: (fetchSignal) => fetch(
       `/api/runs/${encodeURIComponent(runId)}/checkpoint`,
       { cache: 'no-store', signal: fetchSignal },
+    ),
+    readCheckpointResponse: (response, responseSignal) => readCheckpointPayloadResponse(
+      response,
+      { signal: responseSignal },
     ),
   });
 }
