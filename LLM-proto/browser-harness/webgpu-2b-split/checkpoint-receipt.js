@@ -1,4 +1,4 @@
-import { readResponseBytesBounded } from './artifact-cache.js';
+import { readCoordinatorJsonResponse } from './coordinator-json-response.js';
 
 // The Coordinator receipt contains only checkpoint binding metadata. Keep the
 // browser-side success response small enough that an unexpected response cannot
@@ -6,11 +6,9 @@ import { readResponseBytesBounded } from './artifact-cache.js';
 export const MAX_CHECKPOINT_RELAY_RECEIPT_BYTES = 16 * 1024;
 
 export async function readCheckpointRelayReceipt(response, { signal } = {}) {
-  const bytes = await readResponseBytesBounded(response, {
+  return readCoordinatorJsonResponse(response, {
     maxBytes: MAX_CHECKPOINT_RELAY_RECEIPT_BYTES,
-    url: 'checkpoint relay receipt',
+    label: 'checkpoint relay receipt',
     signal,
   });
-  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  return JSON.parse(text);
 }
