@@ -1,6 +1,8 @@
 import geometryModule from './wasm-fixtures/segment-geometry.wasm';
 
 const I32_MAX = 0x7fffffff;
+const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 
 if (!(geometryModule instanceof WebAssembly.Module)) {
   throw new TypeError('segment-geometry-wasm: imported .wasm is not a WebAssembly.Module');
@@ -20,6 +22,39 @@ const REASONS = {
   4: 'layer-outside-model',
   5: 'segments-incomplete',
 };
+
+async function readJsonBounded(request) {
+  if (!request.body) {
+    throw new Error('invalid-json');
+  }
+
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_REQUEST_BYTES) {
+        throw new Error('invalid-json');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return JSON.parse(FATAL_UTF8_DECODER.decode(bytes));
+}
 
 function inI32Domain(value) {
   return Number.isSafeInteger(value) && value >= 0 && value <= I32_MAX;
@@ -85,7 +120,7 @@ export default {
 
     let payload;
     try {
-      payload = await request.json();
+      payload = await readJsonBounded(request);
     } catch {
       return Response.json(
         { status: 'invalid', reason: 'invalid-json', wasmCalled: false },

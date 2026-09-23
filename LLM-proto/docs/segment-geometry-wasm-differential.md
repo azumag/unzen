@@ -60,6 +60,18 @@ Within the admitted numeric domain, the Wasm function returns compact determinis
 
 Input segment order is not semantically meaningful: JavaScript sorts by `index` before invoking the Wasm checker, matching the current production validator. Layer ranges are inclusive, so `layerStart === layerEnd` represents one layer and is valid when the overall coverage contract is satisfied.
 
+## Request input boundary
+
+The differential Worker treats its POST body as a bounded control document rather than delegating the entire body to `Request.json()`.
+
+- the request stream is read incrementally with a hard `2 MiB` byte ceiling before a contiguous decode buffer is allocated;
+- accepted bytes are decoded as UTF-8 with fatal decoding, so malformed byte sequences cannot be normalized to `U+FFFD` before `JSON.parse()`;
+- invalid UTF-8, malformed JSON, missing bodies, and over-limit bodies keep the existing public malformed-body response: HTTP `400` with `reason=invalid-json` and `wasmCalled=false`;
+- a valid UTF-8 BOM remains accepted by the platform `TextDecoder` behavior;
+- geometry validation, reason codes, the Wasm ABI, and the pinned Wasm binary are unchanged.
+
+This is request-memory/input-integrity hardening for the local differential Worker. It is not transport authentication, production deployment evidence, or stronger model/WebGPU evidence for #167.
+
 ## Differential evidence
 
 `tests/segment-geometry-wasm-differential.test.ts` covers curated vectors for:
@@ -77,6 +89,8 @@ Input segment order is not semantically meaningful: JavaScript sorts by `index` 
 - explicit pre-Wasm rejection outside the chosen numeric domain
 - structural malformed values retained on the JavaScript side
 - deterministic seeded integer vectors to detect JS/Wasm drift
+
+`tests/segment-geometry-wasm-request-boundary.test.ts` separately covers malformed UTF-8 that replacement decoding would otherwise turn into valid JSON, a syntactically valid request above the explicit byte ceiling, and valid BOM-prefixed JSON.
 
 `tests/model-manifest-validator.test.ts` separately pins the production JavaScript numeric trust boundary, including unsafe `totalLayers`, segment indexes, range endpoints, and the precision-collapse adjacency case where `x + 1 === x`.
 
