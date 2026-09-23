@@ -224,6 +224,7 @@ def _route_probe_tokens(
         raise RuntimeError("physical artifact count invalid")
     if len(tiles) != 8:
         raise RuntimeError("execution tile count drift")
+    physical_slice_packing: dict[int,list[tuple[int,int]]] | None = None
     if physical_artifact_bytes is not None:
         if not isinstance(physical_artifact_bytes,dict):
             raise RuntimeError("physical artifact byte table invalid")
@@ -234,6 +235,7 @@ def _route_probe_tokens(
             for value in physical_artifact_bytes.values()
         ):
             raise RuntimeError("physical artifact byte table invalid")
+        physical_slice_packing={index:[] for index in range(physical_artifact_count)}
 
     assignments=[0]*len(TOKEN_IDS)
     routed: list[tuple[dict[str,object],int,int,int,int,list[int]]]=[]
@@ -291,6 +293,8 @@ def _route_probe_tokens(
                 raise RuntimeError("physical slice byte length drift")
             if artifact_byte_offset + byte_length > physical_artifact_bytes[ai]:
                 raise RuntimeError("physical slice exceeds physical artifact bytes")
+            assert physical_slice_packing is not None
+            physical_slice_packing[ai].append((artifact_byte_offset,byte_length))
             execution_tile={
                 "tileIndex":ti,
                 "startRow":start,
@@ -311,6 +315,20 @@ def _route_probe_tokens(
         routed.append((execution_tile,ti,start,end,ai,positions))
     if expected_start != VOCAB_ROWS:
         raise RuntimeError("execution tile ranges must cover the full vocabulary")
+    if physical_artifact_bytes is not None:
+        assert physical_slice_packing is not None
+        for artifact_index in range(physical_artifact_count):
+            expected_offset=0
+            for artifact_byte_offset,byte_length in physical_slice_packing[artifact_index]:
+                if artifact_byte_offset != expected_offset:
+                    raise RuntimeError(
+                        f"physical artifact {artifact_index} slice packing must be contiguous from byte zero"
+                    )
+                expected_offset += byte_length
+            if expected_offset != physical_artifact_bytes[artifact_index]:
+                raise RuntimeError(
+                    f"physical artifact {artifact_index} slice packing must cover physical artifact exactly"
+                )
     if any(count != 1 for count in assignments):
         raise RuntimeError("execution tile routing must cover every probe token exactly once")
     return routed
