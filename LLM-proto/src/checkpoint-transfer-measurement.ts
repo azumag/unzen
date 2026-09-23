@@ -229,7 +229,7 @@ export function deserializeCheckpointPayload(serialized: Uint8Array): Checkpoint
   let parsedHeader: unknown;
   try {
     parsedHeader = JSON.parse(
-      new TextDecoder().decode(frame.slice(headerStart, payloadStart)),
+      new TextDecoder('utf-8', { fatal: true }).decode(frame.slice(headerStart, payloadStart)),
     );
   } catch {
     throw new Error('serialized checkpoint header must be valid JSON');
