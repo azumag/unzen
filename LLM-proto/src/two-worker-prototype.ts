@@ -568,6 +568,11 @@ function validateSegmentExecutionInput(
     if (!hiddenStates) {
       throw new Error('prototype segment 1 checkpoint hiddenStates must be a Uint8Array');
     }
+    try {
+      bytesToText(hiddenStates);
+    } catch {
+      throw new Error('prototype segment 1 checkpoint hiddenStates must be valid UTF-8');
+    }
     checkpointHiddenStates = hiddenStates;
   }
 
@@ -760,5 +765,5 @@ function textToBytes(value: string): Uint8Array {
 }
 
 function bytesToText(bytes: Uint8Array): string {
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
