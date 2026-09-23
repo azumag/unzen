@@ -10,7 +10,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -27,6 +27,11 @@ import {
   parsePsRows,
   summarizeProcessRows,
 } from './capture_endpoint_poststage_webgpu_process_rss.mjs';
+import {
+  assertEvidenceOutputPathIdentity,
+  cleanupReservedEvidenceOutput,
+  reserveEvidenceOutput,
+} from './evidence_output_reservation.mjs';
 import {
   readRegularJsonFile,
 } from './preflight_endpoint_embedding_eight_physical_bundle.mjs';
@@ -282,25 +287,33 @@ async function runCapture(config) {
     throw new Error('process RSS capture supports only macOS/Linux ps semantics');
   }
   await preflightCancellationRssCapture(config);
-  mkdirSync(dirname(config.outputPath), { recursive: true });
-  const profileDir = mkdtempSync(join(tmpdir(), 'unzen-eight-physical-cancel-rss-'));
-  await assertPortAvailable(config.serverPort, 'harness server');
-  await assertPortAvailable(config.debugPort, 'Chrome DevTools');
 
-  const server = spawn(process.execPath, [HARNESS_SERVER], {
-    cwd: LLM_PROTO_ROOT,
-    env: {
-      ...process.env,
-      DATA_DIR: config.dataDir,
-      PREFLIGHT_REPORT: config.preflightReport,
-      GRAPH_PATH: config.graphPath,
-      PORT: String(config.serverPort),
-    },
-    stdio: 'ignore',
-  });
+  let outputFd = null;
+  let outputFdOpen = false;
+  let outputCommitted = false;
+  let profileDir = null;
+  let server;
   let chrome;
   let cdp;
   try {
+    outputFd = reserveEvidenceOutput(config.outputPath);
+    outputFdOpen = true;
+    profileDir = mkdtempSync(join(tmpdir(), 'unzen-eight-physical-cancel-rss-'));
+    await assertPortAvailable(config.serverPort, 'harness server');
+    await assertPortAvailable(config.debugPort, 'Chrome DevTools');
+
+    server = spawn(process.execPath, [HARNESS_SERVER], {
+      cwd: LLM_PROTO_ROOT,
+      env: {
+        ...process.env,
+        DATA_DIR: config.dataDir,
+        PREFLIGHT_REPORT: config.preflightReport,
+        GRAPH_PATH: config.graphPath,
+        PORT: String(config.serverPort),
+      },
+      stdio: 'ignore',
+    });
+
     const harnessUrl = `http://127.0.0.1:${config.serverPort}/`;
     const harnessResponse = await waitFor(harnessUrl, 10000, 'harness server');
     if (server.exitCode !== null) throw new Error(`harness server exited early with ${server.exitCode}`);
@@ -468,14 +481,22 @@ async function runCapture(config) {
         'This diagnostic does not prove decoder/KV/checkpoint full-model equivalence or select 8-physical payloads for production.',
       ],
     };
-    writeFileSync(config.outputPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+    writeFileSync(outputFd, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+    fsyncSync(outputFd);
+    assertEvidenceOutputPathIdentity(outputFd, config.outputPath);
+    outputCommitted = true;
     return evidence;
   } finally {
     cdp?.close();
     if (chrome && !chrome.killed) chrome.kill('SIGTERM');
-    if (!server.killed) server.kill('SIGTERM');
-    await sleep(250);
-    rmSync(profileDir, { recursive: true, force: true });
+    if (server && !server.killed) server.kill('SIGTERM');
+    if (chrome || server) await sleep(250);
+    if (profileDir !== null) rmSync(profileDir, { recursive: true, force: true });
+    if (outputFdOpen) {
+      cleanupReservedEvidenceOutput(outputFd, config.outputPath, outputCommitted);
+      closeSync(outputFd);
+      outputFdOpen = false;
+    }
   }
 }
 
