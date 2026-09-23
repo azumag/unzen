@@ -1,5 +1,8 @@
 import { validateWasmCanaryPayload } from './wasm_canary_contract.mjs';
 
+export const WASM_CANARY_MAX_RESPONSE_BYTES = 64 * 1024;
+const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
 export function validateCanaryUrl(value) {
   const url = new URL(value);
   if (url.protocol !== 'https:') {
@@ -12,6 +15,51 @@ export function validateCanaryUrl(value) {
     throw new Error('Wasm canary smoke URL must not contain credentials.');
   }
   return url;
+}
+
+async function readCanaryJsonBounded(response) {
+  if (!response.body) {
+    throw new Error('Wasm canary response body is missing.');
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > WASM_CANARY_MAX_RESPONSE_BYTES) {
+        await reader.cancel('Wasm canary response exceeded byte limit.').catch(() => {});
+        throw new Error(`Wasm canary response exceeded ${WASM_CANARY_MAX_RESPONSE_BYTES} bytes.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  let text;
+  try {
+    text = FATAL_UTF8_DECODER.decode(bytes);
+  } catch {
+    throw new Error('Wasm canary response is not valid UTF-8.');
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Wasm canary response is not valid JSON.');
+  }
 }
 
 export async function checkRemoteCanary(urlValue, { fetchImpl = fetch, samples = 4 } = {}) {
@@ -32,7 +80,7 @@ export async function checkRemoteCanary(urlValue, { fetchImpl = fetch, samples =
     if (!response.ok) {
       throw new Error(`Wasm canary returned HTTP ${response.status}.`);
     }
-    const payload = await response.json();
+    const payload = await readCanaryJsonBounded(response);
     const validation = validateWasmCanaryPayload(payload);
     if (validation.status !== 'valid') {
       throw new Error(`Wasm canary contract failed: ${JSON.stringify(validation)}`);
