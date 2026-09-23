@@ -41,6 +41,19 @@ describe('browser checkpoint payload response boundary', () => {
     await expect(readCheckpointPayloadResponse(new Response(bytes))).resolves.toEqual(checkpoint);
   });
 
+  it('accepts valid JSON exactly at the declared checkpoint response ceiling', async () => {
+    const prefix = new TextEncoder().encode('{"padding":"');
+    const suffix = new TextEncoder().encode('"}');
+    const paddingBytes = COORDINATOR_CHECKPOINT_RESPONSE_MAX_BYTES - prefix.byteLength - suffix.byteLength;
+    const bytes = new Uint8Array(COORDINATOR_CHECKPOINT_RESPONSE_MAX_BYTES);
+    bytes.fill(0x61, prefix.byteLength, prefix.byteLength + paddingBytes);
+    bytes.set(prefix, 0);
+    bytes.set(suffix, prefix.byteLength + paddingBytes);
+
+    const parsed = await readCheckpointPayloadResponse(new Response(bytes));
+    expect(parsed.padding).toHaveLength(paddingBytes);
+  });
+
   it('fails closed on malformed UTF-8 before JSON parsing', async () => {
     const prefix = new TextEncoder().encode('{"checkpointId":"');
     const suffix = new TextEncoder().encode('","tensors":[]}');
