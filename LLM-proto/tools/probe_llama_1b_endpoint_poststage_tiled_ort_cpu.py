@@ -475,7 +475,11 @@ def _sha256_fd_range(fd: int, *, offset: int, length: int) -> str:
 def _load_pinned_source_model(
     source_model_path: Path, *, expected_sha256: str
 ) -> tuple[int, onnx.ModelProto, dict[str, object], tuple[int, int, int, int, int]]:
-    if len(expected_sha256) != 64:
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
         raise RuntimeError("upstream layout source graph SHA-256 is invalid")
     try:
         expected_bytes = source_model_path.lstat().st_size
