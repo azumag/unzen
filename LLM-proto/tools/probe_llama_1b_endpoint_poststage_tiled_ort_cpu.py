@@ -577,6 +577,7 @@ def build_report(source_model_path: Path, source_external_data: Path, payload_ro
         or source_bytes <= 0
         or not isinstance(source_sha256, str)
         or len(source_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in source_sha256)
     ):
         raise RuntimeError("layout pinned source external-data identity is invalid")
 
