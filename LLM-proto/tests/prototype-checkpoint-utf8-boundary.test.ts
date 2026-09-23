@@ -41,7 +41,7 @@ describe('simulated prototype checkpoint UTF-8 boundary', () => {
       cdnUrl,
       transport,
       checkpoint: checkpoint(malformed),
-    })).rejects.toThrow(
+    } as never)).rejects.toThrow(
       'prototype segment 1 checkpoint hiddenStates must be valid UTF-8',
     );
 
@@ -55,6 +55,6 @@ describe('simulated prototype checkpoint UTF-8 boundary', () => {
       cdnUrl,
       transport,
       checkpoint: checkpoint(new TextEncoder().encode('HELLO')),
-    })).rejects.toThrow('Simulated worker loss');
+    } as never)).rejects.toThrow('Simulated worker loss');
   });
 });
