@@ -548,7 +548,7 @@ async function readJsonBounded(request: Request, maxBytes: number): Promise<unkn
   if (!request.body) throw new AdapterContractError('json-body-required', 400);
   const bytes = await readStreamBounded(request.body, maxBytes);
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } catch {
     throw new AdapterContractError('json-body-invalid', 400);
   }
@@ -558,7 +558,7 @@ async function readResponseJsonBounded(response: Response, maxBytes: number): Pr
   if (!response.body) throw new AdapterContractError('upstream-json-body-required', 502);
   const bytes = await readStreamBounded(response.body, maxBytes);
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   } catch {
     throw new AdapterContractError('upstream-json-body-invalid', 502);
   }
