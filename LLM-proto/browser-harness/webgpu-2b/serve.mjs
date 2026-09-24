@@ -18,7 +18,7 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = resolveWebgpuDiagnosticPort(process.env.PORT, 8788);
 // Local diagnostic harness only: bind to loopback so the private model
 // artifacts under MODELS_DIR are never exposed to the network.
-const HOST = process.env.HOST ?? '127.0.0.1';
+const HOST = '127.0.0.1';
 // When set, /models/<repo>/... is served from this directory so the runner
 // can load model artifacts from disk instead of downloading from
 // huggingface.co (see runner.js env.localModelPath). MODELS_DIR content is

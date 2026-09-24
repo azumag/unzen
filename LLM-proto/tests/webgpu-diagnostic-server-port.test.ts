@@ -39,4 +39,11 @@ describe('shared WebGPU diagnostic server port preflight', () => {
     expect(source).not.toContain('Number(process.env.PORT ?? 8788)');
     expect(source.indexOf(resolverCall)).toBeLessThan(source.indexOf('const server = createServer('));
   });
+
+  it('keeps the base harness loopback-only instead of accepting HOST from the environment', () => {
+    const source = loadSource('../browser-harness/webgpu-2b/serve.mjs');
+    expect(source).toContain("const HOST = '127.0.0.1';");
+    expect(source).toContain('server.listen(PORT, HOST, () => {');
+    expect(source).not.toContain('process.env.HOST');
+  });
 });
