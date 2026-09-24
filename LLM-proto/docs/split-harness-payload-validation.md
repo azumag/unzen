@@ -27,12 +27,12 @@ Before Browser B reconstructs the relayed tensors, the runner now revalidates th
 Before a result report is constructed, the browser runner validates the actual logits tensor:
 
 - the output exists and is `float32` or `float64`;
-- the shape is positive rank 3 with batch size 1;
+- the shape is positive rank 3 with batch size 1, and every dimension is already an actual numeric safe integer rather than a coercible string/boolean/null value;
 - `data.length` exactly matches the shape product;
-- every logit is finite, not only the winning value;
-- argmax is computed only after those checks pass.
+- every logit is already an actual JavaScript number and is finite, not merely coercible through `Number(...)`;
+- argmax is computed from those validated values only after the checks pass.
 
-An empty sequence/vocabulary, truncated tensor, NaN, or positive/negative Infinity therefore fails locally and never reaches the `pass` report path.
+An empty sequence/vocabulary, truncated tensor, coercible dimension/value, NaN, or positive/negative Infinity therefore fails locally and never reaches the `pass` report path. This keeps browser result evidence bound to the numeric tensor values ONNX Runtime actually produced instead of accepting a normalized JavaScript lookalike from a malformed or mocked runtime boundary.
 
 ## Final result boundary
 

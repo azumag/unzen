@@ -241,6 +241,34 @@ describe('browser split runtime validation', () => {
     })).toThrow(/non-finite logit/);
   });
 
+  it('rejects coercible logits dimensions instead of normalizing them', () => {
+    for (const dims of [
+      [1, '2', 3],
+      [1, true, 3],
+      [1, null, 3],
+    ]) {
+      expect(() => argmaxLastLogits({
+        type: 'float32',
+        dims,
+        data: new Float32Array(6),
+      })).toThrow(/unexpected logits shape/);
+    }
+  });
+
+  it('rejects coercible logits values instead of normalizing them', () => {
+    for (const data of [
+      [1, '4', 2],
+      [1, true, 2],
+      [1, null, 2],
+    ]) {
+      expect(() => argmaxLastLogits({
+        type: 'float32',
+        dims: [1, 1, 3],
+        data,
+      })).toThrow(/non-numeric logit/);
+    }
+  });
+
   it('rejects empty logits dimensions and data-length mismatches', () => {
     expect(() => argmaxLastLogits({
       type: 'float32',

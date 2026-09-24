@@ -142,9 +142,9 @@ export function argmaxLastLogits(tensor) {
   if (tensor.type !== 'float32' && tensor.type !== 'float64') {
     throw new Error(`unsupported logits tensor type: ${tensor.type}`);
   }
-  const dims = tensor.dims.map(Number);
+  const dims = tensor.dims;
   if (dims.length !== 3 || dims[0] !== 1
-    || !dims.every((dimension) => Number.isSafeInteger(dimension) && dimension > 0)) {
+    || !dims.every((dimension) => typeof dimension === 'number' && Number.isSafeInteger(dimension) && dimension > 0)) {
     throw new Error(`unexpected logits shape: ${dims}`);
   }
   const [batch, sequenceLength, vocab] = dims;
@@ -152,20 +152,20 @@ export function argmaxLastLogits(tensor) {
   if (!Number.isSafeInteger(elementCount) || tensor.data.length !== elementCount) {
     throw new Error(`logits data length mismatch: shape=${dims}, data=${tensor.data.length}`);
   }
+  const start = (sequenceLength - 1) * vocab;
+  let bestIndex = 0;
+  let bestValue;
   for (let index = 0; index < tensor.data.length; index++) {
-    const value = Number(tensor.data[index]);
+    const value = tensor.data[index];
+    if (typeof value !== 'number') {
+      throw new Error(`non-numeric logit at index ${index}`);
+    }
     if (!Number.isFinite(value)) {
       throw new Error(`non-finite logit at index ${index}`);
     }
-  }
-  const start = (sequenceLength - 1) * vocab;
-  let bestIndex = 0;
-  let bestValue = Number(tensor.data[start]);
-  for (let index = 1; index < vocab; index++) {
-    const value = Number(tensor.data[start + index]);
-    if (value > bestValue) {
+    if (index >= start && (index === start || value > bestValue)) {
       bestValue = value;
-      bestIndex = index;
+      bestIndex = index - start;
     }
   }
   return { tokenId: bestIndex, logit: bestValue, elementCount };
