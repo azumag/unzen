@@ -34,6 +34,10 @@
     P0 modeではこの一般境界に加えてmodel固有のexact contractも適用されます。
   </p>
   <p>
+    <code>artifactBudget</code> は <code>absolute</code>（既定）または <code>p0</code> のexact valueだけを受理します。
+    未対応のmodeはONNX Runtimeやtokenizer/model取得より前に拒否し、trim・case変換などの正規化は行いません。
+  </p>
+  <p>
     Segment 1/standby の checkpoint 待機には上限があります（既定120秒、<code>checkpointWaitMs</code>で変更可能）。
     Stop はfetch/pollを中断します。WebGPU実行中はORT呼び出し自体の強制中断を保証せず、その呼び出しが戻ってsessionを解放するまで「停止要求中」と表示します。
   </p>
