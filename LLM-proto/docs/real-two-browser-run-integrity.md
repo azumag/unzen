@@ -34,6 +34,8 @@ Browser B must load the same manifest and must submit the identifiers from the c
 
 The Coordinator compares all of them with the stored checkpoint before accepting the result. A manifest, checkpoint ID/digest, producer generation, token input, or boundary-size mismatch is rejected with HTTP 409. Profile isolation and Coordinator-only relay checks remain independent mandatory gates.
 
+Browser B only declares split inference complete after the bounded result-acceptance receipt passes its semantic success contract. It requires a successful Coordinator write with boolean idempotency, a valid run ID, lowercase SHA-256 result/checkpoint digests, a bounded checkpoint ID, and the Coordinator-issued profile-isolation evidence. That evidence must identify valid source/segment-1 workers and positive generations and must carry distinct lowercase SHA-256 probe hashes from the Coordinator-issued HttpOnly-cookie proof. The runner then keeps its exact checkpoint ID/digest equality check against the checkpoint actually consumed before logging the result digest.
+
 The first accepted result receives a `resultDigest`. An exact retry by the same Browser B generation is idempotent. A primary/standby race or any other different result for an already completed run returns `409 run-result-conflict`; the original result remains unchanged.
 
 ## Run-ID reuse rule
