@@ -58,12 +58,12 @@ export class ArtifactResidencyLedger {
     const validated = capturedArtifacts.map((artifact, arrayIndex) =>
       cloneAndValidateArtifact(artifact, arrayIndex),
     );
-    const measuredTotalArtifactBytes = validated.reduce(
-      (sum, artifact) => sum + artifact.byteSize,
-      0,
-    );
-    if (!Number.isSafeInteger(measuredTotalArtifactBytes)) {
-      throw new Error('total artifact byte size exceeds JavaScript safe integer range');
+    let measuredTotalArtifactBytes = 0;
+    for (const artifact of validated) {
+      if (measuredTotalArtifactBytes > Number.MAX_SAFE_INTEGER - artifact.byteSize) {
+        throw new Error('total artifact byte size exceeds JavaScript safe integer range');
+      }
+      measuredTotalArtifactBytes += artifact.byteSize;
     }
     for (const artifact of validated) {
       const budget = evaluateBrowserSegmentArtifact(artifact);
