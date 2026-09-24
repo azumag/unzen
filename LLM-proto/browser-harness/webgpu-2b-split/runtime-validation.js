@@ -15,6 +15,7 @@ const TENSOR_TYPE_BYTES = Object.freeze({
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 const WORKER_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const BROWSER_WORKER_ROLES = new Set(['segment0', 'segment1', 'standby']);
 const MAX_CHECKPOINT_ID_LENGTH = 128;
 const MAX_SAFE_TOKEN_ID_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
@@ -115,6 +116,18 @@ export function validateBrowserKvGeometry({ kvHeads, headSize }) {
     }
   }
   return { kvHeads, headSize };
+}
+
+export function validateBrowserWorkerRegistrationConfig({ role, workerId }) {
+  if (typeof role !== 'string' || !BROWSER_WORKER_ROLES.has(role)) {
+    throw new Error(`browser worker role is invalid: ${String(role)}`);
+  }
+  if (workerId !== undefined && workerId !== null) {
+    if (typeof workerId !== 'string' || !WORKER_ID.test(workerId)) {
+      throw new Error(`browser worker ID is invalid: ${String(workerId)}`);
+    }
+  }
+  return { role, workerId };
 }
 
 export function normalizeTokenizerTokenIds(encoded) {
