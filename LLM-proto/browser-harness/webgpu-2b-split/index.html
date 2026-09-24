@@ -24,6 +24,11 @@
     各ブラウザは自分のsegment専用external weightsだけをSHA-256検証してBrowser Cache APIへ保存します。
   </p>
   <p>
+    <code>role</code> は <code>segment0</code> / <code>segment1</code> / <code>standby</code> のexact valueだけを受理します。
+    明示した <code>worker</code> は Coordinator と同じ <code>^[A-Za-z0-9._-]{1,128}$</code> を満たす必要があり、未指定時だけ既存のrandom ID生成を使います。
+    不正なrole/workerはONNX Runtimeの取得より前に拒否され、trim・型変換・別表現への正規化は行いません。
+  </p>
+  <p>
     <code>kvHeads</code> と <code>headSize</code> はURL queryから数値として解釈し、正のsafe integerだけを受理します。
     不正値はONNX Runtime、worker登録、manifest/model取得より前に拒否されます。未指定時はそれぞれ <code>8</code> と <code>64</code> です。
     P0 modeではこの一般境界に加えてmodel固有のexact contractも適用されます。
