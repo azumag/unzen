@@ -28,6 +28,15 @@ describe('model manifest component byte accumulation', () => {
               components: [
                 component('graph', 'segment-0.onnx', Number.MAX_SAFE_INTEGER, graphLocator),
                 component('external-data', 'segment-0.onnx.data', 1, `${graphLocator}.data`),
+                {
+                  ...component(
+                    'external-data',
+                    'segment-0.onnx.extra-data',
+                    2,
+                    `${graphLocator}.extra-data`,
+                  ),
+                  sha256: 'not-a-digest',
+                },
               ],
             }
           : segment,
@@ -41,6 +50,10 @@ describe('model manifest component byte accumulation', () => {
           code: 'artifact-component-byte-size-mismatch',
           path: '$.segments[0].components',
           message: 'component bytes exceed Number.MAX_SAFE_INTEGER; exact byte total is required',
+        }),
+        expect.objectContaining({
+          code: 'invalid-artifact-component-digest',
+          path: '$.segments[0].components[2].sha256',
         }),
       ]),
     );
