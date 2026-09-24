@@ -1,5 +1,9 @@
 import { validateBrowserArtifactBudgetMode } from './artifact-budget.js';
 import {
+  DEFAULT_BROWSER_CHECKPOINT_WAIT_MS,
+  validateBrowserCheckpointWaitConfig,
+} from './checkpoint-wait-config.js';
+import {
   validateBrowserKvGeometry,
   validateBrowserWorkerRegistrationConfig,
 } from './runtime-validation.js';
@@ -10,10 +14,14 @@ const explicitWorkerId = params.get('worker');
 const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
+const checkpointWaitMs = Number(
+  params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS,
+);
 
 validateBrowserWorkerRegistrationConfig({ role, workerId: explicitWorkerId });
 validateBrowserKvGeometry({ kvHeads, headSize });
 validateBrowserArtifactBudgetMode(artifactBudgetMode);
+validateBrowserCheckpointWaitConfig({ role, checkpointWaitMs });
 
 await new Promise((resolve, reject) => {
   const script = document.createElement('script');
