@@ -649,9 +649,8 @@ function requirePositiveFiniteNumber(value: unknown, path: string): number {
 }
 
 function safeAdd(left: number, right: number, path: string): number {
-  const sum = left + right;
-  if (!Number.isSafeInteger(sum)) {
+  if (left > Number.MAX_SAFE_INTEGER - right) {
     throw new Error(`${path} exceeds JavaScript safe integer range`);
   }
-  return sum;
+  return left + right;
 }
