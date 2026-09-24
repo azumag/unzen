@@ -76,6 +76,7 @@ function checkpointPayload(overrides: Record<string, unknown> = {}) {
     sourceWorkerId: 'browser-a',
     manifestDigest: MANIFEST_DIGEST,
     inputTokenIds: [1, 2],
+    segmentExecutionMs: 12.5,
     tensors,
     ...overrides,
   };
@@ -111,6 +112,8 @@ function validResult(
     segment1WorkerId,
     inputTokenIds: checkpoint.inputTokenIds ?? [1, 2],
     boundaryBytes: checkpoint.tensorBytes ?? 64,
+    segment0ExecutionMs: checkpoint.segmentExecutionMs ?? 12.5,
+    segment1ExecutionMs: 7.25,
     top1TokenId: 3,
     top1Logit: 1.25,
     logitsShape: [1, 2, 8],
@@ -151,6 +154,7 @@ describe('real two-browser split Coordinator harness', () => {
       checkpointDigest: posted.body.checkpointDigest,
       manifestDigest: MANIFEST_DIGEST,
       inputTokenIds: [1, 2],
+      segmentExecutionMs: 12.5,
       tensorBytes: 64,
       sourceWorkerId: 'browser-a',
       sourceWorkerIdentity: {

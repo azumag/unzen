@@ -116,6 +116,10 @@ function sameNumberArray(left, right) {
     && left.every((value, index) => value === right[index]);
 }
 
+function isFiniteNonNegativeNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
 function decodedBase64ByteLength(value) {
   if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return undefined;
   if (!CANONICAL_BASE64.test(value)) return undefined;
@@ -200,6 +204,9 @@ function validateCheckpointBinding(body) {
     || !body.inputTokenIds.every((tokenId) => Number.isSafeInteger(tokenId) && tokenId >= 0)) {
     return { ok: false, status: 400, error: 'invalid-checkpoint-binding', reason: 'invalid-input-token-ids' };
   }
+  if (!isFiniteNonNegativeNumber(body.segmentExecutionMs)) {
+    return { ok: false, status: 400, error: 'invalid-checkpoint-binding', reason: 'invalid-segment-execution-ms' };
+  }
   return { ok: true };
 }
 
@@ -207,6 +214,7 @@ function checkpointDigestFor(body, sourceWorkerIdentity) {
   return sha256Json({
     manifestDigest: body.manifestDigest,
     inputTokenIds: body.inputTokenIds,
+    segmentExecutionMs: body.segmentExecutionMs,
     sourceWorkerIdentity: {
       workerId: sourceWorkerIdentity.workerId,
       role: sourceWorkerIdentity.role,
@@ -249,6 +257,12 @@ function validateResultPayload(body) {
   }
   if (!Number.isSafeInteger(body.boundaryBytes) || body.boundaryBytes <= 0) {
     return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-boundary-bytes' };
+  }
+  if (!isFiniteNonNegativeNumber(body.segment0ExecutionMs)) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-segment0-execution-ms' };
+  }
+  if (!isFiniteNonNegativeNumber(body.segment1ExecutionMs)) {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-segment1-execution-ms' };
   }
   return { ok: true };
 }
@@ -295,6 +309,14 @@ function validateResultBinding(body, checkpoint) {
       expectedBoundaryBytes: checkpoint.tensorBytes,
     };
   }
+  if (body.segment0ExecutionMs !== checkpoint.segmentExecutionMs) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-segment0-execution-ms-mismatch',
+      expectedSegment0ExecutionMs: checkpoint.segmentExecutionMs,
+    };
+  }
   return { ok: true };
 }
 
@@ -313,6 +335,8 @@ function resultDigestFor(body, segment1WorkerIdentity) {
     },
     inputTokenIds: body.inputTokenIds,
     boundaryBytes: body.boundaryBytes,
+    segment0ExecutionMs: body.segment0ExecutionMs,
+    segment1ExecutionMs: body.segment1ExecutionMs,
     top1TokenId: body.top1TokenId,
     top1Logit: body.top1Logit,
     logitsShape: body.logitsShape,
