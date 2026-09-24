@@ -29,6 +29,45 @@ describe('shared WebGPU diagnostic server port preflight', () => {
     },
   );
 
+  it.each([
+    true,
+    false,
+    8788n,
+    ['8788'],
+    { valueOf: () => 8788 },
+  ])('rejects coercible non-string/non-number port input %#', (rawPort) => {
+    expect(() => resolveWebgpuDiagnosticPort(rawPort as any, 8788)).toThrow(
+      'PORT must resolve to an integer between 1 and 65535',
+    );
+  });
+
+  it('does not invoke coercion hooks on rejected port objects', () => {
+    const hostilePort = {
+      valueOf() {
+        throw new Error('valueOf must not run');
+      },
+      toString() {
+        throw new Error('toString must not run');
+      },
+    };
+
+    expect(() => resolveWebgpuDiagnosticPort(hostilePort as any, 8788)).toThrow(
+      'PORT must resolve to an integer between 1 and 65535',
+    );
+  });
+
+  it('rejects a coercible non-string/non-number default without invoking it', () => {
+    const hostileDefault = {
+      valueOf() {
+        throw new Error('default valueOf must not run');
+      },
+    };
+
+    expect(() => resolveWebgpuDiagnosticPort(undefined, hostileDefault as any)).toThrow(
+      'PORT must resolve to an integer between 1 and 65535',
+    );
+  });
+
   it('preflights the base harness port before server creation', () => {
     const source = loadSource('../browser-harness/webgpu-2b/serve.mjs');
     const resolverCall = 'const PORT = resolveWebgpuDiagnosticPort(process.env.PORT, 8788);';
