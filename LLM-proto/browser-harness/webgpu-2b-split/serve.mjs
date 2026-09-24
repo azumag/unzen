@@ -252,6 +252,9 @@ function validateResultPayload(body) {
   if (typeof body.top1Logit !== 'number' || !Number.isFinite(body.top1Logit)) {
     return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'top1-logit-must-be-finite' };
   }
+  if (body.tokenText != null && typeof body.tokenText !== 'string') {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'token-text-must-be-string-or-null' };
+  }
   if (!Array.isArray(body.inputTokenIds) || body.inputTokenIds.length === 0
     || !body.inputTokenIds.every((tokenId) => Number.isSafeInteger(tokenId) && tokenId >= 0)) {
     return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-input-token-ids' };
