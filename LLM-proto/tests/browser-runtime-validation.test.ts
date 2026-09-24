@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   argmaxLastLogits,
+  normalizeTokenizerTokenIds,
   validateCheckpointBoundaryNames,
 } from '../browser-harness/webgpu-2b-split/runtime-validation.js';
 
@@ -44,6 +45,40 @@ describe('browser split runtime validation', () => {
   };
 
   const validTensors = () => [tensorWire('boundary-a'), tensorWire('boundary-b')];
+
+  it('accepts actual numeric and safe-bigint tokenizer token IDs', () => {
+    expect(normalizeTokenizerTokenIds({ input_ids: [0, 1, Number.MAX_SAFE_INTEGER] }))
+      .toEqual([0, 1, Number.MAX_SAFE_INTEGER]);
+    expect(normalizeTokenizerTokenIds({ input_ids: [[1n, 2n, 3]] }))
+      .toEqual([1, 2, 3]);
+    expect(normalizeTokenizerTokenIds({
+      input_ids: { tolist: () => [[4n, 5]] },
+    })).toEqual([4, 5]);
+  });
+
+  it('rejects coercible or out-of-range tokenizer token IDs', () => {
+    const invalidValues = [
+      '1',
+      true,
+      null,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      -1n,
+      BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+    ];
+    for (const value of invalidValues) {
+      expect(() => normalizeTokenizerTokenIds({ input_ids: [value] }))
+        .toThrow(/invalid input token ID/);
+    }
+  });
+
+  it('requires a non-empty single tokenizer batch', () => {
+    for (const input_ids of [undefined, null, [], [[]], [[1], [2]], '1,2']) {
+      expect(() => normalizeTokenizerTokenIds({ input_ids }))
+        .toThrow(/tokenizer/);
+    }
+  });
 
   it('accepts the exact manifest boundary tensors independent of relay order', () => {
     expect(() => validateCheckpointBoundaryNames(checkpoint([
