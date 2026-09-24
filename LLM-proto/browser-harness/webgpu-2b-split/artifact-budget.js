@@ -254,8 +254,11 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
     planSnapshot.externalDeclaredBytes,
     'artifact plan externalDeclaredBytes',
   );
+  if (externalDeclaredBytes > Number.MAX_SAFE_INTEGER - graphDeclaredBytes) {
+    throw new Error('artifact plan graph/external byte breakdown must equal declaredBytes');
+  }
   const recomposedDeclaredBytes = graphDeclaredBytes + externalDeclaredBytes;
-  if (!Number.isSafeInteger(recomposedDeclaredBytes) || recomposedDeclaredBytes !== declaredBytes) {
+  if (recomposedDeclaredBytes !== declaredBytes) {
     throw new Error('artifact plan graph/external byte breakdown must equal declaredBytes');
   }
 
