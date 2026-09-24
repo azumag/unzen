@@ -6,16 +6,15 @@ import {
   loadVerifiedArtifact,
   readResponseBytesBounded,
 } from './artifact-cache.js';
+import { readBrowserRuntimeQueryConfig } from './browser-runtime-config.js';
 import { readCheckpointRelayReceipt } from './checkpoint-receipt.js';
 import { readCheckpointPayloadResponse } from './checkpoint-payload-response.js';
-import { DEFAULT_BROWSER_CHECKPOINT_WAIT_MS } from './checkpoint-wait-config.js';
 import { readResultAcceptanceReceipt } from './result-acceptance-receipt.js';
 import {
   planSegmentArtifactBudget,
   verifyActualSegmentArtifactBudget,
 } from './artifact-budget.js';
 import {
-  DEFAULT_BROWSER_WORKER_ROLE,
   argmaxLastLogits,
   normalizeTokenizerTokenIds,
   validateCheckpointBoundaryNames,
@@ -31,20 +30,20 @@ import {
   throwIfAborted,
   waitForCheckpointBounded,
 } from './execution-lifecycle.js';
-import { DEFAULT_BROWSER_RUN_ID } from './run-id.js';
 
 const params = new URLSearchParams(location.search);
-const role = params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE;
-const runId = params.get('run') ?? DEFAULT_BROWSER_RUN_ID;
-const workerId = params.get('worker') ?? `${role}-${crypto.randomUUID().slice(0, 8)}`;
-const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
-const splitRoot = params.get('splitRoot') ?? '/models';
-const kvHeads = Number(params.get('kvHeads') ?? 8);
-const headSize = Number(params.get('headSize') ?? 64);
-const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
-const checkpointWaitMs = Number(
-  params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS,
-);
+const {
+  role,
+  runId,
+  explicitWorkerId,
+  modelId,
+  splitRoot,
+  kvHeads,
+  headSize,
+  artifactBudgetMode,
+  checkpointWaitMs,
+} = readBrowserRuntimeQueryConfig(params);
+const workerId = explicitWorkerId ?? `${role}-${crypto.randomUUID().slice(0, 8)}`;
 // Mirror the atomic publisher's MAX_PREVIOUS_MANIFEST_BYTES / MAX_STAGED_MANIFEST_BYTES.
 const MAX_SPLIT_MANIFEST_BYTES = 4 * 1024 * 1024;
 

@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { validateBrowserKvGeometry } from '../browser-harness/webgpu-2b-split/runtime-validation.js';
 
+const config = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/browser-runtime-config.js', import.meta.url),
+  'utf8',
+);
 const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
@@ -43,15 +47,17 @@ describe('browser KV geometry preflight', () => {
   });
 
   it('validates query geometry before any external runtime or runner import', () => {
+    const configRead = bootstrap.indexOf('readBrowserRuntimeQueryConfig(params)');
     const validation = bootstrap.indexOf('validateBrowserKvGeometry({ kvHeads, headSize })');
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");
 
-    expect(validation).toBeGreaterThanOrEqual(0);
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(validation).toBeGreaterThan(configRead);
     expect(ortLoad).toBeGreaterThan(validation);
     expect(runnerImport).toBeGreaterThan(ortLoad);
-    expect(bootstrap).toContain("params.get('kvHeads') ?? 8");
-    expect(bootstrap).toContain("params.get('headSize') ?? 64");
+    expect(config).toContain("kvHeads: Number(params.get('kvHeads') ?? DEFAULT_BROWSER_KV_HEADS)");
+    expect(config).toContain("headSize: Number(params.get('headSize') ?? DEFAULT_BROWSER_HEAD_SIZE)");
   });
 
   it('routes the harness through the preflight bootstrap only', () => {

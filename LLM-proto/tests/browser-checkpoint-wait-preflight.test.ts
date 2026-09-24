@@ -5,6 +5,10 @@ import {
   validateBrowserCheckpointWaitConfig,
 } from '../browser-harness/webgpu-2b-split/checkpoint-wait-config.js';
 
+const config = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/browser-runtime-config.js', import.meta.url),
+  'utf8',
+);
 const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
@@ -23,11 +27,12 @@ describe('browser checkpoint wait preflight', () => {
     })).toEqual({ role: 'segment1', checkpointWaitMs: 120_000 });
   });
 
-  it('shares the canonical default between bootstrap and the full runner', () => {
-    expect(bootstrap).toContain('DEFAULT_BROWSER_CHECKPOINT_WAIT_MS');
-    expect(bootstrap).toContain("params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS");
-    expect(runner).toContain("import { DEFAULT_BROWSER_CHECKPOINT_WAIT_MS } from './checkpoint-wait-config.js';");
-    expect(runner).toContain("params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS");
+  it('shares the canonical default between query resolution, bootstrap, and the full runner', () => {
+    expect(config).toContain("import { DEFAULT_BROWSER_CHECKPOINT_WAIT_MS } from './checkpoint-wait-config.js';");
+    expect(config).toContain("params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS");
+    expect(bootstrap).toContain('readBrowserRuntimeQueryConfig(params)');
+    expect(runner).toContain('readBrowserRuntimeQueryConfig(params)');
+    expect(bootstrap).not.toContain("params.get('checkpointWaitMs') ?? 120_000");
     expect(runner).not.toContain("params.get('checkpointWaitMs') ?? 120_000");
   });
 
@@ -73,15 +78,14 @@ describe('browser checkpoint wait preflight', () => {
   });
 
   it('validates the timeout before ONNX Runtime or the full runner is loaded', () => {
-    const parse = bootstrap.indexOf("params.get('checkpointWaitMs')");
+    const configRead = bootstrap.indexOf('readBrowserRuntimeQueryConfig(params)');
     const validation = bootstrap.indexOf('validateBrowserCheckpointWaitConfig({ role, checkpointWaitMs })');
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");
 
-    expect(parse).toBeGreaterThanOrEqual(0);
-    expect(validation).toBeGreaterThan(parse);
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(validation).toBeGreaterThan(configRead);
     expect(ortLoad).toBeGreaterThan(validation);
     expect(runnerImport).toBeGreaterThan(ortLoad);
-    expect(bootstrap).toContain('DEFAULT_BROWSER_CHECKPOINT_WAIT_MS');
   });
 });
