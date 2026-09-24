@@ -126,10 +126,13 @@ export function planSegmentArtifactBudget(segment, mode = 'absolute') {
   // ordering before touching later locator/digest accessors.
   const externalDataMembershipSnapshot = [...externalData];
   const externalDataBytesSnapshot = externalDataMembershipSnapshot.map((entry) => entry?.bytes);
-  const externalDeclaredBytes = externalDataBytesSnapshot.reduce(
-    (sum, bytes, index) => sum + safeBytes(bytes, `${label} externalData[${index}].bytes`),
-    0,
-  );
+  const externalDeclaredBytes = externalDataBytesSnapshot.reduce((sum, bytes, index) => {
+    const validatedBytes = safeBytes(bytes, `${label} externalData[${index}].bytes`);
+    if (validatedBytes > Number.MAX_SAFE_INTEGER - sum) {
+      throw new Error(`${label} cumulative external-data bytes exceed safe integer range`);
+    }
+    return sum + validatedBytes;
+  }, 0);
   const graphDeclaredBytes = declaredBytes - externalDeclaredBytes;
   if (!Number.isSafeInteger(graphDeclaredBytes) || graphDeclaredBytes <= 0) {
     throw new Error(
