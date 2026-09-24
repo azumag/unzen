@@ -17,6 +17,8 @@ Browser A computes SHA-256 over the exact `split-manifest.json` bytes it loaded 
 
 `checkpointDigest` covers the manifest digest, input token IDs, source worker identity/generation/profile probe, and the two serialized boundary tensors. An exact checkpoint retry is idempotent and returns the existing binding. A different checkpoint under the same run ID returns `409 run-checkpoint-conflict`.
 
+Browser A only declares the segment complete after the bounded checkpoint-relay receipt has also passed its semantic success contract: `ok=true`, boolean idempotency, Coordinator-owned relay, a valid run ID, lowercase 64-hex manifest/checkpoint digests, a bounded checkpoint ID, positive source-worker generation, confirmed profile isolation, and a positive tensor-byte count. The existing exact manifest-digest comparison then binds that validated receipt back to the manifest loaded by Browser A.
+
 Before Browser B reconstructs any relayed tensor or creates the continuation inference session, it revalidates the immutable checkpoint metadata returned by the Coordinator. The checkpoint ID must be a non-empty string no longer than 128 characters, the checkpoint digest must be lowercase 64-hex SHA-256, and `sourceWorkerId` must satisfy the Coordinator worker-ID contract (`[A-Za-z0-9._-]`, 1–128 characters). `sourceWorkerIdentity.workerId` must exactly equal `sourceWorkerId`, and its generation must be a positive safe integer. This consumer-side preflight complements the existing exact manifest digest, token-ID, and tensor-wire checks so a malformed relay response fails before tensor allocation or continuation inference.
 
 ## Result binding
