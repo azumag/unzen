@@ -108,6 +108,15 @@ function validateCheckpointInputTokenIds(checkpoint) {
   }
 }
 
+export function validateBrowserKvGeometry({ kvHeads, headSize }) {
+  for (const [name, value] of [['kvHeads', kvHeads], ['headSize', headSize]]) {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`${name} must be a positive safe integer: ${String(value)}`);
+    }
+  }
+  return { kvHeads, headSize };
+}
+
 export function normalizeTokenizerTokenIds(encoded) {
   let values = encoded?.input_ids;
   if (values && typeof values.tolist === 'function') values = values.tolist();

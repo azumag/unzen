@@ -24,6 +24,11 @@
     各ブラウザは自分のsegment専用external weightsだけをSHA-256検証してBrowser Cache APIへ保存します。
   </p>
   <p>
+    <code>kvHeads</code> と <code>headSize</code> はURL queryから数値として解釈し、正のsafe integerだけを受理します。
+    不正値はONNX Runtime、worker登録、manifest/model取得より前に拒否されます。未指定時はそれぞれ <code>8</code> と <code>64</code> です。
+    P0 modeではこの一般境界に加えてmodel固有のexact contractも適用されます。
+  </p>
+  <p>
     Segment 1/standby の checkpoint 待機には上限があります（既定120秒、<code>checkpointWaitMs</code>で変更可能）。
     Stop はfetch/pollを中断します。WebGPU実行中はORT呼び出し自体の強制中断を保証せず、その呼び出しが戻ってsessionを解放するまで「停止要求中」と表示します。
   </p>
@@ -39,7 +44,6 @@
   <div id="status"></div>
   <pre id="log"></pre>
 
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js"></script>
-  <script type="module" src="./runner-v3.js"></script>
+  <script type="module" src="./runner-bootstrap.js"></script>
 </body>
 </html>
