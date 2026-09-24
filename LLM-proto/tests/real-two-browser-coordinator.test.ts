@@ -119,6 +119,7 @@ function validResult(
     logitsShape: [1, 2, 8],
     directWorkerNetworking: false,
     relayOwner: 'coordinator',
+    resumedFromCheckpoint: false,
     ...overrides,
   };
 }
@@ -319,6 +320,8 @@ describe('real two-browser split Coordinator harness', () => {
       validResult('browser-b', checkpoint.body, { top1TokenId: 8 }),
       validResult('browser-b', checkpoint.body, { logitsShape: [1, 0, 8] }),
       validResult('browser-b', checkpoint.body, { boundaryBytes: 0 }),
+      validResult('browser-b', checkpoint.body, { resumedFromCheckpoint: undefined }),
+      validResult('browser-b', checkpoint.body, { resumedFromCheckpoint: 'false' }),
     ];
 
     for (const malformedResult of malformedResults) {
@@ -330,6 +333,66 @@ describe('real two-browser split Coordinator harness', () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: 'invalid-result-payload' });
     }
+  });
+
+  it('binds explicit resume evidence to the registered segment1 role before result mutation', async () => {
+    const { baseUrl, state } = await startServer();
+    const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
+    const primary = await registerWorker(baseUrl, 'browser-b', 'segment1');
+    const standby = await registerWorker(baseUrl, 'browser-b-standby', 'standby');
+
+    const primaryCheckpoint = await postCheckpoint(baseUrl, 'resume-role-primary', registerA.cookie);
+    const contradictoryPrimary = await fetch(`${baseUrl}/api/runs/resume-role-primary/result`, {
+      method: 'POST',
+      headers: jsonHeaders(primary.cookie),
+      body: JSON.stringify(validResult('browser-b', primaryCheckpoint.body, {
+        resumedFromCheckpoint: true,
+      })),
+    });
+    expect(contradictoryPrimary.status).toBe(409);
+    expect(await contradictoryPrimary.json()).toMatchObject({
+      error: 'result-resume-role-mismatch',
+      role: 'segment1',
+      expectedResumedFromCheckpoint: false,
+    });
+    expect(state.results.has('resume-role-primary')).toBe(false);
+
+    const standbyCheckpoint = await postCheckpoint(baseUrl, 'resume-role-standby', registerA.cookie);
+    const contradictoryStandby = await fetch(`${baseUrl}/api/runs/resume-role-standby/result`, {
+      method: 'POST',
+      headers: jsonHeaders(standby.cookie),
+      body: JSON.stringify(validResult('browser-b-standby', standbyCheckpoint.body)),
+    });
+    expect(contradictoryStandby.status).toBe(409);
+    expect(await contradictoryStandby.json()).toMatchObject({
+      error: 'result-resume-role-mismatch',
+      role: 'standby',
+      expectedResumedFromCheckpoint: true,
+    });
+    expect(state.results.has('resume-role-standby')).toBe(false);
+
+    const standbyPayload = validResult('browser-b-standby', standbyCheckpoint.body, {
+      resumedFromCheckpoint: true,
+    });
+    const acceptedStandby = await fetch(`${baseUrl}/api/runs/resume-role-standby/result`, {
+      method: 'POST',
+      headers: jsonHeaders(standby.cookie),
+      body: JSON.stringify(standbyPayload),
+    });
+    expect(acceptedStandby.status).toBe(201);
+    const acceptedStandbyBody = await acceptedStandby.json();
+    expect(acceptedStandbyBody.resultDigest).toMatch(/^[a-f0-9]{64}$/);
+
+    const retryStandby = await fetch(`${baseUrl}/api/runs/resume-role-standby/result`, {
+      method: 'POST',
+      headers: jsonHeaders(standby.cookie),
+      body: JSON.stringify(standbyPayload),
+    });
+    expect(retryStandby.status).toBe(200);
+    expect(await retryStandby.json()).toMatchObject({
+      idempotent: true,
+      resultDigest: acceptedStandbyBody.resultDigest,
+    });
   });
 
   it('rejects manifest, checkpoint, producer generation, input and boundary mismatches', async () => {
@@ -474,6 +537,7 @@ describe('real two-browser split Coordinator harness', () => {
 
     const stored = await fetch(`${baseUrl}/api/runs/parallel-result/result`).then((response) => response.json());
     expect(stored.segment1WorkerId).toBe('browser-b');
+    expect(stored.resumedFromCheckpoint).toBe(false);
     expect(stored.profileIsolationConfirmed).toBe(true);
   });
 
