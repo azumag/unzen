@@ -15,6 +15,7 @@ import {
 } from './artifact-budget.js';
 import {
   argmaxLastLogits,
+  normalizeTokenizerTokenIds,
   validateCheckpointBoundaryNames,
 } from './runtime-validation.js';
 import {
@@ -146,14 +147,6 @@ async function loadManifest(signal) {
   return { manifest, manifestDigest };
 }
 
-function normalizeTokenIds(encoded) {
-  let values = encoded?.input_ids;
-  if (values && typeof values.tolist === 'function') values = values.tolist();
-  if (Array.isArray(values) && Array.isArray(values[0])) values = values[0];
-  if (!Array.isArray(values)) throw new Error('tokenizer did not return input_ids array');
-  return values.map((value) => Number(value));
-}
-
 async function loadTokenizer() {
   const options = artifactBudgetMode === 'p0'
     ? { revision: SMOLLM2_P0_CONTRACT.modelRevision }
@@ -167,7 +160,7 @@ async function tokenize(prompt, signal) {
   throwIfAborted(signal);
   const encoded = await tokenizer(prompt, { add_special_tokens: true });
   throwIfAborted(signal);
-  return { tokenizer, tokenIds: normalizeTokenIds(encoded) };
+  return { tokenizer, tokenIds: normalizeTokenizerTokenIds(encoded) };
 }
 
 function typedArrayFor(type, length) {
