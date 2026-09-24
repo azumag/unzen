@@ -679,10 +679,10 @@ function cloneAndValidateComponents(
       graphCount++;
       graphLocator = componentArtifactLocator;
     }
-    componentBytes += byteSize;
-    if (!Number.isSafeInteger(componentBytes)) {
+    if (componentBytes > Number.MAX_SAFE_INTEGER - byteSize) {
       throw new Error(`segment ${artifact.index} component bytes exceed JavaScript safe integer range`);
     }
+    componentBytes += byteSize;
 
     return Object.freeze({
       role: role as SegmentArtifactComponent['role'],
