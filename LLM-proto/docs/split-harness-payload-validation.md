@@ -8,6 +8,12 @@ Coordinator JSON requests are collected under the existing 16 MiB body ceiling a
 
 This boundary prevents the runtime from silently replacing malformed byte sequences with U+FFFD and then accepting the normalized text as evidence-bearing JSON. It does not change route schemas, checkpoint/result binding, or the 16 MiB transport ceiling.
 
+## Tokenizer output boundary
+
+Before Browser A creates the segment-0 `input_ids` tensor or publishes checkpoint evidence, tokenizer output is normalized through a narrow explicit contract instead of generic JavaScript `Number(...)` coercion. The harness accepts a direct token array, a tokenizer object exposing `tolist()`, or exactly one leading batch dimension. The resulting token list must be non-empty.
+
+Each token ID must already be either a non-negative safe-integer JavaScript `number`, or a non-negative `bigint` no larger than `Number.MAX_SAFE_INTEGER`. Safe `bigint` values are explicitly converted to numbers because int64 tokenizer implementations may legitimately expose that representation. Strings, booleans, `null`, fractions, negative values, unsafe numbers, oversized/negative bigints, empty batches, and multiple batches fail closed before model feed construction or checkpoint publication.
+
 ## Checkpoint boundary
 
 `POST /api/runs/:runId/checkpoint` accepts exactly two boundary tensors. Each tensor must have:
