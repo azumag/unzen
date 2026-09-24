@@ -25,6 +25,7 @@ function checkpoint(tensors: unknown[], overrides: Record<string, unknown> = {})
       workerId: 'browser-a',
       generation: 1,
     },
+    segmentExecutionMs: 12.5,
     inputTokenIds: [1, 2, 3],
     tensors,
     ...overrides,
@@ -103,6 +104,22 @@ describe('browser split runtime validation', () => {
     expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors(), {
       sourceWorkerIdentity: { workerId: 'browser-a', generation: Number.MAX_SAFE_INTEGER },
     }), manifest)).not.toThrow();
+  });
+
+  it('requires finite non-negative checkpoint execution timing before continuation', () => {
+    for (const segmentExecutionMs of [undefined, null, '12.5', -0.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors(), {
+        segmentExecutionMs,
+      }), manifest)).toThrow(/invalid segment execution timing/);
+    }
+  });
+
+  it('accepts zero and positive fractional checkpoint execution timing without normalization', () => {
+    for (const segmentExecutionMs of [0, 0.125, 12.5]) {
+      const value = checkpoint(validTensors(), { segmentExecutionMs });
+      expect(() => validateCheckpointBoundaryNames(value, manifest)).not.toThrow();
+      expect(value.segmentExecutionMs).toBe(segmentExecutionMs);
+    }
   });
 
   it('rejects coercible or structurally invalid checkpoint input token IDs before continuation', () => {
