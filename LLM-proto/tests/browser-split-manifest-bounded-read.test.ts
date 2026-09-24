@@ -23,7 +23,7 @@ describe('browser split manifest bounded read', () => {
     expect(runner).toContain('const MAX_SPLIT_MANIFEST_BYTES = 4 * 1024 * 1024;');
 
     const match = runner.match(
-      /async function loadManifest\(signal\) \{([\s\S]*?)\n\}\n\nfunction normalizeTokenIds/,
+      /async function loadManifest\(signal\) \{([\s\S]*?)\n\}\n\nasync function loadTokenizer/,
     );
     expect(match).not.toBeNull();
     const body = match?.[1] ?? '';
