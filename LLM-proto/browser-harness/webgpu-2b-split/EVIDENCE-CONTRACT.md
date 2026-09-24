@@ -10,5 +10,6 @@ For accepted result records:
 - `segment1Role` is a convenience field only. The Coordinator overwrites any client-supplied value with `segment1WorkerIdentity.role` before storing or returning the result.
 - `resumedFromCheckpoint` must still be an explicit JSON boolean and must match the authenticated role: `false` for `segment1`, `true` for `standby`.
 - The immutable result digest is bound to `segment1WorkerIdentity`, including its role, generation, and profile-probe hash. A client-supplied top-level role is never trusted as digest evidence.
+- Optional `tokenText` uses one canonical nullish representation: omission and explicit `null` are both digested and stored as `null`. Non-null values are preserved unchanged. This keeps exported evidence shape aligned with the digest representation used for idempotency.
 
 Consumers should treat checkpoint `sourceWorkerIdentity.workerId` as the canonical segment-0 source identity and `segment1WorkerIdentity.role` as the canonical segment-1 role. The top-level `segment0WorkerId` and `segment1Role` fields exist only for compatibility/convenience and are guaranteed to mirror their canonical identities in stored Coordinator results.
