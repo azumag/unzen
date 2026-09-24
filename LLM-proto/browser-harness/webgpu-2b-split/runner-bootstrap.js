@@ -3,6 +3,7 @@ import {
   DEFAULT_BROWSER_CHECKPOINT_WAIT_MS,
   validateBrowserCheckpointWaitConfig,
 } from './checkpoint-wait-config.js';
+import { validateSmolLm2P0RuntimeParameters } from './p0-manifest-contract.js';
 import {
   validateBrowserKvGeometry,
   validateBrowserWorkerRegistrationConfig,
@@ -11,6 +12,7 @@ import {
 const params = new URLSearchParams(location.search);
 const role = params.get('role') ?? 'segment0';
 const explicitWorkerId = params.get('worker');
+const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
 const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
@@ -22,6 +24,9 @@ validateBrowserWorkerRegistrationConfig({ role, workerId: explicitWorkerId });
 validateBrowserKvGeometry({ kvHeads, headSize });
 validateBrowserArtifactBudgetMode(artifactBudgetMode);
 validateBrowserCheckpointWaitConfig({ role, checkpointWaitMs });
+if (artifactBudgetMode === 'p0') {
+  validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });
+}
 
 await new Promise((resolve, reject) => {
   const script = document.createElement('script');
