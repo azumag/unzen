@@ -732,6 +732,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             ...body,
             runId,
             resultDigest,
+            tokenText: body.tokenText ?? null,
             segment0WorkerId: checkpoint.sourceWorkerIdentity.workerId,
             segment1Role: segment1Identity.identity.role,
             segment1WorkerIdentity: segment1Identity.identity,
