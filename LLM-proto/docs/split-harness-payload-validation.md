@@ -20,7 +20,7 @@ This boundary prevents the runtime from silently replacing malformed byte sequen
 
 Malformed, duplicate, truncated, oversized-by-declaration, or shape/byte-inconsistent tensors are rejected before they are stored as Coordinator evidence. The Coordinator computes the accepted `tensorBytes` value from the validated shape/type rather than trusting the client-provided aggregate.
 
-Before Browser B reconstructs the relayed tensors, the runner also requires the two names to match the current split manifest exactly. This keeps a structurally valid but wrong-boundary checkpoint from being consumed as the model's continuation input.
+Before Browser B reconstructs the relayed tensors, the runner now revalidates the complete wire contract rather than trusting the stored checkpoint solely because it came back from the Coordinator. It requires the two names to match the current split manifest exactly, requires every tensor type to equal the manifest `boundary.dtype`, recomputes the byte count from type and positive integer dimensions, and checks canonical base64 plus decoded byte length before `atob()` or typed-array construction runs. This consumer-side validation is intentionally redundant with the Coordinator ingress gate so a malformed or corrupted checkpoint response fails closed before model continuation input is allocated.
 
 ## Browser logits validation
 
