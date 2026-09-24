@@ -1,13 +1,24 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { validateBrowserWorkerRegistrationConfig } from '../browser-harness/webgpu-2b-split/runtime-validation.js';
+import {
+  DEFAULT_BROWSER_WORKER_ROLE,
+  validateBrowserWorkerRegistrationConfig,
+} from '../browser-harness/webgpu-2b-split/runtime-validation.js';
 
 const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
 );
+const runner = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/runner-v3.js', import.meta.url),
+  'utf8',
+);
 
 describe('browser worker registration preflight', () => {
+  it('keeps the canonical browser worker default at segment0', () => {
+    expect(DEFAULT_BROWSER_WORKER_ROLE).toBe('segment0');
+  });
+
   it.each(['segment0', 'segment1', 'standby'])('accepts Coordinator role %s', (role) => {
     expect(validateBrowserWorkerRegistrationConfig({ role, workerId: 'browser-A_1.test' }))
       .toEqual({ role, workerId: 'browser-A_1.test' });
@@ -55,7 +66,15 @@ describe('browser worker registration preflight', () => {
     expect(geometry).toBeGreaterThan(registration);
     expect(ortLoad).toBeGreaterThan(geometry);
     expect(runnerImport).toBeGreaterThan(ortLoad);
-    expect(bootstrap).toContain("params.get('role') ?? 'segment0'");
+    expect(bootstrap).toContain("params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE");
+    expect(bootstrap).toContain("DEFAULT_BROWSER_WORKER_ROLE,");
     expect(bootstrap).toContain("params.get('worker')");
+  });
+
+  it('shares the same omitted-role default between bootstrap and execution', () => {
+    expect(runner).toContain("params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE");
+    expect(runner).toContain("DEFAULT_BROWSER_WORKER_ROLE,");
+    expect(bootstrap).not.toContain("params.get('role') ?? 'segment0'");
+    expect(runner).not.toContain("params.get('role') ?? 'segment0'");
   });
 });
