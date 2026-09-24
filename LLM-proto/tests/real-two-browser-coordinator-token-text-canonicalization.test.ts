@@ -30,14 +30,14 @@ afterEach(async () => {
 });
 
 async function startServer() {
-  const { server } = createSplitHarnessServer();
+  const { server, state } = createSplitHarnessServer();
   servers.push(server);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
   });
   const address = server.address() as AddressInfo;
-  return `http://127.0.0.1:${address.port}`;
+  return { baseUrl: `http://127.0.0.1:${address.port}`, state };
 }
 
 async function postJson(url: string, body: unknown, cookie?: string) {
@@ -103,7 +103,7 @@ function resultPayload(
 
 describe('split Coordinator canonical tokenText evidence', () => {
   it('stores omitted tokenText as null and treats an explicit-null retry as idempotent', async () => {
-    const baseUrl = await startServer();
+    const { baseUrl } = await startServer();
     const source = await registerWorker(baseUrl, 'browser-a', 'segment0');
     const consumer = await registerWorker(baseUrl, 'browser-b', 'segment1');
     const checkpoint = await createCheckpoint(baseUrl, 'token-text-omitted-first', source.cookie);
@@ -133,7 +133,7 @@ describe('split Coordinator canonical tokenText evidence', () => {
   });
 
   it('treats explicit null followed by omission as the same immutable result', async () => {
-    const baseUrl = await startServer();
+    const { baseUrl } = await startServer();
     const source = await registerWorker(baseUrl, 'browser-a', 'segment0');
     const consumer = await registerWorker(baseUrl, 'browser-b', 'segment1');
     const checkpoint = await createCheckpoint(baseUrl, 'token-text-null-first', source.cookie);
@@ -163,7 +163,7 @@ describe('split Coordinator canonical tokenText evidence', () => {
   });
 
   it('preserves a non-null tokenText value', async () => {
-    const baseUrl = await startServer();
+    const { baseUrl } = await startServer();
     const source = await registerWorker(baseUrl, 'browser-a', 'segment0');
     const consumer = await registerWorker(baseUrl, 'browser-b', 'segment1');
     const checkpoint = await createCheckpoint(baseUrl, 'token-text-value', source.cookie);
@@ -177,5 +177,30 @@ describe('split Coordinator canonical tokenText evidence', () => {
 
     const stored = await fetch(`${baseUrl}/api/runs/token-text-value/result`);
     expect(await stored.json()).toMatchObject({ tokenText: 'hello' });
+  });
+
+  it.each([
+    ['array', ['hello']],
+    ['object', { text: 'hello' }],
+    ['number', 7],
+    ['boolean', true],
+  ])('rejects %s tokenText before result mutation', async (_label, tokenText) => {
+    const { baseUrl, state } = await startServer();
+    const source = await registerWorker(baseUrl, 'browser-a', 'segment0');
+    const consumer = await registerWorker(baseUrl, 'browser-b', 'segment1');
+    const runId = `token-text-invalid-${_label}`;
+    const checkpoint = await createCheckpoint(baseUrl, runId, source.cookie);
+
+    const rejected = await postJson(
+      `${baseUrl}/api/runs/${runId}/result`,
+      resultPayload(checkpoint.body, { tokenText }),
+      consumer.cookie,
+    );
+    expect(rejected.response.status).toBe(400);
+    expect(rejected.body).toMatchObject({
+      error: 'invalid-result-payload',
+      reason: 'token-text-must-be-string-or-null',
+    });
+    expect(state.results.has(runId)).toBe(false);
   });
 });
