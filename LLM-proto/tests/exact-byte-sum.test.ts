@@ -16,8 +16,8 @@ describe('exactByteSum', () => {
 
   it.each([[-1], [1.5], [Number.NaN], [Number.POSITIVE_INFINITY], [Number.MAX_SAFE_INTEGER + 1]])(
     'rejects invalid byte values before aggregation: %j',
-    (values) => {
-      expect(() => exactByteSum(values, 'verified prepared file bytes'))
+    (value) => {
+      expect(() => exactByteSum([value], 'verified prepared file bytes'))
         .toThrow('verified prepared file bytes[0] must be a non-negative safe integer');
     },
   );
