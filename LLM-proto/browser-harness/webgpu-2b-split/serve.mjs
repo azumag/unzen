@@ -338,13 +338,13 @@ function validateResumeEvidenceBinding(body, segment1WorkerIdentity) {
   return { ok: true };
 }
 
-function resultDigestFor(body, segment1WorkerIdentity) {
+function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
   return sha256Json({
     checkpointId: body.checkpointId,
     checkpointDigest: body.checkpointDigest,
     checkpointSourceWorkerGeneration: body.checkpointSourceWorkerGeneration,
     manifestDigest: body.manifestDigest,
-    segment0WorkerId: body.segment0WorkerId,
+    segment0WorkerId: checkpoint.sourceWorkerIdentity.workerId,
     segment1WorkerIdentity: {
       workerId: segment1WorkerIdentity.workerId,
       role: segment1WorkerIdentity.role,
@@ -703,7 +703,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             json(res, isolation.status, isolation);
             return;
           }
-          const resultDigest = resultDigestFor(body, segment1Identity.identity);
+          const resultDigest = resultDigestFor(body, checkpoint, segment1Identity.identity);
           const existingResult = state.results.get(runId);
           if (existingResult) {
             if (existingResult.resultDigest === resultDigest) {
@@ -732,6 +732,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             ...body,
             runId,
             resultDigest,
+            segment0WorkerId: checkpoint.sourceWorkerIdentity.workerId,
             segment1Role: segment1Identity.identity.role,
             segment1WorkerIdentity: segment1Identity.identity,
             profileIsolationConfirmed: true,
