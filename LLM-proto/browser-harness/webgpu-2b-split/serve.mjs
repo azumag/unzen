@@ -99,7 +99,9 @@ function safeRunId(raw) {
 }
 
 function safeWorkerId(raw) {
-  if (!/^[A-Za-z0-9._-]{1,128}$/.test(raw)) throw new Error('invalid worker id');
+  if (typeof raw !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(raw)) {
+    throw new Error('invalid worker id');
+  }
   return raw;
 }
 
@@ -455,13 +457,14 @@ function resolveProfileIsolation(state, runId, resultBody, segment1Identity) {
       segment1WorkerId: segment1Identity.workerId,
     };
   }
-  if (String(resultBody.segment0WorkerId ?? sourceIdentity.workerId) !== sourceIdentity.workerId) {
+  const reportedSourceWorkerId = resultBody.segment0WorkerId ?? sourceIdentity.workerId;
+  if (reportedSourceWorkerId !== sourceIdentity.workerId) {
     return {
       ok: false,
       status: 409,
       error: 'result-source-worker-mismatch',
       sourceWorkerId: sourceIdentity.workerId,
-      reportedSourceWorkerId: resultBody.segment0WorkerId,
+      reportedSourceWorkerId,
     };
   }
   return {
@@ -498,9 +501,9 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
 
       if (req.method === 'POST' && url.pathname === '/api/workers/register') {
         const body = await readJson(req);
-        const workerId = safeWorkerId(String(body.workerId ?? ''));
-        const role = String(body.role ?? '');
-        if (!['segment0', 'segment1', 'standby'].includes(role)) {
+        const workerId = safeWorkerId(body.workerId);
+        const role = body.role;
+        if (typeof role !== 'string' || !['segment0', 'segment1', 'standby'].includes(role)) {
           json(res, 400, { ok: false, error: 'invalid worker role' });
           return;
         }
@@ -548,7 +551,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
             json(res, validatedBinding.status, validatedBinding);
             return;
           }
-          const sourceWorkerId = safeWorkerId(String(body.sourceWorkerId ?? ''));
+          const sourceWorkerId = safeWorkerId(body.sourceWorkerId);
           const sourceIdentity = workerIdentityForRequest(state, req, sourceWorkerId, ['segment0']);
           if (!sourceIdentity.ok) {
             json(res, sourceIdentity.status, sourceIdentity);
@@ -626,7 +629,7 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
         const runId = safeRunId(resultMatch[1]);
         if (req.method === 'POST') {
           const body = await readJson(req);
-          const segment1WorkerId = safeWorkerId(String(body.segment1WorkerId ?? ''));
+          const segment1WorkerId = safeWorkerId(body.segment1WorkerId);
           const segment1Identity = workerIdentityForRequest(
             state,
             req,
