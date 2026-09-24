@@ -12,9 +12,10 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveWebgpuDiagnosticPort } from '../webgpu-2b-split/server-port.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
-const PORT = Number(process.env.PORT ?? 8788);
+const PORT = resolveWebgpuDiagnosticPort(process.env.PORT, 8788);
 // Local diagnostic harness only: bind to loopback so the private model
 // artifacts under MODELS_DIR are never exposed to the network.
 const HOST = process.env.HOST ?? '127.0.0.1';

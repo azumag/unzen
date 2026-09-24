@@ -1,6 +1,6 @@
 export const DEFAULT_ENDPOINT_WEBGPU_DIAGNOSTIC_PORT = 8793;
 
-export function resolveEndpointWebgpuDiagnosticPort(
+export function resolveWebgpuDiagnosticPort(
   rawPort,
   defaultPort = DEFAULT_ENDPOINT_WEBGPU_DIAGNOSTIC_PORT,
 ) {
@@ -10,3 +10,5 @@ export function resolveEndpointWebgpuDiagnosticPort(
   }
   return port;
 }
+
+export const resolveEndpointWebgpuDiagnosticPort = resolveWebgpuDiagnosticPort;
