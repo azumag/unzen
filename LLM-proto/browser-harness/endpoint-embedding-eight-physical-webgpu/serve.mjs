@@ -7,6 +7,7 @@ import {
   openExistingNonSymlinkFile,
   readBoundedUtf8FileHandle,
 } from '../webgpu-2b-split/server-safe-path.mjs';
+import { resolveEndpointWebgpuDiagnosticPort } from '../webgpu-2b-split/server-port.mjs';
 import { validateEndpointEmbeddingEightPhysicalPreflightReport } from './contract.js';
 import { ENDPOINT_EMBEDDING_EIGHT_PHYSICAL_PREFLIGHT_MAX_BYTES } from './preflight-budget.js';
 
@@ -15,7 +16,7 @@ const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
 const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : null;
 const PREFLIGHT_REPORT = process.env.PREFLIGHT_REPORT ? resolve(process.env.PREFLIGHT_REPORT) : null;
 const GRAPH_PATH = process.env.GRAPH_PATH ? resolve(process.env.GRAPH_PATH) : null;
-const PORT = Number(process.env.PORT ?? 8797);
+const PORT = resolveEndpointWebgpuDiagnosticPort(process.env.PORT, 8797);
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -27,9 +28,6 @@ const MIME = {
 if (!DATA_DIR) throw new Error('DATA_DIR is required');
 if (!PREFLIGHT_REPORT) throw new Error('PREFLIGHT_REPORT is required');
 if (!GRAPH_PATH) throw new Error('GRAPH_PATH is required');
-if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
-  throw new Error('PORT must be an integer between 1 and 65535');
-}
 
 async function requireNonSymlinkDirectory(path, field) {
   const info = await lstat(path);
