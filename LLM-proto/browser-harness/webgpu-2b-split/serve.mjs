@@ -23,9 +23,10 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveWebgpuDiagnosticPort } from './server-port.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
-const DEFAULT_PORT = Number(process.env.PORT ?? 8791);
+const DEFAULT_PORT = 8791;
 const MODELS_DIR = process.env.MODELS_DIR ? resolve(process.env.MODELS_DIR) : undefined;
 const MAX_JSON_BYTES = 16 * 1024 * 1024;
 const FATAL_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -759,13 +760,14 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
   return { server, state };
 }
 
-export async function listenSplitHarness({ port = DEFAULT_PORT } = {}) {
+export async function listenSplitHarness({ port = process.env.PORT } = {}) {
+  const resolvedPort = resolveWebgpuDiagnosticPort(port, DEFAULT_PORT);
   const { server, state } = createSplitHarnessServer();
   await new Promise((resolvePromise, rejectPromise) => {
     server.once('error', rejectPromise);
-    server.listen(port, '127.0.0.1', resolvePromise);
+    server.listen(resolvedPort, '127.0.0.1', resolvePromise);
   });
-  return { server, state, port };
+  return { server, state, port: resolvedPort };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
