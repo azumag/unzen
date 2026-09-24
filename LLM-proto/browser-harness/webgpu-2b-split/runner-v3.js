@@ -459,6 +459,7 @@ async function runSegment1(manifest, manifestDigest, signal) {
       segment0WorkerId: checkpoint.sourceWorkerId,
       segment1WorkerId: workerId,
       segment1Role: role,
+      resumedFromCheckpoint: role === 'standby',
       inputTokenIds: tokenIds,
       boundaryBytes: checkpoint.tensors.reduce((sum, tensor) => sum + Number(tensor.bytes), 0),
       segment0ExecutionMs: checkpoint.segmentExecutionMs,
