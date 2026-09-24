@@ -2,11 +2,12 @@ import { createServer } from 'node:http';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openExistingFileWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
+import { resolveEndpointWebgpuDiagnosticPort } from '../webgpu-2b-split/server-port.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const SHARED_SPLIT_ROOT = resolve(ROOT, '../webgpu-2b-split');
 const DATA_DIR = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : null;
-const PORT = Number(process.env.PORT ?? 8793);
+const PORT = resolveEndpointWebgpuDiagnosticPort(process.env.PORT);
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.onnx': 'application/octet-stream', '.bin': 'application/octet-stream' };
 if (!DATA_DIR) throw new Error('DATA_DIR is required');
 
