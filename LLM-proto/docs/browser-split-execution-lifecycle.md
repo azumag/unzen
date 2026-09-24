@@ -46,9 +46,9 @@ It does not claim GPU preemption that the runtime does not expose.
 
 ## Checkpoint wait deadline
 
-Segment 1 and standby no longer poll a missing checkpoint forever. The maximum wait is controlled by the `checkpointWaitMs` URL parameter and defaults to **120000 ms (120 seconds)**. `checkpoint-wait-config.js` owns this default as `DEFAULT_BROWSER_CHECKPOINT_WAIT_MS`; both `runner-bootstrap.js` and `runner-v3.js` consume the same constant so omitted-query behavior cannot drift between preflight and execution.
+Segment 1 and standby no longer poll a missing checkpoint forever. The maximum wait is controlled by the `checkpointWaitMs` URL parameter and defaults to **120000 ms (120 seconds)**. `checkpoint-wait-config.js` owns this default as `DEFAULT_BROWSER_CHECKPOINT_WAIT_MS`; `browser-runtime-config.js` resolves the query value from that constant once for both `runner-bootstrap.js` and `runner-v3.js`, so omitted-query behavior cannot drift between preflight and execution.
 
-The bootstrap validates this parameter before loading ONNX Runtime or importing the full runner. Every role still requires an explicitly parsed value to be finite and greater than zero. Because Segment 1 and standby actually pass the value to `waitForCheckpointBounded()`, those roles additionally require a positive JavaScript safe integer. Segment 0 never polls for a checkpoint, so its historical positive-finite compatibility is intentionally preserved rather than tightened for an unused setting. The full runner retains its positive-finite check as defense in depth for direct module execution; the bootstrap remains the authoritative early role-aware validation path.
+The bootstrap validates the resolved parameter before loading ONNX Runtime or importing the full runner. Every role still requires the parsed value to be finite and greater than zero. Because Segment 1 and standby actually pass the value to `waitForCheckpointBounded()`, those roles additionally require a positive JavaScript safe integer. Segment 0 never polls for a checkpoint, so its historical positive-finite compatibility is intentionally preserved rather than tightened for an unused setting. The full runner retains its positive-finite check as defense in depth for direct module execution; the bootstrap remains the authoritative early role-aware validation path.
 
 Examples:
 
