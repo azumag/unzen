@@ -116,6 +116,41 @@ describe('endpoint embedding artifact policy contract', () => {
     ]));
   });
 
+  it('rejects initializer end overflow before adding exact byte offsets', () => {
+    const value = candidate();
+    value.embeddingInitializer.sourceOffsetBytes = Number.MAX_SAFE_INTEGER;
+
+    expect(() => evaluateEndpointEmbeddingArtifactPolicyContract(value))
+      .toThrow('embedding initializer end offset exceeds safe integer range');
+  });
+
+  it('rejects embedding row geometry before multiplying beyond the safe-integer range', () => {
+    const value = candidate();
+    value.rows = Number.MAX_SAFE_INTEGER;
+    value.hiddenSize = 2;
+
+    expect(() => evaluateEndpointEmbeddingArtifactPolicyContract(value))
+      .toThrow('embedding row geometry exceeds safe integer range');
+  });
+
+  it('rejects aggregate physical artifact bytes before the safe-integer range is exceeded', () => {
+    const value = candidate();
+    for (const artifact of value.physicalArtifacts) {
+      artifact.bytes = Number.MAX_SAFE_INTEGER;
+    }
+
+    expect(() => evaluateEndpointEmbeddingArtifactPolicyContract(value))
+      .toThrow('physical artifact bytes total exceeds safe integer range');
+  });
+
+  it('rejects tile source-offset overflow before adding exact byte offsets', () => {
+    const value = candidate();
+    value.physicalArtifacts[0].sourceOffsetBytes = Number.MAX_SAFE_INTEGER;
+
+    expect(() => evaluateEndpointEmbeddingArtifactPolicyContract(value))
+      .toThrow('tile 1 source offset exceeds safe integer range');
+  });
+
   it('rejects malformed unsafe byte geometry instead of coercing it', () => {
     const value = candidate();
     value.tiles[0].byteLength = -1;

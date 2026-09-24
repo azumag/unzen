@@ -28,6 +28,20 @@ function requireSafeInteger(value, label, { positive = false } = {}) {
   return value;
 }
 
+function safeAdd(left, right, diagnostic) {
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new Error(diagnostic);
+  }
+  return left + right;
+}
+
+function safeMultiply(left, right, diagnostic) {
+  if (left !== 0 && right > Math.floor(Number.MAX_SAFE_INTEGER / left)) {
+    throw new Error(diagnostic);
+  }
+  return left * right;
+}
+
 function tierForBytes(bytes) {
   if (bytes <= ENDPOINT_EMBEDDING_ARTIFACT_POLICY.preferredCeilingBytes) return 'preferred';
   if (bytes <= ENDPOINT_EMBEDDING_ARTIFACT_POLICY.normalCeilingBytes) return 'normal';
@@ -55,15 +69,18 @@ export function evaluateEndpointEmbeddingArtifactPolicyContract(contract = ENDPO
     'embeddingInitializer.byteLength',
     { positive: true },
   );
-  const initializerEnd = initializerOffset + initializerBytes;
-  if (!Number.isSafeInteger(initializerEnd)) {
-    throw new Error('embedding initializer end offset exceeds safe integer range');
-  }
+  const initializerEnd = safeAdd(
+    initializerOffset,
+    initializerBytes,
+    'embedding initializer end offset exceeds safe integer range',
+  );
 
-  const expectedInitializerBytes = rows * hiddenSize * FLOAT32_BYTES;
-  if (!Number.isSafeInteger(expectedInitializerBytes)) {
-    throw new Error('embedding row geometry exceeds safe integer range');
-  }
+  const initializerGeometryDiagnostic = 'embedding row geometry exceeds safe integer range';
+  const expectedInitializerBytes = safeMultiply(
+    safeMultiply(rows, hiddenSize, initializerGeometryDiagnostic),
+    FLOAT32_BYTES,
+    initializerGeometryDiagnostic,
+  );
   if (initializerBytes !== expectedInitializerBytes) {
     violation(
       violations,
@@ -221,10 +238,12 @@ export function evaluateEndpointEmbeddingArtifactPolicyContract(contract = ENDPO
         `tile ${tileIndex} row span does not equal rowCount`,
       );
     }
-    const expectedTileBytes = rowCount * hiddenSize * FLOAT32_BYTES;
-    if (!Number.isSafeInteger(expectedTileBytes)) {
-      throw new Error(`tile ${tileIndex} byte geometry exceeds safe integer range`);
-    }
+    const tileGeometryDiagnostic = `tile ${tileIndex} byte geometry exceeds safe integer range`;
+    const expectedTileBytes = safeMultiply(
+      safeMultiply(rowCount, hiddenSize, tileGeometryDiagnostic),
+      FLOAT32_BYTES,
+      tileGeometryDiagnostic,
+    );
     if (byteLength !== expectedTileBytes) {
       violation(
         violations,
@@ -234,10 +253,11 @@ export function evaluateEndpointEmbeddingArtifactPolicyContract(contract = ENDPO
     }
 
     const artifact = artifactByIndex.get(physicalArtifactIndex);
-    const tileEndInArtifact = artifactByteOffset + byteLength;
-    if (!Number.isSafeInteger(tileEndInArtifact)) {
-      throw new Error(`tile ${tileIndex} artifact end exceeds safe integer range`);
-    }
+    const tileEndInArtifact = safeAdd(
+      artifactByteOffset,
+      byteLength,
+      `tile ${tileIndex} artifact end exceeds safe integer range`,
+    );
     if (!artifact) {
       violation(
         violations,
@@ -252,8 +272,22 @@ export function evaluateEndpointEmbeddingArtifactPolicyContract(contract = ENDPO
           `tile ${tileIndex} ends at ${tileEndInArtifact} within artifact ${physicalArtifactIndex} of ${artifact.bytes} bytes`,
         );
       }
-      const expectedSourceOffset = initializerOffset + startRow * hiddenSize * FLOAT32_BYTES;
-      const actualSourceOffset = artifact.sourceOffsetBytes + artifactByteOffset;
+      const tileSourceGeometryDiagnostic = `tile ${tileIndex} source offset exceeds safe integer range`;
+      const sourceRowBytes = safeMultiply(
+        safeMultiply(startRow, hiddenSize, tileSourceGeometryDiagnostic),
+        FLOAT32_BYTES,
+        tileSourceGeometryDiagnostic,
+      );
+      const expectedSourceOffset = safeAdd(
+        initializerOffset,
+        sourceRowBytes,
+        tileSourceGeometryDiagnostic,
+      );
+      const actualSourceOffset = safeAdd(
+        artifact.sourceOffsetBytes,
+        artifactByteOffset,
+        tileSourceGeometryDiagnostic,
+      );
       if (actualSourceOffset !== expectedSourceOffset) {
         violation(
           violations,
@@ -324,7 +358,14 @@ export function evaluateEndpointEmbeddingArtifactPolicyContract(contract = ENDPO
 
   const maximumPhysicalArtifactBytes = Math.max(...physicalArtifacts.map((artifact) => artifact.bytes));
   const maximumExecutionTileBytes = Math.max(...executionTiles.map((tile) => tile.byteLength));
-  const totalPhysicalArtifactBytes = physicalArtifacts.reduce((sum, artifact) => sum + artifact.bytes, 0);
+  const totalPhysicalArtifactBytes = physicalArtifacts.reduce(
+    (sum, artifact) => safeAdd(
+      sum,
+      artifact.bytes,
+      'physical artifact bytes total exceeds safe integer range',
+    ),
+    0,
+  );
   if (totalPhysicalArtifactBytes !== initializerBytes) {
     violation(
       violations,
