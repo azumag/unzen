@@ -8,6 +8,7 @@ import {
 } from './artifact-cache.js';
 import { readCheckpointRelayReceipt } from './checkpoint-receipt.js';
 import { readCheckpointPayloadResponse } from './checkpoint-payload-response.js';
+import { DEFAULT_BROWSER_CHECKPOINT_WAIT_MS } from './checkpoint-wait-config.js';
 import { readResultAcceptanceReceipt } from './result-acceptance-receipt.js';
 import {
   planSegmentArtifactBudget,
@@ -40,7 +41,9 @@ const splitRoot = params.get('splitRoot') ?? '/models';
 const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
-const checkpointWaitMs = Number(params.get('checkpointWaitMs') ?? 120_000);
+const checkpointWaitMs = Number(
+  params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS,
+);
 // Mirror the atomic publisher's MAX_PREVIOUS_MANIFEST_BYTES / MAX_STAGED_MANIFEST_BYTES.
 const MAX_SPLIT_MANIFEST_BYTES = 4 * 1024 * 1024;
 
