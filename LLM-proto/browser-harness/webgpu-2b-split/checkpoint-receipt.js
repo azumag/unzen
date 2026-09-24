@@ -1,4 +1,8 @@
 import { readCoordinatorJsonResponse } from './coordinator-json-response.js';
+import {
+  assertCoordinatorReceiptRunId,
+  resolveCoordinatorReceiptExpectedRunId,
+} from './coordinator-receipt-run-binding.js';
 
 // The Coordinator receipt contains only checkpoint binding metadata. Keep the
 // browser-side success response small enough that an unexpected response cannot
@@ -45,11 +49,16 @@ function validateCheckpointRelayReceipt(receipt) {
   return receipt;
 }
 
-export async function readCheckpointRelayReceipt(response, { signal } = {}) {
+export async function readCheckpointRelayReceipt(response, { signal, expectedRunId } = {}) {
+  const expected = resolveCoordinatorReceiptExpectedRunId(expectedRunId);
   const receipt = await readCoordinatorJsonResponse(response, {
     maxBytes: MAX_CHECKPOINT_RELAY_RECEIPT_BYTES,
     label: 'checkpoint relay receipt',
     signal,
   });
-  return validateCheckpointRelayReceipt(receipt);
+  return assertCoordinatorReceiptRunId(
+    validateCheckpointRelayReceipt(receipt),
+    expected,
+    'checkpoint relay receipt',
+  );
 }

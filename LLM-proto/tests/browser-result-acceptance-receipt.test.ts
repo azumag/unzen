@@ -9,6 +9,7 @@ const runner = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-v3.js', import.meta.url),
   'utf8',
 );
+const EXPECTED_RUN_ID = 'run-1';
 
 function concatBytes(...parts: Uint8Array[]) {
   const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
@@ -39,7 +40,7 @@ function validReceipt(overrides: Record<string, unknown> = {}) {
   return {
     ok: true,
     idempotent: false,
-    runId: 'run-1',
+    runId: EXPECTED_RUN_ID,
     profileIsolationConfirmed: true,
     profileIsolationEvidence: validProfileEvidence(),
     checkpointId: 'checkpoint-00000000-0000-4000-8000-000000000000',
@@ -47,6 +48,10 @@ function validReceipt(overrides: Record<string, unknown> = {}) {
     resultDigest: 'b'.repeat(64),
     ...overrides,
   };
+}
+
+function readReceipt(response: Response) {
+  return readResultAcceptanceReceipt(response, { expectedRunId: EXPECTED_RUN_ID });
 }
 
 describe('browser result acceptance receipt boundary', () => {
@@ -57,14 +62,20 @@ describe('browser result acceptance receipt boundary', () => {
       new TextEncoder().encode(JSON.stringify(receipt)),
     );
 
-    await expect(readResultAcceptanceReceipt(new Response(bytes))).resolves.toEqual(receipt);
+    await expect(readReceipt(new Response(bytes))).resolves.toEqual(receipt);
   });
 
   it('accepts the Coordinator idempotent success receipt shape', async () => {
     const receipt = validReceipt({ idempotent: true });
-    await expect(readResultAcceptanceReceipt(
+    await expect(readReceipt(
       new Response(JSON.stringify(receipt)),
     )).resolves.toEqual(receipt);
+  });
+
+  it('fails closed on a structurally valid receipt for a different requested run', async () => {
+    await expect(readReceipt(
+      new Response(JSON.stringify(validReceipt({ runId: 'run-2' }))),
+    )).rejects.toThrow(/bound to a different run ID/);
   });
 
   it.each([
@@ -83,7 +94,7 @@ describe('browser result acceptance receipt boundary', () => {
     [{ profileIsolationEvidence: validProfileEvidence({ sourceProfileProbeHash: 'C'.repeat(64) }) }, /invalid profile isolation probe hashes/],
     [{ profileIsolationEvidence: validProfileEvidence({ segment1ProfileProbeHash: 'c'.repeat(64) }) }, /invalid profile isolation probe hashes/],
   ])('rejects malformed successful result receipt metadata: %j', async (overrides, expected) => {
-    await expect(readResultAcceptanceReceipt(
+    await expect(readReceipt(
       new Response(JSON.stringify(validReceipt(overrides))),
     )).rejects.toThrow(expected);
   });
@@ -93,7 +104,7 @@ describe('browser result acceptance receipt boundary', () => {
     const suffix = new TextEncoder().encode('","profileIsolationConfirmed":true}');
     const bytes = concatBytes(prefix, new Uint8Array([0xc3, 0x28]), suffix);
 
-    await expect(readResultAcceptanceReceipt(new Response(bytes))).rejects.toBeInstanceOf(TypeError);
+    await expect(readReceipt(new Response(bytes))).rejects.toBeInstanceOf(TypeError);
   });
 
   it('cancels an oversized streamed receipt before parsing it', async () => {
@@ -109,7 +120,7 @@ describe('browser result acceptance receipt boundary', () => {
       },
     });
 
-    await expect(readResultAcceptanceReceipt(new Response(stream))).rejects.toThrow(/exceeds byte limit/);
+    await expect(readReceipt(new Response(stream))).rejects.toThrow(/exceeds byte limit/);
     expect(cancelled).toBe(true);
   });
 

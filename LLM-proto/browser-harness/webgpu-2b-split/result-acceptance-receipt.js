@@ -1,4 +1,8 @@
 import { readCoordinatorJsonResponse } from './coordinator-json-response.js';
+import {
+  assertCoordinatorReceiptRunId,
+  resolveCoordinatorReceiptExpectedRunId,
+} from './coordinator-receipt-run-binding.js';
 
 // The result acceptance response is metadata-only. Keep this transport boundary
 // small before profile-isolation and checkpoint binding validation runs.
@@ -62,11 +66,16 @@ function validateResultAcceptanceReceipt(receipt) {
   return receipt;
 }
 
-export async function readResultAcceptanceReceipt(response, { signal } = {}) {
+export async function readResultAcceptanceReceipt(response, { signal, expectedRunId } = {}) {
+  const expected = resolveCoordinatorReceiptExpectedRunId(expectedRunId);
   const receipt = await readCoordinatorJsonResponse(response, {
     maxBytes: MAX_RESULT_ACCEPTANCE_RECEIPT_BYTES,
     label: 'result acceptance receipt',
     signal,
   });
-  return validateResultAcceptanceReceipt(receipt);
+  return assertCoordinatorReceiptRunId(
+    validateResultAcceptanceReceipt(receipt),
+    expected,
+    'result acceptance receipt',
+  );
 }
