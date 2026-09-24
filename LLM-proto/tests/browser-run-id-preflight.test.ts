@@ -11,6 +11,10 @@ const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
 );
+const runner = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/runner-v3.js', import.meta.url),
+  'utf8',
+);
 const indexHtml = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/index.html', import.meta.url),
   'utf8',
@@ -59,7 +63,7 @@ describe('browser run ID preflight', () => {
     expect(coordinator).toContain("if (!/^[A-Za-z0-9._-]{1,128}$/.test(raw)) throw new Error('invalid run id');");
   });
 
-  it('shares the canonical browser syntax and default with Coordinator receipt binding', () => {
+  it('shares the canonical browser syntax and default across browser run paths', () => {
     expect(DEFAULT_BROWSER_RUN_ID).toBe('demo');
     expect(resolveCoordinatorReceiptExpectedRunId(undefined, '?run=receipt-1')).toBe('receipt-1');
     expect(resolveCoordinatorReceiptExpectedRunId(undefined, '')).toBe(DEFAULT_BROWSER_RUN_ID);
@@ -69,6 +73,10 @@ describe('browser run ID preflight', () => {
     expect(bootstrap).toContain("import { DEFAULT_BROWSER_RUN_ID, validateBrowserRunId } from './run-id.js';");
     expect(bootstrap).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
     expect(bootstrap).not.toContain("params.get('run') ?? 'demo'");
+
+    expect(runner).toContain("import { DEFAULT_BROWSER_RUN_ID } from './run-id.js';");
+    expect(runner).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
+    expect(runner).not.toContain("params.get('run') ?? 'demo'");
 
     expect(receiptBinding).toContain("import { BROWSER_RUN_ID_PATTERN, DEFAULT_BROWSER_RUN_ID } from './run-id.js';");
     expect(receiptBinding).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
