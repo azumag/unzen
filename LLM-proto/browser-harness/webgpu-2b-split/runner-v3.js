@@ -15,6 +15,7 @@ import {
   verifyActualSegmentArtifactBudget,
 } from './artifact-budget.js';
 import {
+  DEFAULT_BROWSER_WORKER_ROLE,
   argmaxLastLogits,
   normalizeTokenizerTokenIds,
   validateCheckpointBoundaryNames,
@@ -33,7 +34,7 @@ import {
 import { DEFAULT_BROWSER_RUN_ID } from './run-id.js';
 
 const params = new URLSearchParams(location.search);
-const role = params.get('role') ?? 'segment0';
+const role = params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE;
 const runId = params.get('run') ?? DEFAULT_BROWSER_RUN_ID;
 const workerId = params.get('worker') ?? `${role}-${crypto.randomUUID().slice(0, 8)}`;
 const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
