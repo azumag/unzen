@@ -13,12 +13,39 @@ const TENSOR_TYPE_BYTES = Object.freeze({
   bool: 1,
 });
 const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+const WORKER_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const MAX_CHECKPOINT_ID_LENGTH = 128;
 
 function decodedBase64ByteLength(value) {
   if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return undefined;
   if (!CANONICAL_BASE64.test(value)) return undefined;
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
   return (value.length / 4) * 3 - padding;
+}
+
+function validateCheckpointImmutableMetadata(checkpoint) {
+  if (typeof checkpoint?.checkpointId !== 'string'
+    || checkpoint.checkpointId.length === 0
+    || checkpoint.checkpointId.length > MAX_CHECKPOINT_ID_LENGTH) {
+    throw new Error('Coordinator checkpoint contains an invalid checkpoint ID');
+  }
+  if (typeof checkpoint.checkpointDigest !== 'string' || !SHA256_HEX.test(checkpoint.checkpointDigest)) {
+    throw new Error('Coordinator checkpoint contains an invalid checkpoint digest');
+  }
+  if (typeof checkpoint.sourceWorkerId !== 'string' || !WORKER_ID.test(checkpoint.sourceWorkerId)) {
+    throw new Error('Coordinator checkpoint contains an invalid source worker ID');
+  }
+  const sourceWorkerIdentity = checkpoint.sourceWorkerIdentity;
+  if (!sourceWorkerIdentity || typeof sourceWorkerIdentity !== 'object' || Array.isArray(sourceWorkerIdentity)) {
+    throw new Error('Coordinator checkpoint contains an invalid source worker identity');
+  }
+  if (sourceWorkerIdentity.workerId !== checkpoint.sourceWorkerId) {
+    throw new Error('Coordinator checkpoint source worker identity does not match source worker ID');
+  }
+  if (!Number.isSafeInteger(sourceWorkerIdentity.generation) || sourceWorkerIdentity.generation <= 0) {
+    throw new Error('Coordinator checkpoint contains an invalid source worker generation');
+  }
 }
 
 function validateBoundaryTensorWire(tensor, index, expectedType) {
@@ -76,6 +103,7 @@ function validateCheckpointInputTokenIds(checkpoint) {
 }
 
 export function validateCheckpointBoundaryNames(checkpoint, manifest) {
+  validateCheckpointImmutableMetadata(checkpoint);
   if (!Array.isArray(checkpoint?.tensors) || checkpoint.tensors.length !== 2) {
     throw new Error('Coordinator checkpoint must contain exactly two boundary tensors');
   }
