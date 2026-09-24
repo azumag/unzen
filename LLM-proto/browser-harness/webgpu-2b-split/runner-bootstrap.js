@@ -1,9 +1,15 @@
-import { validateBrowserKvGeometry } from './runtime-validation.js';
+import {
+  validateBrowserKvGeometry,
+  validateBrowserWorkerRegistrationConfig,
+} from './runtime-validation.js';
 
 const params = new URLSearchParams(location.search);
+const role = params.get('role') ?? 'segment0';
+const explicitWorkerId = params.get('worker');
 const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
 
+validateBrowserWorkerRegistrationConfig({ role, workerId: explicitWorkerId });
 validateBrowserKvGeometry({ kvHeads, headSize });
 
 await new Promise((resolve, reject) => {
