@@ -6,12 +6,13 @@ import {
 import { validateSmolLm2P0RuntimeParameters } from './p0-manifest-contract.js';
 import { DEFAULT_BROWSER_RUN_ID, validateBrowserRunId } from './run-id.js';
 import {
+  DEFAULT_BROWSER_WORKER_ROLE,
   validateBrowserKvGeometry,
   validateBrowserWorkerRegistrationConfig,
 } from './runtime-validation.js';
 
 const params = new URLSearchParams(location.search);
-const role = params.get('role') ?? 'segment0';
+const role = params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE;
 const runId = params.get('run') ?? DEFAULT_BROWSER_RUN_ID;
 const explicitWorkerId = params.get('worker');
 const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
