@@ -101,6 +101,7 @@ function validResult(
     logitsShape: [1, 2, 8],
     directWorkerNetworking: false,
     relayOwner: 'coordinator',
+    resumedFromCheckpoint: false,
     ...overrides,
   };
 }
