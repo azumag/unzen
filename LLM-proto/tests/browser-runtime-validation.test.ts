@@ -16,6 +16,14 @@ function tensorWire(name: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function checkpoint(tensors: unknown[], overrides: Record<string, unknown> = {}) {
+  return {
+    inputTokenIds: [1, 2, 3],
+    tensors,
+    ...overrides,
+  };
+}
+
 describe('browser split runtime validation', () => {
   const manifest = {
     boundary: {
@@ -27,27 +35,56 @@ describe('browser split runtime validation', () => {
     },
   };
 
+  const validTensors = () => [tensorWire('boundary-a'), tensorWire('boundary-b')];
+
   it('accepts the exact manifest boundary tensors independent of relay order', () => {
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [
-        tensorWire('boundary-b'),
-        tensorWire('boundary-a'),
-      ],
-    }, manifest)).not.toThrow();
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-b'),
+      tensorWire('boundary-a'),
+    ]), manifest)).not.toThrow();
+  });
+
+  it('rejects coercible or structurally invalid checkpoint input token IDs before continuation', () => {
+    const invalidTokenIds = [
+      [],
+      ['1', 2],
+      [true, 2],
+      [null, 2],
+      [-1, 2],
+      [1.5, 2],
+      [Number.MAX_SAFE_INTEGER + 1, 2],
+      '1,2',
+      null,
+    ];
+    for (const inputTokenIds of invalidTokenIds) {
+      expect(() => validateCheckpointBoundaryNames(
+        checkpoint(validTensors(), { inputTokenIds }),
+        manifest,
+      )).toThrow(/invalid input token IDs/);
+    }
+  });
+
+  it('accepts zero and other non-negative safe integer checkpoint token IDs without normalization', () => {
+    const inputTokenIds = [0, 1, Number.MAX_SAFE_INTEGER];
+    const value = checkpoint(validTensors(), { inputTokenIds });
+    expect(() => validateCheckpointBoundaryNames(value, manifest)).not.toThrow();
+    expect(value.inputTokenIds).toEqual(inputTokenIds);
   });
 
   it('rejects duplicate, missing, unexpected, and oversized boundary names', () => {
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a'), tensorWire('boundary-a')],
-    }, manifest)).toThrow(/duplicate/);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a'), tensorWire('other')],
-    }, manifest)).toThrow(/do not match manifest/);
-    expect(() => validateCheckpointBoundaryNames({ tensors: [tensorWire('boundary-a')] }, manifest)).toThrow(/exactly two/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a'), tensorWire('boundary-a'),
+    ]), manifest)).toThrow(/duplicate/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a'), tensorWire('other'),
+    ]), manifest)).toThrow(/do not match manifest/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a'),
+    ]), manifest)).toThrow(/exactly two/);
     const oversizedName = 'x'.repeat(1025);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire(oversizedName), tensorWire('boundary-b')],
-    }, {
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire(oversizedName), tensorWire('boundary-b'),
+    ]), {
       boundary: {
         dtype: 'float32',
         tensors: [{ name: oversizedName }, { name: 'boundary-b' }],
@@ -56,58 +93,48 @@ describe('browser split runtime validation', () => {
   });
 
   it('rejects unsupported or manifest-mismatched boundary tensor types', () => {
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [
-        tensorWire('boundary-a', { type: 'complex64' }),
-        tensorWire('boundary-b'),
-      ],
-    }, manifest)).toThrow(/unsupported type/);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [
-        tensorWire('boundary-a', {
-          type: 'float64',
-          bytes: 64,
-          base64: Buffer.alloc(64).toString('base64'),
-        }),
-        tensorWire('boundary-b'),
-      ],
-    }, manifest)).toThrow(/does not match manifest/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { type: 'complex64' }),
+      tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/unsupported type/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', {
+        type: 'float64',
+        bytes: 64,
+        base64: Buffer.alloc(64).toString('base64'),
+      }),
+      tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/does not match manifest/);
   });
 
   it('rejects malformed, over-ranked, overflowing, and byte-inconsistent boundary tensor shapes', () => {
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a', { dims: [1, 0, 4] }), tensorWire('boundary-b')],
-    }, manifest)).toThrow(/invalid dimension/);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a', { dims: new Array(9).fill(1) }), tensorWire('boundary-b')],
-    }, manifest)).toThrow(/invalid dims/);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [
-        tensorWire('boundary-a', { dims: [Number.MAX_SAFE_INTEGER, 2] }),
-        tensorWire('boundary-b'),
-      ],
-    }, manifest)).toThrow(/overflows/);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a', { bytes: 31 }), tensorWire('boundary-b')],
-    }, manifest)).toThrow(/declared byte length mismatch/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { dims: [1, 0, 4] }), tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/invalid dimension/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { dims: new Array(9).fill(1) }), tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/invalid dims/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { dims: [Number.MAX_SAFE_INTEGER, 2] }),
+      tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/overflows/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { bytes: 31 }), tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/declared byte length mismatch/);
   });
 
   it('rejects malformed or length-mismatched base64 before reconstruction', () => {
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a', { base64: '!!!!' }), tensorWire('boundary-b')],
-    }, manifest)).toThrow(/invalid base64/);
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [
-        tensorWire('boundary-a', { base64: Buffer.alloc(28).toString('base64') }),
-        tensorWire('boundary-b'),
-      ],
-    }, manifest)).toThrow(/encoded byte length mismatch/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { base64: '!!!!' }), tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/invalid base64/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', { base64: Buffer.alloc(28).toString('base64') }),
+      tensorWire('boundary-b'),
+    ]), manifest)).toThrow(/encoded byte length mismatch/);
   });
 
   it('rejects an unsupported manifest boundary dtype before trusting relay tensors', () => {
-    expect(() => validateCheckpointBoundaryNames({
-      tensors: [tensorWire('boundary-a'), tensorWire('boundary-b')],
-    }, {
+    expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors()), {
       boundary: {
         dtype: 'complex64',
         tensors: manifest.boundary.tensors,
