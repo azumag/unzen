@@ -34,6 +34,13 @@ function diagnosticValue(value) {
   }
 }
 
+export function validateBrowserArtifactBudgetMode(mode) {
+  if (typeof mode !== 'string' || !['p0', 'absolute'].includes(mode)) {
+    throw new Error(`unsupported browser artifact budget mode: ${diagnosticValue(mode)}`);
+  }
+  return mode;
+}
+
 function requireRecord(value, label) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
@@ -99,9 +106,7 @@ function immutableArtifactLoadSnapshot({
 }
 
 export function planSegmentArtifactBudget(segment, mode = 'absolute') {
-  if (!['p0', 'absolute'].includes(mode)) {
-    throw new Error(`unsupported browser artifact budget mode: ${diagnosticValue(mode)}`);
-  }
+  validateBrowserArtifactBudgetMode(mode);
   const validatedSegment = requireRecord(segment, 'segment artifact budget input');
 
   // Capture each planner-relevant caller-owned field at most once, but preserve
