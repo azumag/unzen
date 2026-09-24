@@ -82,4 +82,8 @@ describe('browser worker registration preflight', () => {
     expect(bootstrap).not.toContain("params.get('artifactBudget')");
     expect(runner).not.toContain("params.get('artifactBudget')");
   });
+
+  it('emits explicit resume evidence from the canonical resolved worker role', () => {
+    expect(runner).toContain("resumedFromCheckpoint: role === 'standby'");
+  });
 });
