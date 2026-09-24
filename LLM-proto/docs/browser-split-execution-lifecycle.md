@@ -48,6 +48,8 @@ It does not claim GPU preemption that the runtime does not expose.
 
 Segment 1 and standby no longer poll a missing checkpoint forever. The maximum wait is controlled by the `checkpointWaitMs` URL parameter and defaults to **120000 ms (120 seconds)**.
 
+The bootstrap validates this parameter before loading ONNX Runtime or importing the full runner. Every role still requires an explicitly parsed value to be finite and greater than zero. Because Segment 1 and standby actually pass the value to `waitForCheckpointBounded()`, those roles additionally require a positive JavaScript safe integer. Segment 0 never polls for a checkpoint, so its historical positive-finite compatibility is intentionally preserved rather than tightened for an unused setting.
+
 Examples:
 
 ```text
