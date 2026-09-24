@@ -46,6 +46,11 @@ function validateCheckpointImmutableMetadata(checkpoint) {
   if (!Number.isSafeInteger(sourceWorkerIdentity.generation) || sourceWorkerIdentity.generation <= 0) {
     throw new Error('Coordinator checkpoint contains an invalid source worker generation');
   }
+  if (typeof checkpoint.segmentExecutionMs !== 'number'
+    || !Number.isFinite(checkpoint.segmentExecutionMs)
+    || checkpoint.segmentExecutionMs < 0) {
+    throw new Error('Coordinator checkpoint contains invalid segment execution timing');
+  }
 }
 
 function validateBoundaryTensorWire(tensor, index, expectedType) {
