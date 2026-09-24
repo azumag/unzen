@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveCoordinatorReceiptExpectedRunId } from '../browser-harness/webgpu-2b-split/coordinator-receipt-run-binding.js';
 import {
   BROWSER_RUN_ID_PATTERN,
+  DEFAULT_BROWSER_RUN_ID,
   validateBrowserRunId,
 } from '../browser-harness/webgpu-2b-split/run-id.js';
 
@@ -58,18 +59,26 @@ describe('browser run ID preflight', () => {
     expect(coordinator).toContain("if (!/^[A-Za-z0-9._-]{1,128}$/.test(raw)) throw new Error('invalid run id');");
   });
 
-  it('shares the canonical browser syntax with Coordinator receipt binding', () => {
+  it('shares the canonical browser syntax and default with Coordinator receipt binding', () => {
+    expect(DEFAULT_BROWSER_RUN_ID).toBe('demo');
     expect(resolveCoordinatorReceiptExpectedRunId(undefined, '?run=receipt-1')).toBe('receipt-1');
-    expect(resolveCoordinatorReceiptExpectedRunId(undefined, '')).toBe('demo');
+    expect(resolveCoordinatorReceiptExpectedRunId(undefined, '')).toBe(DEFAULT_BROWSER_RUN_ID);
     expect(() => resolveCoordinatorReceiptExpectedRunId(undefined, '?run=bad%2Fid'))
       .toThrow('Coordinator receipt expected run ID is invalid');
-    expect(receiptBinding).toContain("import { BROWSER_RUN_ID_PATTERN } from './run-id.js';");
+
+    expect(bootstrap).toContain("import { DEFAULT_BROWSER_RUN_ID, validateBrowserRunId } from './run-id.js';");
+    expect(bootstrap).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
+    expect(bootstrap).not.toContain("params.get('run') ?? 'demo'");
+
+    expect(receiptBinding).toContain("import { BROWSER_RUN_ID_PATTERN, DEFAULT_BROWSER_RUN_ID } from './run-id.js';");
+    expect(receiptBinding).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
+    expect(receiptBinding).not.toContain("params.get('run') ?? 'demo'");
     expect(receiptBinding).not.toContain('const SAFE_RUN_ID =');
     expect(receiptBinding).not.toContain('/^[A-Za-z0-9._-]{1,128}$/');
   });
 
   it('validates run IDs before ONNX Runtime or the full runner is loaded', () => {
-    const parse = bootstrap.indexOf("params.get('run') ?? 'demo'");
+    const parse = bootstrap.indexOf("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
     const validation = bootstrap.indexOf('validateBrowserRunId(runId)');
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");

@@ -4,7 +4,7 @@ import {
   validateBrowserCheckpointWaitConfig,
 } from './checkpoint-wait-config.js';
 import { validateSmolLm2P0RuntimeParameters } from './p0-manifest-contract.js';
-import { validateBrowserRunId } from './run-id.js';
+import { DEFAULT_BROWSER_RUN_ID, validateBrowserRunId } from './run-id.js';
 import {
   validateBrowserKvGeometry,
   validateBrowserWorkerRegistrationConfig,
@@ -12,7 +12,7 @@ import {
 
 const params = new URLSearchParams(location.search);
 const role = params.get('role') ?? 'segment0';
-const runId = params.get('run') ?? 'demo';
+const runId = params.get('run') ?? DEFAULT_BROWSER_RUN_ID;
 const explicitWorkerId = params.get('worker');
 const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
 const kvHeads = Number(params.get('kvHeads') ?? 8);

@@ -1,3 +1,4 @@
+export const DEFAULT_BROWSER_RUN_ID = 'demo';
 export const BROWSER_RUN_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
 /**
