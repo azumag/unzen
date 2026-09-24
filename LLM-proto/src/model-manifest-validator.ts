@@ -884,7 +884,7 @@ function validateArtifactComponents(
   }
 
   const componentPaths = new Set<string>();
-  let totalBytes = 0;
+  let totalBytes: number | undefined = 0;
   let graphCount = 0;
   let graphLocator: string | undefined;
 
@@ -946,7 +946,18 @@ function validateArtifactComponents(
         `${componentPath}.byteSize`,
         'component byteSize must be a safe positive integer',
       );
-    } else {
+    } else if (
+      totalBytes !== undefined &&
+      component.byteSize > Number.MAX_SAFE_INTEGER - totalBytes
+    ) {
+      issue(
+        issues,
+        'artifact-component-byte-size-mismatch',
+        `${path}.components`,
+        'component bytes exceed Number.MAX_SAFE_INTEGER; exact byte total is required',
+      );
+      totalBytes = undefined;
+    } else if (totalBytes !== undefined) {
       totalBytes += component.byteSize;
     }
 
@@ -983,6 +994,7 @@ function validateArtifactComponents(
     );
   }
   if (
+    totalBytes !== undefined &&
     typeof artifact.byteSize === 'number' &&
     Number.isSafeInteger(artifact.byteSize) &&
     totalBytes !== artifact.byteSize
