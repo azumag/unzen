@@ -1,3 +1,4 @@
+import { validateBrowserArtifactBudgetMode } from './artifact-budget.js';
 import {
   validateBrowserKvGeometry,
   validateBrowserWorkerRegistrationConfig,
@@ -8,9 +9,11 @@ const role = params.get('role') ?? 'segment0';
 const explicitWorkerId = params.get('worker');
 const kvHeads = Number(params.get('kvHeads') ?? 8);
 const headSize = Number(params.get('headSize') ?? 64);
+const artifactBudgetMode = params.get('artifactBudget') ?? 'absolute';
 
 validateBrowserWorkerRegistrationConfig({ role, workerId: explicitWorkerId });
 validateBrowserKvGeometry({ kvHeads, headSize });
+validateBrowserArtifactBudgetMode(artifactBudgetMode);
 
 await new Promise((resolve, reject) => {
   const script = document.createElement('script');
