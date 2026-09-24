@@ -265,6 +265,9 @@ function validateResultPayload(body) {
   if (!isFiniteNonNegativeNumber(body.segment1ExecutionMs)) {
     return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'invalid-segment1-execution-ms' };
   }
+  if (typeof body.resumedFromCheckpoint !== 'boolean') {
+    return { ok: false, status: 400, error: 'invalid-result-payload', reason: 'resumed-from-checkpoint-boolean-required' };
+  }
   return { ok: true };
 }
 
@@ -321,6 +324,20 @@ function validateResultBinding(body, checkpoint) {
   return { ok: true };
 }
 
+function validateResumeEvidenceBinding(body, segment1WorkerIdentity) {
+  const expectedResumedFromCheckpoint = segment1WorkerIdentity.role === 'standby';
+  if (body.resumedFromCheckpoint !== expectedResumedFromCheckpoint) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'result-resume-role-mismatch',
+      role: segment1WorkerIdentity.role,
+      expectedResumedFromCheckpoint,
+    };
+  }
+  return { ok: true };
+}
+
 function resultDigestFor(body, segment1WorkerIdentity) {
   return sha256Json({
     checkpointId: body.checkpointId,
@@ -342,7 +359,7 @@ function resultDigestFor(body, segment1WorkerIdentity) {
     top1Logit: body.top1Logit,
     logitsShape: body.logitsShape,
     tokenText: body.tokenText ?? null,
-    resumedFromCheckpoint: body.resumedFromCheckpoint === true,
+    resumedFromCheckpoint: body.resumedFromCheckpoint,
   });
 }
 
@@ -668,6 +685,11 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
           const validatedResult = validateResultPayload(body);
           if (!validatedResult.ok) {
             json(res, validatedResult.status, validatedResult);
+            return;
+          }
+          const resumeBinding = validateResumeEvidenceBinding(body, segment1Identity.identity);
+          if (!resumeBinding.ok) {
+            json(res, resumeBinding.status, resumeBinding);
             return;
           }
           const checkpoint = state.checkpoints.get(runId);
