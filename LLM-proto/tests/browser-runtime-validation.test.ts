@@ -18,6 +18,13 @@ function tensorWire(name: string, overrides: Record<string, unknown> = {}) {
 
 function checkpoint(tensors: unknown[], overrides: Record<string, unknown> = {}) {
   return {
+    checkpointId: 'checkpoint-00000000-0000-4000-8000-000000000000',
+    checkpointDigest: 'a'.repeat(64),
+    sourceWorkerId: 'browser-a',
+    sourceWorkerIdentity: {
+      workerId: 'browser-a',
+      generation: 1,
+    },
     inputTokenIds: [1, 2, 3],
     tensors,
     ...overrides,
@@ -42,6 +49,60 @@ describe('browser split runtime validation', () => {
       tensorWire('boundary-b'),
       tensorWire('boundary-a'),
     ]), manifest)).not.toThrow();
+  });
+
+  it('rejects missing, non-string, or oversized checkpoint IDs', () => {
+    for (const checkpointId of ['', null, 42, 'x'.repeat(129)]) {
+      expect(() => validateCheckpointBoundaryNames(
+        checkpoint(validTensors(), { checkpointId }),
+        manifest,
+      )).toThrow(/invalid checkpoint ID/);
+    }
+  });
+
+  it('requires a lowercase 64-hex checkpoint digest', () => {
+    for (const checkpointDigest of [
+      '',
+      'a'.repeat(63),
+      'a'.repeat(65),
+      'A'.repeat(64),
+      `${'a'.repeat(63)}g`,
+      null,
+    ]) {
+      expect(() => validateCheckpointBoundaryNames(
+        checkpoint(validTensors(), { checkpointDigest }),
+        manifest,
+      )).toThrow(/invalid checkpoint digest/);
+    }
+  });
+
+  it('requires the Coordinator worker-ID syntax for checkpoint source workers', () => {
+    for (const sourceWorkerId of ['', 'browser a', 'browser/a', 'x'.repeat(129), null]) {
+      expect(() => validateCheckpointBoundaryNames(
+        checkpoint(validTensors(), { sourceWorkerId }),
+        manifest,
+      )).toThrow(/invalid source worker ID/);
+    }
+  });
+
+  it('requires source worker identity to match the source worker ID', () => {
+    expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors(), {
+      sourceWorkerIdentity: null,
+    }), manifest)).toThrow(/invalid source worker identity/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors(), {
+      sourceWorkerIdentity: { workerId: 'browser-other', generation: 1 },
+    }), manifest)).toThrow(/does not match source worker ID/);
+  });
+
+  it('requires a positive safe-integer source worker generation', () => {
+    for (const generation of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', null]) {
+      expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors(), {
+        sourceWorkerIdentity: { workerId: 'browser-a', generation },
+      }), manifest)).toThrow(/invalid source worker generation/);
+    }
+    expect(() => validateCheckpointBoundaryNames(checkpoint(validTensors(), {
+      sourceWorkerIdentity: { workerId: 'browser-a', generation: Number.MAX_SAFE_INTEGER },
+    }), manifest)).not.toThrow();
   });
 
   it('rejects coercible or structurally invalid checkpoint input token IDs before continuation', () => {
