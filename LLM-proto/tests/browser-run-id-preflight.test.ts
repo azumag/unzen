@@ -7,6 +7,10 @@ import {
   validateBrowserRunId,
 } from '../browser-harness/webgpu-2b-split/run-id.js';
 
+const config = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/browser-runtime-config.js', import.meta.url),
+  'utf8',
+);
 const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
@@ -70,12 +74,13 @@ describe('browser run ID preflight', () => {
     expect(() => resolveCoordinatorReceiptExpectedRunId(undefined, '?run=bad%2Fid'))
       .toThrow('Coordinator receipt expected run ID is invalid');
 
-    expect(bootstrap).toContain("import { DEFAULT_BROWSER_RUN_ID, validateBrowserRunId } from './run-id.js';");
-    expect(bootstrap).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
-    expect(bootstrap).not.toContain("params.get('run') ?? 'demo'");
+    expect(config).toContain("import { DEFAULT_BROWSER_RUN_ID } from './run-id.js';");
+    expect(config).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
+    expect(config).not.toContain("params.get('run') ?? 'demo'");
 
-    expect(runner).toContain("import { DEFAULT_BROWSER_RUN_ID } from './run-id.js';");
-    expect(runner).toContain("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
+    expect(bootstrap).toContain('readBrowserRuntimeQueryConfig(params)');
+    expect(runner).toContain('readBrowserRuntimeQueryConfig(params)');
+    expect(bootstrap).not.toContain("params.get('run') ?? 'demo'");
     expect(runner).not.toContain("params.get('run') ?? 'demo'");
 
     expect(receiptBinding).toContain("import { BROWSER_RUN_ID_PATTERN, DEFAULT_BROWSER_RUN_ID } from './run-id.js';");
@@ -86,13 +91,13 @@ describe('browser run ID preflight', () => {
   });
 
   it('validates run IDs before ONNX Runtime or the full runner is loaded', () => {
-    const parse = bootstrap.indexOf("params.get('run') ?? DEFAULT_BROWSER_RUN_ID");
+    const configRead = bootstrap.indexOf('readBrowserRuntimeQueryConfig(params)');
     const validation = bootstrap.indexOf('validateBrowserRunId(runId)');
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");
 
-    expect(parse).toBeGreaterThanOrEqual(0);
-    expect(validation).toBeGreaterThan(parse);
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(validation).toBeGreaterThan(configRead);
     expect(ortLoad).toBeGreaterThan(validation);
     expect(runnerImport).toBeGreaterThan(ortLoad);
   });
