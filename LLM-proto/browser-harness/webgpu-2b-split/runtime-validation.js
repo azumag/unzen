@@ -16,6 +16,7 @@ const CANONICAL_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 const WORKER_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const MAX_CHECKPOINT_ID_LENGTH = 128;
+const MAX_SAFE_TOKEN_ID_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 function decodedBase64ByteLength(value) {
   if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return undefined;
@@ -105,6 +106,29 @@ function validateCheckpointInputTokenIds(checkpoint) {
     || !tokenIds.every((tokenId) => Number.isSafeInteger(tokenId) && tokenId >= 0)) {
     throw new Error('Coordinator checkpoint contains invalid input token IDs');
   }
+}
+
+export function normalizeTokenizerTokenIds(encoded) {
+  let values = encoded?.input_ids;
+  if (values && typeof values.tolist === 'function') values = values.tolist();
+  if (Array.isArray(values) && Array.isArray(values[0])) {
+    if (values.length !== 1) {
+      throw new Error('tokenizer input_ids must contain exactly one batch');
+    }
+    [values] = values;
+  }
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error('tokenizer did not return a non-empty input_ids array');
+  }
+  return values.map((value, index) => {
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+      return value;
+    }
+    if (typeof value === 'bigint' && value >= 0n && value <= MAX_SAFE_TOKEN_ID_BIGINT) {
+      return Number(value);
+    }
+    throw new Error(`tokenizer returned invalid input token ID at index ${index}`);
+  });
 }
 
 export function validateCheckpointBoundaryNames(checkpoint, manifest) {
