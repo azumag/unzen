@@ -5,6 +5,10 @@ import {
   validateSmolLm2P0RuntimeParameters,
 } from '../browser-harness/webgpu-2b-split/p0-manifest-contract.js';
 
+const config = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/browser-runtime-config.js', import.meta.url),
+  'utf8',
+);
 const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
@@ -33,6 +37,7 @@ describe('browser P0 runtime parameter preflight', () => {
   });
 
   it('checks the pinned P0 contract before external runtime/module loading', () => {
+    const configRead = bootstrap.indexOf('readBrowserRuntimeQueryConfig(params)');
     const modeGuard = bootstrap.indexOf("if (artifactBudgetMode === 'p0')");
     const validation = bootstrap.indexOf(
       'validateSmolLm2P0RuntimeParameters({ modelId, kvHeads, headSize });',
@@ -40,12 +45,13 @@ describe('browser P0 runtime parameter preflight', () => {
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");
 
-    expect(modeGuard).toBeGreaterThanOrEqual(0);
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(modeGuard).toBeGreaterThan(configRead);
     expect(validation).toBeGreaterThan(modeGuard);
     expect(ortLoad).toBeGreaterThan(validation);
     expect(runnerImport).toBeGreaterThan(ortLoad);
-    expect(bootstrap).toContain(
-      "params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct'",
+    expect(config).toContain(
+      "modelId: params.get('model') ?? DEFAULT_BROWSER_MODEL_ID",
     );
   });
 
