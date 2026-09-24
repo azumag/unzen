@@ -21,19 +21,58 @@ function concatBytes(...parts: Uint8Array[]) {
   return merged;
 }
 
+function validReceipt(overrides: Record<string, unknown> = {}) {
+  return {
+    ok: true,
+    idempotent: false,
+    runId: 'run-1',
+    relayOwner: 'coordinator',
+    manifestDigest: 'a'.repeat(64),
+    checkpointId: 'checkpoint-00000000-0000-4000-8000-000000000000',
+    checkpointDigest: 'b'.repeat(64),
+    sourceWorkerGeneration: 1,
+    profileProbeConfirmed: true,
+    tensorBytes: 32,
+    ...overrides,
+  };
+}
+
 describe('browser checkpoint relay receipt boundary', () => {
-  it('parses a valid BOM-prefixed metadata receipt', async () => {
-    const receipt = {
-      manifestDigest: 'manifest-sha256',
-      checkpointId: 'checkpoint-1',
-      checkpointDigest: 'checkpoint-sha256',
-    };
+  it('parses and validates a valid BOM-prefixed metadata receipt', async () => {
+    const receipt = validReceipt();
     const bytes = concatBytes(
       new Uint8Array([0xef, 0xbb, 0xbf]),
       new TextEncoder().encode(JSON.stringify(receipt)),
     );
 
     await expect(readCheckpointRelayReceipt(new Response(bytes))).resolves.toEqual(receipt);
+  });
+
+  it('accepts the Coordinator idempotent success receipt shape', async () => {
+    const receipt = validReceipt({ idempotent: true });
+    await expect(readCheckpointRelayReceipt(
+      new Response(JSON.stringify(receipt)),
+    )).resolves.toEqual(receipt);
+  });
+
+  it.each([
+    [{ ok: false }, /successful Coordinator write/],
+    [{ idempotent: 'false' }, /successful Coordinator write/],
+    [{ relayOwner: 'worker' }, /not Coordinator-owned/],
+    [{ runId: 'bad/run' }, /invalid run ID/],
+    [{ manifestDigest: 'A'.repeat(64) }, /invalid manifest digest/],
+    [{ checkpointId: '' }, /invalid checkpoint ID/],
+    [{ checkpointId: 'x'.repeat(129) }, /invalid checkpoint ID/],
+    [{ checkpointDigest: 'B'.repeat(64) }, /invalid checkpoint digest/],
+    [{ sourceWorkerGeneration: 0 }, /invalid source worker generation/],
+    [{ sourceWorkerGeneration: '1' }, /invalid source worker generation/],
+    [{ profileProbeConfirmed: false }, /does not confirm profile isolation/],
+    [{ tensorBytes: 0 }, /invalid tensor byte count/],
+    [{ tensorBytes: 1.5 }, /invalid tensor byte count/],
+  ])('rejects malformed successful receipt metadata: %j', async (overrides, expected) => {
+    await expect(readCheckpointRelayReceipt(
+      new Response(JSON.stringify(validReceipt(overrides))),
+    )).rejects.toThrow(expected);
   });
 
   it('fails closed on malformed UTF-8 before JSON parsing', async () => {
