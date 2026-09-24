@@ -75,6 +75,7 @@ async function createCheckpoint(baseUrl: string, cookie: string | undefined) {
     sourceWorkerId: 'browser-a',
     manifestDigest: MANIFEST_DIGEST,
     inputTokenIds: [1, 2],
+    segmentExecutionMs: 12.5,
     tensors,
   }, cookie);
 }
@@ -93,6 +94,8 @@ function validResult(
     segment1WorkerId: 'browser-b',
     inputTokenIds: [1, 2],
     boundaryBytes: 64,
+    segment0ExecutionMs: 12.5,
+    segment1ExecutionMs: 7.25,
     top1TokenId: 3,
     top1Logit: 1.25,
     logitsShape: [1, 2, 8],
@@ -143,6 +146,7 @@ describe('split Coordinator strict JSON worker identity boundary', () => {
       sourceWorkerId: ['browser-a'],
       manifestDigest: MANIFEST_DIGEST,
       inputTokenIds: [1, 2],
+      segmentExecutionMs: 12.5,
       tensors,
     }, registered.cookie);
 
