@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { resolveCoordinatorReceiptExpectedRunId } from '../browser-harness/webgpu-2b-split/coordinator-receipt-run-binding.js';
 import {
   BROWSER_RUN_ID_PATTERN,
   validateBrowserRunId,
@@ -15,6 +16,10 @@ const indexHtml = readFileSync(
 );
 const coordinator = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/serve.mjs', import.meta.url),
+  'utf8',
+);
+const receiptBinding = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/coordinator-receipt-run-binding.js', import.meta.url),
   'utf8',
 );
 
@@ -51,6 +56,16 @@ describe('browser run ID preflight', () => {
   it('matches the Coordinator safeRunId syntax exactly', () => {
     expect(BROWSER_RUN_ID_PATTERN.source).toBe('^[A-Za-z0-9._-]{1,128}$');
     expect(coordinator).toContain("if (!/^[A-Za-z0-9._-]{1,128}$/.test(raw)) throw new Error('invalid run id');");
+  });
+
+  it('shares the canonical browser syntax with Coordinator receipt binding', () => {
+    expect(resolveCoordinatorReceiptExpectedRunId(undefined, '?run=receipt-1')).toBe('receipt-1');
+    expect(resolveCoordinatorReceiptExpectedRunId(undefined, '')).toBe('demo');
+    expect(() => resolveCoordinatorReceiptExpectedRunId(undefined, '?run=bad%2Fid'))
+      .toThrow('Coordinator receipt expected run ID is invalid');
+    expect(receiptBinding).toContain("import { BROWSER_RUN_ID_PATTERN } from './run-id.js';");
+    expect(receiptBinding).not.toContain('const SAFE_RUN_ID =');
+    expect(receiptBinding).not.toContain('/^[A-Za-z0-9._-]{1,128}$/');
   });
 
   it('validates run IDs before ONNX Runtime or the full runner is loaded', () => {
