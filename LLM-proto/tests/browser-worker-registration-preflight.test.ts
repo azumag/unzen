@@ -57,24 +57,29 @@ describe('browser worker registration preflight', () => {
   });
 
   it('runs registration config validation before external runtime loading', () => {
+    const configRead = bootstrap.indexOf('readBrowserRuntimeQueryConfig(params)');
     const registration = bootstrap.indexOf('validateBrowserWorkerRegistrationConfig({ role, workerId: explicitWorkerId })');
     const geometry = bootstrap.indexOf('validateBrowserKvGeometry({ kvHeads, headSize })');
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");
 
-    expect(registration).toBeGreaterThanOrEqual(0);
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(registration).toBeGreaterThan(configRead);
     expect(geometry).toBeGreaterThan(registration);
     expect(ortLoad).toBeGreaterThan(geometry);
     expect(runnerImport).toBeGreaterThan(ortLoad);
-    expect(bootstrap).toContain("params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE");
-    expect(bootstrap).toContain("DEFAULT_BROWSER_WORKER_ROLE,");
-    expect(bootstrap).toContain("params.get('worker')");
   });
 
-  it('shares the same omitted-role default between bootstrap and execution', () => {
-    expect(runner).toContain("params.get('role') ?? DEFAULT_BROWSER_WORKER_ROLE");
-    expect(runner).toContain("DEFAULT_BROWSER_WORKER_ROLE,");
-    expect(bootstrap).not.toContain("params.get('role') ?? 'segment0'");
-    expect(runner).not.toContain("params.get('role') ?? 'segment0'");
+  it('shares runtime query resolution between bootstrap and execution', () => {
+    expect(bootstrap).toContain('readBrowserRuntimeQueryConfig(params)');
+    expect(runner).toContain('readBrowserRuntimeQueryConfig(params)');
+    expect(bootstrap).not.toContain("params.get('role')");
+    expect(runner).not.toContain("params.get('role')");
+    expect(bootstrap).not.toContain("params.get('model')");
+    expect(runner).not.toContain("params.get('model')");
+    expect(bootstrap).not.toContain("params.get('kvHeads')");
+    expect(runner).not.toContain("params.get('kvHeads')");
+    expect(bootstrap).not.toContain("params.get('artifactBudget')");
+    expect(runner).not.toContain("params.get('artifactBudget')");
   });
 });
