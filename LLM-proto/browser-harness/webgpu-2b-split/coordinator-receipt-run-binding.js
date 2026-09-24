@@ -1,4 +1,4 @@
-const SAFE_RUN_ID = /^[A-Za-z0-9._-]{1,128}$/;
+import { BROWSER_RUN_ID_PATTERN } from './run-id.js';
 
 export function resolveCoordinatorReceiptExpectedRunId(
   expectedRunId,
@@ -9,7 +9,7 @@ export function resolveCoordinatorReceiptExpectedRunId(
     const params = new URLSearchParams(typeof search === 'string' ? search : '');
     resolved = params.get('run') ?? 'demo';
   }
-  if (typeof resolved !== 'string' || !SAFE_RUN_ID.test(resolved)) {
+  if (typeof resolved !== 'string' || !BROWSER_RUN_ID_PATTERN.test(resolved)) {
     throw new Error('Coordinator receipt expected run ID is invalid');
   }
   return resolved;
