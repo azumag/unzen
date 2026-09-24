@@ -264,7 +264,11 @@ export function verifyActualSegmentArtifactBudget(plan, reports) {
   const reportMembershipSnapshot = [...reports];
   const reportBytesSnapshot = reportMembershipSnapshot.map((report) => report?.bytes);
   const actualBytes = reportBytesSnapshot.reduce((sum, bytes, index) => {
-    return sum + safeBytes(bytes, `artifact report[${index}].bytes`);
+    const validatedBytes = safeBytes(bytes, `artifact report[${index}].bytes`);
+    if (validatedBytes > Number.MAX_SAFE_INTEGER - sum) {
+      throw new Error('artifact report cumulative bytes exceed safe integer range');
+    }
+    return sum + validatedBytes;
   }, 0);
   if (actualBytes !== declaredBytes) {
     throw new Error(
