@@ -14,6 +14,7 @@ const coordinator = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/serve.mjs', import.meta.url),
   'utf8',
 );
+const EXPECTED_RUN_ID = 'run-1';
 
 function concatBytes(...parts: Uint8Array[]) {
   const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
@@ -26,9 +27,14 @@ function concatBytes(...parts: Uint8Array[]) {
   return merged;
 }
 
+function readCheckpoint(response: Response) {
+  return readCheckpointPayloadResponse(response, { expectedRunId: EXPECTED_RUN_ID });
+}
+
 describe('browser checkpoint payload response boundary', () => {
-  it('parses a valid BOM-prefixed checkpoint payload', async () => {
+  it('parses a valid BOM-prefixed checkpoint payload for the requested run', async () => {
     const checkpoint = {
+      runId: EXPECTED_RUN_ID,
       checkpointId: 'checkpoint-1',
       checkpointDigest: 'digest',
       tensors: [],
@@ -38,11 +44,24 @@ describe('browser checkpoint payload response boundary', () => {
       new TextEncoder().encode(JSON.stringify(checkpoint)),
     );
 
-    await expect(readCheckpointPayloadResponse(new Response(bytes))).resolves.toEqual(checkpoint);
+    await expect(readCheckpoint(new Response(bytes))).resolves.toEqual(checkpoint);
+  });
+
+  it('rejects a structurally valid checkpoint payload from another run', async () => {
+    const checkpoint = {
+      runId: 'run-2',
+      checkpointId: 'checkpoint-1',
+      checkpointDigest: 'digest',
+      tensors: [],
+    };
+
+    await expect(readCheckpoint(
+      new Response(JSON.stringify(checkpoint)),
+    )).rejects.toThrow(/checkpoint payload response is bound to a different run ID/);
   });
 
   it('accepts valid JSON exactly at the declared checkpoint response ceiling', async () => {
-    const prefix = new TextEncoder().encode('{"padding":"');
+    const prefix = new TextEncoder().encode(`{"runId":"${EXPECTED_RUN_ID}","padding":"`);
     const suffix = new TextEncoder().encode('"}');
     const paddingBytes = COORDINATOR_CHECKPOINT_RESPONSE_MAX_BYTES - prefix.byteLength - suffix.byteLength;
     const bytes = new Uint8Array(COORDINATOR_CHECKPOINT_RESPONSE_MAX_BYTES);
@@ -50,7 +69,8 @@ describe('browser checkpoint payload response boundary', () => {
     bytes.set(prefix, 0);
     bytes.set(suffix, prefix.byteLength + paddingBytes);
 
-    const parsed = await readCheckpointPayloadResponse(new Response(bytes));
+    const parsed = await readCheckpoint(new Response(bytes));
+    expect(parsed.runId).toBe(EXPECTED_RUN_ID);
     expect(parsed.padding).toHaveLength(paddingBytes);
   });
 
@@ -59,7 +79,7 @@ describe('browser checkpoint payload response boundary', () => {
     const suffix = new TextEncoder().encode('","tensors":[]}');
     const bytes = concatBytes(prefix, new Uint8Array([0xc3, 0x28]), suffix);
 
-    await expect(readCheckpointPayloadResponse(new Response(bytes))).rejects.toBeInstanceOf(TypeError);
+    await expect(readCheckpoint(new Response(bytes))).rejects.toBeInstanceOf(TypeError);
   });
 
   it('cancels a response declared above the checkpoint transport ceiling', async () => {
@@ -78,7 +98,7 @@ describe('browser checkpoint payload response boundary', () => {
       },
     });
 
-    await expect(readCheckpointPayloadResponse(response)).rejects.toThrow(/exceeds byte limit/);
+    await expect(readCheckpoint(response)).rejects.toThrow(/exceeds byte limit/);
     expect(cancelled).toBe(true);
   });
 
