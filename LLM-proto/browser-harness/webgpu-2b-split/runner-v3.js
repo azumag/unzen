@@ -29,10 +29,11 @@ import {
   throwIfAborted,
   waitForCheckpointBounded,
 } from './execution-lifecycle.js';
+import { DEFAULT_BROWSER_RUN_ID } from './run-id.js';
 
 const params = new URLSearchParams(location.search);
 const role = params.get('role') ?? 'segment0';
-const runId = params.get('run') ?? 'demo';
+const runId = params.get('run') ?? DEFAULT_BROWSER_RUN_ID;
 const workerId = params.get('worker') ?? `${role}-${crypto.randomUUID().slice(0, 8)}`;
 const modelId = params.get('model') ?? 'onnx-community/Llama-3.2-1B-Instruct';
 const splitRoot = params.get('splitRoot') ?? '/models';
