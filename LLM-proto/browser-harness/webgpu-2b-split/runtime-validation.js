@@ -67,10 +67,19 @@ function validateBoundaryTensorWire(tensor, index, expectedType) {
   }
 }
 
+function validateCheckpointInputTokenIds(checkpoint) {
+  const tokenIds = checkpoint?.inputTokenIds;
+  if (!Array.isArray(tokenIds) || tokenIds.length === 0
+    || !tokenIds.every((tokenId) => Number.isSafeInteger(tokenId) && tokenId >= 0)) {
+    throw new Error('Coordinator checkpoint contains invalid input token IDs');
+  }
+}
+
 export function validateCheckpointBoundaryNames(checkpoint, manifest) {
   if (!Array.isArray(checkpoint?.tensors) || checkpoint.tensors.length !== 2) {
     throw new Error('Coordinator checkpoint must contain exactly two boundary tensors');
   }
+  validateCheckpointInputTokenIds(checkpoint);
   const expectedNames = manifest?.boundary?.tensors?.map((entry) => entry.name);
   if (!Array.isArray(expectedNames) || expectedNames.length !== 2) {
     throw new Error('manifest must declare exactly two boundary tensor names');
