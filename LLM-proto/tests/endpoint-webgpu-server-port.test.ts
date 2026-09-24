@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { listenSplitHarness } from '../browser-harness/webgpu-2b-split/serve.mjs';
 import {
   DEFAULT_ENDPOINT_WEBGPU_DIAGNOSTIC_PORT,
   resolveEndpointWebgpuDiagnosticPort,
@@ -44,6 +45,7 @@ describe('endpoint WebGPU diagnostic server port preflight', () => {
   });
 
   it.each([
+    [8791, 8791],
     [8795, 8795],
     [8796, 8796],
     [8797, 8797],
@@ -96,5 +98,44 @@ describe('endpoint WebGPU diagnostic server port preflight', () => {
     );
     expect(source).not.toContain('if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535)');
     expect(source).not.toContain("throw new Error('PORT must be an integer between 1 and 65535')");
+  });
+});
+
+describe('split WebGPU diagnostic listener port preflight', () => {
+  it('validates the selected port before creating or listening on the Coordinator server', () => {
+    const source = loadSource('../browser-harness/webgpu-2b-split/serve.mjs');
+    const resolverCall = 'const resolvedPort = resolveWebgpuDiagnosticPort(port, DEFAULT_PORT);';
+    const createCall = 'const { server, state } = createSplitHarnessServer();';
+
+    expect(source).toContain("import { resolveWebgpuDiagnosticPort } from './server-port.mjs';");
+    expect(source).toContain('const DEFAULT_PORT = 8791;');
+    expect(source).toContain('export async function listenSplitHarness({ port = process.env.PORT } = {}) {');
+    expect(source).toContain(resolverCall);
+    expect(source).toContain("server.listen(resolvedPort, '127.0.0.1', resolvePromise);");
+    expect(source).toContain('return { server, state, port: resolvedPort };');
+    expect(source).not.toContain('Number(process.env.PORT ?? 8791)');
+    expect(source.indexOf(resolverCall)).toBeLessThan(source.indexOf(createCall));
+  });
+
+  it.each([0, -1, 8791.5, 65536, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid explicit listener port %j before server creation',
+    async (port) => {
+      await expect(listenSplitHarness({ port })).rejects.toThrow(
+        'PORT must resolve to an integer between 1 and 65535',
+      );
+    },
+  );
+
+  it('rejects an invalid PORT environment value before server creation', async () => {
+    const previousPort = process.env.PORT;
+    process.env.PORT = 'not-a-port';
+    try {
+      await expect(listenSplitHarness()).rejects.toThrow(
+        'PORT must resolve to an integer between 1 and 65535',
+      );
+    } finally {
+      if (previousPort === undefined) delete process.env.PORT;
+      else process.env.PORT = previousPort;
+    }
   });
 });
