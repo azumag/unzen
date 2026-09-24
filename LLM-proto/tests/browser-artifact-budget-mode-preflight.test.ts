@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { validateBrowserArtifactBudgetMode } from '../browser-harness/webgpu-2b-split/artifact-budget.js';
 
+const config = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/browser-runtime-config.js', import.meta.url),
+  'utf8',
+);
 const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
@@ -20,17 +24,19 @@ describe('browser artifact budget mode preflight', () => {
   });
 
   it('runs artifact budget validation before external runtime loading', () => {
+    const configRead = bootstrap.indexOf('readBrowserRuntimeQueryConfig(params)');
     const registration = bootstrap.indexOf('validateBrowserWorkerRegistrationConfig({ role, workerId: explicitWorkerId })');
     const geometry = bootstrap.indexOf('validateBrowserKvGeometry({ kvHeads, headSize })');
     const budget = bootstrap.indexOf('validateBrowserArtifactBudgetMode(artifactBudgetMode)');
     const ortLoad = bootstrap.indexOf('onnxruntime-web@1.22.0');
     const runnerImport = bootstrap.indexOf("import('./runner-v3.js')");
 
-    expect(registration).toBeGreaterThanOrEqual(0);
+    expect(configRead).toBeGreaterThanOrEqual(0);
+    expect(registration).toBeGreaterThan(configRead);
     expect(geometry).toBeGreaterThan(registration);
     expect(budget).toBeGreaterThan(geometry);
     expect(ortLoad).toBeGreaterThan(budget);
     expect(runnerImport).toBeGreaterThan(ortLoad);
-    expect(bootstrap).toContain("params.get('artifactBudget') ?? 'absolute'");
+    expect(config).toContain("artifactBudgetMode: params.get('artifactBudget') ?? DEFAULT_BROWSER_ARTIFACT_BUDGET_MODE");
   });
 });
