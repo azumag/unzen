@@ -9,6 +9,10 @@ const bootstrap = readFileSync(
   new URL('../browser-harness/webgpu-2b-split/runner-bootstrap.js', import.meta.url),
   'utf8',
 );
+const runner = readFileSync(
+  new URL('../browser-harness/webgpu-2b-split/runner-v3.js', import.meta.url),
+  'utf8',
+);
 
 describe('browser checkpoint wait preflight', () => {
   it('keeps the 120 second default', () => {
@@ -17,6 +21,14 @@ describe('browser checkpoint wait preflight', () => {
       role: 'segment1',
       checkpointWaitMs: DEFAULT_BROWSER_CHECKPOINT_WAIT_MS,
     })).toEqual({ role: 'segment1', checkpointWaitMs: 120_000 });
+  });
+
+  it('shares the canonical default between bootstrap and the full runner', () => {
+    expect(bootstrap).toContain('DEFAULT_BROWSER_CHECKPOINT_WAIT_MS');
+    expect(bootstrap).toContain("params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS");
+    expect(runner).toContain("import { DEFAULT_BROWSER_CHECKPOINT_WAIT_MS } from './checkpoint-wait-config.js';");
+    expect(runner).toContain("params.get('checkpointWaitMs') ?? DEFAULT_BROWSER_CHECKPOINT_WAIT_MS");
+    expect(runner).not.toContain("params.get('checkpointWaitMs') ?? 120_000");
   });
 
   it('rejects non-positive and non-finite values for every browser role', () => {
