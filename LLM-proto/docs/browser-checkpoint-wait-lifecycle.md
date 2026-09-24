@@ -32,6 +32,8 @@ The byte ceiling is derived from the local Coordinator transport contract rather
 
 The `4 KiB` envelope is a compatibility contract, not spare unbounded capacity. If Coordinator-generated checkpoint metadata grows beyond it, the transport constant and its tests must be changed deliberately. This keeps the successful checkpoint read bounded without forcing the actual tensor payload into the much smaller `16 KiB` metadata-receipt limits used by checkpoint/result acknowledgements.
 
+After bounded, fatal JSON parsing, a successful checkpoint payload is also bound to the same immutable browser `run` query parameter used to construct the polling URL, with the existing `demo` fallback when the parameter is absent. A structurally valid payload whose `runId` names another safe run is rejected before Browser B can reconstruct boundary tensors, create the continuation WebGPU session, or run segment 1. Focused tests may pass the same expected run ID explicitly instead of depending on browser globals.
+
 `waitForCheckpointBounded()` snapshots the supplied checkpoint response reader before polling begins. This keeps the successful-body policy stable across asynchronous fetch/sleep boundaries and prevents a caller from swapping an accepted reader implementation after the wait starts.
 
 ## Abort race and cleanup containment
