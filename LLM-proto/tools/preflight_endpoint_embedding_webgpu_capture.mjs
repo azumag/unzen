@@ -11,6 +11,7 @@ import {
   ENDPOINT_EMBEDDING_WEBGPU_EXPECTED,
   validateEndpointEmbeddingWebGpuManifest,
 } from '../browser-harness/endpoint-embedding-tiled-webgpu/contract.js';
+import { exactByteSum } from './exact_byte_sum.mjs';
 import { probeEndpointEmbeddingWebGpuHost } from './probe_endpoint_embedding_webgpu_host.mjs';
 import { readStableRegularUtf8File } from './read_stable_regular_utf8_file.mjs';
 
@@ -283,7 +284,10 @@ export async function preflightEndpointEmbeddingWebGpuCapture({ dataDir, chromeB
     defaultDeviceTileBudget,
     verifiedFiles,
     verifiedFileCount: verifiedFiles.length,
-    verifiedBytes: verifiedFiles.reduce((sum, file) => sum + file.bytes, 0),
+    verifiedBytes: exactByteSum(
+      verifiedFiles.map((file) => file.bytes),
+      'verified prepared file bytes',
+    ),
     conclusion: 'The prepared endpoint embedding browser bundle, Chrome executable, and a lightweight loopback WebGPU adapter/device probe satisfy the pinned diagnostic capture preflight. The host-probe Chrome major is bound to the selected executable identity. A separate non-gating default-device tile-budget diagnostic is reported without treating that probe device as ONNX Runtime Web\'s internal GPUDevice. This does not constitute browser/WebGPU execution evidence or ORT WebGPU inference evidence.',
   };
 }
