@@ -2,6 +2,7 @@ import { validateEndpointFiveWayWebGpuManifest } from './contract.js';
 import { BROWSER_SEGMENT_ABSOLUTE_MAX_BYTES } from '../webgpu-2b-split/artifact-budget.js';
 import { readResponseBytesBounded } from '../webgpu-2b-split/artifact-cache.js';
 import { readEndpointDiagnosticManifestResponse } from '../webgpu-2b-split/diagnostic-manifest.js';
+import { exactByteSum } from '../webgpu-2b-split/exact-byte-sum.js';
 
 const statusEl = document.querySelector('#status');
 const reportEl = document.querySelector('#report');
@@ -223,7 +224,10 @@ async function main() {
       bytes: artifact.bytes,
       sha256: physicalByIndex(payloads, artifact.index).sha256,
     })),
-    fullPhysicalDependencyBytes: manifest.physicalArtifacts.reduce((sum, artifact) => sum + artifact.bytes, 0),
+    fullPhysicalDependencyBytes: exactByteSum(
+      manifest.physicalArtifacts.map((artifact) => artifact.bytes),
+      'endpoint physical dependency bytes',
+    ),
     executedTile,
     sessionReleaseApiCompleted: executedTile.embedding.sessionReleaseMs >= 0 && executedTile.logits.sessionReleaseMs >= 0,
     conclusion: 'Real browser ORT Web/WebGPU executed one diagnostic 5-way boundary-crossing tied-weight tile from two independently verified physical payloads using two external initializers plus Concat. This proves browser multi-artifact primitive feasibility only. It does not select the 5-way architecture, approve Concat as a production strategy, measure peak host/GPU working set or immediate GPU-memory reclamation, define cache/runtime/dispatcher semantics, or prove final-norm/full-vs-staged equivalence.',
