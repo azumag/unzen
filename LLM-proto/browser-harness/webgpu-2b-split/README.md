@@ -26,3 +26,7 @@ This field is evidence metadata only. Synthetic Coordinator coverage does not by
 ## Exact byte evidence
 
 Browser-side evidence totals that are intended to be exact use `exact-byte-sum.js`. The helper accepts only non-negative safe integers and checks `Number.MAX_SAFE_INTEGER - value` before every addition, so an aggregate fails closed before JavaScript integer precision can be lost. `runner-v3.js` uses this contract for both the locally produced segment-0 boundary total and the Coordinator-returned checkpoint boundary total. The endpoint five-way WebGPU diagnostic reuses the same browser helper for its full physical dependency byte total.
+
+## Tensor shape arithmetic
+
+Browser runtime tensor element counts are computed with a shared pre-multiplication safe-integer guard in `runtime-validation.js`. Received checkpoint tensors and logits require positive safe-integer dimensions. Metadata-driven empty KV tensors may explicitly contain zero dimensions, but all other dimensions must still be non-negative safe integers and the product is rejected before it could exceed `Number.MAX_SAFE_INTEGER`. This keeps validation and typed-array allocation from relying on a rounded JavaScript dimension product.
