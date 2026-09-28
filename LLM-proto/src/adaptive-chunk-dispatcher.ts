@@ -256,10 +256,10 @@ export class AdaptiveChunkDispatcher {
       : checkpointBytesInput;
     if (
       typeof checkpointBytes !== 'number' ||
-      !Number.isFinite(checkpointBytes) ||
+      !Number.isSafeInteger(checkpointBytes) ||
       checkpointBytes <= 0
     ) {
-      throw new Error('checkpointBytes must be a positive finite number');
+      throw new Error('checkpointBytes must be a positive safe integer');
     }
 
     const coordinatorUrlInput = readRuntimeField(
