@@ -188,10 +188,37 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                         verify_artifact_integrity(manifest_path)
                 measure.assert_not_called()
 
-
     def test_rejects_integers_above_javascript_safe_range_before_measurement(self) -> None:
         oversized = 1 << 53
         mutations = (
+            (
+                "preferred maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "preferredMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.preferredMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "normal maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "normalMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.normalMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "absolute maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "absoluteMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.absoluteMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "split required maximum",
+                lambda manifest: manifest["splitPlan"].__setitem__(
+                    "requiredMaxBytes", oversized
+                ),
+                r"splitPlan\.requiredMaxBytes must be a positive integer within JavaScript safe range",
+            ),
             (
                 "segment artifact bytes",
                 lambda manifest: manifest["segments"][1].__setitem__(
@@ -247,7 +274,6 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, expected_error):
                         verify_artifact_integrity(manifest_path)
                 measure.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()

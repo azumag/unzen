@@ -301,7 +301,9 @@ def _non_negative_int(raw: object, *, field: str) -> int:
     return raw
 
 
-def _tier(byte_size: int, budget: dict[str, object]) -> str:
+def _browser_artifact_budget_limits(
+    budget: dict[str, object],
+) -> tuple[int, int, int]:
     preferred = _positive_int(
         budget.get("preferredMaxBytes"), field="browserArtifactBudget.preferredMaxBytes"
     )
@@ -313,6 +315,11 @@ def _tier(byte_size: int, budget: dict[str, object]) -> str:
     )
     if not preferred <= normal <= absolute:
         raise ValueError("browser artifact budget limits must be monotonically increasing")
+    return preferred, normal, absolute
+
+
+def _tier(byte_size: int, budget: dict[str, object]) -> str:
+    preferred, normal, absolute = _browser_artifact_budget_limits(budget)
     if byte_size <= preferred:
         return "preferred"
     if byte_size <= normal:
@@ -413,6 +420,7 @@ def _preflight_artifact_metadata(
 ) -> None:
     """Validate immutable manifest metadata before hashing any artifact payload."""
 
+    _browser_artifact_budget_limits(budget)
     _non_negative_int(
         budget.get("maximumSegmentArtifactBytes"),
         field="browserArtifactBudget.maximumSegmentArtifactBytes",

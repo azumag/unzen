@@ -32,10 +32,12 @@ manifest:
 Every integer manifest field validated by this gate is also bounded to
 JavaScript's safe-integer range. Non-negative fields accept at most
 `Number.MAX_SAFE_INTEGER`, while positive-only fields retain their stricter
-lower bound. Oversized JSON integers therefore fail during metadata preflight
-before any graph or external-data payload is hashed, keeping this Python
-verifier aligned with the TypeScript manifest consumer instead of accepting
-values that JavaScript cannot represent exactly.
+lower bound. This includes the preferred/normal/absolute browser budget limits
+and both required maxima, which are validated before payload measurement.
+Oversized JSON integers therefore fail during metadata preflight before any
+graph or external-data payload is hashed, keeping this Python verifier aligned
+with the TypeScript manifest consumer instead of accepting values that
+JavaScript cannot represent exactly.
 
 The split manifest is opened once as a regular file. The JSON bytes and
 `manifestSha256` are taken from that same descriptor, and descriptor metadata is
