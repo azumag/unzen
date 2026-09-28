@@ -56,7 +56,7 @@ A passing probe establishes all of the following for the pinned Wrangler release
 3. The emitted Wasm payload preserves the 41-byte fixture identity.
 4. The generated JavaScript references a `.wasm` module and does not contain the complete fixture as a base64 inline payload.
 5. Exact per-file bytes and SHA-256 values are measured directly from the dry-run output directory.
-6. JavaScript/Wasm upload-module counts and exact module byte totals are recorded separately from auxiliary dry-run files such as source maps and README output.
+6. JavaScript/Wasm upload-module counts and exact module byte totals are recorded separately from auxiliary dry-run files such as source maps and README output. Every exact aggregate uses the shared pre-addition safe-integer guard and fails closed before JavaScript integer precision could be lost.
 7. Wrangler's human-readable `Total Upload` / gzip values are also captured, but are explicitly labeled **approximate** because the CLI rounds the displayed KiB values.
 
 Cloudflare's documented default import contract supplies the semantic mapping `.wasm` -> `WebAssembly.Module`; the dry-run evidence verifies that this input is packaged as a distinct Wasm upload module rather than being hidden inside the JavaScript bundle.

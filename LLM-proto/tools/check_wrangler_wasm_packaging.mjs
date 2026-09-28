@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { exactByteSum } from './exact_byte_sum.mjs';
 
 const WRANGLER_VERSION = '4.129.1';
 const COMPATIBILITY_DATE = '2026-08-06';
@@ -142,8 +143,18 @@ try {
     );
   }
 
-  const exactJavaScriptModuleBytes = jsModules.reduce((sum, module) => sum + module.bytes, 0);
-  const exactWasmModuleBytes = wasmModules.reduce((sum, module) => sum + module.bytes, 0);
+  const exactJavaScriptModuleBytes = exactByteSum(
+    jsModules.map((module) => module.bytes),
+    'Wrangler JavaScript module bytes',
+  );
+  const exactWasmModuleBytes = exactByteSum(
+    wasmModules.map((module) => module.bytes),
+    'Wrangler Wasm module bytes',
+  );
+  const exactJavaScriptPlusWasmModuleBytes = exactByteSum(
+    [exactJavaScriptModuleBytes, exactWasmModuleBytes],
+    'Wrangler JavaScript + Wasm module bytes',
+  );
 
   const report = {
     status: 'pass',
@@ -168,7 +179,7 @@ try {
       emittedWasmModuleCount: wasmModules.length,
       exactJavaScriptModuleBytes,
       exactWasmModuleBytes,
-      exactJavaScriptPlusWasmModuleBytes: exactJavaScriptModuleBytes + exactWasmModuleBytes,
+      exactJavaScriptPlusWasmModuleBytes,
       ...reportedUpload,
       reportedUploadByteValuesAreApproximate: true,
       modules: evidence,
