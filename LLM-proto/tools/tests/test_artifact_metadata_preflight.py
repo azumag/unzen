@@ -104,7 +104,7 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
             (
                 "external bytes",
                 lambda manifest: manifest["segments"][1]["externalData"][0].__setitem__("bytes", True),
-                r"segments\[1\]\.externalData\[0\]\.bytes must be a non-negative integer",
+                r"segments\[1\]\.externalData\[0\]\.bytes must be a positive integer",
             ),
             (
                 "external sha",
@@ -116,7 +116,7 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
             (
                 "artifact bytes",
                 lambda manifest: manifest["segments"][1].__setitem__("browserArtifactBytes", "12"),
-                r"segments\[1\]\.browserArtifactBytes must be a non-negative integer",
+                r"segments\[1\]\.browserArtifactBytes must be a positive integer",
             ),
             (
                 "artifact tier",
@@ -135,7 +135,7 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                 lambda manifest: manifest["browserArtifactBudget"]["segments"][1].__setitem__(
                     "artifactBytes", False
                 ),
-                r"browserArtifactBudget\.segments\[1\]\.artifactBytes must be a non-negative integer",
+                r"browserArtifactBudget\.segments\[1\]\.artifactBytes must be a positive integer",
             ),
             (
                 "budget entry tier",
@@ -165,14 +165,14 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                 lambda manifest: manifest["browserArtifactBudget"].__setitem__(
                     "maximumSegmentArtifactBytes", -1
                 ),
-                r"browserArtifactBudget\.maximumSegmentArtifactBytes must be a non-negative integer",
+                r"browserArtifactBudget\.maximumSegmentArtifactBytes must be a positive integer",
             ),
             (
                 "plan maximum",
                 lambda manifest: manifest["splitPlan"].__setitem__(
                     "maximumGeneratedSegmentBytes", True
                 ),
-                r"splitPlan\.maximumGeneratedSegmentBytes must be a non-negative integer",
+                r"splitPlan\.maximumGeneratedSegmentBytes must be a positive integer",
             ),
         )
 
@@ -188,6 +188,224 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                         verify_artifact_integrity(manifest_path)
                 measure.assert_not_called()
 
+    def test_rejects_relaxed_product_budget_before_measurement(self) -> None:
+        mutations = (
+            (
+                "preferred ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].update(
+                    {
+                        "preferredMaxBytes": verifier.PRODUCT_PREFERRED_MAX_BYTES + 1,
+                        "normalMaxBytes": verifier.PRODUCT_NORMAL_MAX_BYTES,
+                        "absoluteMaxBytes": verifier.PRODUCT_ABSOLUTE_MAX_BYTES,
+                    }
+                ),
+                r"browserArtifactBudget\.preferredMaxBytes cannot relax the product preferred ceiling",
+            ),
+            (
+                "normal ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].update(
+                    {
+                        "preferredMaxBytes": verifier.PRODUCT_PREFERRED_MAX_BYTES,
+                        "normalMaxBytes": verifier.PRODUCT_NORMAL_MAX_BYTES + 1,
+                        "absoluteMaxBytes": verifier.PRODUCT_ABSOLUTE_MAX_BYTES,
+                    }
+                ),
+                r"browserArtifactBudget\.normalMaxBytes cannot relax the product normal ceiling",
+            ),
+            (
+                "absolute ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].update(
+                    {
+                        "preferredMaxBytes": verifier.PRODUCT_PREFERRED_MAX_BYTES,
+                        "normalMaxBytes": verifier.PRODUCT_NORMAL_MAX_BYTES,
+                        "absoluteMaxBytes": verifier.PRODUCT_ABSOLUTE_MAX_BYTES + 1,
+                    }
+                ),
+                r"browserArtifactBudget\.absoluteMaxBytes cannot relax the product absolute ceiling",
+            ),
+            (
+                "required preferred ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "requiredMaxBytes",
+                    verifier.PRODUCT_PREFERRED_MAX_BYTES + 1,
+                ),
+                r"browserArtifactBudget\.requiredMaxBytes cannot relax the product preferred ceiling",
+            ),
+            (
+                "required absolute ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "requiredMaxBytes",
+                    manifest["browserArtifactBudget"]["absoluteMaxBytes"] + 1,
+                ),
+                r"browserArtifactBudget\.requiredMaxBytes cannot exceed absoluteMaxBytes",
+            ),
+        )
+
+        for label, mutate, expected_error in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                manifest_path = self._fixture(Path(tmp))
+                manifest = self._load(manifest_path)
+                mutate(manifest)
+                self._save(manifest_path, manifest)
+
+                with patch.object(verifier, "_measure_file") as measure:
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        verify_artifact_integrity(manifest_path)
+                measure.assert_not_called()
+
+    def test_rejects_non_monotonic_budget_limits_before_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["browserArtifactBudget"]["preferredMaxBytes"] = 1025
+            manifest["browserArtifactBudget"]["normalMaxBytes"] = 1024
+            self._save(manifest_path, manifest)
+
+            with patch.object(verifier, "_measure_file") as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "browser artifact budget limits must be monotonically increasing",
+                ):
+                    verify_artifact_integrity(manifest_path)
+            measure.assert_not_called()
+
+    def test_rejects_zero_byte_metadata_before_measurement(self) -> None:
+        mutations = (
+            (
+                "segment artifact bytes",
+                lambda manifest: manifest["segments"][1].__setitem__(
+                    "browserArtifactBytes", 0
+                ),
+                r"segments\[1\]\.browserArtifactBytes must be a positive integer",
+            ),
+            (
+                "external bytes",
+                lambda manifest: manifest["segments"][1]["externalData"][0].__setitem__(
+                    "bytes", 0
+                ),
+                r"segments\[1\]\.externalData\[0\]\.bytes must be a positive integer",
+            ),
+            (
+                "budget entry bytes",
+                lambda manifest: manifest["browserArtifactBudget"]["segments"][1].__setitem__(
+                    "artifactBytes", 0
+                ),
+                r"browserArtifactBudget\.segments\[1\]\.artifactBytes must be a positive integer",
+            ),
+            (
+                "budget maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "maximumSegmentArtifactBytes", 0
+                ),
+                r"browserArtifactBudget\.maximumSegmentArtifactBytes must be a positive integer",
+            ),
+            (
+                "plan maximum",
+                lambda manifest: manifest["splitPlan"].__setitem__(
+                    "maximumGeneratedSegmentBytes", 0
+                ),
+                r"splitPlan\.maximumGeneratedSegmentBytes must be a positive integer",
+            ),
+        )
+
+        for label, mutate, expected_error in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                manifest_path = self._fixture(Path(tmp))
+                manifest = self._load(manifest_path)
+                mutate(manifest)
+                self._save(manifest_path, manifest)
+
+                with patch.object(verifier, "_measure_file") as measure:
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        verify_artifact_integrity(manifest_path)
+                measure.assert_not_called()
+
+    def test_rejects_integers_above_javascript_safe_range_before_measurement(self) -> None:
+        oversized = 1 << 53
+        mutations = (
+            (
+                "preferred maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "preferredMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.preferredMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "normal maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "normalMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.normalMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "absolute maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "absoluteMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.absoluteMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "split required maximum",
+                lambda manifest: manifest["splitPlan"].__setitem__(
+                    "requiredMaxBytes", oversized
+                ),
+                r"splitPlan\.requiredMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "segment artifact bytes",
+                lambda manifest: manifest["segments"][1].__setitem__(
+                    "browserArtifactBytes", oversized
+                ),
+                r"segments\[1\]\.browserArtifactBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "external bytes",
+                lambda manifest: manifest["segments"][1]["externalData"][0].__setitem__(
+                    "bytes", oversized
+                ),
+                r"segments\[1\]\.externalData\[0\]\.bytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "budget entry bytes",
+                lambda manifest: manifest["browserArtifactBudget"]["segments"][1].__setitem__(
+                    "artifactBytes", oversized
+                ),
+                r"browserArtifactBudget\.segments\[1\]\.artifactBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "budget maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "maximumSegmentArtifactBytes", oversized
+                ),
+                r"browserArtifactBudget\.maximumSegmentArtifactBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "plan maximum",
+                lambda manifest: manifest["splitPlan"].__setitem__(
+                    "maximumGeneratedSegmentBytes", oversized
+                ),
+                r"splitPlan\.maximumGeneratedSegmentBytes must be a positive integer within JavaScript safe range",
+            ),
+            (
+                "required maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "requiredMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.requiredMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+        )
+
+        for label, mutate, expected_error in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                manifest_path = self._fixture(Path(tmp))
+                manifest = self._load(manifest_path)
+                mutate(manifest)
+                self._save(manifest_path, manifest)
+
+                with patch.object(verifier, "_measure_file") as measure:
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        verify_artifact_integrity(manifest_path)
+                measure.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

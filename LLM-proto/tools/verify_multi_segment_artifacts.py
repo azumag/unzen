@@ -28,6 +28,10 @@ ASCII_CASE_FOLD = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "abcdefghijklmnopqrstuvwxyz",
 )
+JAVASCRIPT_MAX_SAFE_INTEGER = (1 << 53) - 1
+PRODUCT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024
+PRODUCT_NORMAL_MAX_BYTES = 512 * 1024 * 1024
+PRODUCT_ABSOLUTE_MAX_BYTES = 1024 * 1024 * 1024
 
 
 def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
@@ -275,18 +279,34 @@ def _positive_int(raw: object, *, field: str) -> int:
     # booleans, or numeric strings with int(): values such as 12.9 or "12" can
     # otherwise normalize into an integer that happens to equal a measured file
     # size and incorrectly pass an integrity audit.
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
-        raise ValueError(f"{field} must be a positive integer")
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or raw <= 0
+        or raw > JAVASCRIPT_MAX_SAFE_INTEGER
+    ):
+        raise ValueError(
+            f"{field} must be a positive integer within JavaScript safe range"
+        )
     return raw
 
 
 def _non_negative_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-        raise ValueError(f"{field} must be a non-negative integer")
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or raw < 0
+        or raw > JAVASCRIPT_MAX_SAFE_INTEGER
+    ):
+        raise ValueError(
+            f"{field} must be a non-negative integer within JavaScript safe range"
+        )
     return raw
 
 
-def _tier(byte_size: int, budget: dict[str, object]) -> str:
+def _browser_artifact_budget_limits(
+    budget: dict[str, object],
+) -> tuple[int, int, int]:
     preferred = _positive_int(
         budget.get("preferredMaxBytes"), field="browserArtifactBudget.preferredMaxBytes"
     )
@@ -298,6 +318,26 @@ def _tier(byte_size: int, budget: dict[str, object]) -> str:
     )
     if not preferred <= normal <= absolute:
         raise ValueError("browser artifact budget limits must be monotonically increasing")
+    if preferred > PRODUCT_PREFERRED_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.preferredMaxBytes cannot relax the product "
+            f"preferred ceiling of {PRODUCT_PREFERRED_MAX_BYTES} bytes"
+        )
+    if normal > PRODUCT_NORMAL_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.normalMaxBytes cannot relax the product "
+            f"normal ceiling of {PRODUCT_NORMAL_MAX_BYTES} bytes"
+        )
+    if absolute > PRODUCT_ABSOLUTE_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.absoluteMaxBytes cannot relax the product "
+            f"absolute ceiling of {PRODUCT_ABSOLUTE_MAX_BYTES} bytes"
+        )
+    return preferred, normal, absolute
+
+
+def _tier(byte_size: int, budget: dict[str, object]) -> str:
+    preferred, normal, absolute = _browser_artifact_budget_limits(budget)
     if byte_size <= preferred:
         return "preferred"
     if byte_size <= normal:
@@ -398,11 +438,11 @@ def _preflight_artifact_metadata(
 ) -> None:
     """Validate immutable manifest metadata before hashing any artifact payload."""
 
-    _non_negative_int(
+    _positive_int(
         budget.get("maximumSegmentArtifactBytes"),
         field="browserArtifactBudget.maximumSegmentArtifactBytes",
     )
-    _non_negative_int(
+    _positive_int(
         split_plan.get("maximumGeneratedSegmentBytes"),
         field="splitPlan.maximumGeneratedSegmentBytes",
     )
@@ -419,7 +459,7 @@ def _preflight_artifact_metadata(
             )
 
         _canonical_sha256(raw_segment.get("sha256"), field=f"segments[{index}].sha256")
-        _non_negative_int(
+        _positive_int(
             raw_segment.get("browserArtifactBytes"),
             field=f"segments[{index}].browserArtifactBytes",
         )
@@ -437,7 +477,7 @@ def _preflight_artifact_metadata(
                     f"segments[{index}].externalData[{external_index}] must be an object"
                 )
             field_prefix = f"segments[{index}].externalData[{external_index}]"
-            _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
+            _positive_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             _canonical_sha256(raw_entry.get("sha256"), field=f"{field_prefix}.sha256")
 
         raw_budget_entry = raw_budget_segments[index]
@@ -451,7 +491,7 @@ def _preflight_artifact_metadata(
             != index
         ):
             raise ValueError(f"browserArtifactBudget.segments[{index}] index mismatch")
-        _non_negative_int(
+        _positive_int(
             raw_budget_entry.get("artifactBytes"),
             field=f"browserArtifactBudget.segments[{index}].artifactBytes",
         )
@@ -491,9 +531,19 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     if not isinstance(split_plan, dict):
         raise ValueError("split manifest splitPlan must be an object")
 
+    _, _, absolute_max = _browser_artifact_budget_limits(budget)
     budget_required_max = _positive_int(
         budget.get("requiredMaxBytes"), field="browserArtifactBudget.requiredMaxBytes"
     )
+    if budget_required_max > PRODUCT_PREFERRED_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.requiredMaxBytes cannot relax the product "
+            f"preferred ceiling of {PRODUCT_PREFERRED_MAX_BYTES} bytes"
+        )
+    if budget_required_max > absolute_max:
+        raise ValueError(
+            "browserArtifactBudget.requiredMaxBytes cannot exceed absoluteMaxBytes"
+        )
     split_required_max = _positive_int(
         split_plan.get("requiredMaxBytes"), field="splitPlan.requiredMaxBytes"
     )
@@ -557,7 +607,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                 field=location_field,
             )
 
-            expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
+            expected_bytes = _positive_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             observed_bytes, observed_sha = _measure_file(
                 external_path,
                 missing_message=f"segment external data not found: {external_path}",
@@ -586,7 +636,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             )
 
         artifact_bytes = graph_bytes + external_bytes
-        declared_artifact_bytes = _non_negative_int(
+        declared_artifact_bytes = _positive_int(
             raw_segment.get("browserArtifactBytes"),
             field=f"segments[{index}].browserArtifactBytes",
         )
@@ -612,7 +662,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             raise ValueError(f"browserArtifactBudget.segments[{index}] must be an object")
         if _non_negative_int(raw_budget_entry.get("index"), field=f"browserArtifactBudget.segments[{index}].index") != index:
             raise ValueError(f"browserArtifactBudget.segments[{index}] index mismatch")
-        budget_artifact_bytes = _non_negative_int(
+        budget_artifact_bytes = _positive_int(
             raw_budget_entry.get("artifactBytes"),
             field=f"browserArtifactBudget.segments[{index}].artifactBytes",
         )
@@ -647,7 +697,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         )
 
     maximum = max(int(report["artifactBytes"]) for report in reports)
-    declared_budget_maximum = _non_negative_int(
+    declared_budget_maximum = _positive_int(
         budget.get("maximumSegmentArtifactBytes"),
         field="browserArtifactBudget.maximumSegmentArtifactBytes",
     )
@@ -656,7 +706,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             "browserArtifactBudget.maximumSegmentArtifactBytes mismatch: "
             f"declared={declared_budget_maximum}, observed={maximum}"
         )
-    declared_plan_maximum = _non_negative_int(
+    declared_plan_maximum = _positive_int(
         split_plan.get("maximumGeneratedSegmentBytes"),
         field="splitPlan.maximumGeneratedSegmentBytes",
     )

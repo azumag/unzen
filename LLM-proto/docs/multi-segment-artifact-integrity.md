@@ -29,6 +29,21 @@ manifest:
   splitPlan.requiredMaxBytes)`);
 - relative artifact paths.
 
+Every integer manifest field validated by this gate is also bounded to
+JavaScript's safe-integer range. Segment and budget indices remain non-negative;
+artifact byte counts, aggregate byte maxima, browser budget limits, and required
+maxima must be positive. All accept at most `Number.MAX_SAFE_INTEGER`. Browser
+budget metadata also cannot relax the product ceilings (preferred 256 MiB,
+normal 512 MiB, absolute 1 GiB), and `browserArtifactBudget.requiredMaxBytes`
+cannot exceed either the product preferred ceiling or the manifest absolute
+ceiling. This matches the TypeScript consumer's positive safe-integer and product
+budget contract for measured artifact sizes and is enforced before payload
+measurement.
+Oversized JSON integers therefore fail during metadata preflight before any
+graph or external-data payload is hashed, keeping this Python verifier aligned
+with the TypeScript manifest consumer instead of accepting values that
+JavaScript cannot represent exactly.
+
 The split manifest is opened once as a regular file. The JSON bytes and
 `manifestSha256` are taken from that same descriptor, and descriptor metadata is
 checked again after the read. This prevents path replacement from making the

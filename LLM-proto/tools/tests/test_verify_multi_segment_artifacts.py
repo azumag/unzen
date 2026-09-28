@@ -206,7 +206,7 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
             manifest["segments"][0]["externalData"][0]["bytes"] = str(external_bytes)
             self._save_manifest(manifest_path, manifest)
             with self.subTest(field="externalData.bytes numeric string"):
-                with self.assertRaisesRegex(ValueError, "must be a non-negative integer"):
+                with self.assertRaisesRegex(ValueError, "must be a positive integer"):
                     verify_artifact_integrity(manifest_path)
 
             manifest_path = self._fixture(root)
@@ -215,7 +215,7 @@ class VerifyMultiSegmentArtifactsTest(unittest.TestCase):
             manifest["segments"][0]["browserArtifactBytes"] = float(artifact_bytes)
             self._save_manifest(manifest_path, manifest)
             with self.subTest(field="browserArtifactBytes float"):
-                with self.assertRaisesRegex(ValueError, "must be a non-negative integer"):
+                with self.assertRaisesRegex(ValueError, "must be a positive integer"):
                     verify_artifact_integrity(manifest_path)
 
             manifest_path = self._fixture(root)
