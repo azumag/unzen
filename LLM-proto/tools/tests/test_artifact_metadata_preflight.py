@@ -189,5 +189,65 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                 measure.assert_not_called()
 
 
+    def test_rejects_integers_above_javascript_safe_range_before_measurement(self) -> None:
+        oversized = 1 << 53
+        mutations = (
+            (
+                "segment artifact bytes",
+                lambda manifest: manifest["segments"][1].__setitem__(
+                    "browserArtifactBytes", oversized
+                ),
+                r"segments\[1\]\.browserArtifactBytes must be a non-negative integer within JavaScript safe range",
+            ),
+            (
+                "external bytes",
+                lambda manifest: manifest["segments"][1]["externalData"][0].__setitem__(
+                    "bytes", oversized
+                ),
+                r"segments\[1\]\.externalData\[0\]\.bytes must be a non-negative integer within JavaScript safe range",
+            ),
+            (
+                "budget entry bytes",
+                lambda manifest: manifest["browserArtifactBudget"]["segments"][1].__setitem__(
+                    "artifactBytes", oversized
+                ),
+                r"browserArtifactBudget\.segments\[1\]\.artifactBytes must be a non-negative integer within JavaScript safe range",
+            ),
+            (
+                "budget maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "maximumSegmentArtifactBytes", oversized
+                ),
+                r"browserArtifactBudget\.maximumSegmentArtifactBytes must be a non-negative integer within JavaScript safe range",
+            ),
+            (
+                "plan maximum",
+                lambda manifest: manifest["splitPlan"].__setitem__(
+                    "maximumGeneratedSegmentBytes", oversized
+                ),
+                r"splitPlan\.maximumGeneratedSegmentBytes must be a non-negative integer within JavaScript safe range",
+            ),
+            (
+                "required maximum",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "requiredMaxBytes", oversized
+                ),
+                r"browserArtifactBudget\.requiredMaxBytes must be a positive integer within JavaScript safe range",
+            ),
+        )
+
+        for label, mutate, expected_error in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                manifest_path = self._fixture(Path(tmp))
+                manifest = self._load(manifest_path)
+                mutate(manifest)
+                self._save(manifest_path, manifest)
+
+                with patch.object(verifier, "_measure_file") as measure:
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        verify_artifact_integrity(manifest_path)
+                measure.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

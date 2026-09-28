@@ -28,6 +28,7 @@ ASCII_CASE_FOLD = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "abcdefghijklmnopqrstuvwxyz",
 )
+JAVASCRIPT_MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
 def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
@@ -275,14 +276,28 @@ def _positive_int(raw: object, *, field: str) -> int:
     # booleans, or numeric strings with int(): values such as 12.9 or "12" can
     # otherwise normalize into an integer that happens to equal a measured file
     # size and incorrectly pass an integrity audit.
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
-        raise ValueError(f"{field} must be a positive integer")
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or raw <= 0
+        or raw > JAVASCRIPT_MAX_SAFE_INTEGER
+    ):
+        raise ValueError(
+            f"{field} must be a positive integer within JavaScript safe range"
+        )
     return raw
 
 
 def _non_negative_int(raw: object, *, field: str) -> int:
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-        raise ValueError(f"{field} must be a non-negative integer")
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or raw < 0
+        or raw > JAVASCRIPT_MAX_SAFE_INTEGER
+    ):
+        raise ValueError(
+            f"{field} must be a non-negative integer within JavaScript safe range"
+        )
     return raw
 
 
