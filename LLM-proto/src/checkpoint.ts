@@ -182,6 +182,11 @@ export class CheckpointStore {
         'checkpoint metadata.sequenceLength must be a non-negative safe integer',
       );
     }
+    if (sequenceLength !== shape[1]) {
+      throw new Error(
+        'checkpoint metadata.sequenceLength must match metadata.shape[1]',
+      );
+    }
 
     const timestamp = readCheckpointField(metadata, 'timestamp');
     if (
