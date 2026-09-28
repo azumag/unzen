@@ -17,6 +17,7 @@ import type { ArtifactResidencyLedger } from './artifact-residency-ledger.js';
 import type { WorkerId, WorkerInfo, SegmentConfig } from './types.js';
 import { WorkerStatus } from './types.js';
 import { WorkerPool } from './worker-pool.js';
+import { isContiguousLayerSuccessor } from './segment-layer-range.js';
 
 /**
  * A span is a contiguous range of segments assigned to a single worker.
@@ -64,7 +65,7 @@ export function snapshotSpanSegments(
   for (let index = 1; index < segmentSnapshot.length; index++) {
     const previous = segmentSnapshot[index - 1];
     const current = segmentSnapshot[index];
-    if (current.layerStart !== previous.layerEnd + 1) {
+    if (!isContiguousLayerSuccessor(previous.layerEnd, current.layerStart)) {
       throw new Error(
         `${owner} segment layer ranges must be contiguous: segment ${index - 1} ends at ` +
         `${previous.layerEnd}, segment ${index} starts at ${current.layerStart}`,
