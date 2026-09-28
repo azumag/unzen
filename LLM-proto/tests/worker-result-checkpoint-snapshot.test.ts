@@ -22,7 +22,7 @@ function validMetadata() {
   return {
     shape: [1, 1, 3],
     dtype: 'float16',
-    sequenceLength: 3,
+    sequenceLength: 1,
     timestamp: 123,
   };
 }
@@ -67,7 +67,7 @@ describe('worker-result checkpoint snapshot boundary', () => {
         return bump(reads, 'metadata.dtype') === 1 ? 'float16' : '';
       },
       get sequenceLength() {
-        return bump(reads, 'metadata.sequenceLength') === 1 ? 3 : -1;
+        return bump(reads, 'metadata.sequenceLength') === 1 ? 1 : -1;
       },
       get timestamp() {
         return bump(reads, 'metadata.timestamp') === 1 ? 123 : -1;
@@ -108,7 +108,7 @@ describe('worker-result checkpoint snapshot boundary', () => {
     expect(owned.metadata).toEqual({
       shape: [1, 1, 3],
       dtype: 'float16',
-      sequenceLength: 3,
+      sequenceLength: 1,
       timestamp: 123,
     });
     expectSingleReads(reads, [
@@ -132,7 +132,7 @@ describe('worker-result checkpoint snapshot boundary', () => {
     const metadata = {
       shape,
       dtype: 'float16',
-      sequenceLength: 3,
+      sequenceLength: 1,
       timestamp: 456,
     };
     const checkpoint = {
@@ -166,7 +166,7 @@ describe('worker-result checkpoint snapshot boundary', () => {
     expect(owned.metadata).toEqual({
       shape: [1, 1, 3],
       dtype: 'float16',
-      sequenceLength: 3,
+      sequenceLength: 1,
       timestamp: 456,
     });
 

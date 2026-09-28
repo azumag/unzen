@@ -109,10 +109,12 @@ checkpoint bound to all of the following:
 Only a result that passes those checks reaches `CheckpointStore`. The store then
 performs a second runtime validation before mutating durable prototype state:
 `hiddenStates` must be a non-empty `Uint8Array`; `metadata.shape` must contain
-positive safe-integer dimensions; `metadata.dtype` must be non-empty; and
-`sequenceLength` / `timestamp` must be non-negative safe integers. A malformed
-payload therefore cannot become a resume point even if it crossed a TypeScript
-or transport boundary with an asserted `Checkpoint` type.
+positive safe-integer dimensions; `metadata.dtype` must be non-empty;
+`sequenceLength` must be a non-negative safe integer equal to the captured
+`metadata.shape[1]`; and `timestamp` must be a non-negative safe integer. A
+malformed or internally contradictory payload therefore cannot become a resume
+point even if it crossed a TypeScript or transport boundary with an asserted
+`Checkpoint` type.
 
 Validation is followed by an ownership boundary. The store copies the hidden-state
 bytes, metadata object and shape array before saving them, and `get()` / `latest()`
@@ -166,6 +168,8 @@ work under #167.
 - A durable checkpoint must match the request and exact completed span boundary.
 - A durable checkpoint payload must pass `CheckpointStore` structural validation
   before it can mutate the resume store.
+- A durable checkpoint's `metadata.sequenceLength` must equal the captured
+  second tensor-shape dimension; contradictory resume geometry is rejected.
 - Store-owned checkpoint bytes and metadata must not share mutable references with
   producer inputs or consumer read results.
 - Checkpoint lookup, latest selection and cleanup use exact request identity; one

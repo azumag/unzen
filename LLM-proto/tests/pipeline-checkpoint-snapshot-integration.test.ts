@@ -29,7 +29,7 @@ function makeHostileCheckpoint(requestId: string, segmentIndex: number): Hostile
       return shape;
     },
     get sequenceLength() {
-      return bump('metadata.sequenceLength') === 1 ? 3 : -1;
+      return bump('metadata.sequenceLength') === 1 ? 1 : -1;
     },
     get timestamp() {
       return bump('metadata.timestamp') === 1 ? 123 : -1;
@@ -78,7 +78,7 @@ function expectStableCheckpoint(checkpoint: unknown, requestId: string): void {
     metadata: {
       shape: [1, 1, 3],
       dtype: 'float16',
-      sequenceLength: 3,
+      sequenceLength: 1,
       timestamp: 123,
     },
   });

@@ -108,6 +108,14 @@ describe('CheckpointStore runtime trust boundary', () => {
     expect(indexCalls.count).toBe(0);
   });
 
+  it('rejects a sequence length that contradicts the captured shape', () => {
+    const checkpoint = validCheckpoint();
+    checkpoint.metadata.sequenceLength = 2;
+
+    expect(() => CheckpointStore.snapshotValidatedCheckpoint(checkpoint))
+      .toThrow('checkpoint metadata.sequenceLength must match metadata.shape[1]');
+  });
+
   it('keeps valid checkpoints ownership-isolated', () => {
     const checkpoint = validCheckpoint();
     const snapshot = CheckpointStore.snapshotValidatedCheckpoint(checkpoint);
