@@ -153,6 +153,8 @@ work under #167.
 - A stale same-index bundle digest rejects the heartbeat atomically and cannot
   replace the previous residency snapshot.
 - Segment indexes are contiguous `0..n-1`.
+- Adjacent layer ranges use a safe-integer successor check; a range ending at
+  `Number.MAX_SAFE_INTEGER` cannot have another representable contiguous segment.
 - Artifact byte sizes are safe positive integers and represent the complete
   browser bundle for that segment, including external weights.
 - Bundle component bytes must sum exactly to the logical artifact byte size;

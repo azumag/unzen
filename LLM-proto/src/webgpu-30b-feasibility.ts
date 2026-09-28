@@ -1,6 +1,7 @@
 import type { SegmentArtifact, SegmentedModelManifest } from './model-manifest.js';
 import { parseQuantizationBits } from './model-manifest.js';
 import { createFixtureModelManifest } from './model-manifest-fixtures.js';
+import { isContiguousLayerSuccessor } from './segment-layer-range.js';
 
 export type WebGpuRuntimeName = 'transformers-js-v4' | 'webllm' | 'onnxruntime-web';
 export type FeasibilityStatus = 'pass' | 'fail';
@@ -388,7 +389,7 @@ function evaluateSegmentGate(segments: readonly SegmentArtifact[]) {
   const pass = segments.length > 0 && segments.every((segment, index) => (
     segment.index === index &&
     segment.layerStart <= segment.layerEnd &&
-    (index === 0 || segment.layerStart === segments[index - 1].layerEnd + 1)
+    (index === 0 || isContiguousLayerSuccessor(segments[index - 1].layerEnd, segment.layerStart))
   ));
   return {
     name: 'segment-layer-boundaries',

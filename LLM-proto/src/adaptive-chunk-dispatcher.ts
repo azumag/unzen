@@ -7,6 +7,7 @@ import {
   type WorkerId,
 } from './types.js';
 import { AllowlistedPrototypeTransport } from './two-worker-prototype.js';
+import { isContiguousLayerSuccessor } from './segment-layer-range.js';
 
 export interface CachedArtifactIdentity {
   readonly segmentIndex: number;
@@ -191,7 +192,7 @@ export class AdaptiveChunkDispatcher {
     for (let index = 1; index < segments.length; index++) {
       const previous = segments[index - 1];
       const current = segments[index];
-      if (current.layerStart !== previous.layerEnd + 1) {
+      if (!isContiguousLayerSuccessor(previous.layerEnd, current.layerStart)) {
         throw new Error(
           `AdaptiveChunkDispatcher segment layer ranges must be contiguous: ` +
           `segment ${index - 1} ends at ${previous.layerEnd}, ` +
