@@ -188,6 +188,22 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                         verify_artifact_integrity(manifest_path)
                 measure.assert_not_called()
 
+    def test_rejects_non_monotonic_budget_limits_before_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = self._fixture(Path(tmp))
+            manifest = self._load(manifest_path)
+            manifest["browserArtifactBudget"]["preferredMaxBytes"] = 1025
+            manifest["browserArtifactBudget"]["normalMaxBytes"] = 1024
+            self._save(manifest_path, manifest)
+
+            with patch.object(verifier, "_measure_file") as measure:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "browser artifact budget limits must be monotonically increasing",
+                ):
+                    verify_artifact_integrity(manifest_path)
+            measure.assert_not_called()
+
     def test_rejects_integers_above_javascript_safe_range_before_measurement(self) -> None:
         oversized = 1 << 53
         mutations = (
