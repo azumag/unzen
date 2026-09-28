@@ -23,6 +23,7 @@ import {
   type SegmentedModelManifest,
 } from './model-manifest.js';
 import { snapshotValidatedModelManifest } from './model-manifest-snapshot.js';
+import { isContiguousLayerSuccessor } from './segment-layer-range.js';
 
 export type ModelManifestValidationStatus = 'valid' | 'invalid';
 
@@ -678,7 +679,7 @@ function validateSegments(
   for (let index = 1; index < sorted.length; index++) {
     const previous = sorted[index - 1];
     const current = sorted[index];
-    if (Number(current.layerStart) !== Number(previous.layerEnd) + 1) {
+    if (!isContiguousLayerSuccessor(Number(previous.layerEnd), Number(current.layerStart))) {
       issue(
         issues,
         'non-contiguous-layer-ranges',

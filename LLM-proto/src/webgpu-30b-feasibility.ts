@@ -133,7 +133,7 @@ export function evaluateWebGpu30BFeasibility(
   ));
   const scaleUpGates = [
     evaluateParameterGate(model.parameterCount / 1e9),
-    evaluateSegmentGate(model.segments),
+    evaluateSegmentGate(model.segments, model.totalLayers),
     evaluateQuantizationGate(quantizationBits),
     evaluateMemoryGate(segments),
     evaluateLoadGate(manifest.dispatcherAssumptions),
@@ -221,6 +221,7 @@ function validateFeasibilityManifestRuntimeEnvelope(
   assertNonEmptyString(model.manifestDigest, 'model.manifestDigest');
   assertPositiveFiniteNumber(model.parameterCount, 'model.parameterCount');
   assertNonEmptyString(model.quantization, 'model.quantization');
+  assertPositiveSafeInteger(model.totalLayers, 'model.totalLayers');
   if (!Array.isArray(model.segments)) {
     throw new Error('model.segments must be an array');
   }
@@ -385,18 +386,28 @@ function evaluateParameterGate(parameterCountB: number) {
   };
 }
 
-function evaluateSegmentGate(segments: readonly SegmentArtifact[]) {
-  const pass = segments.length > 0 && segments.every((segment, index) => (
-    segment.index === index &&
-    segment.layerStart <= segment.layerEnd &&
-    (index === 0 || isContiguousLayerSuccessor(segments[index - 1].layerEnd, segment.layerStart))
-  ));
+function evaluateSegmentGate(
+  segments: readonly SegmentArtifact[],
+  totalLayers: number,
+) {
+  const orderedSegments = [...segments].sort((left, right) => left.index - right.index);
+  const pass = orderedSegments.length > 0 &&
+    orderedSegments[0].layerStart === 0 &&
+    orderedSegments[orderedSegments.length - 1].layerEnd === totalLayers - 1 &&
+    orderedSegments.every((segment, index) => (
+      segment.index === index &&
+      segment.layerStart <= segment.layerEnd &&
+      (index === 0 || isContiguousLayerSuccessor(
+        orderedSegments[index - 1].layerEnd,
+        segment.layerStart,
+      ))
+    ));
   return {
     name: 'segment-layer-boundaries',
     status: pass ? 'pass' as const : 'fail' as const,
     reason: pass
-      ? 'contiguous layer segments with stable indexes are declared'
-      : 'segments must be contiguous layer ranges with stable indexes',
+      ? 'contiguous layer segments with stable indexes cover the declared model'
+      : 'segments must cover model layers contiguously with stable indexes',
   };
 }
 
