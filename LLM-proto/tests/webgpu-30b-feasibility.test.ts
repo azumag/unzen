@@ -157,7 +157,70 @@ describe('WebGPU 30B partial inference feasibility gate', () => {
 
     expect(report.status).toBe('fail');
     expect(report.failureReasons).toContain(
-      'segment-layer-boundaries: segments must be contiguous layer ranges with stable indexes',
+      'segment-layer-boundaries: segments must cover model layers contiguously with stable indexes',
     );
   });
+
+  it('accepts shuffled segment declarations without mutating caller order', () => {
+    const base = createDefault30BFeasibilityManifest();
+    const shuffledSegments = [...base.model.segments].reverse();
+    const originalIndexes = shuffledSegments.map((segment) => segment.index);
+    const manifest: WebGpu30BFeasibilityManifest = {
+      ...base,
+      model: {
+        ...base.model,
+        segments: shuffledSegments,
+      },
+    };
+
+    const report = evaluateWebGpu30BFeasibility(manifest);
+
+    expect(report.status).toBe('pass');
+    expect(shuffledSegments.map((segment) => segment.index)).toEqual(originalIndexes);
+  });
+
+  it('fails the segment gate when declared ranges do not cover the whole model', () => {
+    const base = createDefault30BFeasibilityManifest();
+    const nonZeroStart = evaluateWebGpu30BFeasibility({
+      ...base,
+      model: {
+        ...base.model,
+        segments: base.model.segments.map((segment, index) => index === 0
+          ? { ...segment, layerStart: 1 }
+          : segment),
+      },
+    });
+    const incompleteTail = evaluateWebGpu30BFeasibility({
+      ...base,
+      model: {
+        ...base.model,
+        segments: base.model.segments.map((segment, index) =>
+          index === base.model.segments.length - 1
+            ? { ...segment, layerEnd: segment.layerEnd - 1 }
+            : segment),
+      },
+    });
+
+    for (const report of [nonZeroStart, incompleteTail]) {
+      expect(report.status).toBe('fail');
+      expect(report.failureReasons).toContain(
+        'segment-layer-boundaries: segments must cover model layers contiguously with stable indexes',
+      );
+    }
+  });
+
+  it('rejects invalid model.totalLayers before segment geometry arithmetic', () => {
+    const base = createDefault30BFeasibilityManifest();
+
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      model: { ...base.model, totalLayers: 0 },
+    })).toThrow('model.totalLayers must be a positive safe integer');
+
+    expect(() => evaluateWebGpu30BFeasibility({
+      ...base,
+      model: { ...base.model, totalLayers: Number.MAX_SAFE_INTEGER + 1 },
+    })).toThrow('model.totalLayers must be a positive safe integer');
+  });
+
 });

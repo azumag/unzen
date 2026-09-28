@@ -15,7 +15,7 @@ consistent. Manual browser validation remains a separate local gate.
 |---|---|
 | Model class | 28B-34B parameters |
 | Quantization | 4-bit or smaller for the first 30B WebGPU attempt |
-| Segment count | Contiguous layer ranges declared by the `SegmentedModelManifest` (the 30B example uses 8) |
+| Segment count | Stable indexes covering exactly `0..totalLayers-1`; declaration order is not semantically meaningful (the 30B example uses 8) |
 | Segment size | Each segment must fit the declared worker memory budget |
 | Dispatcher fit | Each segment must fit `WorkerTelemetry.vramFreeMB` used by `AdaptiveChunkDispatcher` |
 | Checkpoint tensor | `[batchSize, sequenceLength, hiddenSize]` plus dtype |
@@ -68,9 +68,11 @@ The runtime envelope requires:
 
 - a non-null, non-array top-level manifest and model object;
 - non-empty model identity, revision, manifest digest, and quantization strings,
-  plus a positive finite parameter count;
+  plus a positive finite parameter count and a positive safe-integer `totalLayers`;
 - an array of segment objects whose indexes/layer bounds are non-negative safe
-  integers and whose memory estimates are positive finite numbers;
+  integers and whose memory estimates are positive finite numbers; the geometry
+  gate sorts a copy by `index`, requires complete `0..totalLayers-1` coverage,
+  and never mutates the caller's segment order;
 - a checkpoint-tensor object with three positive safe-integer dimensions and a
   `float16` or `float32` dtype;
 - finite worker/transfer budgets and dispatcher assumptions, with a strictly

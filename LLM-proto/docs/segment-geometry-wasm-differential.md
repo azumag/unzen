@@ -36,7 +36,7 @@ Number.isSafeInteger(value)
 1 <= totalLayers
 ```
 
-Contiguity (`previous.layerEnd + 1`) and completeness (`totalLayers - 1`) arithmetic runs only after every topology value has passed that safe-integer gate. This avoids precision-collapse cases above `Number.MAX_SAFE_INTEGER`, where distinct mathematical layer numbers can become the same JavaScript `number` (for example, an unsafe `x` can satisfy `x + 1 === x`). Such inputs fail closed before topology arithmetic.
+Contiguity uses the shared `isContiguousLayerSuccessor()` safe-integer predicate, while completeness compares the final layer with `totalLayers - 1` only after every topology value has passed the safe-integer gate. This avoids precision-collapse cases above `Number.MAX_SAFE_INTEGER`, where distinct mathematical layer numbers can become the same JavaScript `number` (for example, an unsafe `x` can satisfy `x + 1 === x`). Such inputs fail closed before topology arithmetic.
 
 The Wasm differential worker deliberately uses a narrower execution domain. Before calling Wasm, all geometry integers must additionally satisfy:
 
