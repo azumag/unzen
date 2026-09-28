@@ -176,6 +176,21 @@ describe('CheckpointStore', () => {
       expect(store.size).toBe(0);
     });
 
+    it('rejects sequence length that disagrees with the captured tensor shape', () => {
+      const base = makeCheckpoint(reqId, 0);
+      const checkpoint: Checkpoint = {
+        ...base,
+        metadata: {
+          ...base.metadata,
+          sequenceLength: 127,
+        },
+      };
+
+      expect(() => store.save(checkpoint))
+        .toThrow('checkpoint metadata.sequenceLength must match metadata.shape[1]');
+      expect(store.size).toBe(0);
+    });
+
     it('rejects invalid timestamp before mutating the store', () => {
       const base = makeCheckpoint(reqId, 0);
       const checkpoint: Checkpoint = {
