@@ -308,6 +308,34 @@ describe('real two-browser split Coordinator harness', () => {
     }
   });
 
+  it('rejects boundary tensor geometry before unsafe integer multiplication', async () => {
+    const { baseUrl } = await startServer();
+    const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
+
+    const overflowCases = [
+      {
+        runId: 'tensor-dimension-product-overflow',
+        tensor: { ...tensors[0], dims: [Number.MAX_SAFE_INTEGER, 2] },
+      },
+      {
+        runId: 'tensor-byte-product-overflow',
+        tensor: { ...tensors[0], type: 'float64', dims: [Number.MAX_SAFE_INTEGER] },
+      },
+    ];
+
+    for (const { runId, tensor } of overflowCases) {
+      const response = await postCheckpoint(baseUrl, runId, registerA.cookie, {
+        tensors: [tensor, tensors[1]],
+      });
+      expect(response.response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        error: 'invalid-boundary-tensor',
+        index: 0,
+        reason: 'tensor-size-overflow',
+      });
+    }
+  });
+
   it('rejects incomplete or numerically invalid pass results', async () => {
     const { baseUrl } = await startServer();
     const registerA = await registerWorker(baseUrl, 'browser-a', 'segment0');
