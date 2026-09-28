@@ -159,6 +159,34 @@ describe('Workers Coordinator prototype gate', () => {
     );
   });
 
+  it('fails closed before finite fan-out transfer totals exceed the safe integer range', () => {
+    const segments = makeSegments(3);
+    const assignments = createAssignmentFixture();
+    expect(assignments.length).toBeGreaterThanOrEqual(2);
+    const overflowAssignments = assignments.map((assignment, index) => ({
+      ...assignment,
+      checkpointTransferMs:
+        index === 0
+          ? Number.MAX_SAFE_INTEGER
+          : index === 1
+            ? 1
+            : 0,
+    }));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...createDefaultWorkersCoordinatorManifest(overflowAssignments, segments),
+      assignments: overflowAssignments,
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'assignment checkpoint transfer total exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
   it('fails when retry resume impact exceeds the Workers scale-up gate', () => {
     const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
     const manifest: WorkersCoordinatorPrototypeManifest = {

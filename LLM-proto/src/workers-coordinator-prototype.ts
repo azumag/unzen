@@ -130,6 +130,10 @@ export function runWorkersCoordinatorPrototype(
     throw new Error('Workers Coordinator prototype requires AdaptiveChunkDispatcher assignments');
   }
 
+  // Imported assignment reports are a runtime boundary. Validate and aggregate
+  // transfer timing before recording any simulated Coordinator/CDN activity so
+  // precision loss cannot turn into accepted latency evidence.
+  const fanoutLatencyMs = computeAssignmentFanoutLatencyMs(manifest.assignments);
   const transportStartIndex = transport.connectionCount;
   const coordinatorUrl = manifest.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
   const cdnUrl = manifest.cdnUrl ?? DEFAULT_CDN_URL;
@@ -154,7 +158,6 @@ export function runWorkersCoordinatorPrototype(
   }
 
   const retryResumeImpact = state.computeRetryResumeImpact();
-  const fanoutLatencyMs = state.computeFanoutLatencyMs();
   const fanoutLatencySamplesMs = state.computeHeartbeatFanoutLatencySamplesMs();
   const p95FanoutLatencyMs = percentile(fanoutLatencySamplesMs, 95);
   const directWorkerNetworking = state.rejectDirectWorkerNetworking();
@@ -248,14 +251,6 @@ class SimulatedCoordinatorDurableObject {
     };
   }
 
-  computeFanoutLatencyMs(): number {
-    const assignmentLatency = this.manifest.assignments.reduce(
-      (sum, assignment) => sum + assignment.checkpointTransferMs,
-      0,
-    );
-    return Math.round(assignmentLatency / Math.max(1, this.manifest.assignments.length));
-  }
-
   computeHeartbeatFanoutLatencySamplesMs(): readonly number[] {
     return this.registeredWorkers.map((worker, index) =>
       worker.heartbeatAtMs - this.manifest.receivedAtMs + index * 7
@@ -269,6 +264,43 @@ class SimulatedCoordinatorDurableObject {
       reason: 'worker-to-worker networking is outside the Coordinator/CDN allowlist',
     };
   }
+}
+
+function computeAssignmentFanoutLatencyMs(
+  assignments: readonly AdaptiveChunkAssignmentReport[],
+): number {
+  let hasUnboundedTransfer = false;
+
+  // Keep the existing Infinity sentinel for a worker with zero checkpoint
+  // throughput, while rejecting every malformed finite timing before summing.
+  for (let index = 0; index < assignments.length; index++) {
+    const transferMs = assignments[index].checkpointTransferMs;
+    if (transferMs === Number.POSITIVE_INFINITY) {
+      hasUnboundedTransfer = true;
+      continue;
+    }
+    if (!Number.isSafeInteger(transferMs) || transferMs < 0) {
+      throw new Error(
+        `assignment ${index} checkpointTransferMs must be a non-negative safe integer or Infinity`,
+      );
+    }
+  }
+
+  if (hasUnboundedTransfer) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let totalTransferMs = 0;
+  for (const assignment of assignments) {
+    if (totalTransferMs > Number.MAX_SAFE_INTEGER - assignment.checkpointTransferMs) {
+      throw new Error(
+        'assignment checkpoint transfer total exceeds JavaScript safe integer range',
+      );
+    }
+    totalTransferMs += assignment.checkpointTransferMs;
+  }
+
+  return Math.round(totalTransferMs / Math.max(1, assignments.length));
 }
 
 function selectFailureReason(
