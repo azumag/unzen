@@ -157,15 +157,15 @@ function validateBoundaryTensors(tensors) {
       if (!Number.isSafeInteger(dimension) || dimension <= 0) {
         return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'invalid-dimension' };
       }
-      elementCount *= dimension;
-      if (!Number.isSafeInteger(elementCount)) {
+      if (elementCount > Math.floor(Number.MAX_SAFE_INTEGER / dimension)) {
         return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'tensor-size-overflow' };
       }
+      elementCount *= dimension;
     }
-    const expectedBytes = elementCount * elementBytes;
-    if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0) {
+    if (elementCount > Math.floor(Number.MAX_SAFE_INTEGER / elementBytes)) {
       return { ok: false, status: 400, error: 'invalid-boundary-tensor', index, reason: 'tensor-size-overflow' };
     }
+    const expectedBytes = elementCount * elementBytes;
     if (!Number.isSafeInteger(tensor.bytes) || tensor.bytes !== expectedBytes) {
       return {
         ok: false,
