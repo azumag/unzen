@@ -15,3 +15,7 @@ Before opening or hashing the pinned external-data payload, preparation now vali
 The validated values are copied into owned snapshots. Payload materialization, temporary graph construction, and manifest emission use those snapshots rather than rereading the caller-owned layout dictionaries after the expensive source hash begins.
 
 This is fail-fast reliability hardening only. It does not select the five-way layout, change the pinned model or payload identity, change the browser experiment, or add new real WebGPU evidence.
+
+## Runtime evidence total
+
+The follow-on five-way browser runtime report treats `fullPhysicalDependencyBytes` as an exact evidence field. It reuses the shared browser exact-byte summation helper, requires every physical-artifact byte count to be a non-negative safe integer, and rejects the aggregate before an addition could exceed `Number.MAX_SAFE_INTEGER`. This hardening does not change the pinned five-way geometry or promote the diagnostic into a readiness decision.
