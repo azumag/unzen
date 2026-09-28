@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   argmaxLastLogits,
+  checkedTensorElementCount,
   normalizeTokenizerTokenIds,
   validateCheckpointBoundaryNames,
 } from '../browser-harness/webgpu-2b-split/runtime-validation.js';
@@ -45,6 +46,26 @@ describe('browser split runtime validation', () => {
   };
 
   const validTensors = () => [tensorWire('boundary-a'), tensorWire('boundary-b')];
+
+  it('computes tensor element counts without crossing the safe-integer boundary', () => {
+    expect(checkedTensorElementCount(
+      [Number.MAX_SAFE_INTEGER, 1],
+      { label: 'test tensor' },
+    )).toBe(Number.MAX_SAFE_INTEGER);
+    expect(() => checkedTensorElementCount(
+      [Number.MAX_SAFE_INTEGER, 2],
+      { label: 'test tensor' },
+    )).toThrow(/overflows safe integer range/);
+  });
+
+  it('allows zero-sized tensor geometry only when explicitly requested', () => {
+    expect(() => checkedTensorElementCount([1, 0, 4], { label: 'test tensor' }))
+      .toThrow(/invalid dimension/);
+    expect(checkedTensorElementCount(
+      [1, 0, Number.MAX_SAFE_INTEGER],
+      { label: 'empty KV tensor', allowZero: true },
+    )).toBe(0);
+  });
 
   it('accepts actual numeric and safe-bigint tokenizer token IDs', () => {
     expect(normalizeTokenizerTokenIds({ input_ids: [0, 1, Number.MAX_SAFE_INTEGER] }))
@@ -232,6 +253,18 @@ describe('browser split runtime validation', () => {
       tensorWire('boundary-b'),
     ]), manifest)).toThrow(/overflows/);
     expect(() => validateCheckpointBoundaryNames(checkpoint([
+      tensorWire('boundary-a', {
+        type: 'float64',
+        dims: [Math.floor(Number.MAX_SAFE_INTEGER / 8) + 1],
+      }),
+      tensorWire('boundary-b'),
+    ]), {
+      boundary: {
+        dtype: 'float64',
+        tensors: manifest.boundary.tensors,
+      },
+    })).toThrow(/overflows/);
+    expect(() => validateCheckpointBoundaryNames(checkpoint([
       tensorWire('boundary-a', { bytes: 31 }), tensorWire('boundary-b'),
     ]), manifest)).toThrow(/declared byte length mismatch/);
   });
@@ -274,6 +307,14 @@ describe('browser split runtime validation', () => {
       dims: [1, 1, 3],
       data: new Float32Array([1, invalid, 2]),
     })).toThrow(/non-finite logit/);
+  });
+
+  it('rejects overflowing logits geometry before multiplying dimensions', () => {
+    expect(() => argmaxLastLogits({
+      type: 'float32',
+      dims: [1, Number.MAX_SAFE_INTEGER, 2],
+      data: [],
+    })).toThrow(/logits shape size overflows safe integer range/);
   });
 
   it('rejects coercible logits dimensions instead of normalizing them', () => {
