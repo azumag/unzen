@@ -17,6 +17,7 @@ import {
 } from './artifact-budget.js';
 import {
   argmaxLastLogits,
+  checkedTensorElementCount,
   normalizeTokenizerTokenIds,
   validateCheckpointBoundaryNames,
 } from './runtime-validation.js';
@@ -207,7 +208,10 @@ function emptyTensorFromMetadata(meta, sequenceLength) {
     axis,
     sequenceLength,
   }));
-  const length = dims.reduce((product, value) => product * value, 1);
+  const length = checkedTensorElementCount(dims, {
+    label: `model input ${meta.name ?? 'unknown'} shape`,
+    allowZero: true,
+  });
   return new ort.Tensor(meta.type, typedArrayFor(meta.type, length), dims);
 }
 
