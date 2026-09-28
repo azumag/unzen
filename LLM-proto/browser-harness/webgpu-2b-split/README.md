@@ -22,3 +22,7 @@ The browser worker registration contract remains defined in `runtime-validation.
 Result payloads use an explicit boolean `resumedFromCheckpoint` field. The browser runner emits `false` for the primary `segment1` role and `true` for `standby`. The Coordinator requires an actual JSON boolean, binds it to the authenticated registered worker role before mutating result state, and includes the exact value in the immutable result digest. A primary result claiming resume or a standby result denying resume is rejected as `result-resume-role-mismatch`; missing or coercible values are rejected as malformed result payloads.
 
 This field is evidence metadata only. Synthetic Coordinator coverage does not by itself prove physical worker-loss/resume behavior; that still requires the distinct-browser runtime evidence tracked by issue #167.
+
+## Exact byte evidence
+
+Browser-side evidence totals that are intended to be exact use `exact-byte-sum.js`. The helper accepts only non-negative safe integers and checks `Number.MAX_SAFE_INTEGER - value` before every addition, so an aggregate fails closed before JavaScript integer precision can be lost. `runner-v3.js` uses this contract for both the locally produced segment-0 boundary total and the Coordinator-returned checkpoint boundary total. The endpoint five-way WebGPU diagnostic reuses the same browser helper for its full physical dependency byte total.
