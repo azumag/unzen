@@ -35,7 +35,7 @@ This single-read boundary also applies to accessor- or Proxy-backed options. A g
 - `loadBudgetRatio` must be finite and inside `(0, 1]`.
 - `longLivedWorkerMs` must be finite and non-negative. Zero is valid and makes every otherwise-eligible worker immediately satisfy the age threshold.
 - `configuredVramLimitMB` must be a JavaScript `number` at runtime and must be non-negative. Finite values impose a cap and positive infinity keeps the existing unlimited default. Only an omitted/`undefined` option selects that default; `null`, strings, booleans, objects, arrays, symbols, and other non-number values are rejected rather than coerced or treated as unlimited.
-- `checkpointBytes` must be a positive finite number.
+- `checkpointBytes` must be a positive safe integer. It is an exact byte count reported as `checkpointTransferBytes`, not a continuous-valued measurement.
 
 These guards keep `NaN`, invalid infinities, zero divisors, negative limits, and malformed runtime values out of VRAM-fit, lifetime, checkpoint-transfer, and score calculations. In particular, `configuredVramLimitMB` is checked for its runtime type before any numeric comparison, so values such as a `Symbol` cannot escape the canonical validation error through JavaScript coercion behavior.
 
@@ -49,7 +49,7 @@ This matters because TypeScript `readonly` annotations do not prevent runtime mu
 
 Every registration and heartbeat is copied into a dispatcher-owned frozen telemetry snapshot before validation and cache synchronization. The snapshot includes a copied/frozen `cacheHits` array and, when present, copied/frozen `cacheArtifacts` identity objects and array. Validation, residency synchronization, scoring, load gates, and stored worker state therefore all refer to the same accepted snapshot.
 
-The snapshot boundary reads each telemetry root field used by the dispatcher exactly once. `cacheHits` and optional `cacheArtifacts` are first bound to one captured container reference; their top-level members are then copied by fixed numeric position before any cache-artifact identity field is read. Each identity's `segmentIndex` and `sha256` is captured exactly once and the owned identity is frozen from those captured primitives. Scalar telemetry fields are likewise captured once and the subsequent numeric validators operate only on those captured values.
+The snapshot boundary reads each telemetry root field used by the dispatcher exactly once. `cacheHits` and optional once-captured `cacheArtifacts` are first bound to one captured container reference; their top-level members are then copied by fixed numeric position before any cache-artifact identity field is read. Each identity's `segmentIndex` and `sha256` is captured exactly once and the owned identity is frozen from those captured primitives. Scalar telemetry fields are likewise captured once and the subsequent numeric validators operate only on those captured values.
 
 This ordering matters for accessor- or Proxy-backed runtime input. A getter cannot return one collection during shape validation and a different collection during the copy, an early cache-artifact identity getter cannot replace a later array member before it is selected for validation, and a valid-first / altered-second identity getter cannot make the stored snapshot differ from the value whose runtime type was accepted. Collection membership is detached before scalar getters are evaluated, so a scalar getter that mutates the caller's cache arrays cannot retroactively change the accepted cache inventory.
 
