@@ -30,10 +30,11 @@ manifest:
 - relative artifact paths.
 
 Every integer manifest field validated by this gate is also bounded to
-JavaScript's safe-integer range. Non-negative fields accept at most
-`Number.MAX_SAFE_INTEGER`, while positive-only fields retain their stricter
-lower bound. This includes the preferred/normal/absolute browser budget limits
-and both required maxima, which are validated before payload measurement.
+JavaScript's safe-integer range. Segment and budget indices remain non-negative;
+artifact byte counts, aggregate byte maxima, browser budget limits, and required
+maxima must be positive. All accept at most `Number.MAX_SAFE_INTEGER`. This
+matches the TypeScript consumer's positive safe-integer contract for measured
+artifact sizes and is enforced before payload measurement.
 Oversized JSON integers therefore fail during metadata preflight before any
 graph or external-data payload is hashed, keeping this Python verifier aligned
 with the TypeScript manifest consumer instead of accepting values that

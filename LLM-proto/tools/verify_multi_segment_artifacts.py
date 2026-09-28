@@ -421,11 +421,11 @@ def _preflight_artifact_metadata(
     """Validate immutable manifest metadata before hashing any artifact payload."""
 
     _browser_artifact_budget_limits(budget)
-    _non_negative_int(
+    _positive_int(
         budget.get("maximumSegmentArtifactBytes"),
         field="browserArtifactBudget.maximumSegmentArtifactBytes",
     )
-    _non_negative_int(
+    _positive_int(
         split_plan.get("maximumGeneratedSegmentBytes"),
         field="splitPlan.maximumGeneratedSegmentBytes",
     )
@@ -442,7 +442,7 @@ def _preflight_artifact_metadata(
             )
 
         _canonical_sha256(raw_segment.get("sha256"), field=f"segments[{index}].sha256")
-        _non_negative_int(
+        _positive_int(
             raw_segment.get("browserArtifactBytes"),
             field=f"segments[{index}].browserArtifactBytes",
         )
@@ -460,7 +460,7 @@ def _preflight_artifact_metadata(
                     f"segments[{index}].externalData[{external_index}] must be an object"
                 )
             field_prefix = f"segments[{index}].externalData[{external_index}]"
-            _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
+            _positive_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             _canonical_sha256(raw_entry.get("sha256"), field=f"{field_prefix}.sha256")
 
         raw_budget_entry = raw_budget_segments[index]
@@ -474,7 +474,7 @@ def _preflight_artifact_metadata(
             != index
         ):
             raise ValueError(f"browserArtifactBudget.segments[{index}] index mismatch")
-        _non_negative_int(
+        _positive_int(
             raw_budget_entry.get("artifactBytes"),
             field=f"browserArtifactBudget.segments[{index}].artifactBytes",
         )
@@ -580,7 +580,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
                 field=location_field,
             )
 
-            expected_bytes = _non_negative_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
+            expected_bytes = _positive_int(raw_entry.get("bytes"), field=f"{field_prefix}.bytes")
             observed_bytes, observed_sha = _measure_file(
                 external_path,
                 missing_message=f"segment external data not found: {external_path}",
@@ -609,7 +609,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             )
 
         artifact_bytes = graph_bytes + external_bytes
-        declared_artifact_bytes = _non_negative_int(
+        declared_artifact_bytes = _positive_int(
             raw_segment.get("browserArtifactBytes"),
             field=f"segments[{index}].browserArtifactBytes",
         )
@@ -635,7 +635,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             raise ValueError(f"browserArtifactBudget.segments[{index}] must be an object")
         if _non_negative_int(raw_budget_entry.get("index"), field=f"browserArtifactBudget.segments[{index}].index") != index:
             raise ValueError(f"browserArtifactBudget.segments[{index}] index mismatch")
-        budget_artifact_bytes = _non_negative_int(
+        budget_artifact_bytes = _positive_int(
             raw_budget_entry.get("artifactBytes"),
             field=f"browserArtifactBudget.segments[{index}].artifactBytes",
         )
@@ -670,7 +670,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
         )
 
     maximum = max(int(report["artifactBytes"]) for report in reports)
-    declared_budget_maximum = _non_negative_int(
+    declared_budget_maximum = _positive_int(
         budget.get("maximumSegmentArtifactBytes"),
         field="browserArtifactBudget.maximumSegmentArtifactBytes",
     )
@@ -679,7 +679,7 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
             "browserArtifactBudget.maximumSegmentArtifactBytes mismatch: "
             f"declared={declared_budget_maximum}, observed={maximum}"
         )
-    declared_plan_maximum = _non_negative_int(
+    declared_plan_maximum = _positive_int(
         split_plan.get("maximumGeneratedSegmentBytes"),
         field="splitPlan.maximumGeneratedSegmentBytes",
     )
