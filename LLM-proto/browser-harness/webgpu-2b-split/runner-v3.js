@@ -7,6 +7,7 @@ import {
   readResponseBytesBounded,
 } from './artifact-cache.js';
 import { readBrowserRuntimeQueryConfig } from './browser-runtime-config.js';
+import { exactByteSum } from './exact-byte-sum.js';
 import { readCheckpointRelayReceipt } from './checkpoint-receipt.js';
 import { readCheckpointPayloadResponse } from './checkpoint-payload-response.js';
 import { readResultAcceptanceReceipt } from './result-acceptance-receipt.js';
@@ -361,7 +362,10 @@ async function runSegment0(manifest, manifestDigest, signal) {
     const executionMs = performance.now() - started;
     throwIfAborted(signal);
     const tensors = boundaryNames.map((name) => tensorToWire(name, outputs[name]));
-    const tensorBytes = tensors.reduce((sum, tensor) => sum + tensor.bytes, 0);
+    const tensorBytes = exactByteSum(
+      tensors.map((tensor) => tensor.bytes),
+      'segment 0 boundary tensor bytes',
+    );
     await prepared.sessionOwner.release();
     throwIfAborted(signal);
     log(`segment0 complete: ${executionMs.toFixed(1)}ms, boundary=${tensorBytes} bytes`);
@@ -461,7 +465,10 @@ async function runSegment1(manifest, manifestDigest, signal) {
       segment1Role: role,
       resumedFromCheckpoint: role === 'standby',
       inputTokenIds: tokenIds,
-      boundaryBytes: checkpoint.tensors.reduce((sum, tensor) => sum + Number(tensor.bytes), 0),
+      boundaryBytes: exactByteSum(
+        checkpoint.tensors.map((tensor) => tensor.bytes),
+        'checkpoint boundary tensor bytes',
+      ),
       segment0ExecutionMs: checkpoint.segmentExecutionMs,
       segment1ExecutionMs: executionMs,
       artifactCache: {
