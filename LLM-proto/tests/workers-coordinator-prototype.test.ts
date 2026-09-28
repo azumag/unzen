@@ -159,6 +159,42 @@ describe('Workers Coordinator prototype gate', () => {
     );
   });
 
+  it('rejects the dispatcher unbounded-transfer sentinel before transport activity', () => {
+    const segments = makeSegments(2);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments,
+      configuredVramLimitMB: 2_100,
+    });
+    const zeroCheckpointThroughputTelemetry: WorkerTelemetry = {
+      ...baseTelemetry,
+      vramFreeMB: 2_100,
+      checkpointBytesPerSecond: 0,
+    };
+    dispatcher.registerWorker({
+      id: 'visitor-a',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    dispatcher.registerWorker({
+      id: 'visitor-b',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    const assignments = dispatcher.run('workers-unbounded-transfer').assignments;
+    expect(assignments[1].checkpointTransferMs).toBe(Number.POSITIVE_INFINITY);
+
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest = createDefaultWorkersCoordinatorManifest(assignments, segments);
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'assignment 1 checkpointTransferMs is unbounded and cannot be reported by Workers Coordinator',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
   it('fails closed before finite fan-out transfer totals exceed the safe integer range', () => {
     const segments = makeSegments(3);
     const assignments = createAssignmentFixture();
