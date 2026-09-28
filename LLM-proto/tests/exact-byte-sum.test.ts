@@ -7,6 +7,13 @@ describe('exactByteSum', () => {
       .toBe(420_274_176);
   });
 
+  it('allows an aggregate exactly equal to Number.MAX_SAFE_INTEGER', () => {
+    expect(exactByteSum(
+      [Number.MAX_SAFE_INTEGER - 1, 1],
+      'verified prepared file bytes',
+    )).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it('fails closed before an addition would cross Number.MAX_SAFE_INTEGER', () => {
     expect(() => exactByteSum(
       [Number.MAX_SAFE_INTEGER, 1],
