@@ -27,6 +27,34 @@ function decodedBase64ByteLength(value) {
   return (value.length / 4) * 3 - padding;
 }
 
+export function checkedTensorElementCount(
+  dimensions,
+  { label = 'tensor shape', allowZero = false } = {},
+) {
+  if (!Array.isArray(dimensions)) {
+    throw new Error(`${label} has invalid dims`);
+  }
+
+  let elementCount = 1;
+  for (let index = 0; index < dimensions.length; index += 1) {
+    const dimension = dimensions[index];
+    const minimum = allowZero ? 0 : 1;
+    if (!Number.isSafeInteger(dimension) || dimension < minimum) {
+      throw new Error(`${label} has invalid dimension at index ${index}`);
+    }
+    if (dimension === 0) {
+      elementCount = 0;
+      continue;
+    }
+    if (elementCount !== 0
+      && elementCount > Math.floor(Number.MAX_SAFE_INTEGER / dimension)) {
+      throw new Error(`${label} size overflows safe integer range`);
+    }
+    elementCount *= dimension;
+  }
+  return elementCount;
+}
+
 function validateCheckpointImmutableMetadata(checkpoint) {
   if (typeof checkpoint?.checkpointId !== 'string'
     || checkpoint.checkpointId.length === 0
@@ -72,20 +100,12 @@ function validateBoundaryTensorWire(tensor, index, expectedType) {
   if (!Array.isArray(tensor.dims) || tensor.dims.length === 0 || tensor.dims.length > 8) {
     throw new Error(`Coordinator checkpoint boundary tensor ${index} has invalid dims`);
   }
-  let elementCount = 1;
-  for (const dimension of tensor.dims) {
-    if (!Number.isSafeInteger(dimension) || dimension <= 0) {
-      throw new Error(`Coordinator checkpoint boundary tensor ${index} has invalid dimension`);
-    }
-    elementCount *= dimension;
-    if (!Number.isSafeInteger(elementCount)) {
-      throw new Error(`Coordinator checkpoint boundary tensor ${index} size overflows safe integer range`);
-    }
-  }
-  const expectedBytes = elementCount * elementBytes;
-  if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0) {
-    throw new Error(`Coordinator checkpoint boundary tensor ${index} size overflows safe integer range`);
-  }
+  const tensorLabel = `Coordinator checkpoint boundary tensor ${index}`;
+  const elementCount = checkedTensorElementCount(tensor.dims, { label: tensorLabel });
+  const expectedBytes = checkedTensorElementCount(
+    [elementCount, elementBytes],
+    { label: tensorLabel },
+  );
   if (!Number.isSafeInteger(tensor.bytes) || tensor.bytes !== expectedBytes) {
     throw new Error(
       `Coordinator checkpoint boundary tensor ${index} declared byte length mismatch: declared=${String(tensor.bytes)}, expected=${expectedBytes}`,
@@ -195,8 +215,8 @@ export function argmaxLastLogits(tensor) {
     throw new Error(`unexpected logits shape: ${dims}`);
   }
   const [batch, sequenceLength, vocab] = dims;
-  const elementCount = batch * sequenceLength * vocab;
-  if (!Number.isSafeInteger(elementCount) || tensor.data.length !== elementCount) {
+  const elementCount = checkedTensorElementCount(dims, { label: 'logits shape' });
+  if (tensor.data.length !== elementCount) {
     throw new Error(`logits data length mismatch: shape=${dims}, data=${tensor.data.length}`);
   }
   const start = (sequenceLength - 1) * vocab;
