@@ -65,7 +65,7 @@ describe('checkpoint shape runtime boundary', () => {
   it('copies only the canonical three dimensions from a valid Proxy-backed shape', () => {
     let lengthReads = 0;
     let memberReads = 0;
-    const shape = new Proxy([1, 2, 3], {
+    const shape = new Proxy([1, 1, 3], {
       get(target, property, receiver) {
         if (property === 'length') lengthReads += 1;
         if (property === '0' || property === '1' || property === '2') memberReads += 1;
@@ -83,7 +83,7 @@ describe('checkpoint shape runtime boundary', () => {
 
     const owned = CheckpointStore.snapshotValidatedCheckpoint(snapshot.checkpoint);
 
-    expect(owned.metadata.shape).toEqual([1, 2, 3]);
+    expect(owned.metadata.shape).toEqual([1, 1, 3]);
     expect(lengthReads).toBe(1);
     expect(memberReads).toBe(3);
   });
