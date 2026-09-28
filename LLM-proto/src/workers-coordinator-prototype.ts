@@ -269,25 +269,22 @@ class SimulatedCoordinatorDurableObject {
 function computeAssignmentFanoutLatencyMs(
   assignments: readonly AdaptiveChunkAssignmentReport[],
 ): number {
-  let hasUnboundedTransfer = false;
-
-  // Keep the existing Infinity sentinel for a worker with zero checkpoint
-  // throughput, while rejecting every malformed finite timing before summing.
+  // AdaptiveChunkDispatcher uses Infinity as an upstream sentinel when a real
+  // cross-worker checkpoint transfer has zero throughput. A Workers Coordinator
+  // report is serialized across runtime boundaries, so every reported timing
+  // must remain finite and JSON-safe.
   for (let index = 0; index < assignments.length; index++) {
     const transferMs = assignments[index].checkpointTransferMs;
     if (transferMs === Number.POSITIVE_INFINITY) {
-      hasUnboundedTransfer = true;
-      continue;
+      throw new Error(
+        `assignment ${index} checkpointTransferMs is unbounded and cannot be reported by Workers Coordinator`,
+      );
     }
     if (!Number.isSafeInteger(transferMs) || transferMs < 0) {
       throw new Error(
-        `assignment ${index} checkpointTransferMs must be a non-negative safe integer or Infinity`,
+        `assignment ${index} checkpointTransferMs must be a non-negative safe integer`,
       );
     }
-  }
-
-  if (hasUnboundedTransfer) {
-    return Number.POSITIVE_INFINITY;
   }
 
   let totalTransferMs = 0;
