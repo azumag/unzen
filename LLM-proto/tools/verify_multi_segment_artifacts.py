@@ -29,6 +29,9 @@ ASCII_CASE_FOLD = str.maketrans(
     "abcdefghijklmnopqrstuvwxyz",
 )
 JAVASCRIPT_MAX_SAFE_INTEGER = (1 << 53) - 1
+PRODUCT_PREFERRED_MAX_BYTES = 256 * 1024 * 1024
+PRODUCT_NORMAL_MAX_BYTES = 512 * 1024 * 1024
+PRODUCT_ABSOLUTE_MAX_BYTES = 1024 * 1024 * 1024
 
 
 def _stat_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
@@ -315,6 +318,21 @@ def _browser_artifact_budget_limits(
     )
     if not preferred <= normal <= absolute:
         raise ValueError("browser artifact budget limits must be monotonically increasing")
+    if preferred > PRODUCT_PREFERRED_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.preferredMaxBytes cannot relax the product "
+            f"preferred ceiling of {PRODUCT_PREFERRED_MAX_BYTES} bytes"
+        )
+    if normal > PRODUCT_NORMAL_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.normalMaxBytes cannot relax the product "
+            f"normal ceiling of {PRODUCT_NORMAL_MAX_BYTES} bytes"
+        )
+    if absolute > PRODUCT_ABSOLUTE_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.absoluteMaxBytes cannot relax the product "
+            f"absolute ceiling of {PRODUCT_ABSOLUTE_MAX_BYTES} bytes"
+        )
     return preferred, normal, absolute
 
 
@@ -420,7 +438,6 @@ def _preflight_artifact_metadata(
 ) -> None:
     """Validate immutable manifest metadata before hashing any artifact payload."""
 
-    _browser_artifact_budget_limits(budget)
     _positive_int(
         budget.get("maximumSegmentArtifactBytes"),
         field="browserArtifactBudget.maximumSegmentArtifactBytes",
@@ -514,9 +531,19 @@ def verify_artifact_integrity(manifest_path: Path) -> dict[str, object]:
     if not isinstance(split_plan, dict):
         raise ValueError("split manifest splitPlan must be an object")
 
+    _, _, absolute_max = _browser_artifact_budget_limits(budget)
     budget_required_max = _positive_int(
         budget.get("requiredMaxBytes"), field="browserArtifactBudget.requiredMaxBytes"
     )
+    if budget_required_max > PRODUCT_PREFERRED_MAX_BYTES:
+        raise ValueError(
+            "browserArtifactBudget.requiredMaxBytes cannot relax the product "
+            f"preferred ceiling of {PRODUCT_PREFERRED_MAX_BYTES} bytes"
+        )
+    if budget_required_max > absolute_max:
+        raise ValueError(
+            "browserArtifactBudget.requiredMaxBytes cannot exceed absoluteMaxBytes"
+        )
     split_required_max = _positive_int(
         split_plan.get("requiredMaxBytes"), field="splitPlan.requiredMaxBytes"
     )

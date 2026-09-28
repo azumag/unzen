@@ -188,6 +188,71 @@ class ArtifactMetadataPreflightTest(unittest.TestCase):
                         verify_artifact_integrity(manifest_path)
                 measure.assert_not_called()
 
+    def test_rejects_relaxed_product_budget_before_measurement(self) -> None:
+        mutations = (
+            (
+                "preferred ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].update(
+                    {
+                        "preferredMaxBytes": verifier.PRODUCT_PREFERRED_MAX_BYTES + 1,
+                        "normalMaxBytes": verifier.PRODUCT_NORMAL_MAX_BYTES,
+                        "absoluteMaxBytes": verifier.PRODUCT_ABSOLUTE_MAX_BYTES,
+                    }
+                ),
+                r"browserArtifactBudget\.preferredMaxBytes cannot relax the product preferred ceiling",
+            ),
+            (
+                "normal ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].update(
+                    {
+                        "preferredMaxBytes": verifier.PRODUCT_PREFERRED_MAX_BYTES,
+                        "normalMaxBytes": verifier.PRODUCT_NORMAL_MAX_BYTES + 1,
+                        "absoluteMaxBytes": verifier.PRODUCT_ABSOLUTE_MAX_BYTES,
+                    }
+                ),
+                r"browserArtifactBudget\.normalMaxBytes cannot relax the product normal ceiling",
+            ),
+            (
+                "absolute ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].update(
+                    {
+                        "preferredMaxBytes": verifier.PRODUCT_PREFERRED_MAX_BYTES,
+                        "normalMaxBytes": verifier.PRODUCT_NORMAL_MAX_BYTES,
+                        "absoluteMaxBytes": verifier.PRODUCT_ABSOLUTE_MAX_BYTES + 1,
+                    }
+                ),
+                r"browserArtifactBudget\.absoluteMaxBytes cannot relax the product absolute ceiling",
+            ),
+            (
+                "required preferred ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "requiredMaxBytes",
+                    verifier.PRODUCT_PREFERRED_MAX_BYTES + 1,
+                ),
+                r"browserArtifactBudget\.requiredMaxBytes cannot relax the product preferred ceiling",
+            ),
+            (
+                "required absolute ceiling",
+                lambda manifest: manifest["browserArtifactBudget"].__setitem__(
+                    "requiredMaxBytes",
+                    manifest["browserArtifactBudget"]["absoluteMaxBytes"] + 1,
+                ),
+                r"browserArtifactBudget\.requiredMaxBytes cannot exceed absoluteMaxBytes",
+            ),
+        )
+
+        for label, mutate, expected_error in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                manifest_path = self._fixture(Path(tmp))
+                manifest = self._load(manifest_path)
+                mutate(manifest)
+                self._save(manifest_path, manifest)
+
+                with patch.object(verifier, "_measure_file") as measure:
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        verify_artifact_integrity(manifest_path)
+                measure.assert_not_called()
+
     def test_rejects_non_monotonic_budget_limits_before_measurement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = self._fixture(Path(tmp))
