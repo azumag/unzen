@@ -39,8 +39,10 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
     ['configuredVramLimitMB', -1],
     ['checkpointBytes', 0],
     ['checkpointBytes', -1],
+    ['checkpointBytes', 0.5],
     ['checkpointBytes', Number.NaN],
     ['checkpointBytes', Number.POSITIVE_INFINITY],
+    ['checkpointBytes', Number.MAX_SAFE_INTEGER + 1],
   ] as const)(
     'rejects invalid dispatcher option %s=%s',
     (field, value) => {
@@ -57,7 +59,7 @@ describe('AdaptiveChunkDispatcher telemetry validation', () => {
       segments: makeSegments(1),
       longLivedWorkerMs: 0,
       configuredVramLimitMB: Number.POSITIVE_INFINITY,
-      checkpointBytes: 1,
+      checkpointBytes: Number.MAX_SAFE_INTEGER,
     })).not.toThrow();
   });
 

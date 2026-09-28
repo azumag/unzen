@@ -35,7 +35,7 @@ This single-read boundary also applies to accessor- or Proxy-backed options. A g
 - `loadBudgetRatio` must be finite and inside `(0, 1]`.
 - `longLivedWorkerMs` must be finite and non-negative. Zero is valid and makes every otherwise-eligible worker immediately satisfy the age threshold.
 - `configuredVramLimitMB` must be a JavaScript `number` at runtime and must be non-negative. Finite values impose a cap and positive infinity keeps the existing unlimited default. Only an omitted/`undefined` option selects that default; `null`, strings, booleans, objects, arrays, symbols, and other non-number values are rejected rather than coerced or treated as unlimited.
-- `checkpointBytes` must be a positive finite number.
+- `checkpointBytes` must be a positive safe integer. It is an exact byte count reported as `checkpointTransferBytes`, not a continuous-valued measurement.
 
 These guards keep `NaN`, invalid infinities, zero divisors, negative limits, and malformed runtime values out of VRAM-fit, lifetime, checkpoint-transfer, and score calculations. In particular, `configuredVramLimitMB` is checked for its runtime type before any numeric comparison, so values such as a `Symbol` cannot escape the canonical validation error through JavaScript coercion behavior.
 
