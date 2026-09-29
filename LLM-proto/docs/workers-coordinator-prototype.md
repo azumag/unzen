@@ -299,6 +299,13 @@ silently bypassing latency gates.
 - `bottlenecksToIssue`
 - `failureReason`
 
+The production observability gate validates numeric policy and observed metrics
+before alert evaluation. Latency thresholds and observed latency/variance must
+be non-negative finite numbers, retry/canary counters and `exportedAtMs` must be
+non-negative safe integers, and `sampleRate` must be finite within `[0, 1]`.
+This prevents JavaScript `NaN`/infinite comparisons from becoming accidental
+clean alerts or promotion decisions.
+
 `WorkersCoordinatorSignedRunnerReleaseGateReport` includes:
 
 - `csp`
