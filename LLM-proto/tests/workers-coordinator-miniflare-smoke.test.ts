@@ -114,6 +114,35 @@ describe('Workers Coordinator Miniflare runtime smoke', () => {
     );
   });
 
+  it('uses one owned manifest snapshot across asynchronous Miniflare work', async () => {
+    const base = createManifestFixture();
+    let requestIdReads = 0;
+    const manifest = {
+      ...base,
+      get requestId() {
+        requestIdReads++;
+        return requestIdReads === 1
+          ? 'miniflare-owned-snapshot'
+          : 'miniflare-caller-mutated';
+      },
+    } as WorkersCoordinatorPrototypeManifest;
+
+    const report = await runWorkersCoordinatorMiniflareSmoke({
+      manifest,
+      concurrentHeartbeatBursts: 1,
+    });
+
+    expect(requestIdReads).toBe(1);
+    expect(report.requestId).toBe('miniflare-owned-snapshot');
+    expect(report.durableObjectStorageFields.storageKeys).toEqual(
+      expect.arrayContaining([
+        'manifest:miniflare-owned-snapshot',
+        'request:miniflare-owned-snapshot:lifecycle',
+        'request:miniflare-owned-snapshot:assignments',
+      ]),
+    );
+  });
+
   it('runs API lifecycle, Durable Object storage, WebSocket heartbeat, assignment, checkpoint, and rejection paths in Miniflare', async () => {
     const manifest = createManifestFixture();
     const report = await runWorkersCoordinatorMiniflareSmoke({ manifest });

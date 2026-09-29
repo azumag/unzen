@@ -126,6 +126,43 @@ describe('Workers Coordinator load-shaped runtime smoke', () => {
     });
   });
 
+  it('uses owned manifest snapshots across load-shaped restart and report reads', async () => {
+    await withPersistRoot(async (persistRoot) => {
+      const base = createManifestFixture(0);
+      let requestIdReads = 0;
+      const manifest = Object.defineProperty(
+        { ...base },
+        'requestId',
+        {
+          enumerable: true,
+          configurable: true,
+          get() {
+            requestIdReads++;
+            return requestIdReads === 1
+              ? 'load-shaped-owned-snapshot'
+              : 'load-shaped-caller-mutated';
+          },
+        },
+      ) as WorkersCoordinatorPrototypeManifest;
+
+      const report = await runWorkersCoordinatorLoadShapedSmoke({
+        manifests: [manifest],
+        durableObjectsPersistRoot: persistRoot,
+        heartbeatBursts: 1,
+        maxP95FanoutLatencyMs: LOAD_SHAPED_FANOUT_BUDGET_MS,
+      });
+
+      expect(requestIdReads).toBe(1);
+      expect(report.requestIds).toEqual(['load-shaped-owned-snapshot']);
+      expect(report.requestReports[0].requestId).toBe('load-shaped-owned-snapshot');
+      expect(report.restartPersistence).toMatchObject({
+        persisted: true,
+        persistedRequestIds: ['load-shaped-owned-snapshot'],
+        missingRequestIds: [],
+      });
+    });
+  });
+
   it('drives concurrent request traffic, real client heartbeat timing, and Durable Object restart persistence', async () => {
     await withPersistRoot(async (persistRoot) => {
       const manifests = [0, 1, 2].map(createManifestFixture);
