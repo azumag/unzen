@@ -60,6 +60,39 @@ function createManifestFixture(
 }
 
 describe('Workers Coordinator Miniflare runtime smoke', () => {
+  it('rejects an unbounded dispatcher transfer before JSON serialization', async () => {
+    const segments = makeSegments(2);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments,
+      configuredVramLimitMB: 2_100,
+    });
+    const zeroCheckpointThroughputTelemetry: WorkerTelemetry = {
+      ...baseTelemetry,
+      vramFreeMB: 2_100,
+      checkpointBytesPerSecond: 0,
+    };
+    dispatcher.registerWorker({
+      id: 'visitor-a',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    dispatcher.registerWorker({
+      id: 'visitor-b',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    const assignments = dispatcher.run('miniflare-unbounded-transfer').assignments;
+    expect(assignments[1].checkpointTransferMs).toBe(Number.POSITIVE_INFINITY);
+    const manifest = {
+      ...createDefaultWorkersCoordinatorManifest(assignments, segments),
+      requestId: 'miniflare-unbounded-transfer',
+    };
+
+    await expect(runWorkersCoordinatorMiniflareSmoke({ manifest })).rejects.toThrow(
+      'assignment 1 checkpointTransferMs must be a non-negative safe integer before Miniflare JSON serialization',
+    );
+  });
+
   it('runs API lifecycle, Durable Object storage, WebSocket heartbeat, assignment, checkpoint, and rejection paths in Miniflare', async () => {
     const manifest = createManifestFixture();
     const report = await runWorkersCoordinatorMiniflareSmoke({ manifest });
