@@ -183,13 +183,21 @@ The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
 
-Imported finite `checkpointTransferMs` values are treated as exact,
-non-negative safe integers. The prototype validates and sums them with checked
-arithmetic before any simulated Coordinator/CDN connection is recorded; if the
-finite total would leave JavaScript's safe-integer range, the run fails closed
-instead of rounding through precision loss. `Number.POSITIVE_INFINITY` remains
-the existing unbounded-transfer sentinel and therefore still fails any finite
-fan-out latency budget.
+Imported `checkpointTransferMs` values are validated before any simulated
+Coordinator/CDN connection is recorded. Finite values must be exact,
+non-negative safe integers and are summed with checked arithmetic; if the total
+would leave JavaScript's safe-integer range, the run fails closed instead of
+rounding through precision loss. `AdaptiveChunkDispatcher` may use
+`Number.POSITIVE_INFINITY` internally as an unbounded-transfer sentinel, but
+Workers Coordinator reports reject that sentinel at the runtime boundary so all
+reported timing fields remain finite and JSON-safe.
+
+Derived timing is also computed with checked safe-integer arithmetic before any
+simulated transport activity. Retry/resume delay rejects overflow in
+`checkpointRelayMs + retryBackoffMs`; request completion rejects overflow while
+adding `receivedAtMs`, fan-out latency, and retry delay; heartbeat fan-out
+samples reject timestamps that predate the request or would overflow when the
+per-worker scheduling offset is added.
 
 ## Prototype Contract
 
@@ -210,6 +218,24 @@ stand-in. The test imports an `AdaptiveChunkDispatcher` assignment report, posts
 the manifest to `/api/requests`, opens concurrent heartbeat WebSockets for all
 registered workers, stores checkpoint relay metadata under Coordinator-owned
 Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
+
+Before the manifest crosses the host-to-Miniflare JSON boundary, every imported
+`checkpointTransferMs` must be a non-negative safe integer and the aggregate
+must remain in JavaScript's safe-integer range. This deliberately rejects the
+dispatcher's internal `Infinity` sentinel before `JSON.stringify()` can coerce
+it to `null` and change the meaning of the runtime evidence. The same preflight
+runs across every manifest in the load-shaped smoke before Miniflare activity.
+
+The Miniflare boundary also validates `receivedAtMs`, checkpoint relay/backoff
+timings, latency thresholds, worker heartbeat timestamps, and retry/resume
+derived timing before runtime startup. The normal smoke additionally preflights
+the full synthetic heartbeat schedule so its generated `sentAtMs` and fan-out
+samples cannot leave JavaScript's safe-integer range after a request has already
+been accepted. The embedded Durable Object runtime repeats the manifest timing
+validation after JSON parsing and uses checked arithmetic for retry/resume delay
+and `requestLifecycle.completedAtMs`; this keeps direct runtime use fail-closed
+even if host-side callers change later. Load-shaped heartbeat count and its
+explicit p95 budget are validated before Miniflare startup as well.
 
 `WorkersCoordinatorMiniflareSmokeReport` includes:
 

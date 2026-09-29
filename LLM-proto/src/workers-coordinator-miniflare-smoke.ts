@@ -127,7 +127,9 @@ const DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS = 5;
 export async function runWorkersCoordinatorMiniflareSmoke(
   options: WorkersCoordinatorMiniflareSmokeOptions,
 ): Promise<WorkersCoordinatorMiniflareSmokeReport> {
+  assertMiniflareManifestTimings(options.manifest);
   const heartbeatBursts = options.concurrentHeartbeatBursts ?? DEFAULT_HEARTBEAT_BURSTS;
+  assertMiniflareHeartbeatSchedule(options.manifest, heartbeatBursts);
   const mf = createWorkersCoordinatorMiniflare();
 
   try {
@@ -182,7 +184,12 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
     throw new Error('Load-shaped Workers Coordinator smoke requires at least one manifest');
   }
 
+  for (const manifest of options.manifests) {
+    assertMiniflareManifestTimings(manifest);
+  }
+
   const heartbeatBursts = options.heartbeatBursts ?? DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS;
+  assertMiniflareNonNegativeSafeInteger(heartbeatBursts, 'heartbeatBursts');
   const fallbackChurnWorkerId = options.manifests[0].lostWorkerId;
   const churnWorkerIds = new Set(
     options.churnWorkerIds ?? (fallbackChurnWorkerId ? [fallbackChurnWorkerId] : []),
@@ -190,6 +197,10 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
   const requestIds = options.manifests.map((manifest) => manifest.requestId);
   const maxP95FanoutLatencyMs = options.maxP95FanoutLatencyMs ?? Math.max(
     ...options.manifests.map((manifest) => manifest.maxFanoutLatencyMs),
+  );
+  assertMiniflareNonNegativeSafeInteger(
+    maxP95FanoutLatencyMs,
+    'maxP95FanoutLatencyMs',
   );
 
   let mf = createWorkersCoordinatorMiniflare(options.durableObjectsPersistRoot);
@@ -330,6 +341,134 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
       await mf.dispose();
     }
   }
+}
+
+function assertMiniflareManifestTimings(
+  manifest: WorkersCoordinatorPrototypeManifest,
+): void {
+  assertMiniflareNonNegativeSafeInteger(manifest.receivedAtMs, 'receivedAtMs');
+  assertMiniflareNonNegativeSafeInteger(manifest.checkpointRelayMs, 'checkpointRelayMs');
+  assertMiniflareNonNegativeSafeInteger(manifest.retryBackoffMs, 'retryBackoffMs');
+  assertMiniflareNonNegativeSafeInteger(manifest.maxFanoutLatencyMs, 'maxFanoutLatencyMs');
+  assertMiniflareNonNegativeSafeInteger(
+    manifest.maxRetryResumeImpactMs,
+    'maxRetryResumeImpactMs',
+  );
+  for (let index = 0; index < manifest.workers.length; index++) {
+    assertMiniflareNonNegativeSafeInteger(
+      manifest.workers[index].heartbeatAtMs,
+      `worker ${index} heartbeatAtMs`,
+    );
+  }
+
+  let totalTransferMs = 0;
+  for (let index = 0; index < manifest.assignments.length; index++) {
+    const transferMs = manifest.assignments[index].checkpointTransferMs;
+    if (!Number.isSafeInteger(transferMs) || transferMs < 0) {
+      throw new Error(
+        `assignment ${index} checkpointTransferMs must be a non-negative safe integer before Miniflare JSON serialization`,
+      );
+    }
+    if (totalTransferMs > Number.MAX_SAFE_INTEGER - transferMs) {
+      throw new Error(
+        'assignment checkpoint transfer total exceeds JavaScript safe integer range before Miniflare JSON serialization',
+      );
+    }
+    totalTransferMs += transferMs;
+  }
+
+  const lostAssignment = manifest.lostWorkerId
+    ? manifest.assignments.find((assignment) => assignment.workerId === manifest.lostWorkerId)
+    : undefined;
+  if (lostAssignment) {
+    checkedAddMiniflareTimings(
+      manifest.checkpointRelayMs,
+      manifest.retryBackoffMs,
+      'retry/resume estimatedDelayMs',
+    );
+  }
+}
+
+function assertMiniflareHeartbeatSchedule(
+  manifest: WorkersCoordinatorPrototypeManifest,
+  heartbeatBursts: number,
+): void {
+  assertMiniflareNonNegativeSafeInteger(heartbeatBursts, 'concurrentHeartbeatBursts');
+  if (heartbeatBursts === 0 || manifest.workers.length === 0) {
+    return;
+  }
+
+  const maxBurstIndex = heartbeatBursts - 1;
+  const maxWorkerIndex = manifest.workers.length - 1;
+  const maxBurstSentOffsetMs = checkedMultiplyMiniflareTiming(
+    maxBurstIndex,
+    100,
+    'heartbeat sentAt burst offset',
+  );
+  const maxWorkerSentOffsetMs = checkedMultiplyMiniflareTiming(
+    maxWorkerIndex,
+    11,
+    'heartbeat sentAt worker offset',
+  );
+  const latestBurstSentAtMs = checkedAddMiniflareTimings(
+    manifest.receivedAtMs,
+    maxBurstSentOffsetMs,
+    'heartbeat sentAtMs',
+  );
+  checkedAddMiniflareTimings(
+    latestBurstSentAtMs,
+    maxWorkerSentOffsetMs,
+    'heartbeat sentAtMs',
+  );
+
+  const maxBurstFanoutOffsetMs = checkedMultiplyMiniflareTiming(
+    maxBurstIndex,
+    13,
+    'heartbeat fan-out burst offset',
+  );
+  const maxWorkerFanoutOffsetMs = checkedMultiplyMiniflareTiming(
+    maxWorkerIndex,
+    27,
+    'heartbeat fan-out worker offset',
+  );
+  const maxBurstFanoutMs = checkedAddMiniflareTimings(
+    100,
+    maxBurstFanoutOffsetMs,
+    'heartbeat fan-out latency',
+  );
+  checkedAddMiniflareTimings(
+    maxBurstFanoutMs,
+    maxWorkerFanoutOffsetMs,
+    'heartbeat fan-out latency',
+  );
+}
+
+function checkedMultiplyMiniflareTiming(left: number, right: number, label: string): number {
+  assertMiniflareNonNegativeSafeInteger(left, `${label} left operand`);
+  assertMiniflareNonNegativeSafeInteger(right, `${label} right operand`);
+  if (left !== 0 && right > Math.floor(Number.MAX_SAFE_INTEGER / left)) {
+    throw new Error(
+      `${label} exceeds JavaScript safe integer range before Miniflare JSON serialization`,
+    );
+  }
+  return left * right;
+}
+
+function assertMiniflareNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      `${label} must be a non-negative safe integer before Miniflare JSON serialization`,
+    );
+  }
+}
+
+function checkedAddMiniflareTimings(left: number, right: number, label: string): number {
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new Error(
+      `${label} exceeds JavaScript safe integer range before Miniflare JSON serialization`,
+    );
+  }
+  return left + right;
 }
 
 async function dispatchHeartbeat(
@@ -482,6 +621,7 @@ export class WorkersCoordinatorDurableObject {
 
   async acceptRequest(request) {
     const manifest = await request.json();
+    assertRuntimeManifestTimings(manifest);
     const lifecycle = {
       endpoint: '/api/requests',
       acceptedAtMs: manifest.receivedAtMs,
@@ -619,7 +759,15 @@ export class WorkersCoordinatorDurableObject {
       status: failureReason ? 'fail' : 'pass',
       requestLifecycle: {
         ...lifecycle,
-        completedAtMs: manifest.receivedAtMs + p95FanoutLatencyMs + retryResumeImpact.estimatedDelayMs,
+        completedAtMs: checkedAddRuntimeTimings(
+          checkedAddRuntimeTimings(
+            manifest.receivedAtMs,
+            p95FanoutLatencyMs,
+            'request lifecycle completedAtMs',
+          ),
+          retryResumeImpact.estimatedDelayMs,
+          'request lifecycle completedAtMs',
+        ),
         httpStatus: 202,
       },
       durableObjectStorageFields: {
@@ -665,9 +813,60 @@ function computeRetryResumeImpact(manifest) {
     lostWorkerId: manifest.lostWorkerId,
     retryCount,
     resumeCount: retryCount,
-    estimatedDelayMs: retryCount * (manifest.checkpointRelayMs + manifest.retryBackoffMs),
+    estimatedDelayMs: retryCount === 0
+      ? 0
+      : checkedAddRuntimeTimings(
+        manifest.checkpointRelayMs,
+        manifest.retryBackoffMs,
+        'retry/resume estimatedDelayMs',
+      ),
     resumedFromSegment: lostAssignment?.startSegment ?? null,
   };
+}
+
+function assertRuntimeManifestTimings(manifest) {
+  assertRuntimeNonNegativeSafeInteger(manifest.receivedAtMs, 'receivedAtMs');
+  assertRuntimeNonNegativeSafeInteger(manifest.checkpointRelayMs, 'checkpointRelayMs');
+  assertRuntimeNonNegativeSafeInteger(manifest.retryBackoffMs, 'retryBackoffMs');
+  assertRuntimeNonNegativeSafeInteger(manifest.maxFanoutLatencyMs, 'maxFanoutLatencyMs');
+  assertRuntimeNonNegativeSafeInteger(
+    manifest.maxRetryResumeImpactMs,
+    'maxRetryResumeImpactMs',
+  );
+  for (let index = 0; index < manifest.workers.length; index++) {
+    assertRuntimeNonNegativeSafeInteger(
+      manifest.workers[index].heartbeatAtMs,
+      'worker ' + index + ' heartbeatAtMs',
+    );
+  }
+  let totalTransferMs = 0;
+  for (let index = 0; index < manifest.assignments.length; index++) {
+    const transferMs = manifest.assignments[index].checkpointTransferMs;
+    assertRuntimeNonNegativeSafeInteger(
+      transferMs,
+      'assignment ' + index + ' checkpointTransferMs',
+    );
+    totalTransferMs = checkedAddRuntimeTimings(
+      totalTransferMs,
+      transferMs,
+      'assignment checkpoint transfer total',
+    );
+  }
+}
+
+function assertRuntimeNonNegativeSafeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(label + ' must be a non-negative safe integer');
+  }
+}
+
+function checkedAddRuntimeTimings(left, right, label) {
+  assertRuntimeNonNegativeSafeInteger(left, label + ' left operand');
+  assertRuntimeNonNegativeSafeInteger(right, label + ' right operand');
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new Error(label + ' exceeds JavaScript safe integer range');
+  }
+  return left + right;
 }
 
 function selectFailureReason(

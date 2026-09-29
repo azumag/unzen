@@ -60,6 +60,60 @@ function createManifestFixture(
 }
 
 describe('Workers Coordinator Miniflare runtime smoke', () => {
+  it('rejects an unbounded dispatcher transfer before JSON serialization', async () => {
+    const segments = makeSegments(2);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments,
+      configuredVramLimitMB: 2_100,
+    });
+    const zeroCheckpointThroughputTelemetry: WorkerTelemetry = {
+      ...baseTelemetry,
+      vramFreeMB: 2_100,
+      checkpointBytesPerSecond: 0,
+    };
+    dispatcher.registerWorker({
+      id: 'visitor-a',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    dispatcher.registerWorker({
+      id: 'visitor-b',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    const assignments = dispatcher.run('miniflare-unbounded-transfer').assignments;
+    expect(assignments[1].checkpointTransferMs).toBe(Number.POSITIVE_INFINITY);
+    const manifest = {
+      ...createDefaultWorkersCoordinatorManifest(assignments, segments),
+      requestId: 'miniflare-unbounded-transfer',
+    };
+
+    await expect(runWorkersCoordinatorMiniflareSmoke({ manifest })).rejects.toThrow(
+      'assignment 1 checkpointTransferMs must be a non-negative safe integer before Miniflare JSON serialization',
+    );
+  });
+
+  it('rejects retry/resume timing overflow before starting Miniflare', async () => {
+    const manifest = createManifestFixture({
+      checkpointRelayMs: Number.MAX_SAFE_INTEGER,
+      retryBackoffMs: 1,
+    });
+
+    await expect(runWorkersCoordinatorMiniflareSmoke({ manifest })).rejects.toThrow(
+      'retry/resume estimatedDelayMs exceeds JavaScript safe integer range before Miniflare JSON serialization',
+    );
+  });
+
+  it('rejects synthetic heartbeat schedule overflow before starting Miniflare', async () => {
+    const manifest = createManifestFixture({
+      receivedAtMs: Number.MAX_SAFE_INTEGER,
+    });
+
+    await expect(runWorkersCoordinatorMiniflareSmoke({ manifest })).rejects.toThrow(
+      'heartbeat sentAtMs exceeds JavaScript safe integer range before Miniflare JSON serialization',
+    );
+  });
+
   it('runs API lifecycle, Durable Object storage, WebSocket heartbeat, assignment, checkpoint, and rejection paths in Miniflare', async () => {
     const manifest = createManifestFixture();
     const report = await runWorkersCoordinatorMiniflareSmoke({ manifest });

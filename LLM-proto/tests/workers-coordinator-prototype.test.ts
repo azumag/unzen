@@ -159,6 +159,42 @@ describe('Workers Coordinator prototype gate', () => {
     );
   });
 
+  it('rejects the dispatcher unbounded-transfer sentinel before transport activity', () => {
+    const segments = makeSegments(2);
+    const dispatcher = new AdaptiveChunkDispatcher({
+      segments,
+      configuredVramLimitMB: 2_100,
+    });
+    const zeroCheckpointThroughputTelemetry: WorkerTelemetry = {
+      ...baseTelemetry,
+      vramFreeMB: 2_100,
+      checkpointBytesPerSecond: 0,
+    };
+    dispatcher.registerWorker({
+      id: 'visitor-a',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    dispatcher.registerWorker({
+      id: 'visitor-b',
+      tier: WorkerTier.TIER_3,
+      telemetry: zeroCheckpointThroughputTelemetry,
+    });
+    const assignments = dispatcher.run('workers-unbounded-transfer').assignments;
+    expect(assignments[1].checkpointTransferMs).toBe(Number.POSITIVE_INFINITY);
+
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest = createDefaultWorkersCoordinatorManifest(assignments, segments);
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'assignment 1 checkpointTransferMs is unbounded and cannot be reported by Workers Coordinator',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
   it('fails closed before finite fan-out transfer totals exceed the safe integer range', () => {
     const segments = makeSegments(3);
     const assignments = createAssignmentFixture();
@@ -183,6 +219,73 @@ describe('Workers Coordinator prototype gate', () => {
 
     expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
       'assignment checkpoint transfer total exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
+  it('rejects retry/resume delay overflow before transport activity', () => {
+    const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...base,
+      checkpointRelayMs: Number.MAX_SAFE_INTEGER,
+      retryBackoffMs: 1,
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'retry/resume estimatedDelayMs exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
+  it('rejects request completion timestamp overflow before transport activity', () => {
+    const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+    const receivedAtMs = Number.MAX_SAFE_INTEGER - 50;
+    const assignments = base.assignments.map((assignment) => ({
+      ...assignment,
+      checkpointTransferMs: 100,
+    }));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...base,
+      receivedAtMs,
+      assignments,
+      lostWorkerId: undefined,
+      workers: base.workers.map((worker, index) => ({
+        ...worker,
+        heartbeatAtMs: receivedAtMs + index,
+      })),
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'request lifecycle completedAtMs exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
+  it('rejects heartbeat fan-out latency overflow before transport activity', () => {
+    const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...base,
+      receivedAtMs: 0,
+      workers: base.workers.map((worker) => ({
+        ...worker,
+        heartbeatAtMs: Number.MAX_SAFE_INTEGER,
+      })),
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'worker 1 heartbeat fan-out latency exceeds JavaScript safe integer range',
     );
     expect(transport.connectionCount).toBe(0);
   });
