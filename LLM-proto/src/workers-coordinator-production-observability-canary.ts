@@ -75,6 +75,7 @@ export interface WorkersCoordinatorProductionObservabilityCanaryReport {
 export function runWorkersCoordinatorProductionObservabilityCanaryGate(
   options: WorkersCoordinatorProductionObservabilityCanaryOptions,
 ): WorkersCoordinatorProductionObservabilityCanaryReport {
+  assertProductionObservabilityCanaryInputs(options);
   const upstreamRetryCount = options.deployedReport.upstreamReport.retryResumeImpact.retryCount;
   const checkpointStorageKeys = [
     ...options.deployedReport.upstreamReport.checkpointRelay.storageKeys,
@@ -135,6 +136,86 @@ export function runWorkersCoordinatorProductionObservabilityCanaryGate(
     failureReason,
     bottlenecksToIssue: selectBottlenecksToIssue(failureReason, canaryRelease.decision),
   };
+}
+
+function assertProductionObservabilityCanaryInputs(
+  options: WorkersCoordinatorProductionObservabilityCanaryOptions,
+): void {
+  assertProductionGateNonNegativeFiniteNumber(
+    options.thresholds.maxBrowserP95FanoutLatencyMs,
+    'maxBrowserP95FanoutLatencyMs',
+  );
+  assertProductionGateNonNegativeFiniteNumber(
+    options.thresholds.maxEdgePlacementVarianceMs,
+    'maxEdgePlacementVarianceMs',
+  );
+  assertProductionGateNonNegativeSafeInteger(
+    options.thresholds.maxUpstreamRetryCount,
+    'maxUpstreamRetryCount',
+  );
+  assertProductionGateUnitInterval(options.canary.sampleRate, 'sampleRate');
+  assertProductionGateNonNegativeSafeInteger(
+    options.canary.minHealthyRequests,
+    'minHealthyRequests',
+  );
+  assertProductionGateNonNegativeSafeInteger(
+    options.canary.observedHealthyRequests,
+    'observedHealthyRequests',
+  );
+  assertProductionGateNonNegativeSafeInteger(
+    options.canary.rollbackErrorBudget,
+    'rollbackErrorBudget',
+  );
+  assertProductionGateNonNegativeSafeInteger(
+    options.canary.observedErrorCount,
+    'observedErrorCount',
+  );
+  assertProductionGateNonNegativeSafeInteger(options.exportedAtMs, 'exportedAtMs');
+  assertProductionGateNonNegativeFiniteNumber(
+    options.deployedReport.browserWebSocketTiming.p95FanoutLatencyMs,
+    'deployed browser p95 fanout latency',
+  );
+  assertProductionGateNonNegativeFiniteNumber(
+    options.deployedReport.edgePlacement.varianceMs,
+    'deployed edge placement variance',
+  );
+  assertProductionGateNonNegativeSafeInteger(
+    options.deployedReport.upstreamReport.retryResumeImpact.retryCount,
+    'deployed upstream retry count',
+  );
+}
+
+function assertProductionGateNonNegativeSafeInteger(
+  value: unknown,
+  label: string,
+): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      `${label} must be a non-negative safe integer before canary evaluation`,
+    );
+  }
+}
+
+function assertProductionGateNonNegativeFiniteNumber(
+  value: unknown,
+  label: string,
+): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(
+      `${label} must be a non-negative finite number before canary evaluation`,
+    );
+  }
+}
+
+function assertProductionGateUnitInterval(
+  value: unknown,
+  label: string,
+): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(
+      `${label} must be a finite number in [0, 1] before canary evaluation`,
+    );
+  }
 }
 
 function evaluateAlertThresholds(input: {
