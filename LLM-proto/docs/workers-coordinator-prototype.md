@@ -237,6 +237,14 @@ and `requestLifecycle.completedAtMs`; this keeps direct runtime use fail-closed
 even if host-side callers change later. Load-shaped heartbeat count and its
 explicit p95 budget are validated before Miniflare startup as well.
 
+Each caller-owned manifest is then serialized exactly once into the JSON body
+that will cross the Miniflare boundary, parsed back into an owned snapshot, and
+validated again. Request IDs, workers, heartbeat scheduling, report lookups, and
+load-shaped restart/persistence checks all use that owned snapshot rather than
+re-reading caller-controlled getters or objects after asynchronous work starts.
+This binds host-side validation, the transmitted request body, and subsequent
+runtime evidence to one manifest generation.
+
 `WorkersCoordinatorMiniflareSmokeReport` includes:
 
 - `runtime`
