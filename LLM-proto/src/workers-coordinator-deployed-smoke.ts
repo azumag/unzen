@@ -103,29 +103,61 @@ const DEFAULT_EDGE_PLACEMENT_VARIANCE_MS = 250;
 export async function runWorkersCoordinatorDeployedSmoke(
   options: WorkersCoordinatorDeployedSmokeOptions,
 ): Promise<WorkersCoordinatorDeployedSmokeReport> {
+  const manifest = snapshotDeployedSmokeManifest(options.manifest);
+  const target = snapshotDeployedSmokeTarget(options.target);
   const heartbeatBursts = options.heartbeatBursts ?? DEFAULT_HEARTBEAT_BURSTS;
   const maxBrowserP95FanoutLatencyMs =
-    options.maxBrowserP95FanoutLatencyMs ?? options.manifest.maxFanoutLatencyMs;
+    options.maxBrowserP95FanoutLatencyMs ?? manifest.maxFanoutLatencyMs;
   const maxEdgePlacementVarianceMs =
     options.maxEdgePlacementVarianceMs ?? DEFAULT_EDGE_PLACEMENT_VARIANCE_MS;
 
-  const requestResult = await options.client.postRequest(options.target, options.manifest);
+  assertDeployedSmokeNonNegativeSafeInteger(heartbeatBursts, 'heartbeatBursts');
+  assertDeployedSmokeNonNegativeFiniteNumber(
+    maxBrowserP95FanoutLatencyMs,
+    'maxBrowserP95FanoutLatencyMs',
+    'network activity',
+  );
+  assertDeployedSmokeNonNegativeFiniteNumber(
+    maxEdgePlacementVarianceMs,
+    'maxEdgePlacementVarianceMs',
+    'network activity',
+  );
+  const expectedHeartbeatCount = checkedMultiplyDeployedSmokeCounts(
+    manifest.workers.length,
+    heartbeatBursts,
+    'expectedHeartbeatCount',
+  );
+
+  const requestResult = await options.client.postRequest(target, manifest);
+  assertDeployedSmokeNonNegativeFiniteNumber(
+    requestResult.latencyMs,
+    'deployed request latencyMs',
+    'heartbeat activity',
+  );
   const heartbeatAcks: WorkersCoordinatorBrowserHeartbeatAck[] = [];
 
   for (let burst = 0; burst < heartbeatBursts; burst++) {
-    heartbeatAcks.push(...await Promise.all(
-      options.manifest.workers.map((worker) =>
-        options.client.sendHeartbeat(options.target, worker.id, {
-          requestId: options.manifest.requestId,
+    const burstAcks = await Promise.all(
+      manifest.workers.map(async (worker) => {
+        const ack = await options.client.sendHeartbeat(target, worker.id, {
+          requestId: manifest.requestId,
           sentAtMs: Date.now(),
           burst,
-        }),
-      ),
-    ));
+        });
+        assertDeployedSmokeHeartbeatAck(ack, worker.id, manifest.requestId, burst);
+        return ack;
+      }),
+    );
+    heartbeatAcks.push(...burstAcks);
   }
 
-  const directWorkerNetworking = await options.client.rejectDirectWorkerNetworking(options.target);
-  const upstreamReport = await options.client.readReport(options.target, options.manifest.requestId);
+  const directWorkerNetworking = await options.client.rejectDirectWorkerNetworking(target);
+  const upstreamReport = await options.client.readReport(target, manifest.requestId);
+  if (upstreamReport.requestId !== manifest.requestId) {
+    throw new Error(
+      `upstream report requestId mismatch: expected ${manifest.requestId}, got ${upstreamReport.requestId}`,
+    );
+  }
   const fanoutLatencySamplesMs = heartbeatAcks.map((ack) => ack.clientMeasuredLatencyMs);
   const p95FanoutLatencyMs = percentileNumber(fanoutLatencySamplesMs, 95);
   const edgePlacement = computeEdgePlacement(
@@ -137,7 +169,7 @@ export async function runWorkersCoordinatorDeployedSmoke(
     directWorkerNetworkingRejected: directWorkerNetworking.rejected,
     upstreamFailureReason: upstreamReport.failureReason,
     acceptedHeartbeatCount: heartbeatAcks.length,
-    expectedHeartbeatCount: options.manifest.workers.length * heartbeatBursts,
+    expectedHeartbeatCount,
     p95FanoutLatencyMs,
     maxBrowserP95FanoutLatencyMs,
     edgePlacementVarianceMs: edgePlacement.varianceMs,
@@ -147,15 +179,15 @@ export async function runWorkersCoordinatorDeployedSmoke(
   return {
     runtime: 'deployed-workers-smoke',
     status: failureReason ? 'fail' : 'pass',
-    requestId: options.manifest.requestId,
+    requestId: manifest.requestId,
     target: {
-      baseUrl: options.target.baseUrl,
-      runtime: options.target.runtime,
-      environment: options.target.environment,
-      authHeaderName: options.target.authHeaderName,
-      authHeaderPresent: Boolean(options.target.authToken),
-      durableObjectMigrationTag: options.target.durableObjectMigrationTag,
-      edgePlacementHints: options.target.edgePlacementHints,
+      baseUrl: target.baseUrl,
+      runtime: target.runtime,
+      environment: target.environment,
+      authHeaderName: target.authHeaderName,
+      authHeaderPresent: Boolean(target.authToken),
+      durableObjectMigrationTag: target.durableObjectMigrationTag,
+      edgePlacementHints: target.edgePlacementHints,
     },
     requestLifecycle: {
       ...upstreamReport.requestLifecycle,
@@ -165,7 +197,7 @@ export async function runWorkersCoordinatorDeployedSmoke(
     browserWebSocketTiming: {
       source: 'real-browser-websocket-client',
       heartbeatBursts,
-      attemptedHeartbeatCount: options.manifest.workers.length * heartbeatBursts,
+      attemptedHeartbeatCount: expectedHeartbeatCount,
       acceptedHeartbeatCount: heartbeatAcks.length,
       fanoutLatencySamplesMs,
       p95FanoutLatencyMs,
@@ -176,6 +208,101 @@ export async function runWorkersCoordinatorDeployedSmoke(
     failureReason,
     bottlenecksToIssue: selectBottlenecksToIssue(failureReason),
   };
+}
+
+function snapshotDeployedSmokeManifest(
+  manifest: WorkersCoordinatorPrototypeManifest,
+): WorkersCoordinatorPrototypeManifest {
+  const body = JSON.stringify(manifest);
+  if (body === undefined) {
+    throw new Error('Workers Coordinator deployed smoke manifest must serialize to a JSON object');
+  }
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Workers Coordinator deployed smoke manifest must serialize to a JSON object');
+  }
+  return parsed as WorkersCoordinatorPrototypeManifest;
+}
+
+function snapshotDeployedSmokeTarget(
+  target: WorkersCoordinatorDeploymentTarget,
+): WorkersCoordinatorDeploymentTarget {
+  return {
+    baseUrl: target.baseUrl,
+    runtime: target.runtime,
+    environment: target.environment,
+    authHeaderName: target.authHeaderName,
+    authToken: target.authToken,
+    durableObjectMigrationTag: target.durableObjectMigrationTag,
+    edgePlacementHints: [...target.edgePlacementHints],
+  };
+}
+
+function assertDeployedSmokeHeartbeatAck(
+  ack: WorkersCoordinatorBrowserHeartbeatAck,
+  expectedWorkerId: string,
+  expectedRequestId: string,
+  expectedBurst: number,
+): void {
+  if (ack.ok !== true) {
+    throw new Error(`heartbeat ${expectedWorkerId} acknowledgement must be ok`);
+  }
+  if (ack.workerId !== expectedWorkerId) {
+    throw new Error(
+      `heartbeat acknowledgement workerId mismatch: expected ${expectedWorkerId}, got ${ack.workerId}`,
+    );
+  }
+  if (ack.requestId !== expectedRequestId) {
+    throw new Error(
+      `heartbeat acknowledgement requestId mismatch: expected ${expectedRequestId}, got ${ack.requestId}`,
+    );
+  }
+  if (ack.burst !== expectedBurst) {
+    throw new Error(
+      `heartbeat acknowledgement burst mismatch: expected ${expectedBurst}, got ${ack.burst}`,
+    );
+  }
+  assertDeployedSmokeNonNegativeFiniteNumber(
+    ack.clientMeasuredLatencyMs,
+    `heartbeat ${expectedWorkerId} clientMeasuredLatencyMs`,
+    'report evaluation',
+  );
+}
+
+function assertDeployedSmokeNonNegativeSafeInteger(
+  value: unknown,
+  label: string,
+): asserts value is number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      `${label} must be a non-negative safe integer before deployed smoke network activity`,
+    );
+  }
+}
+
+function assertDeployedSmokeNonNegativeFiniteNumber(
+  value: unknown,
+  label: string,
+  phase: string,
+): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(
+      `${label} must be a non-negative finite number before deployed smoke ${phase}`,
+    );
+  }
+}
+
+function checkedMultiplyDeployedSmokeCounts(
+  left: number,
+  right: number,
+  label: string,
+): number {
+  if (left !== 0 && right > Math.floor(Number.MAX_SAFE_INTEGER / left)) {
+    throw new Error(
+      `${label} exceeds JavaScript safe integer range before deployed smoke network activity`,
+    );
+  }
+  return left * right;
 }
 
 function computeEdgePlacement(
