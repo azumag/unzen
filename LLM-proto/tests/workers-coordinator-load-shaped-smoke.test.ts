@@ -195,12 +195,12 @@ describe('Workers Coordinator load-shaped runtime smoke', () => {
         manifests: [createManifestFixture(0)],
         durableObjectsPersistRoot: persistRoot,
         heartbeatBursts: 2,
-        maxP95FanoutLatencyMs: -1,
+        maxP95FanoutLatencyMs: 0,
       });
 
       expect(report.status).toBe('fail');
       expect(report.failureReason).toMatch(/^client-timing-p95-exceeded:/);
-      expect(report.clientTiming.p95FanoutLatencyMs).toBeGreaterThanOrEqual(0);
+      expect(report.clientTiming.p95FanoutLatencyMs).toBeGreaterThan(0);
     });
   });
 });
