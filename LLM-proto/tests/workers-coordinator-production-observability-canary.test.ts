@@ -156,6 +156,80 @@ function createDeployedReport(
 }
 
 describe('Workers Coordinator production observability canary gate', () => {
+  it('fails closed on malformed numeric thresholds, controls, and observed metrics', () => {
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: createDeployedReport(),
+      thresholds: { ...thresholds, maxBrowserP95FanoutLatencyMs: Number.NaN },
+      canary,
+      exportedAtMs: 1_779_408_060_000,
+    })).toThrow(
+      'maxBrowserP95FanoutLatencyMs must be a non-negative finite number before canary evaluation',
+    );
+
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: createDeployedReport(),
+      thresholds: { ...thresholds, maxUpstreamRetryCount: 1.5 },
+      canary,
+      exportedAtMs: 1_779_408_060_000,
+    })).toThrow(
+      'maxUpstreamRetryCount must be a non-negative safe integer before canary evaluation',
+    );
+
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: createDeployedReport(),
+      thresholds,
+      canary: { ...canary, sampleRate: 1.01 },
+      exportedAtMs: 1_779_408_060_000,
+    })).toThrow(
+      'sampleRate must be a finite number in [0, 1] before canary evaluation',
+    );
+
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: createDeployedReport(),
+      thresholds,
+      canary: { ...canary, observedErrorCount: Number.POSITIVE_INFINITY },
+      exportedAtMs: 1_779_408_060_000,
+    })).toThrow(
+      'observedErrorCount must be a non-negative safe integer before canary evaluation',
+    );
+
+    const malformedReport = createDeployedReport();
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: {
+        ...malformedReport,
+        browserWebSocketTiming: {
+          ...malformedReport.browserWebSocketTiming,
+          p95FanoutLatencyMs: Number.NaN,
+        },
+      },
+      thresholds,
+      canary,
+      exportedAtMs: 1_779_408_060_000,
+    })).toThrow(
+      'deployed browser p95 fanout latency must be a non-negative finite number before canary evaluation',
+    );
+
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: createDeployedReport({
+        edgePlacement: { observations: [], varianceMs: Number.POSITIVE_INFINITY },
+      }),
+      thresholds,
+      canary,
+      exportedAtMs: 1_779_408_060_000,
+    })).toThrow(
+      'deployed edge placement variance must be a non-negative finite number before canary evaluation',
+    );
+
+    expect(() => runWorkersCoordinatorProductionObservabilityCanaryGate({
+      deployedReport: createDeployedReport(),
+      thresholds,
+      canary,
+      exportedAtMs: Number.POSITIVE_INFINITY,
+    })).toThrow(
+      'exportedAtMs must be a non-negative safe integer before canary evaluation',
+    );
+  });
+
   it('exports durable per-request metrics, evaluates alerts, and promotes a clean canary', () => {
     const report = runWorkersCoordinatorProductionObservabilityCanaryGate({
       deployedReport: createDeployedReport(),
