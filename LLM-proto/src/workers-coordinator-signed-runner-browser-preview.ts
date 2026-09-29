@@ -175,6 +175,26 @@ function parseCspDirective(cspHeader: string, directiveName: string): readonly s
   return directive.split(/\s+/).slice(1);
 }
 
+function isRunnerUrlWithinPreviewTarget(baseUrl: string, runnerUrl: string): boolean {
+  try {
+    const base = new URL(baseUrl);
+    const runner = new URL(runnerUrl);
+
+    if (base.origin !== runner.origin) {
+      return false;
+    }
+
+    const basePath = base.pathname.replace(/\/+$/, '') || '/';
+    if (basePath === '/') {
+      return true;
+    }
+
+    return runner.pathname === basePath || runner.pathname.startsWith(`${basePath}/`);
+  } catch {
+    return false;
+  }
+}
+
 function selectTargetFailureReason(
   target: WorkersCoordinatorSignedRunnerBrowserPreviewTarget,
   evidence: WorkersCoordinatorSignedRunnerBrowserEvidencePayload,
@@ -182,7 +202,7 @@ function selectTargetFailureReason(
   if (!target.authHeaderPresent) {
     return `authenticated-preview-header-missing: ${target.authHeaderName}`;
   }
-  if (!evidence.runnerUrl.startsWith(target.baseUrl.replace(/\/$/, ''))) {
+  if (!isRunnerUrlWithinPreviewTarget(target.baseUrl, evidence.runnerUrl)) {
     return 'runner-url-outside-preview-target';
   }
   return undefined;
