@@ -253,6 +253,46 @@ describe('Workers Coordinator signed runner browser preview verification contrac
       'non-coordinator-cdn-network-attempt-not-blocked: https://collector.example.test',
     );
   });
+
+  it('rejects a lookalike hostname outside the preview target origin', async () => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example.evil.test/runners/signed/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+    expect(report.bottlenecksToIssue).toEqual(['signed-runner-preview-routing-hardening']);
+  });
+
+  it('accepts a runner beneath a path-scoped preview target', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({
+        baseUrl: 'https://preview.unzen-workers.example/runners/signed/',
+      }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+  });
+
+  it('rejects a sibling path that only shares the preview target string prefix', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({
+        baseUrl: 'https://preview.unzen-workers.example/runners/signed',
+      }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example/runners/signed-shadow/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+  });
 });
 
 describe('Workers Coordinator signed runner browser preview integration gate', () => {
