@@ -219,6 +219,13 @@ the manifest to `/api/requests`, opens concurrent heartbeat WebSockets for all
 registered workers, stores checkpoint relay metadata under Coordinator-owned
 Durable Object keys, and records the 403 rejection from `/worker-peer/direct`.
 
+Before the manifest crosses the host-to-Miniflare JSON boundary, every imported
+`checkpointTransferMs` must be a non-negative safe integer and the aggregate
+must remain in JavaScript's safe-integer range. This deliberately rejects the
+dispatcher's internal `Infinity` sentinel before `JSON.stringify()` can coerce
+it to `null` and change the meaning of the runtime evidence. The same preflight
+runs across every manifest in the load-shaped smoke before Miniflare activity.
+
 `WorkersCoordinatorMiniflareSmokeReport` includes:
 
 - `runtime`
