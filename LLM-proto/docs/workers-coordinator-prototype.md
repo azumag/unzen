@@ -280,6 +280,16 @@ runtime evidence to one manifest generation.
 - `bottlenecksToIssue`
 - `failureReason`
 
+The deployed smoke owns a stable request boundary before asynchronous client
+activity. The caller manifest is JSON-snapshotted, deployment target fields are
+copied once, numeric heartbeat/latency controls are preflighted, and derived
+heartbeat counts use checked safe-integer multiplication. Request and heartbeat
+latencies must remain finite and non-negative; heartbeat acknowledgements must
+match the expected worker, request, and burst; and the upstream report must
+match the snapshotted request ID. This keeps deployed evidence bound to one
+manifest/target generation and prevents malformed `NaN`/infinite telemetry from
+silently bypassing latency gates.
+
 `WorkersCoordinatorProductionObservabilityCanaryReport` includes:
 
 - `metricsExport`
