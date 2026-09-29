@@ -93,6 +93,27 @@ describe('Workers Coordinator Miniflare runtime smoke', () => {
     );
   });
 
+  it('rejects retry/resume timing overflow before starting Miniflare', async () => {
+    const manifest = createManifestFixture({
+      checkpointRelayMs: Number.MAX_SAFE_INTEGER,
+      retryBackoffMs: 1,
+    });
+
+    await expect(runWorkersCoordinatorMiniflareSmoke({ manifest })).rejects.toThrow(
+      'retry/resume estimatedDelayMs exceeds JavaScript safe integer range before Miniflare JSON serialization',
+    );
+  });
+
+  it('rejects synthetic heartbeat schedule overflow before starting Miniflare', async () => {
+    const manifest = createManifestFixture({
+      receivedAtMs: Number.MAX_SAFE_INTEGER,
+    });
+
+    await expect(runWorkersCoordinatorMiniflareSmoke({ manifest })).rejects.toThrow(
+      'heartbeat sentAtMs exceeds JavaScript safe integer range before Miniflare JSON serialization',
+    );
+  });
+
   it('runs API lifecycle, Durable Object storage, WebSocket heartbeat, assignment, checkpoint, and rejection paths in Miniflare', async () => {
     const manifest = createManifestFixture();
     const report = await runWorkersCoordinatorMiniflareSmoke({ manifest });
