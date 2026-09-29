@@ -192,6 +192,13 @@ rounding through precision loss. `AdaptiveChunkDispatcher` may use
 Workers Coordinator reports reject that sentinel at the runtime boundary so all
 reported timing fields remain finite and JSON-safe.
 
+Derived timing is also computed with checked safe-integer arithmetic before any
+simulated transport activity. Retry/resume delay rejects overflow in
+`checkpointRelayMs + retryBackoffMs`; request completion rejects overflow while
+adding `receivedAtMs`, fan-out latency, and retry delay; heartbeat fan-out
+samples reject timestamps that predate the request or would overflow when the
+per-worker scheduling offset is added.
+
 ## Prototype Contract
 
 | Boundary | Prototype expectation |
