@@ -183,13 +183,14 @@ The harness intentionally reuses `AdaptiveChunkDispatcher` assignment reports
 instead of inventing a second scheduler. This keeps the report fields stable
 while validating the Workers-specific boundary.
 
-Imported finite `checkpointTransferMs` values are treated as exact,
-non-negative safe integers. The prototype validates and sums them with checked
-arithmetic before any simulated Coordinator/CDN connection is recorded; if the
-finite total would leave JavaScript's safe-integer range, the run fails closed
-instead of rounding through precision loss. `Number.POSITIVE_INFINITY` remains
-the existing unbounded-transfer sentinel and therefore still fails any finite
-fan-out latency budget.
+Imported `checkpointTransferMs` values are validated before any simulated
+Coordinator/CDN connection is recorded. Finite values must be exact,
+non-negative safe integers and are summed with checked arithmetic; if the total
+would leave JavaScript's safe-integer range, the run fails closed instead of
+rounding through precision loss. `AdaptiveChunkDispatcher` may use
+`Number.POSITIVE_INFINITY` internally as an unbounded-transfer sentinel, but
+Workers Coordinator reports reject that sentinel at the runtime boundary so all
+reported timing fields remain finite and JSON-safe.
 
 ## Prototype Contract
 
