@@ -86,11 +86,19 @@ export interface WorkersCoordinatorSignedRunnerReleaseGateReport {
 export function runWorkersCoordinatorSignedRunnerReleaseGate(
   options: WorkersCoordinatorSignedRunnerReleaseGateOptions,
 ): WorkersCoordinatorSignedRunnerReleaseGateReport {
+  const productionGateReport = snapshotSignedRunnerGateInput(
+    options.productionGateReport,
+    'production gate report',
+  );
+  const runner = snapshotSignedRunnerGateInput(
+    options.runner,
+    'signed runner contract',
+  );
   const allowedOrigins = uniqueOrigins([
-    ...options.runner.coordinatorOrigins,
-    ...options.runner.cdnOrigins,
+    ...runner.coordinatorOrigins,
+    ...runner.cdnOrigins,
   ]);
-  const networkAttempts = options.runner.observedNetworkAttempts.map((attempt) => {
+  const networkAttempts = runner.observedNetworkAttempts.map((attempt) => {
     const origin = originOf(attempt.url);
     return {
       ...attempt,
@@ -102,17 +110,17 @@ export function runWorkersCoordinatorSignedRunnerReleaseGate(
     !attempt.allowed && attempt.blocked,
   ) ?? null;
   const failureReason = selectFailureReason({
-    productionGateStatus: options.productionGateReport.status,
-    productionGateFailureReason: options.productionGateReport.failureReason,
-    connectSrc: options.runner.csp.connectSrc,
+    productionGateStatus: productionGateReport.status,
+    productionGateFailureReason: productionGateReport.failureReason,
+    connectSrc: runner.csp.connectSrc,
     allowedOrigins,
-    sandboxFlags: options.runner.sandboxIframe.flags,
-    topLevelDomAccessDenied: options.runner.sandboxIframe.topLevelDomAccessDenied,
-    topLevelCookieAccessDenied: options.runner.sandboxIframe.topLevelCookieAccessDenied,
-    topLevelStorageAccessDenied: options.runner.sandboxIframe.topLevelStorageAccessDenied,
-    coop: options.runner.headers['cross-origin-opener-policy'],
-    coep: options.runner.headers['cross-origin-embedder-policy'],
-    signatureVerified: options.runner.signature.verified,
+    sandboxFlags: runner.sandboxIframe.flags,
+    topLevelDomAccessDenied: runner.sandboxIframe.topLevelDomAccessDenied,
+    topLevelCookieAccessDenied: runner.sandboxIframe.topLevelCookieAccessDenied,
+    topLevelStorageAccessDenied: runner.sandboxIframe.topLevelStorageAccessDenied,
+    coop: runner.headers['cross-origin-opener-policy'],
+    coep: runner.headers['cross-origin-embedder-policy'],
+    signatureVerified: runner.signature.verified,
     networkAttempts,
     blockedNonCoordinatorCdnNetworkAttempt,
   });
@@ -120,28 +128,28 @@ export function runWorkersCoordinatorSignedRunnerReleaseGate(
   return {
     runtime: 'signed-runner-csp-coop-coep-release-gate',
     status: failureReason ? 'fail' : 'pass',
-    requestId: options.productionGateReport.requestId,
-    runnerUrl: options.runner.runnerUrl,
+    requestId: productionGateReport.requestId,
+    runnerUrl: runner.runnerUrl,
     csp: {
-      connectSrc: options.runner.csp.connectSrc,
-      scriptSrc: options.runner.csp.scriptSrc,
-      workerSrc: options.runner.csp.workerSrc,
+      connectSrc: runner.csp.connectSrc,
+      scriptSrc: runner.csp.scriptSrc,
+      workerSrc: runner.csp.workerSrc,
       allowedOrigins,
     },
     sandboxIframe: {
-      flags: options.runner.sandboxIframe.flags,
-      allowScriptsOnly: isAllowScriptsOnly(options.runner.sandboxIframe.flags),
-      topLevelDomAccessDenied: options.runner.sandboxIframe.topLevelDomAccessDenied,
-      topLevelCookieAccessDenied: options.runner.sandboxIframe.topLevelCookieAccessDenied,
-      topLevelStorageAccessDenied: options.runner.sandboxIframe.topLevelStorageAccessDenied,
+      flags: runner.sandboxIframe.flags,
+      allowScriptsOnly: isAllowScriptsOnly(runner.sandboxIframe.flags),
+      topLevelDomAccessDenied: runner.sandboxIframe.topLevelDomAccessDenied,
+      topLevelCookieAccessDenied: runner.sandboxIframe.topLevelCookieAccessDenied,
+      topLevelStorageAccessDenied: runner.sandboxIframe.topLevelStorageAccessDenied,
     },
     coopCoepHeaders: {
-      coop: options.runner.headers['cross-origin-opener-policy'] ?? null,
-      coep: options.runner.headers['cross-origin-embedder-policy'] ?? null,
-      isolated: options.runner.headers['cross-origin-opener-policy'] === 'same-origin'
-        && options.runner.headers['cross-origin-embedder-policy'] === 'require-corp',
+      coop: runner.headers['cross-origin-opener-policy'] ?? null,
+      coep: runner.headers['cross-origin-embedder-policy'] ?? null,
+      isolated: runner.headers['cross-origin-opener-policy'] === 'same-origin'
+        && runner.headers['cross-origin-embedder-policy'] === 'require-corp',
     },
-    signature: options.runner.signature,
+    signature: runner.signature,
     networkBoundary: {
       allowedOrigins,
       attempts: networkAttempts,
@@ -150,6 +158,21 @@ export function runWorkersCoordinatorSignedRunnerReleaseGate(
     failureReason,
     bottlenecksToIssue: selectBottlenecksToIssue(failureReason),
   };
+}
+
+function snapshotSignedRunnerGateInput<T extends object>(
+  value: T,
+  label: string,
+): T {
+  const body = JSON.stringify(value);
+  if (body === undefined) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  return parsed as T;
 }
 
 function selectFailureReason(input: {
