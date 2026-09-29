@@ -134,10 +134,26 @@ export function runWorkersCoordinatorPrototype(
   // transfer timing before recording any simulated Coordinator/CDN activity so
   // precision loss cannot turn into accepted latency evidence.
   const fanoutLatencyMs = computeAssignmentFanoutLatencyMs(manifest.assignments);
-  const transportStartIndex = transport.connectionCount;
+  assertNonNegativeSafeInteger(manifest.receivedAtMs, 'receivedAtMs');
+  assertNonNegativeSafeInteger(manifest.checkpointRelayMs, 'checkpointRelayMs');
+
   const coordinatorUrl = manifest.coordinatorUrl ?? DEFAULT_COORDINATOR_URL;
   const cdnUrl = manifest.cdnUrl ?? DEFAULT_CDN_URL;
   const state = new SimulatedCoordinatorDurableObject(manifest);
+  const retryResumeImpact = state.computeRetryResumeImpact();
+  const fanoutLatencySamplesMs = state.computeHeartbeatFanoutLatencySamplesMs();
+  const p95FanoutLatencyMs = percentile(fanoutLatencySamplesMs, 95);
+  const completedAtMs = checkedAddNonNegativeSafeIntegers(
+    checkedAddNonNegativeSafeIntegers(
+      manifest.receivedAtMs,
+      fanoutLatencyMs,
+      'request lifecycle completedAtMs',
+    ),
+    retryResumeImpact.estimatedDelayMs,
+    'request lifecycle completedAtMs',
+  );
+
+  const transportStartIndex = transport.connectionCount;
 
   transport.connect(`${coordinatorUrl}/api/requests/${manifest.requestId}`);
   for (const worker of state.registeredWorkers) {
@@ -157,9 +173,6 @@ export function runWorkersCoordinatorPrototype(
     transport.connect(`${coordinatorUrl}/checkpoints/${key}`);
   }
 
-  const retryResumeImpact = state.computeRetryResumeImpact();
-  const fanoutLatencySamplesMs = state.computeHeartbeatFanoutLatencySamplesMs();
-  const p95FanoutLatencyMs = percentile(fanoutLatencySamplesMs, 95);
   const directWorkerNetworking = state.rejectDirectWorkerNetworking();
   const failureReason = selectFailureReason(
     manifest,
@@ -176,7 +189,7 @@ export function runWorkersCoordinatorPrototype(
       acceptedAtMs: manifest.receivedAtMs,
       plannedSegmentCount: manifest.segments.length,
       promptTokens: manifest.promptTokens,
-      completedAtMs: manifest.receivedAtMs + fanoutLatencyMs + retryResumeImpact.estimatedDelayMs,
+      completedAtMs,
     },
     workerStateBoundary: {
       owner: 'durable-object',
@@ -241,20 +254,37 @@ class SimulatedCoordinatorDurableObject {
       ? this.manifest.assignments.find((assignment) => assignment.workerId === lostWorkerId)
       : undefined;
     const retryCount = lostAssignment ? 1 : 0;
+    const estimatedDelayMs = retryCount === 0
+      ? 0
+      : checkedAddNonNegativeSafeIntegers(
+        this.manifest.checkpointRelayMs,
+        this.manifest.retryBackoffMs,
+        'retry/resume estimatedDelayMs',
+      );
 
     return {
       lostWorkerId,
       retryCount,
       resumeCount: retryCount,
-      estimatedDelayMs: retryCount * (this.manifest.checkpointRelayMs + this.manifest.retryBackoffMs),
+      estimatedDelayMs,
       resumedFromSegment: lostAssignment?.startSegment ?? null,
     };
   }
 
   computeHeartbeatFanoutLatencySamplesMs(): readonly number[] {
-    return this.registeredWorkers.map((worker, index) =>
-      worker.heartbeatAtMs - this.manifest.receivedAtMs + index * 7
-    );
+    return this.registeredWorkers.map((worker, index) => {
+      assertNonNegativeSafeInteger(worker.heartbeatAtMs, `worker ${index} heartbeatAtMs`);
+      if (worker.heartbeatAtMs < this.manifest.receivedAtMs) {
+        throw new Error(
+          `worker ${index} heartbeatAtMs must not precede receivedAtMs`,
+        );
+      }
+      return checkedAddNonNegativeSafeIntegers(
+        worker.heartbeatAtMs - this.manifest.receivedAtMs,
+        index * 7,
+        `worker ${index} heartbeat fan-out latency`,
+      );
+    });
   }
 
   rejectDirectWorkerNetworking(): WorkersCoordinatorPrototypeReport['directWorkerNetworking'] {
@@ -264,6 +294,25 @@ class SimulatedCoordinatorDurableObject {
       reason: 'worker-to-worker networking is outside the Coordinator/CDN allowlist',
     };
   }
+}
+
+function assertNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`);
+  }
+}
+
+function checkedAddNonNegativeSafeIntegers(
+  left: number,
+  right: number,
+  label: string,
+): number {
+  assertNonNegativeSafeInteger(left, `${label} left operand`);
+  assertNonNegativeSafeInteger(right, `${label} right operand`);
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new Error(`${label} exceeds JavaScript safe integer range`);
+  }
+  return left + right;
 }
 
 function computeAssignmentFanoutLatencyMs(
