@@ -76,6 +76,28 @@ async function withPersistRoot<T>(run: (persistRoot: string) => Promise<T>): Pro
 }
 
 describe('Workers Coordinator load-shaped runtime smoke', () => {
+  it('rejects any unbounded transfer before starting load-shaped Miniflare activity', async () => {
+    await withPersistRoot(async (persistRoot) => {
+      const base = createManifestFixture(0);
+      const assignments = base.assignments.map((assignment, index) => ({
+        ...assignment,
+        checkpointTransferMs:
+          index === 0 ? Number.POSITIVE_INFINITY : assignment.checkpointTransferMs,
+      }));
+      const manifest: WorkersCoordinatorPrototypeManifest = {
+        ...base,
+        assignments,
+      };
+
+      await expect(runWorkersCoordinatorLoadShapedSmoke({
+        manifests: [manifest],
+        durableObjectsPersistRoot: persistRoot,
+      })).rejects.toThrow(
+        'assignment 0 checkpointTransferMs must be a non-negative safe integer before Miniflare JSON serialization',
+      );
+    });
+  });
+
   it('drives concurrent request traffic, real client heartbeat timing, and Durable Object restart persistence', async () => {
     await withPersistRoot(async (persistRoot) => {
       const manifests = [0, 1, 2].map(createManifestFixture);
