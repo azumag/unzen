@@ -359,7 +359,7 @@ describe('Workers Coordinator deployed runtime smoke', () => {
       client,
       heartbeatBursts: 1,
     })).rejects.toThrow(
-      'heartbeat deployed-t2-a clientMeasuredLatencyMs must be a non-negative finite number before deployed smoke report evaluation',
+      'heartbeat stable-t2-a clientMeasuredLatencyMs must be a non-negative finite number before deployed smoke report evaluation',
     );
     expect(rejectDirectWorkerNetworkingCalls).toBe(0);
   });
