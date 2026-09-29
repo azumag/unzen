@@ -181,7 +181,7 @@ export async function runWorkersCoordinatorMiniflareSmoke(
 export async function runWorkersCoordinatorLoadShapedSmoke(
   options: WorkersCoordinatorLoadShapedSmokeOptions,
 ): Promise<WorkersCoordinatorLoadShapedSmokeReport> {
-  if (manifests.length === 0) {
+  if (options.manifests.length === 0) {
     throw new Error('Load-shaped Workers Coordinator smoke requires at least one manifest');
   }
 
