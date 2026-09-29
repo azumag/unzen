@@ -316,6 +316,13 @@ clean alerts or promotion decisions.
 - `bottlenecksToIssue`
 - `failureReason`
 
+The signed-runner release gate snapshots both the upstream production-gate
+report and the runner contract through JSON before evaluating CSP, sandbox,
+headers, signature, or observed network attempts. Network-attempt URL
+classification and the URL retained in the gate report therefore come from the
+same owned generation instead of re-reading caller-controlled getters during
+classification.
+
 `WorkersCoordinatorSignedRunnerBrowserPreviewReport` includes:
 
 - `target`

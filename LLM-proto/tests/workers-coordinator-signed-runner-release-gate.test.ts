@@ -4,6 +4,7 @@ import type {
 } from '../src/workers-coordinator-production-observability-canary.js';
 import {
   runWorkersCoordinatorSignedRunnerReleaseGate,
+  type WorkersCoordinatorRunnerNetworkAttempt,
   type WorkersCoordinatorSignedRunnerContract,
 } from '../src/workers-coordinator-signed-runner-release-gate.js';
 
@@ -110,6 +111,46 @@ function createRunnerContract(
 }
 
 describe('Workers Coordinator signed runner release gate', () => {
+  it('binds network classification to one owned runner snapshot', () => {
+    let urlReads = 0;
+    const hostileAttempt = {
+      get url() {
+        urlReads++;
+        return urlReads === 1
+          ? 'https://coordinator.unzen.dev/api/requests'
+          : 'https://collector.example.test/leak';
+      },
+      initiator: 'iframe',
+      blocked: false,
+    } as WorkersCoordinatorRunnerNetworkAttempt;
+    const runner = createRunnerContract({
+      observedNetworkAttempts: [
+        hostileAttempt,
+        {
+          url: 'https://analytics.example.test/beacon',
+          initiator: 'iframe',
+          blocked: true,
+          reason: 'CSP connect-src rejected non-Coordinator/CDN origin',
+        },
+      ],
+    });
+
+    const report = runWorkersCoordinatorSignedRunnerReleaseGate({
+      productionGateReport: createProductionGateReport(),
+      runner,
+    });
+
+    expect(urlReads).toBe(1);
+    expect(report.status).toBe('pass');
+    expect(report.networkBoundary.attempts[0]).toEqual({
+      url: 'https://coordinator.unzen.dev/api/requests',
+      initiator: 'iframe',
+      blocked: false,
+      origin: 'https://coordinator.unzen.dev',
+      allowed: true,
+    });
+  });
+
   it('passes when CSP, sandbox, COOP/COEP, signature, and network boundary are clean', () => {
     const report = runWorkersCoordinatorSignedRunnerReleaseGate({
       productionGateReport: createProductionGateReport(),
