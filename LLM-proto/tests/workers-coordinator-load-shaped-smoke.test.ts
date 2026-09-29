@@ -98,6 +98,34 @@ describe('Workers Coordinator load-shaped runtime smoke', () => {
     });
   });
 
+  it('rejects an unsafe heartbeat burst count before starting load-shaped Miniflare activity', async () => {
+    await withPersistRoot(async (persistRoot) => {
+      const manifest = createManifestFixture(0);
+
+      await expect(runWorkersCoordinatorLoadShapedSmoke({
+        manifests: [manifest],
+        durableObjectsPersistRoot: persistRoot,
+        heartbeatBursts: Number.MAX_SAFE_INTEGER + 1,
+      })).rejects.toThrow(
+        'heartbeatBursts must be a non-negative safe integer before Miniflare JSON serialization',
+      );
+    });
+  });
+
+  it('rejects an unsafe load-shaped p95 budget before starting Miniflare activity', async () => {
+    await withPersistRoot(async (persistRoot) => {
+      const manifest = createManifestFixture(0);
+
+      await expect(runWorkersCoordinatorLoadShapedSmoke({
+        manifests: [manifest],
+        durableObjectsPersistRoot: persistRoot,
+        maxP95FanoutLatencyMs: Number.MAX_SAFE_INTEGER + 1,
+      })).rejects.toThrow(
+        'maxP95FanoutLatencyMs must be a non-negative safe integer before Miniflare JSON serialization',
+      );
+    });
+  });
+
   it('drives concurrent request traffic, real client heartbeat timing, and Durable Object restart persistence', async () => {
     await withPersistRoot(async (persistRoot) => {
       const manifests = [0, 1, 2].map(createManifestFixture);
