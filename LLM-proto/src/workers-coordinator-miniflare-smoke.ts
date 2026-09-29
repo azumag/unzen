@@ -129,6 +129,7 @@ export async function runWorkersCoordinatorMiniflareSmoke(
 ): Promise<WorkersCoordinatorMiniflareSmokeReport> {
   assertMiniflareManifestTimings(options.manifest);
   const heartbeatBursts = options.concurrentHeartbeatBursts ?? DEFAULT_HEARTBEAT_BURSTS;
+  assertMiniflareHeartbeatSchedule(options.manifest, heartbeatBursts);
   const mf = createWorkersCoordinatorMiniflare();
 
   try {
@@ -188,6 +189,7 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
   }
 
   const heartbeatBursts = options.heartbeatBursts ?? DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS;
+  assertMiniflareNonNegativeSafeInteger(heartbeatBursts, 'heartbeatBursts');
   const fallbackChurnWorkerId = options.manifests[0].lostWorkerId;
   const churnWorkerIds = new Set(
     options.churnWorkerIds ?? (fallbackChurnWorkerId ? [fallbackChurnWorkerId] : []),
@@ -195,6 +197,10 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
   const requestIds = options.manifests.map((manifest) => manifest.requestId);
   const maxP95FanoutLatencyMs = options.maxP95FanoutLatencyMs ?? Math.max(
     ...options.manifests.map((manifest) => manifest.maxFanoutLatencyMs),
+  );
+  assertMiniflareNonNegativeSafeInteger(
+    maxP95FanoutLatencyMs,
+    'maxP95FanoutLatencyMs',
   );
 
   let mf = createWorkersCoordinatorMiniflare(options.durableObjectsPersistRoot);
@@ -381,6 +387,71 @@ function assertMiniflareManifestTimings(
       'retry/resume estimatedDelayMs',
     );
   }
+}
+
+function assertMiniflareHeartbeatSchedule(
+  manifest: WorkersCoordinatorPrototypeManifest,
+  heartbeatBursts: number,
+): void {
+  assertMiniflareNonNegativeSafeInteger(heartbeatBursts, 'concurrentHeartbeatBursts');
+  if (heartbeatBursts === 0 || manifest.workers.length === 0) {
+    return;
+  }
+
+  const maxBurstIndex = heartbeatBursts - 1;
+  const maxWorkerIndex = manifest.workers.length - 1;
+  const maxBurstSentOffsetMs = checkedMultiplyMiniflareTiming(
+    maxBurstIndex,
+    100,
+    'heartbeat sentAt burst offset',
+  );
+  const maxWorkerSentOffsetMs = checkedMultiplyMiniflareTiming(
+    maxWorkerIndex,
+    11,
+    'heartbeat sentAt worker offset',
+  );
+  const latestBurstSentAtMs = checkedAddMiniflareTimings(
+    manifest.receivedAtMs,
+    maxBurstSentOffsetMs,
+    'heartbeat sentAtMs',
+  );
+  checkedAddMiniflareTimings(
+    latestBurstSentAtMs,
+    maxWorkerSentOffsetMs,
+    'heartbeat sentAtMs',
+  );
+
+  const maxBurstFanoutOffsetMs = checkedMultiplyMiniflareTiming(
+    maxBurstIndex,
+    13,
+    'heartbeat fan-out burst offset',
+  );
+  const maxWorkerFanoutOffsetMs = checkedMultiplyMiniflareTiming(
+    maxWorkerIndex,
+    27,
+    'heartbeat fan-out worker offset',
+  );
+  const maxBurstFanoutMs = checkedAddMiniflareTimings(
+    100,
+    maxBurstFanoutOffsetMs,
+    'heartbeat fan-out latency',
+  );
+  checkedAddMiniflareTimings(
+    maxBurstFanoutMs,
+    maxWorkerFanoutOffsetMs,
+    'heartbeat fan-out latency',
+  );
+}
+
+function checkedMultiplyMiniflareTiming(left: number, right: number, label: string): number {
+  assertMiniflareNonNegativeSafeInteger(left, `${label} left operand`);
+  assertMiniflareNonNegativeSafeInteger(right, `${label} right operand`);
+  if (left !== 0 && right > Math.floor(Number.MAX_SAFE_INTEGER / left)) {
+    throw new Error(
+      `${label} exceeds JavaScript safe integer range before Miniflare JSON serialization`,
+    );
+  }
+  return left * right;
 }
 
 function assertMiniflareNonNegativeSafeInteger(value: number, label: string): void {
