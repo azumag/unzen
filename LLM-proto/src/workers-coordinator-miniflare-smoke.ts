@@ -127,15 +127,16 @@ const DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS = 5;
 export async function runWorkersCoordinatorMiniflareSmoke(
   options: WorkersCoordinatorMiniflareSmokeOptions,
 ): Promise<WorkersCoordinatorMiniflareSmokeReport> {
-  assertMiniflareManifestTimings(options.manifest);
+  const manifestSnapshot = snapshotManifestForMiniflare(options.manifest);
+  const manifest = manifestSnapshot.manifest;
   const heartbeatBursts = options.concurrentHeartbeatBursts ?? DEFAULT_HEARTBEAT_BURSTS;
-  assertMiniflareHeartbeatSchedule(options.manifest, heartbeatBursts);
+  assertMiniflareHeartbeatSchedule(manifest, heartbeatBursts);
   const mf = createWorkersCoordinatorMiniflare();
 
   try {
     const requestResponse = await mf.dispatchFetch('http://workers.local/api/requests', {
       method: 'POST',
-      body: JSON.stringify(options.manifest),
+      body: manifestSnapshot.body,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -146,10 +147,10 @@ export async function runWorkersCoordinatorMiniflareSmoke(
 
     for (let burst = 0; burst < heartbeatBursts; burst++) {
       await Promise.all(
-        options.manifest.workers.map((worker, workerIndex) =>
+        manifest.workers.map((worker, workerIndex) =>
           dispatchHeartbeat(mf, worker.id, {
-            requestId: options.manifest.requestId,
-            sentAtMs: options.manifest.receivedAtMs + burst * 100 + workerIndex * 11,
+            requestId: manifest.requestId,
+            sentAtMs: manifest.receivedAtMs + burst * 100 + workerIndex * 11,
             fanoutLatencyMs: 100 + burst * 13 + workerIndex * 27,
             burst,
           }),
@@ -165,7 +166,7 @@ export async function runWorkersCoordinatorMiniflareSmoke(
     }
 
     const reportResponse = await mf.dispatchFetch(
-      `http://workers.local/api/requests/${options.manifest.requestId}/report`,
+      `http://workers.local/api/requests/${manifest.requestId}/report`,
     );
     if (!reportResponse.ok) {
       throw new Error(`Miniflare report endpoint failed: ${reportResponse.status}`);
@@ -180,38 +181,38 @@ export async function runWorkersCoordinatorMiniflareSmoke(
 export async function runWorkersCoordinatorLoadShapedSmoke(
   options: WorkersCoordinatorLoadShapedSmokeOptions,
 ): Promise<WorkersCoordinatorLoadShapedSmokeReport> {
-  if (options.manifests.length === 0) {
+  if (manifests.length === 0) {
     throw new Error('Load-shaped Workers Coordinator smoke requires at least one manifest');
   }
 
-  for (const manifest of options.manifests) {
-    assertMiniflareManifestTimings(manifest);
-  }
+  const manifestSnapshots = options.manifests.map(snapshotManifestForMiniflare);
+  const manifests = manifestSnapshots.map((snapshot) => snapshot.manifest);
+  const durableObjectsPersistRoot = options.durableObjectsPersistRoot;
 
   const heartbeatBursts = options.heartbeatBursts ?? DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS;
   assertMiniflareNonNegativeSafeInteger(heartbeatBursts, 'heartbeatBursts');
-  const fallbackChurnWorkerId = options.manifests[0].lostWorkerId;
+  const fallbackChurnWorkerId = manifests[0].lostWorkerId;
   const churnWorkerIds = new Set(
     options.churnWorkerIds ?? (fallbackChurnWorkerId ? [fallbackChurnWorkerId] : []),
   );
-  const requestIds = options.manifests.map((manifest) => manifest.requestId);
+  const requestIds = manifests.map((manifest) => manifest.requestId);
   const maxP95FanoutLatencyMs = options.maxP95FanoutLatencyMs ?? Math.max(
-    ...options.manifests.map((manifest) => manifest.maxFanoutLatencyMs),
+    ...manifests.map((manifest) => manifest.maxFanoutLatencyMs),
   );
   assertMiniflareNonNegativeSafeInteger(
     maxP95FanoutLatencyMs,
     'maxP95FanoutLatencyMs',
   );
 
-  let mf = createWorkersCoordinatorMiniflare(options.durableObjectsPersistRoot);
+  let mf = createWorkersCoordinatorMiniflare(durableObjectsPersistRoot);
   let disposed = false;
 
   try {
     const requestResponses = await Promise.all(
-      options.manifests.map((manifest) =>
+      manifestSnapshots.map((snapshot) =>
         mf.dispatchFetch('http://workers.local/api/requests', {
           method: 'POST',
-          body: JSON.stringify(manifest),
+          body: snapshot.body,
           headers: {
             'Content-Type': 'application/json',
           },
@@ -227,7 +228,7 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
 
     for (let burst = 0; burst < heartbeatBursts; burst++) {
       const burstHeartbeats: Promise<MeasuredHeartbeatAck>[] = [];
-      for (const manifest of options.manifests) {
+      for (const manifest of manifests) {
         for (const worker of manifest.workers) {
           attemptedHeartbeatCount++;
           if (churnWorkerIds.has(worker.id) && burst >= churnStartBurst) {
@@ -257,7 +258,7 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
     await mf.dispose();
     disposed = true;
 
-    mf = createWorkersCoordinatorMiniflare(options.durableObjectsPersistRoot);
+    mf = createWorkersCoordinatorMiniflare(durableObjectsPersistRoot);
     disposed = false;
 
     const afterRestartReports = await readSmokeReports(mf, requestIds);
@@ -298,7 +299,7 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
       p95FanoutLatencyMs,
       maxP95FanoutLatencyMs,
       acceptedApiRequests,
-      expectedApiRequests: options.manifests.length,
+      expectedApiRequests: manifests.length,
     });
 
     return {
@@ -306,7 +307,7 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
       status: failureReason ? 'fail' : 'pass',
       requestIds,
       customerTraffic: {
-        concurrentApiRequests: options.manifests.length,
+        concurrentApiRequests: manifests.length,
         acceptedApiRequests,
         heartbeatBursts,
         attemptedHeartbeatCount,
@@ -321,7 +322,7 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
       },
       restartPersistence: {
         persisted,
-        durableObjectsPersistRoot: options.durableObjectsPersistRoot,
+        durableObjectsPersistRoot,
         beforeRestartStorageKeyCount,
         afterRestartStorageKeyCount,
         persistedRequestIds,
@@ -341,6 +342,35 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
       await mf.dispose();
     }
   }
+}
+
+function snapshotManifestForMiniflare(
+  manifest: WorkersCoordinatorPrototypeManifest,
+): {
+  readonly manifest: WorkersCoordinatorPrototypeManifest;
+  readonly body: string;
+} {
+  // Validate the caller-owned object first so malformed timing fields keep the
+  // existing pre-serialization diagnostics, then validate the exact JSON
+  // snapshot that will cross the host-to-Miniflare boundary. All asynchronous
+  // work below uses this owned snapshot rather than re-reading caller fields.
+  assertMiniflareManifestTimings(manifest);
+
+  const body = JSON.stringify(manifest);
+  if (body === undefined) {
+    throw new Error('Workers Coordinator manifest must serialize to a JSON object');
+  }
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Workers Coordinator manifest must serialize to a JSON object');
+  }
+
+  const owned = parsed as WorkersCoordinatorPrototypeManifest;
+  assertMiniflareManifestTimings(owned);
+  return {
+    manifest: owned,
+    body,
+  };
 }
 
 function assertMiniflareManifestTimings(
