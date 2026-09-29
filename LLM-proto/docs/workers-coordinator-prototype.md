@@ -226,6 +226,17 @@ dispatcher's internal `Infinity` sentinel before `JSON.stringify()` can coerce
 it to `null` and change the meaning of the runtime evidence. The same preflight
 runs across every manifest in the load-shaped smoke before Miniflare activity.
 
+The Miniflare boundary also validates `receivedAtMs`, checkpoint relay/backoff
+timings, latency thresholds, worker heartbeat timestamps, and retry/resume
+derived timing before runtime startup. The normal smoke additionally preflights
+the full synthetic heartbeat schedule so its generated `sentAtMs` and fan-out
+samples cannot leave JavaScript's safe-integer range after a request has already
+been accepted. The embedded Durable Object runtime repeats the manifest timing
+validation after JSON parsing and uses checked arithmetic for retry/resume delay
+and `requestLifecycle.completedAtMs`; this keeps direct runtime use fail-closed
+even if host-side callers change later. Load-shaped heartbeat count and its
+explicit p95 budget are validated before Miniflare startup as well.
+
 `WorkersCoordinatorMiniflareSmokeReport` includes:
 
 - `runtime`
