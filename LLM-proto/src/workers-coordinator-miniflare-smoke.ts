@@ -127,6 +127,7 @@ const DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS = 5;
 export async function runWorkersCoordinatorMiniflareSmoke(
   options: WorkersCoordinatorMiniflareSmokeOptions,
 ): Promise<WorkersCoordinatorMiniflareSmokeReport> {
+  assertMiniflareManifestTransferTimings(options.manifest);
   const heartbeatBursts = options.concurrentHeartbeatBursts ?? DEFAULT_HEARTBEAT_BURSTS;
   const mf = createWorkersCoordinatorMiniflare();
 
@@ -180,6 +181,10 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
 ): Promise<WorkersCoordinatorLoadShapedSmokeReport> {
   if (options.manifests.length === 0) {
     throw new Error('Load-shaped Workers Coordinator smoke requires at least one manifest');
+  }
+
+  for (const manifest of options.manifests) {
+    assertMiniflareManifestTransferTimings(manifest);
   }
 
   const heartbeatBursts = options.heartbeatBursts ?? DEFAULT_LOAD_SHAPED_HEARTBEAT_BURSTS;
@@ -329,6 +334,26 @@ export async function runWorkersCoordinatorLoadShapedSmoke(
     if (!disposed) {
       await mf.dispose();
     }
+  }
+}
+
+function assertMiniflareManifestTransferTimings(
+  manifest: WorkersCoordinatorPrototypeManifest,
+): void {
+  let totalTransferMs = 0;
+  for (let index = 0; index < manifest.assignments.length; index++) {
+    const transferMs = manifest.assignments[index].checkpointTransferMs;
+    if (!Number.isSafeInteger(transferMs) || transferMs < 0) {
+      throw new Error(
+        `assignment ${index} checkpointTransferMs must be a non-negative safe integer before Miniflare JSON serialization`,
+      );
+    }
+    if (totalTransferMs > Number.MAX_SAFE_INTEGER - transferMs) {
+      throw new Error(
+        'assignment checkpoint transfer total exceeds JavaScript safe integer range before Miniflare JSON serialization',
+      );
+    }
+    totalTransferMs += transferMs;
   }
 }
 
