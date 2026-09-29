@@ -42,11 +42,16 @@ runner boundary through a browser harness against an authenticated Wrangler
 preview or deployed Worker URL. It records the target URL and auth preflight,
 browser-captured runner headers, CSP `connect-src`, sandbox flags, COOP / COEP,
 allowed origins, and blocked non-Coordinator/CDN network attempts before routing
-to the next pilot bottleneck. The contract fields are carried inside an
-`EvidenceEnvelope` payload: the gate runs `validateEvidenceEnvelope()` first and
-only reports readiness from the validator result. A hand-written fixture that
-claims `captured-and-verified` is rejected as `not-evaluated` unless an external
-artifact loader, independent verifier, and trusted verifier list are supplied.
+to the next pilot bottleneck. The browser-captured runner URL must stay on the
+same URL origin as the configured preview target and, when that target is
+path-scoped, must either match the target pathname exactly or remain below it on
+a path-segment boundary. Lookalike hostnames, sibling pathname prefixes, and
+malformed URLs fail closed as `runner-url-outside-preview-target`. The contract
+fields are carried inside an `EvidenceEnvelope` payload: the gate runs
+`validateEvidenceEnvelope()` first and only reports readiness from the validator
+result. A hand-written fixture that claims `captured-and-verified` is rejected as
+`not-evaluated` unless an external artifact loader, independent verifier, and
+trusted verifier list are supplied.
 
 `src/workers-coordinator-signed-runner-webgpu-worker-pilot.ts` connects that
 preview runner to a WebGPU dedicated worker pilot. The report keeps the preview
