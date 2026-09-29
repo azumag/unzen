@@ -223,6 +223,73 @@ describe('Workers Coordinator prototype gate', () => {
     expect(transport.connectionCount).toBe(0);
   });
 
+  it('rejects retry/resume delay overflow before transport activity', () => {
+    const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...base,
+      checkpointRelayMs: Number.MAX_SAFE_INTEGER,
+      retryBackoffMs: 1,
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'retry/resume estimatedDelayMs exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
+  it('rejects request completion timestamp overflow before transport activity', () => {
+    const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+    const receivedAtMs = Number.MAX_SAFE_INTEGER - 50;
+    const assignments = base.assignments.map((assignment) => ({
+      ...assignment,
+      checkpointTransferMs: 100,
+    }));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...base,
+      receivedAtMs,
+      assignments,
+      lostWorkerId: undefined,
+      workers: base.workers.map((worker, index) => ({
+        ...worker,
+        heartbeatAtMs: receivedAtMs + index,
+      })),
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'request lifecycle completedAtMs exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
+  it('rejects heartbeat fan-out latency overflow before transport activity', () => {
+    const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
+    const transport = new AllowlistedPrototypeTransport([
+      'https://coordinator.unzen.local',
+      'https://cdn.unzen.local',
+    ]);
+    const manifest: WorkersCoordinatorPrototypeManifest = {
+      ...base,
+      receivedAtMs: 0,
+      workers: base.workers.map((worker) => ({
+        ...worker,
+        heartbeatAtMs: Number.MAX_SAFE_INTEGER,
+      })),
+    };
+
+    expect(() => runWorkersCoordinatorPrototype(manifest, transport)).toThrow(
+      'worker 1 heartbeat fan-out latency exceeds JavaScript safe integer range',
+    );
+    expect(transport.connectionCount).toBe(0);
+  });
+
   it('fails when retry resume impact exceeds the Workers scale-up gate', () => {
     const base = createDefaultWorkersCoordinatorManifest(createAssignmentFixture(), makeSegments(3));
     const manifest: WorkersCoordinatorPrototypeManifest = {
