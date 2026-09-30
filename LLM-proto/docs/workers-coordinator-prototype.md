@@ -42,11 +42,14 @@ runner boundary through a browser harness against an authenticated Wrangler
 preview or deployed Worker URL. It records the target URL and auth preflight,
 browser-captured runner headers, CSP `connect-src`, sandbox flags, COOP / COEP,
 allowed origins, and blocked non-Coordinator/CDN network attempts before routing
-to the next pilot bottleneck. The browser-captured runner URL must stay on the
-same URL origin as the configured preview target and, when that target is
-path-scoped, must either match the target pathname exactly or remain below it on
-a path-segment boundary. Lookalike hostnames, sibling pathname prefixes, and
-malformed URLs fail closed as `runner-url-outside-preview-target`. The contract
+to the next pilot bottleneck. The browser-captured runner URL and configured
+preview target must both use HTTP(S), must stay on the same URL origin, and,
+when that target is path-scoped, the runner must either match the target
+pathname exactly or remain below it on a path-segment boundary. Lookalike
+hostnames, sibling pathname prefixes, non-HTTP(S) schemes (including `blob:`,
+`data:`, and `file:`), and malformed URLs fail closed as
+`runner-url-outside-preview-target`. Wrangler localhost `http:` previews
+remain valid. The contract
 fields are carried inside an `EvidenceEnvelope` payload: the gate runs
 `validateEvidenceEnvelope()` first and only reports readiness from the validator
 result. A hand-written fixture that claims `captured-and-verified` is rejected as
