@@ -1,5 +1,6 @@
 import {
   AdaptiveChunkDispatcher,
+  DEFAULT_CHECKPOINT_BYTES,
   type AdaptiveChunkAssignmentReport,
   type AdaptiveDispatcherRunReport,
   type WorkerTelemetry,
@@ -30,6 +31,8 @@ export interface CoordinatorPrototypeManifest {
   readonly cdnUrl?: string;
   readonly loadBudgetRatio?: number;
   readonly checkpointBytes?: number;
+  /** Synthetic recovery throughput assumption, not measured replacement telemetry. */
+  readonly recoveryCheckpointBytesPerSecond?: number;
 }
 
 export interface CoordinatorPrototypeReport {
@@ -66,6 +69,15 @@ export interface CoordinatorPrototypeReport {
     readonly affectedSegments: readonly number[];
     readonly resumedFromSegment?: number;
     readonly addedCheckpointDelayMs: number;
+    readonly recoveryCost?: {
+      readonly checkpointBytes: number;
+      readonly checkpointTransferMs: number;
+      readonly bytesPerSecond: number;
+      readonly source: 'prototype-configured-rate' | 'prototype-default-rate';
+      readonly retryOverheadMs: number;
+      readonly via: 'coordinator';
+      readonly evidence: 'estimated';
+    };
     readonly failureReason?: string;
   };
   readonly transport: AdaptiveDispatcherRunReport['transport'];
@@ -80,6 +92,16 @@ interface WorkerLossSelectorSnapshot {
 
 const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
+interface RecoveryEstimateSnapshot {
+  readonly checkpointBytes: number;
+  readonly bytesPerSecond: number;
+  readonly transferMs: number;
+  readonly source: 'prototype-configured-rate' | 'prototype-default-rate';
+}
+
+// Synthetic fixture assumptions; neither value is production latency evidence.
+const DEFAULT_RECOVERY_BYTES_PER_SECOND = 8 * 1024 * 1024;
+const RETRY_OVERHEAD_MS = 50;
 const UNKNOWN_COORDINATOR_FAILURE = 'Unknown error';
 
 export function createDefaultCoordinatorPrototypeManifest(): CoordinatorPrototypeManifest {
@@ -132,6 +154,7 @@ export function runCoordinatorPrototype(
   manifest: CoordinatorPrototypeManifest,
 ): CoordinatorPrototypeReport {
   const workerLossSelector = snapshotWorkerLossSelector(manifest);
+  const recoveryEstimate = snapshotRecoveryEstimate(manifest);
   // requestId is caller-owned input. Capture it once so dispatch, fallback
   // reporting, and the returned report cannot observe different accessor values.
   const requestId = manifest.requestId;
@@ -148,7 +171,7 @@ export function runCoordinatorPrototype(
     coordinatorUrl,
     cdnUrl,
     loadBudgetRatio: manifest.loadBudgetRatio,
-    checkpointBytes: manifest.checkpointBytes,
+    checkpointBytes: recoveryEstimate.checkpointBytes,
   });
 
   for (const worker of eligibleWorkers) {
@@ -181,7 +204,7 @@ export function runCoordinatorPrototype(
     assignedBy: 'AdaptiveChunkDispatcher' as const,
   }));
   const checkpointRelay = buildCheckpointRelay(assignments);
-  const retryResumeImpact = buildRetryResumeImpact(workerLossSelector, assignments);
+  const retryResumeImpact = buildRetryResumeImpact(workerLossSelector, assignments, recoveryEstimate);
   const directWorkerNetworking = dispatcherReport.transport.connections.some(
     (connection) => connection.startsWith('worker://'),
   );
@@ -256,6 +279,36 @@ function snapshotWorkerLossSelector(
   return Object.freeze({
     lostWorkerId,
     lostAfterAssignmentIndex,
+  });
+}
+
+function snapshotRecoveryEstimate(
+  manifest: CoordinatorPrototypeManifest,
+): RecoveryEstimateSnapshot {
+  // Read once before dispatch. Assignment and recovery reporting must share the
+  // same checkpoint size even when a caller supplies getters or proxies.
+  const checkpointBytesInput = manifest.checkpointBytes;
+  const rateInput = manifest.recoveryCheckpointBytesPerSecond;
+  const checkpointBytes = checkpointBytesInput === undefined
+    ? DEFAULT_CHECKPOINT_BYTES
+    : checkpointBytesInput;
+  if (!Number.isSafeInteger(checkpointBytes) || checkpointBytes <= 0) {
+    throw new Error('checkpointBytes must be a positive safe integer');
+  }
+  const bytesPerSecond = rateInput === undefined ? DEFAULT_RECOVERY_BYTES_PER_SECOND : rateInput;
+  if (typeof bytesPerSecond !== 'number' || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    throw new Error('recoveryCheckpointBytesPerSecond must be a positive finite number');
+  }
+  // Round up so a positive modeled transfer never disappears as zero ms.
+  const transferMs = Math.max(1, Math.ceil((checkpointBytes / bytesPerSecond) * 1000));
+  if (!Number.isSafeInteger(transferMs + RETRY_OVERHEAD_MS)) {
+    throw new Error('recovery checkpoint delay must fit in a safe integer');
+  }
+  return Object.freeze({
+    checkpointBytes,
+    bytesPerSecond,
+    transferMs,
+    source: rateInput === undefined ? 'prototype-default-rate' : 'prototype-configured-rate',
   });
 }
 
@@ -379,6 +432,7 @@ function buildRetryResumeImpact(
   assignments: readonly (AdaptiveChunkAssignmentReport & {
     readonly assignedBy: 'AdaptiveChunkDispatcher';
   })[],
+  recoveryEstimate: RecoveryEstimateSnapshot,
 ): CoordinatorPrototypeReport['retryResumeImpact'] {
   const requestedLostWorker = selector.lostWorkerId;
   const lostAssignmentIndex = selector.lostAfterAssignmentIndex ?? -1;
@@ -410,7 +464,16 @@ function buildRetryResumeImpact(
     resumeCount: precedingCheckpoint ? 1 : 0,
     affectedSegments,
     resumedFromSegment: precedingCheckpoint?.endSegment,
-    addedCheckpointDelayMs: lostAssignment.checkpointTransferMs + 50,
+    addedCheckpointDelayMs: (precedingCheckpoint ? recoveryEstimate.transferMs : 0) + RETRY_OVERHEAD_MS,
+    recoveryCost: {
+      checkpointBytes: precedingCheckpoint ? recoveryEstimate.checkpointBytes : 0,
+      checkpointTransferMs: precedingCheckpoint ? recoveryEstimate.transferMs : 0,
+      bytesPerSecond: recoveryEstimate.bytesPerSecond,
+      source: recoveryEstimate.source,
+      retryOverheadMs: RETRY_OVERHEAD_MS,
+      via: 'coordinator',
+      evidence: 'estimated',
+    },
     failureReason: `worker-lost: ${lostAssignment.workerId}`,
   };
 }

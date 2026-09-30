@@ -85,6 +85,48 @@ closed rather than being interpreted as omission. Accessor- or Proxy-backed
 caller objects therefore cannot validate one selector and switch to another
 after dispatch begins.
 
+## Recovery cost estimates
+
+`retryResumeImpact.recoveryCost` is present only for a selected simulated loss.
+It independently models a Coordinator-owned checkpoint being sent to a replacement
+worker; it never reuses the lost assignment's transfer cost or adds a historical
+`checkpointRelay` row. The harness does not select a replacement, perform this
+recovery transfer, or verify that the inferred preceding checkpoint was durably
+stored. `resumeCount` describes the modeled scenario, not completed recovery.
+Original assignment and lifecycle reports still describe the baseline run.
+
+`recoveryCheckpointBytesPerSecond` is an optional positive finite manifest value.
+The default is **8 MiB/s**, a synthetic assumption matching the slowest throughput
+in the default fixture, not measured replacement throughput or a guaranteed
+conservative production bound. Set it explicitly for a different scenario.
+Checkpoint size shares the dispatcher's resolved `checkpointBytes` (default 4 MiB).
+Both inputs are captured once before dispatch; invalid inputs or an unsafe total
+millisecond estimate fail before simulated connections.
+
+For a preceding checkpoint, the recovery transfer estimate is
+`max(1, ceil(checkpointBytes / recoveryCheckpointBytesPerSecond * 1000))` ms.
+`addedCheckpointDelayMs` adds the separately reported **50 ms** synthetic
+`retryOverheadMs`. Thus the default recovery models 500 ms transfer + 50 ms overhead,
+including after an original rolling assignment reported 0 bytes / 0 ms.
+A first-assignment loss has no preceding checkpoint: recovery bytes/time are zero
+and only retry overhead remains. No selected loss retains the existing zero-delay
+report without a `recoveryCost` object.
+
+The recovery object records `checkpointBytes`, `checkpointTransferMs`,
+`bytesPerSecond`, `source` (`prototype-configured-rate` or `prototype-default-rate`),
+`retryOverheadMs`, `via: coordinator`, and `evidence: estimated`. These values
+exclude recomputation, model downloads, loss detection, and real storage read/egress
+measurements. The existing >500 ms checkpoint budget flag now reflects this estimate;
+it is not production latency evidence. Future actual retry assignment or storage
+instrumentation must supply separately identified evidence without double-counting
+an end-to-end observed transfer. Worker-to-worker networking remains disallowed.
+
+Run focused regressions with:
+
+```bash
+npm test -- tests/coordinator-recovery-cost.test.ts tests/coordinator-prototype.test.ts tests/coordinator-worker-loss-selector.test.ts
+```
+
 ## Cloudflare Workers Prototype Handoff
 
 If this harness passes and the report stays inside the latency and churn

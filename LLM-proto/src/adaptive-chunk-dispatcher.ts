@@ -135,7 +135,7 @@ const DEFAULT_COORDINATOR_URL = 'https://coordinator.unzen.local';
 const DEFAULT_CDN_URL = 'https://cdn.unzen.local';
 const DEFAULT_LOAD_BUDGET_RATIO = 0.03;
 const DEFAULT_LONG_LIVED_WORKER_MS = 30 * 60 * 1000;
-const DEFAULT_CHECKPOINT_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_CHECKPOINT_BYTES = 4 * 1024 * 1024;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_ARRAY_LENGTH = 0xffff_ffff;
 
