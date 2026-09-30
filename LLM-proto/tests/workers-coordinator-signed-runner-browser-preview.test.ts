@@ -293,6 +293,44 @@ describe('Workers Coordinator signed runner browser preview verification contrac
     expect(report.status).toBe('fail');
     expect(report.failureReason).toBe('runner-url-outside-preview-target');
   });
+
+  it.each([
+    'blob:https://preview.unzen-workers.example/5ae0ad02-a7a2-4b76-8fa1-6c02f919ce09',
+    'data:text/html,<script>self.close()</script>',
+    'file:///tmp/runner.html',
+  ])('rejects a non-HTTP(S) runner URL: %s', async (runnerUrl) => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({ runnerUrl }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+    expect(report.bottlenecksToIssue).toEqual(['signed-runner-preview-routing-hardening']);
+  });
+
+  it('rejects a non-HTTP(S) preview target even when the runner URL is also file scoped', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({ baseUrl: 'file:///tmp/preview/' }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'file:///tmp/preview/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+  });
+
+  it('preserves Wrangler localhost HTTP preview URLs', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({ baseUrl: 'http://127.0.0.1:8787/runners/signed/' }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'http://127.0.0.1:8787/runners/signed/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+  });
 });
 
 describe('Workers Coordinator signed runner browser preview integration gate', () => {
