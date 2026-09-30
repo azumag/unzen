@@ -180,7 +180,11 @@ function isRunnerUrlWithinPreviewTarget(baseUrl: string, runnerUrl: string): boo
     const base = new URL(baseUrl);
     const runner = new URL(runnerUrl);
 
-    if (base.origin !== runner.origin) {
+    if (
+      (base.protocol !== 'http:' && base.protocol !== 'https:')
+      || (runner.protocol !== 'http:' && runner.protocol !== 'https:')
+      || base.origin !== runner.origin
+    ) {
       return false;
     }
 
