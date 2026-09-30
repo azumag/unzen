@@ -57,7 +57,7 @@ describe('Coordinator prototype harness', () => {
       }),
     );
     expect(report.bottlenecksToIssue).toContain(
-      'cloudflare-workers-websocket-durable-state-validation',
+      'checkpoint-relay-latency-budget',
     );
   });
 
