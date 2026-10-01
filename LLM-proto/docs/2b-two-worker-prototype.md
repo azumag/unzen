@@ -220,6 +220,10 @@ Findings:
 Harness: `browser-harness/webgpu-2b/` (serve with
 `MODELS_DIR=<dir> node serve.mjs` to serve local model artifacts, open
 `index.html?model=<repo>` and click Run; the report is rendered on the page).
+Local `/models/...` responses use `Cache-Control: public, max-age=3600`
+while ordinary harness assets remain `no-store`. `HEAD` validates the target
+without reading or returning model bytes, and missing local model artifacts
+return a plain `404`.
 The runner loads transformers.js from a pinned jsdelivr URL and model
 artifacts from the local `/models/` path or huggingface.co — fine for a local
 diagnostic harness, but a telemetry path would need to vendor the library with
