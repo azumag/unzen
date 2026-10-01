@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,10 +18,10 @@ async function makeRoots() {
   const root = join(workspace, 'harness');
   const modelsDir = join(workspace, 'models');
   await writeFile(join(workspace, 'placeholder'), '');
-  await import('node:fs/promises').then(({ mkdir }) => Promise.all([
+  await Promise.all([
     mkdir(root, { recursive: true }),
     mkdir(join(modelsDir, 'repo'), { recursive: true }),
-  ]));
+  ]);
   await writeFile(join(root, 'index.html'), '<html>ok</html>');
   await writeFile(join(modelsDir, 'repo', 'model.bin'), 'artifact-bytes');
   return { root, modelsDir };
