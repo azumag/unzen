@@ -3,13 +3,21 @@ import { lstat, open, realpath, stat } from 'node:fs/promises';
 import * as nodePath from 'node:path';
 import { TextDecoder } from 'node:util';
 
-function assertPathWithinRoot(pathApi, root, value) {
+export function isPathWithinRootWithPathApi(pathApi, root, value) {
   const fromRoot = pathApi.relative(root, value);
-  if (
+  return !(
     fromRoot === '..'
     || fromRoot.startsWith(`..${pathApi.sep}`)
     || pathApi.isAbsolute(fromRoot)
-  ) {
+  );
+}
+
+export function isPathWithinRoot(root, value) {
+  return isPathWithinRootWithPathApi(nodePath, root, value);
+}
+
+function assertPathWithinRoot(pathApi, root, value) {
+  if (!isPathWithinRootWithPathApi(pathApi, root, value)) {
     throw new Error('path escapes root');
   }
 }

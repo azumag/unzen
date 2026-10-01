@@ -13,6 +13,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveWebgpuDiagnosticPort } from '../webgpu-2b-split/server-port.mjs';
+import { isPathWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = resolveWebgpuDiagnosticPort(process.env.PORT, 8788);
@@ -62,11 +63,12 @@ const server = createServer(async (req, res) => {
       // Prevent empty pathname after slice from escaping base
       if (!pathname) pathname = '/';
     }
-    // Normalize and resolve to prevent path traversal (including symlink-escape via resolve).
+    // Normalize and resolve to keep lexical traversal inside the selected root.
+    // This does not canonicalize or reject symlinks in the trusted MODELS_DIR tree.
     const target = normalize(join(base, pathname));
     const resolvedBase = resolve(base);
     const resolvedTarget = resolve(target);
-    if (!(resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + '/'))) {
+    if (!isPathWithinRoot(resolvedBase, resolvedTarget)) {
       res.writeHead(403).end('forbidden');
       return;
     }

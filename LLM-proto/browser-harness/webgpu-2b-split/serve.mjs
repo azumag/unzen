@@ -24,6 +24,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveWebgpuDiagnosticPort } from './server-port.mjs';
+import { isPathWithinRoot } from './server-safe-path.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const DEFAULT_PORT = 8791;
@@ -478,7 +479,7 @@ async function serveFile(
   const target = normalize(join(base, pathname));
   const resolvedBase = resolve(base);
   const resolvedTarget = resolve(target);
-  if (!(resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + '/'))) {
+  if (!isPathWithinRoot(resolvedBase, resolvedTarget)) {
     res.writeHead(403).end('forbidden');
     return;
   }
