@@ -171,6 +171,11 @@ and the final-position top-1 token ID to match.
 server. The directory name is historical; the harness is now the generic real
 segmented-browser P0 path.
 
+Local `/models/...` responses use `Cache-Control: public, max-age=3600`
+while ordinary harness assets remain `no-store`. `HEAD` validates the static
+target without reading or returning the artifact body, and missing static paths
+return a plain `404`.
+
 The browser runner:
 
 - uses ONNX Runtime WebGPU;
