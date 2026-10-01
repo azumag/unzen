@@ -453,16 +453,25 @@ async function statSafe(path) {
   }
 }
 
-async function serveFile(urlPath, res) {
+async function serveFile(
+  urlPath,
+  res,
+  {
+    headOnly = false,
+    modelsDir = MODELS_DIR,
+    readFileFn = readFile,
+  } = {},
+) {
   let base = ROOT;
   let pathname = urlPath;
   if (pathname === '/') pathname = '/index.html';
-  if (pathname.startsWith('/models/')) {
-    if (!MODELS_DIR) {
+  const isModelArtifactRequest = pathname.startsWith('/models/');
+  if (isModelArtifactRequest) {
+    if (!modelsDir) {
       res.writeHead(404).end('MODELS_DIR is not configured');
       return;
     }
-    base = MODELS_DIR;
+    base = resolve(modelsDir);
     pathname = pathname.slice('/models/'.length);
   }
 
@@ -473,13 +482,39 @@ async function serveFile(urlPath, res) {
     res.writeHead(403).end('forbidden');
     return;
   }
+
   let file = resolvedTarget;
-  if ((await statSafe(file))?.isDirectory()) file = join(file, 'index.html');
-  const body = await readFile(file);
-  res.writeHead(200, {
+  let fileInfo = await statSafe(file);
+  if (fileInfo?.isDirectory()) {
+    file = join(file, 'index.html');
+    fileInfo = await statSafe(file);
+  }
+  if (!fileInfo?.isFile()) {
+    res.writeHead(404).end('not found');
+    return;
+  }
+
+  const headers = {
     'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
-    'Cache-Control': pathname.startsWith('/models/') ? 'public, max-age=3600' : 'no-store',
-  });
+    'Cache-Control': isModelArtifactRequest ? 'public, max-age=3600' : 'no-store',
+  };
+  if (headOnly) {
+    res.writeHead(200, headers);
+    res.end();
+    return;
+  }
+
+  let body;
+  try {
+    body = await readFileFn(file);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+      res.writeHead(404).end('not found');
+      return;
+    }
+    throw error;
+  }
+  res.writeHead(200, headers);
   res.end(body);
 }
 
@@ -527,7 +562,11 @@ function resolveProfileIsolation(state, runId, resultBody, segment1Identity) {
   };
 }
 
-export function createSplitHarnessServer({ state = createCoordinatorState() } = {}) {
+export function createSplitHarnessServer({
+  state = createCoordinatorState(),
+  modelsDir = MODELS_DIR,
+  readFileFn = readFile,
+} = {}) {
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -777,7 +816,11 @@ export function createSplitHarnessServer({ state = createCoordinatorState() } = 
       }
 
       if (req.method === 'GET' || req.method === 'HEAD') {
-        await serveFile(url.pathname, res);
+        await serveFile(url.pathname, res, {
+          headOnly: req.method === 'HEAD',
+          modelsDir,
+          readFileFn,
+        });
         return;
       }
       res.writeHead(404).end('not found');
