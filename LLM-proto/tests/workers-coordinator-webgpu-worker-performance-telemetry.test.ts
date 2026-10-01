@@ -433,6 +433,46 @@ describe('Workers Coordinator WebGPU worker performance telemetry integration ga
     expect(report.failureReason).toBeUndefined();
   });
 
+  it('binds async evidence validation to the initial WebGPU pilot generation', async () => {
+    const pilotReport = createPilotReport({}, {
+      evidenceLevel: 'captured-and-verified',
+      readinessStatus: 'production-candidate',
+      validationStatus: 'valid',
+    });
+    const mutablePilotReport = pilotReport as unknown as {
+      status: 'pass' | 'fail';
+      failureReason?: string;
+      previewRunnerUrl: string;
+      evidence: { readinessStatus: 'contract-tested' | 'production-candidate' };
+    };
+    const evidenceValidation = createVerifiedValidationOptions();
+    const loadArtifact = evidenceValidation.loadArtifact!;
+
+    const report = await runTelemetry({
+      pilotReport,
+      telemetryEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createTelemetryEvidencePayload(),
+      ),
+      evidenceValidation: {
+        ...evidenceValidation,
+        async loadArtifact(locator) {
+          mutablePilotReport.status = 'fail';
+          mutablePilotReport.failureReason = 'mutated-during-validation';
+          mutablePilotReport.previewRunnerUrl = 'https://mutated.example/runner.html';
+          mutablePilotReport.evidence.readinessStatus = 'contract-tested';
+          return loadArtifact(locator);
+        },
+      },
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+    expect(report.evidence.readinessStatus).toBe('production-candidate');
+    expect(report.previewRunnerUrl).toBe(
+      'https://preview.unzen-workers.example/runners/signed/runner.html',
+    );
+  });
+
   it('caps the reported readiness when the pilot upstream is only contract-tested', async () => {
     // Even captured-and-verified telemetry cannot be reported as
     // production-ready while the upstream pilot report is synthetic.
