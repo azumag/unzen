@@ -108,6 +108,11 @@ export interface WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport {
 export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
   options: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryOptions,
 ): Promise<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport> {
+  const pilotReport = snapshotSignedRunnerDownstreamInput(
+    pilotReport,
+    'WebGPU pilot report',
+  );
+
   // The gate only trusts the telemetry fields once the envelope has been
   // validated; a hand-written fixture cannot reach captured-and-verified.
   const validation = await validateEvidenceEnvelope<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryEvidencePayload>(
@@ -121,7 +126,7 @@ export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
     ...ownProvenance,
     readinessStatus: capSignedRunnerReadiness(
       ownProvenance.readinessStatus,
-      options.pilotReport.evidence.readinessStatus,
+      pilotReport.evidence.readinessStatus,
     ),
   };
   const evidenceFailure = evidenceValidationFailureReason(
@@ -133,7 +138,7 @@ export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
     return {
       runtime: 'webgpu-worker-performance-fallback-telemetry',
       status: 'fail',
-      previewRunnerUrl: options.pilotReport.previewRunnerUrl,
+      previewRunnerUrl: pilotReport.previewRunnerUrl,
       evidence,
       failureReason: evidenceFailure,
       bottlenecksToIssue: selectBottlenecksToIssue(evidenceFailure),
@@ -148,7 +153,7 @@ export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
     telemetryEvidence.segmentLatencySamplesMs,
   );
   const failureReason = selectFailureReason({
-    pilotReport: options.pilotReport,
+    pilotReport: pilotReport,
     telemetryEvidence,
     segmentLatencyDistribution,
     blockedNonCoordinatorCdnNetworkAttempt,
@@ -157,7 +162,7 @@ export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
   return {
     runtime: 'webgpu-worker-performance-fallback-telemetry',
     status: failureReason ? 'fail' : 'pass',
-    previewRunnerUrl: options.pilotReport.previewRunnerUrl,
+    previewRunnerUrl: pilotReport.previewRunnerUrl,
     evidence,
     segmentLatencyDistribution,
     indexedDbCacheTiming: telemetryEvidence.indexedDbCacheTiming,
@@ -175,6 +180,21 @@ export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
     failureReason,
     bottlenecksToIssue: selectBottlenecksToIssue(failureReason),
   };
+}
+
+function snapshotSignedRunnerDownstreamInput<T extends object>(
+  value: T,
+  label: string,
+): T {
+  const body = JSON.stringify(value);
+  if (body === undefined) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  return parsed as T;
 }
 
 function selectFailureReason(input: {
