@@ -333,6 +333,15 @@ classification.
 - `bottlenecksToIssue`
 - `failureReason`
 
+The browser-preview gate owns the caller-controlled preview target and upstream
+production-gate report before asynchronous evidence validation starts. Routing,
+authentication, upstream release-gate evaluation, and the final report therefore
+stay bound to one input generation even when external artifact loader/verifier
+callbacks suspend execution. Preview and runner URLs are restricted to HTTP(S),
+same-origin routing, and path-segment containment; malformed URLs, lookalike
+hosts, sibling prefixes, non-HTTP(S) schemes, and normalized dot-segment escapes
+fail closed. Wrangler localhost HTTP previews remain valid.
+
 `WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport` includes:
 
 - `previewRunnerUrl`
