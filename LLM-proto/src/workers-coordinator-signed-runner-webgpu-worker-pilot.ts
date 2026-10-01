@@ -97,6 +97,11 @@ export interface WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport {
 export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
   options: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotOptions,
 ): Promise<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport> {
+  const previewReport = snapshotSignedRunnerDownstreamInput(
+    previewReport,
+    'browser preview report',
+  );
+
   // The gate only trusts the segment/cache/relay fields once the envelope has
   // been validated; a hand-written fixture cannot reach captured-and-verified.
   const validation = await validateEvidenceEnvelope<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotEvidencePayload>(
@@ -110,7 +115,7 @@ export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
     ...ownProvenance,
     readinessStatus: capSignedRunnerReadiness(
       ownProvenance.readinessStatus,
-      options.previewReport.evidence.readinessStatus,
+      previewReport.evidence.readinessStatus,
     ),
   };
   const evidenceFailure = evidenceValidationFailureReason(
@@ -122,8 +127,8 @@ export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
     return {
       runtime: 'signed-runner-webgpu-worker-pilot',
       status: 'fail',
-      previewRunnerUrl: options.previewReport.browserHarness?.runnerUrl
-        ?? options.previewReport.target.baseUrl,
+      previewRunnerUrl: previewReport.browserHarness?.runnerUrl
+        ?? previewReport.target.baseUrl,
       evidence,
       failureReason: evidenceFailure,
       bottlenecksToIssue: selectBottlenecksToIssue(evidenceFailure),
@@ -135,7 +140,7 @@ export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
   const blockedNonCoordinatorCdnNetworkAttempt =
     selectBlockedNonCoordinatorCdnNetworkAttempt(pilotEvidence);
   const failureReason = selectFailureReason({
-    previewReport: options.previewReport,
+    previewReport: previewReport,
     pilotEvidence,
     blockedNonCoordinatorCdnNetworkAttempt,
   });
@@ -143,8 +148,8 @@ export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
   return {
     runtime: 'signed-runner-webgpu-worker-pilot',
     status: failureReason ? 'fail' : 'pass',
-    previewRunnerUrl: options.previewReport.browserHarness?.runnerUrl
-      ?? options.previewReport.target.baseUrl,
+    previewRunnerUrl: previewReport.browserHarness?.runnerUrl
+      ?? previewReport.target.baseUrl,
     evidence,
     segmentExecution: pilotEvidence.segmentExecution,
     indexedDbCache: pilotEvidence.indexedDbCache,
@@ -160,6 +165,21 @@ export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
     failureReason,
     bottlenecksToIssue: selectBottlenecksToIssue(failureReason),
   };
+}
+
+function snapshotSignedRunnerDownstreamInput<T extends object>(
+  value: T,
+  label: string,
+): T {
+  const body = JSON.stringify(value);
+  if (body === undefined) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  return parsed as T;
 }
 
 function selectFailureReason(input: {
