@@ -87,6 +87,14 @@ export interface WorkersCoordinatorSignedRunnerBrowserPreviewReport {
 export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerification(
   options: WorkersCoordinatorSignedRunnerBrowserPreviewOptions,
 ): Promise<WorkersCoordinatorSignedRunnerBrowserPreviewReport> {
+  // Own one generation of caller-controlled routing inputs before crossing the
+  // asynchronous evidence-validation boundary.
+  const target = snapshotBrowserPreviewInput(options.target, 'preview target');
+  const productionGateReport = snapshotBrowserPreviewInput(
+    options.productionGateReport,
+    'production gate report',
+  );
+
   // The gate only trusts contract fields once the envelope has been validated.
   // A hand-written fixture cannot reach captured-and-verified readiness, so the
   // payload-dependent parts of the report stay absent on rejection.
@@ -104,7 +112,7 @@ export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerificatio
     return {
       runtime: 'signed-runner-browser-preview-verification',
       status: 'fail',
-      target: options.target,
+      target,
       evidence,
       failureReason: evidenceFailure,
       bottlenecksToIssue: selectBottlenecksToIssue(evidenceFailure),
@@ -116,16 +124,16 @@ export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerificatio
   const payload = validation.envelope!.payload;
   const contract = browserEvidenceToRunnerContract(payload);
   const releaseGateReport = runWorkersCoordinatorSignedRunnerReleaseGate({
-    productionGateReport: options.productionGateReport,
+    productionGateReport,
     runner: contract,
   });
-  const targetFailureReason = selectTargetFailureReason(options.target, payload);
+  const targetFailureReason = selectTargetFailureReason(target, payload);
   const failureReason = targetFailureReason ?? releaseGateReport.failureReason;
 
   return {
     runtime: 'signed-runner-browser-preview-verification',
     status: failureReason ? 'fail' : 'pass',
-    target: options.target,
+    target,
     browserHarness: {
       runnerUrl: payload.runnerUrl,
       cspConnectSrc: releaseGateReport.csp.connectSrc,
@@ -141,6 +149,21 @@ export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerificatio
     failureReason,
     bottlenecksToIssue: selectBottlenecksToIssue(failureReason),
   };
+}
+
+function snapshotBrowserPreviewInput<T extends object>(
+  value: T,
+  label: string,
+): T {
+  const body = JSON.stringify(value);
+  if (body === undefined) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  const parsed = JSON.parse(body) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} must serialize to a JSON object`);
+  }
+  return parsed as T;
 }
 
 function browserEvidenceToRunnerContract(
