@@ -4,6 +4,7 @@ import { join, posix, win32 } from 'node:path';
 import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
+  isPathWithinRootWithPathApi,
   openExistingFileWithinRoot,
   openExistingNonSymlinkFile,
   readBoundedUtf8FileHandle,
@@ -18,6 +19,30 @@ async function readUtf8Stream(stream: Readable): Promise<string> {
 }
 
 describe('endpoint diagnostic server path containment', () => {
+  it('recognizes exact and nested paths inside a POSIX root', () => {
+    expect(isPathWithinRootWithPathApi(posix, '/repo/root', '/repo/root')).toBe(true);
+    expect(isPathWithinRootWithPathApi(posix, '/repo/root', '/repo/root/nested/file.js')).toBe(true);
+  });
+
+  it('rejects POSIX siblings that only share the root string prefix', () => {
+    expect(isPathWithinRootWithPathApi(posix, '/repo/root', '/repo/root-sibling/file.js')).toBe(false);
+  });
+
+  it('recognizes nested paths inside a Windows root', () => {
+    expect(
+      isPathWithinRootWithPathApi(win32, 'C:\\repo\\root', 'C:\\repo\\root\\nested\\file.js'),
+    ).toBe(true);
+  });
+
+  it('rejects Windows siblings and different drives', () => {
+    expect(
+      isPathWithinRootWithPathApi(win32, 'C:\\repo\\root', 'C:\\repo\\root-sibling\\file.js'),
+    ).toBe(false);
+    expect(
+      isPathWithinRootWithPathApi(win32, 'C:\\repo\\root', 'D:\\repo\\root\\file.js'),
+    ).toBe(false);
+  });
+
   it('accepts nested files with POSIX separators', () => {
     expect(safePathWithPathApi(posix, '/repo/root', 'nested/file.js')).toBe('/repo/root/nested/file.js');
   });
