@@ -98,7 +98,7 @@ export async function runWorkersCoordinatorSignedRunnerWebGpuWorkerPilot(
   options: WorkersCoordinatorSignedRunnerWebGpuWorkerPilotOptions,
 ): Promise<WorkersCoordinatorSignedRunnerWebGpuWorkerPilotReport> {
   const previewReport = snapshotSignedRunnerDownstreamInput(
-    previewReport,
+    options.previewReport,
     'browser preview report',
   );
 
