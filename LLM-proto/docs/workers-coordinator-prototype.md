@@ -352,6 +352,10 @@ fail closed. Wrangler localhost HTTP previews remain valid.
 - `bottlenecksToIssue`
 - `failureReason`
 
+The WebGPU pilot snapshots its upstream browser-preview report before asynchronous
+evidence validation, keeping readiness caps, upstream failure selection, runner
+URL binding, and the final report on one preview generation.
+
 `WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport` includes:
 
 - `previewRunnerUrl`
@@ -363,6 +367,11 @@ fail closed. Wrangler localhost HTTP previews remain valid.
 - `securityBoundaryDuringTelemetry`
 - `bottlenecksToIssue`
 - `failureReason`
+
+The telemetry gate likewise snapshots its upstream WebGPU pilot report before
+asynchronous evidence validation, so readiness caps, pilot pass/fail state,
+runner URL binding, and report output cannot switch generations inside external
+artifact loader/verifier callbacks.
 
 `WorkersCoordinatorProductionWorkerFleetSloCostReport` includes:
 
