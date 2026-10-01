@@ -253,6 +253,110 @@ describe('Workers Coordinator signed runner browser preview verification contrac
       'non-coordinator-cdn-network-attempt-not-blocked: https://collector.example.test',
     );
   });
+
+  it('rejects a lookalike hostname outside the preview target origin', async () => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example.evil.test/runners/signed/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+    expect(report.bottlenecksToIssue).toEqual(['signed-runner-preview-routing-hardening']);
+  });
+
+  it('accepts a runner beneath a path-scoped preview target', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({
+        baseUrl: 'https://preview.unzen-workers.example/runners/signed/',
+      }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example/runners/signed/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+  });
+
+  it('rejects a sibling path that only shares the preview target string prefix', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({
+        baseUrl: 'https://preview.unzen-workers.example/runners/signed',
+      }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example/runners/signed-shadow/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+  });
+
+  it('rejects encoded dot-segment traversal after URL normalization', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({
+        baseUrl: 'https://preview.unzen-workers.example/runners/signed/',
+      }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'https://preview.unzen-workers.example/runners/signed/%2e%2e/escape.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+  });
+
+  it('fails closed on a malformed runner URL', async () => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'not a valid URL',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+    expect(report.bottlenecksToIssue).toEqual(['signed-runner-preview-routing-hardening']);
+  });
+
+  it.each([
+    'blob:https://preview.unzen-workers.example/5ae0ad02-a7a2-4b76-8fa1-6c02f919ce09',
+    'data:text/html,<script>self.close()</script>',
+    'file:///tmp/runner.html',
+  ])('rejects a non-HTTP(S) runner URL: %s', async (runnerUrl) => {
+    const report = await runPreviewVerification({
+      browserEvidencePayload: createBrowserEvidencePayload({ runnerUrl }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+    expect(report.bottlenecksToIssue).toEqual(['signed-runner-preview-routing-hardening']);
+  });
+
+  it('rejects a non-HTTP(S) preview target even when the runner URL is also file scoped', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({ baseUrl: 'file:///tmp/preview/' }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'file:///tmp/preview/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.failureReason).toBe('runner-url-outside-preview-target');
+  });
+
+  it('preserves Wrangler localhost HTTP preview URLs', async () => {
+    const report = await runPreviewVerification({
+      target: createTarget({ baseUrl: 'http://127.0.0.1:8787/runners/signed/' }),
+      browserEvidencePayload: createBrowserEvidencePayload({
+        runnerUrl: 'http://127.0.0.1:8787/runners/signed/runner.html',
+      }),
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+  });
 });
 
 describe('Workers Coordinator signed runner browser preview integration gate', () => {
@@ -313,6 +417,72 @@ describe('Workers Coordinator signed runner browser preview integration gate', (
       producerName: 'unzen-browser-harness',
     });
     expect(report.failureReason).toBeUndefined();
+  });
+
+  it('binds async evidence validation to the initial preview target generation', async () => {
+    const target = createTarget({
+      baseUrl: 'https://preview.unzen-workers.example/runners/signed/',
+    });
+    const mutableTarget = target as unknown as {
+      baseUrl: string;
+      authHeaderPresent: boolean;
+    };
+    const evidenceValidation = createVerifiedValidationOptions();
+    const loadArtifact = evidenceValidation.loadArtifact!;
+
+    const report = await runPreviewVerification({
+      target,
+      browserEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createBrowserEvidencePayload(),
+      ),
+      evidenceValidation: {
+        ...evidenceValidation,
+        async loadArtifact(locator) {
+          mutableTarget.baseUrl = 'https://mutated.example/';
+          mutableTarget.authHeaderPresent = false;
+          return loadArtifact(locator);
+        },
+      },
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+    expect(report.target).toEqual({
+      baseUrl: 'https://preview.unzen-workers.example/runners/signed/',
+      runtime: 'wrangler-preview',
+      environment: 'preview',
+      authHeaderName: 'Authorization',
+      authHeaderPresent: true,
+    });
+  });
+
+  it('binds async evidence validation to the initial production gate generation', async () => {
+    const productionGateReport = createProductionGateReport();
+    const mutableProductionGateReport = productionGateReport as unknown as {
+      status: 'pass' | 'fail';
+      failureReason?: string;
+    };
+    const evidenceValidation = createVerifiedValidationOptions();
+    const loadArtifact = evidenceValidation.loadArtifact!;
+
+    const report = await runPreviewVerification({
+      productionGateReport,
+      browserEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createBrowserEvidencePayload(),
+      ),
+      evidenceValidation: {
+        ...evidenceValidation,
+        async loadArtifact(locator) {
+          mutableProductionGateReport.status = 'fail';
+          mutableProductionGateReport.failureReason = 'mutated-during-validation';
+          return loadArtifact(locator);
+        },
+      },
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+    expect(report.releaseGateReport?.status).toBe('pass');
   });
 
   it('keeps the contract decision independent of the evidence provenance', async () => {
