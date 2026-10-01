@@ -9,11 +9,10 @@
  * SharedArrayBuffer dependency), so COOP/COEP are not required here.
  */
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveWebgpuDiagnosticPort } from '../webgpu-2b-split/server-port.mjs';
-import { isPathWithinRoot } from '../webgpu-2b-split/server-safe-path.mjs';
+import { resolveWebgpu2bStaticResponse } from './static-serving.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = resolveWebgpuDiagnosticPort(process.env.PORT, 8788);
@@ -26,15 +25,6 @@ const HOST = '127.0.0.1';
 // TRUSTED: point it only at a model artifact tree, never at an untrusted
 // directory (symlinks inside it are followed).
 const MODELS_DIR = process.env.MODELS_DIR ? resolve(process.env.MODELS_DIR) : undefined;
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.wasm': 'application/wasm',
-};
 
 const server = createServer(async (req, res) => {
   // Hardening: only GET/HEAD are allowed for static asset serving.
@@ -53,51 +43,19 @@ const server = createServer(async (req, res) => {
       return;
     }
     console.log(`${new Date().toISOString()} ${req.method} ${rawPathname}`);
-    // Model artifacts are resolved under /models/ against MODELS_DIR when
-    // configured; anything else is resolved inside the harness directory.
-    let base = resolve(ROOT);
-    let pathname = rawPathname;
-    if (MODELS_DIR && pathname.startsWith('/models/')) {
-      base = MODELS_DIR;
-      pathname = pathname.slice('/models/'.length);
-      // Prevent empty pathname after slice from escaping base
-      if (!pathname) pathname = '/';
-    }
-    // Normalize and resolve to keep lexical traversal inside the selected root.
-    // This does not canonicalize or reject symlinks in the trusted MODELS_DIR tree.
-    const target = normalize(join(base, pathname));
-    const resolvedBase = resolve(base);
-    const resolvedTarget = resolve(target);
-    if (!isPathWithinRoot(resolvedBase, resolvedTarget)) {
-      res.writeHead(403).end('forbidden');
-      return;
-    }
-    let file = resolvedTarget;
-    if ((await statSafe(file))?.isDirectory()) file = join(file, 'index.html');
-    const body = await readFile(file);
-    res.writeHead(200, {
-      'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
-      'Cache-Control': pathname.startsWith('/models/') ? 'public, max-age=3600' : 'no-store',
+    const response = await resolveWebgpu2bStaticResponse({
+      method: req.method,
+      rawPathname,
+      root: ROOT,
+      modelsDir: MODELS_DIR,
     });
-    if (req.method === 'HEAD') {
-      res.end();
-      return;
-    }
-    res.end(body);
+    res.writeHead(response.status, response.headers);
+    res.end(response.body);
   } catch {
     res.writeHead(404).end('not found');
   }
 });
 
-async function statSafe(path) {
-  try {
-    return await stat(path);
-  } catch {
-    return undefined;
-  }
-}
 
 server.listen(PORT, HOST, () => {
   console.log(`serving ${ROOT} on http://${HOST}:${PORT}`);
