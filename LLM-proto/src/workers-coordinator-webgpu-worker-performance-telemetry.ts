@@ -109,7 +109,7 @@ export async function runWorkersCoordinatorWebGpuWorkerPerformanceTelemetry(
   options: WorkersCoordinatorWebGpuWorkerPerformanceTelemetryOptions,
 ): Promise<WorkersCoordinatorWebGpuWorkerPerformanceTelemetryReport> {
   const pilotReport = snapshotSignedRunnerDownstreamInput(
-    pilotReport,
+    options.pilotReport,
     'WebGPU pilot report',
   );
 
