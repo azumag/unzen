@@ -370,6 +370,48 @@ describe('Workers Coordinator signed runner WebGPU worker pilot integration gate
     expect(report.failureReason).toBeUndefined();
   });
 
+  it('binds async evidence validation to the initial browser-preview generation', async () => {
+    const previewReport = createPreviewReport({}, {
+      evidenceLevel: 'captured-and-verified',
+      readinessStatus: 'production-candidate',
+      validationStatus: 'valid',
+    });
+    const mutablePreviewReport = previewReport as unknown as {
+      status: 'pass' | 'fail';
+      failureReason?: string;
+      browserHarness?: { runnerUrl: string };
+      evidence: { readinessStatus: 'contract-tested' | 'production-candidate' };
+    };
+    const evidenceValidation = createVerifiedValidationOptions();
+    const loadArtifact = evidenceValidation.loadArtifact!;
+
+    const report = await runPilot({
+      previewReport,
+      pilotEvidenceEnvelope: createCapturedAndVerifiedEnvelope(
+        createPilotEvidencePayload(),
+      ),
+      evidenceValidation: {
+        ...evidenceValidation,
+        async loadArtifact(locator) {
+          mutablePreviewReport.status = 'fail';
+          mutablePreviewReport.failureReason = 'mutated-during-validation';
+          mutablePreviewReport.evidence.readinessStatus = 'contract-tested';
+          if (mutablePreviewReport.browserHarness) {
+            mutablePreviewReport.browserHarness.runnerUrl = 'https://mutated.example/runner.html';
+          }
+          return loadArtifact(locator);
+        },
+      },
+    });
+
+    expect(report.status).toBe('pass');
+    expect(report.failureReason).toBeUndefined();
+    expect(report.evidence.readinessStatus).toBe('production-candidate');
+    expect(report.previewRunnerUrl).toBe(
+      'https://preview.unzen-workers.example/runners/signed/runner.html',
+    );
+  });
+
   it('caps the reported readiness when the browser-preview upstream is only contract-tested', async () => {
     // Even captured-and-verified pilot evidence cannot be reported as
     // production-ready while the upstream preview report is synthetic.
