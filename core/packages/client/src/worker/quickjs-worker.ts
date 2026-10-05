@@ -407,15 +407,13 @@ async function handleExecute(
 }
 
 /**
- * Load QuickJS Wasm module from the browser-optimized singlefile variant.
+ * Load QuickJS Wasm module from the QuickJS-NG release variant.
  * This is the production loader — tests inject a mock instead.
  */
 async function loadQuickJS(): Promise<QuickJSModule> {
   // Dynamic import to avoid bundling issues in test environment.
-  // The singlefile variant embeds the Wasm binary as base64 in the JS file,
-  // so no separate .wasm file needs to be served.
-  const { newQuickJSWASMModuleFromVariant } = await import('quickjs-emscripten-core');
-  const { default: variant } = await import('@jitl/quickjs-singlefile-browser-release-sync');
+    const { newQuickJSWASMModuleFromVariant } = await import('quickjs-emscripten-core');
+  const { default: variant } = await import('@jitl/quickjs-ng-wasmfile-release-sync');
   return await newQuickJSWASMModuleFromVariant(variant);
 }
 
