@@ -167,13 +167,13 @@ async function measureUnzenExecutionStages(page) {
 
     const compute = await measure(
       'compute-only',
-      \`function run(n) {
+      `function run(n) {
         function fib(value) {
           if (value <= 1) return value;
           return fib(value - 1) + fib(value - 2);
         }
         return fib(n);
-      }\`,
+      }`,
       [fibN],
       (value) => ({ value }),
     );
@@ -208,7 +208,7 @@ async function measureUnzenExecutionStages(page) {
     };
   });
 
-  console.log(\`UNZEN_STAGE_TIMING \${JSON.stringify(report)}\`);
+  console.log(`UNZEN_STAGE_TIMING \${JSON.stringify(report)}`);
 
   assert(report.stages.baseline.outcome === 'success',
     'Unzen stage baseline must succeed');
@@ -237,7 +237,7 @@ async function measureUnzenExecutionStages(page) {
     assert(
       /timeout|deadline/i.test(compute.errorName ?? '')
         || /timeout|deadline/i.test(compute.errorMessage ?? ''),
-      \`compute-only probe failed for an unexpected reason: \${compute.errorName}: \${compute.errorMessage}\`
+      `compute-only probe failed for an unexpected reason: \${compute.errorName}: \${compute.errorMessage}`
     );
   }
 
