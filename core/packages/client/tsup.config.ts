@@ -1,4 +1,11 @@
 import { defineConfig } from 'tsup';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const quickJsWasmBase64 = readFileSync(
+  require.resolve('@jitl/quickjs-ng-wasmfile-release-sync/wasm')
+).toString('base64');
 
 /**
  * tsup configuration for @unzen/client
@@ -50,6 +57,9 @@ export default defineConfig([
   // without access to the host page's module resolution.
   {
     entry: { 'quickjs-worker': 'src/worker/quickjs-worker.ts' },
+    // Preserve the single-file worker contract: embed the exact installed Wasm
+    // instead of requiring every host to serve a second, implicitly located asset.
+    define: { __UNZEN_QUICKJS_WASM_BASE64__: JSON.stringify(quickJsWasmBase64) },
     format: ['esm'],
     dts: false,
     clean: false,
