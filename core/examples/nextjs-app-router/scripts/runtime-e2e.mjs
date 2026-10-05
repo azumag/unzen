@@ -160,6 +160,25 @@ async function measureUnzenExecutionStages(page) {
       }),
     );
 
+    const fibonacciCode = `function run(n) {
+      function fib(value) {
+        if (value <= 1) return value;
+        return fib(value - 1) + fib(value - 2);
+      }
+      return fib(n);
+    }`;
+
+    const equivalenceFibN = 33;
+    const nativeEquivalenceStartedAt = performance.now();
+    const nativeEquivalenceFibValue = recursiveFib(equivalenceFibN);
+    const nativeEquivalenceFibMs = performance.now() - nativeEquivalenceStartedAt;
+    const computeEquivalence = await measure(
+      'compute-equivalence',
+      fibonacciCode,
+      [equivalenceFibN],
+      (value) => ({ value }),
+    );
+
     const fibN = 38;
     const nativeStartedAt = performance.now();
     const nativeFibValue = recursiveFib(fibN);
@@ -167,13 +186,7 @@ async function measureUnzenExecutionStages(page) {
 
     const compute = await measure(
       'compute-only',
-      `function run(n) {
-        function fib(value) {
-          if (value <= 1) return value;
-          return fib(value - 1) + fib(value - 2);
-        }
-        return fib(n);
-      }`,
+      fibonacciCode,
       [fibN],
       (value) => ({ value }),
     );
@@ -191,6 +204,9 @@ async function measureUnzenExecutionStages(page) {
         payloadBytes,
       },
       native: {
+        equivalenceFibN,
+        equivalenceFibValue: nativeEquivalenceFibValue,
+        equivalenceFibMs: nativeEquivalenceFibMs,
         fibN,
         fibValue: nativeFibValue,
         fibMs: nativeFibMs,
@@ -199,6 +215,7 @@ async function measureUnzenExecutionStages(page) {
         baseline,
         inputScalar,
         inputEcho,
+        computeEquivalence,
         compute,
       },
       estimates: {
@@ -214,10 +231,14 @@ async function measureUnzenExecutionStages(page) {
     'Unzen stage baseline must succeed');
   assert(report.stages.baseline.summary?.value === 1,
     'Unzen stage baseline returned an unexpected value');
+  assert(report.stages.baseline.durationMs < 500,
+    `warmed Unzen baseline regressed to ${report.stages.baseline.durationMs}ms`);
   assert(report.stages.inputScalar.outcome === 'success',
     '560KB input handoff probe must succeed');
   assert(report.stages.inputScalar.summary?.value === report.environment.payloadBytes,
     '560KB input handoff probe returned the wrong length');
+  assert(report.stages.inputScalar.durationMs < 1_000,
+    `560KB input handoff regressed to ${report.stages.inputScalar.durationMs}ms`);
   assert(report.stages.inputEcho.outcome === 'success',
     '560KB result recovery probe must succeed');
   assert(report.stages.inputEcho.summary?.exactMatch === true,
@@ -225,6 +246,16 @@ async function measureUnzenExecutionStages(page) {
   assert(
     report.stages.inputEcho.summary?.stringLength === report.environment.payloadBytes,
     '560KB result recovery probe returned the wrong length'
+  );
+  assert(report.stages.inputEcho.durationMs < 1_000,
+    `560KB input+result round trip regressed to ${report.stages.inputEcho.durationMs}ms`);
+
+  const computeEquivalence = report.stages.computeEquivalence;
+  assert(computeEquivalence.outcome === 'success',
+    'bounded QuickJS compute equivalence probe must succeed');
+  assert(
+    computeEquivalence.summary?.value === report.native.equivalenceFibValue,
+    'bounded QuickJS compute result must match native JavaScript output'
   );
 
   const compute = report.stages.compute;
