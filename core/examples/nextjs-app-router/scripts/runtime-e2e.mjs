@@ -208,7 +208,7 @@ async function measureUnzenExecutionStages(page) {
     };
   });
 
-  console.log(`UNZEN_STAGE_TIMING \${JSON.stringify(report)}`);
+  console.log(`UNZEN_STAGE_TIMING ${JSON.stringify(report)}`);
 
   assert(report.stages.baseline.outcome === 'success',
     'Unzen stage baseline must succeed');
@@ -237,7 +237,7 @@ async function measureUnzenExecutionStages(page) {
     assert(
       /timeout|deadline/i.test(compute.errorName ?? '')
         || /timeout|deadline/i.test(compute.errorMessage ?? ''),
-      `compute-only probe failed for an unexpected reason: \${compute.errorName}: \${compute.errorMessage}`
+      `compute-only probe failed for an unexpected reason: ${compute.errorName}: ${compute.errorMessage}`
     );
   }
 
