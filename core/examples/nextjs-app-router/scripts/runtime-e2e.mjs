@@ -97,6 +97,184 @@ async function verifyHttpEndpoints() {
   );
 }
 
+
+async function measureUnzenExecutionStages(page) {
+  const report = await page.evaluate(async () => {
+    const { WebWorkerSandboxExecutor } = await import('/unzen/client.js');
+    const timeoutMs = 5_000;
+    const payloadBytes = 560_000;
+    const payload = 'x'.repeat(payloadBytes);
+    const executor = new WebWorkerSandboxExecutor({
+      workerUrl: '/unzen/worker.js',
+      timeout: timeoutMs,
+    });
+
+    const measure = async (label, code, args, summarize) => {
+      const startedAt = performance.now();
+      try {
+        const value = await executor.execute(code, args);
+        return {
+          label,
+          outcome: 'success',
+          durationMs: performance.now() - startedAt,
+          summary: summarize(value),
+        };
+      } catch (error) {
+        return {
+          label,
+          outcome: 'error',
+          durationMs: performance.now() - startedAt,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
+
+    const recursiveFib = (n) => n <= 1
+      ? n
+      : recursiveFib(n - 1) + recursiveFib(n - 2);
+
+    // Warm the Worker/QuickJS module first. The measurements below therefore
+    // exclude one-time worker/Wasm initialization and focus on per-call costs.
+    await executor.execute('function run() { return 1; }', []);
+
+    const baseline = await measure(
+      'baseline',
+      'function run() { return 1; }',
+      [],
+      (value) => ({ value }),
+    );
+    const inputScalar = await measure(
+      'input-scalar',
+      'function run(input) { return input.length; }',
+      [payload],
+      (value) => ({ value }),
+    );
+    const inputEcho = await measure(
+      'input-echo',
+      'function run(input) { return input; }',
+      [payload],
+      (value) => ({
+        stringLength: typeof value === 'string' ? value.length : -1,
+        exactMatch: value === payload,
+      }),
+    );
+
+    const fibonacciCode = `function run(n) {
+      function fib(value) {
+        if (value <= 1) return value;
+        return fib(value - 1) + fib(value - 2);
+      }
+      return fib(n);
+    }`;
+
+    const equivalenceFibN = 33;
+    const nativeEquivalenceStartedAt = performance.now();
+    const nativeEquivalenceFibValue = recursiveFib(equivalenceFibN);
+    const nativeEquivalenceFibMs = performance.now() - nativeEquivalenceStartedAt;
+    const computeEquivalence = await measure(
+      'compute-equivalence',
+      fibonacciCode,
+      [equivalenceFibN],
+      (value) => ({ value }),
+    );
+
+    const fibN = 38;
+    const nativeStartedAt = performance.now();
+    const nativeFibValue = recursiveFib(fibN);
+    const nativeFibMs = performance.now() - nativeStartedAt;
+
+    const compute = await measure(
+      'compute-only',
+      fibonacciCode,
+      [fibN],
+      (value) => ({ value }),
+    );
+
+    executor.dispose();
+
+    const baselineMs = baseline.durationMs;
+    const inputScalarMs = inputScalar.durationMs;
+    const inputEchoMs = inputEcho.durationMs;
+
+    return {
+      environment: {
+        userAgent: navigator.userAgent,
+        timeoutMs,
+        payloadBytes,
+      },
+      native: {
+        equivalenceFibN,
+        equivalenceFibValue: nativeEquivalenceFibValue,
+        equivalenceFibMs: nativeEquivalenceFibMs,
+        fibN,
+        fibValue: nativeFibValue,
+        fibMs: nativeFibMs,
+      },
+      stages: {
+        baseline,
+        inputScalar,
+        inputEcho,
+        computeEquivalence,
+        compute,
+      },
+      estimates: {
+        inputHandoffMs: Math.max(0, inputScalarMs - baselineMs),
+        resultRecoveryMs: Math.max(0, inputEchoMs - inputScalarMs),
+      },
+    };
+  });
+
+  console.log(`UNZEN_STAGE_TIMING ${JSON.stringify(report)}`);
+
+  assert(report.stages.baseline.outcome === 'success',
+    'Unzen stage baseline must succeed');
+  assert(report.stages.baseline.summary?.value === 1,
+    'Unzen stage baseline returned an unexpected value');
+  assert(report.stages.baseline.durationMs < 500,
+    `warmed Unzen baseline regressed to ${report.stages.baseline.durationMs}ms`);
+  assert(report.stages.inputScalar.outcome === 'success',
+    '560KB input handoff probe must succeed');
+  assert(report.stages.inputScalar.summary?.value === report.environment.payloadBytes,
+    '560KB input handoff probe returned the wrong length');
+  assert(report.stages.inputScalar.durationMs < 1_000,
+    `560KB input handoff regressed to ${report.stages.inputScalar.durationMs}ms`);
+  assert(report.stages.inputEcho.outcome === 'success',
+    '560KB result recovery probe must succeed');
+  assert(report.stages.inputEcho.summary?.exactMatch === true,
+    '560KB result recovery probe must preserve exact output');
+  assert(
+    report.stages.inputEcho.summary?.stringLength === report.environment.payloadBytes,
+    '560KB result recovery probe returned the wrong length'
+  );
+  assert(report.stages.inputEcho.durationMs < 1_000,
+    `560KB input+result round trip regressed to ${report.stages.inputEcho.durationMs}ms`);
+
+  const computeEquivalence = report.stages.computeEquivalence;
+  assert(computeEquivalence.outcome === 'success',
+    'bounded QuickJS compute equivalence probe must succeed');
+  assert(
+    computeEquivalence.summary?.value === report.native.equivalenceFibValue,
+    'bounded QuickJS compute result must match native JavaScript output'
+  );
+
+  const compute = report.stages.compute;
+  if (compute.outcome === 'success') {
+    assert(
+      compute.summary?.value === report.native.fibValue,
+      'QuickJS compute probe must match native JavaScript output'
+    );
+  } else {
+    assert(
+      /timeout|deadline/i.test(compute.errorName ?? '')
+        || /timeout|deadline/i.test(compute.errorMessage ?? ''),
+      `compute-only probe failed for an unexpected reason: ${compute.errorName}: ${compute.errorMessage}`
+    );
+  }
+
+  return report;
+}
+
 async function saveBrowserArtifacts(context, page) {
   await mkdir(artifactDir, { recursive: true });
 
@@ -153,6 +331,8 @@ async function verifyBrowserFlow() {
         payload.diagnostics?.executedOn === 'browser',
         `expected browser execution, got ${payload.diagnostics?.executedOn}`
       );
+
+      await measureUnzenExecutionStages(page);
 
       const cachedCode = await page.evaluate(async (cacheName) => {
         const manifest = await fetch('/api/unzen/manifest').then((response) => response.json());

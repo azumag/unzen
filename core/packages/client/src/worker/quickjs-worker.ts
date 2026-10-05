@@ -40,6 +40,9 @@ import {
 import { snapshotQuickJsCall } from '../quickjs-call';
 import { describeQuickJsWorkerFailure } from './quickjs-worker-error-boundary';
 
+// Replaced by the worker build with the installed QuickJS-NG Wasm bytes.
+declare const __UNZEN_QUICKJS_WASM_BASE64__: string;
+
 // Default timeout: 50ms (same as server-side QuickJSRuntime)
 const DEFAULT_TIMEOUT_MS = 50;
 // Memory limit: 16MB per context (same as server-side QuickJSRuntime)
@@ -407,16 +410,21 @@ async function handleExecute(
 }
 
 /**
- * Load QuickJS Wasm module from the browser-optimized singlefile variant.
+ * Load QuickJS Wasm module from the QuickJS-NG release variant.
  * This is the production loader — tests inject a mock instead.
  */
 async function loadQuickJS(): Promise<QuickJSModule> {
   // Dynamic import to avoid bundling issues in test environment.
-  // The singlefile variant embeds the Wasm binary as base64 in the JS file,
-  // so no separate .wasm file needs to be served.
-  const { newQuickJSWASMModuleFromVariant } = await import('quickjs-emscripten-core');
-  const { default: variant } = await import('@jitl/quickjs-singlefile-browser-release-sync');
-  return await newQuickJSWASMModuleFromVariant(variant);
+  const { newQuickJSWASMModuleFromVariant, newVariant } = await import('quickjs-emscripten-core');
+  const { default: variant } = await import('@jitl/quickjs-ng-wasmfile-release-sync');
+  const binary = atob(__UNZEN_QUICKJS_WASM_BASE64__);
+  const wasmBytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) {
+    wasmBytes[index] = binary.charCodeAt(index);
+  }
+  return await newQuickJSWASMModuleFromVariant(newVariant(variant, {
+    wasmBinary: wasmBytes.buffer,
+  }));
 }
 
 // ============================================================
