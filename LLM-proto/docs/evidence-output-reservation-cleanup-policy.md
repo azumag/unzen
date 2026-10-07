@@ -43,7 +43,7 @@ Parent-directory mtime gating was considered as the generation token and rejecte
 ## Regression coverage
 
 - `tests/evidence-output-reservation-generation-bound.test.ts` — capability probe, unchanged-reservation removal, committed-evidence protection, pre-existing replacement, missing pathname, single-shared-policy source scan over every host-side capture tool.
-- `tests/evidence-output-reservation-race-quarantine.test.ts` — private-name removal boundary, deterministic replacement injected after the final identity check, committed evidence and already-retargeted pathnames mutating nothing.
+- `tests/evidence-output-reservation-race-quarantine.test.ts` — private-name removal boundary, and a deterministic replacement injected between the step-2 pathname identity check and the quarantine rename (i.e. before the final re-verification), plus committed evidence and already-retargeted pathnames mutating nothing.
 - `tests/evidence-output-reservation-capability-gate.test.ts` — the fallback when the removal primitives are unavailable.
 - `tests/evidence-output-reservation-unlink-failure.test.ts` — a contained unlink failure is never reported as a successful cleanup.
 - `tests/endpoint-embedding-webgpu-output-reservation.test.ts`, `tests/endpoint-poststage-webgpu-process-rss-output-reservation.test.ts`, `tests/eight-physical-rss-bound-output-reservation.test.ts`, `tests/eight-physical-rss-direct-output-reservation.test.ts` — the capture-side reserve/commit/cleanup ordering contract.
