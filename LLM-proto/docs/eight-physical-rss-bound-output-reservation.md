@@ -15,10 +15,10 @@ For those wrapper-owned outputs, publication now follows the same sequence as th
 4. `fsync` the descriptor;
 5. verify that the caller-visible pathname still resolves to the same regular-file identity as the reserved descriptor;
 6. only then mark the output committed;
-7. on failure, invoke the shared best-effort cleanup policy before closing the descriptor.
+7. on failure, invoke the shared generation-bound cleanup policy before closing the descriptor.
 
 A long-running capture therefore does not silently report success if the wrapper-owned output pathname was renamed or replaced before commit. The JSON schemas and diagnostic-only evidence semantics are unchanged.
 
-The raw cancellation capture remains outside this change: the cancellation wrapper passes that path to the child capture process by pathname, so converting it to descriptor-bound publication requires a separate flow change. The shared cleanup helper also retains the namespace check-to-unlink limitation tracked in #1494; this change does not claim to resolve that portability/policy decision.
+The raw cancellation capture remains outside this change: the cancellation wrapper passes that path to the child capture process by pathname, so converting it to descriptor-bound publication requires a separate flow change. The shared cleanup helper no longer carries the namespace check-to-unlink limitation: its cleanup contract is now the generation-bound policy documented in [`evidence-output-reservation-cleanup-policy.md`](./evidence-output-reservation-cleanup-policy.md) (unzen#1494).
 
 This is host-side evidence publication hardening only. It is not new real `Llama-3.2-1B-Instruct` q4 materialization evidence, physical WebGPU evidence, distinct-browser relay/latency evidence, worker-loss/resume evidence, or cache-residency evidence for #167.

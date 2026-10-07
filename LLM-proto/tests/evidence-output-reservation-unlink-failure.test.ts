@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-const unlinkSyncMock = vi.hoisted(() => vi.fn(() => {
+const unlinkSyncMock = vi.hoisted(() => vi.fn((_path: string) => {
   const error = new Error('permission denied') as NodeJS.ErrnoException;
   error.code = 'EACCES';
   throw error;
@@ -29,7 +29,11 @@ describe('shared evidence output reservation cleanup result', () => {
     const fd = reserveEvidenceOutput(outputPath);
     try {
       expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
-      expect(unlinkSyncMock).toHaveBeenCalledWith(outputPath);
+      expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
+      // The unlink targets the private quarantine name, never the shared output pathname.
+      expect(unlinkSyncMock.mock.calls[0][0]).toContain('.unzen-reservation-cleanup-');
+      expect(unlinkSyncMock.mock.calls[0][0]).not.toBe(outputPath);
+      // A contained unlink failure is restored, so no reservation artifact is silently dropped.
       expect(existsSync(outputPath)).toBe(true);
     } finally {
       closeSync(fd);

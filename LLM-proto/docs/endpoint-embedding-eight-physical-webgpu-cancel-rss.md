@@ -129,7 +129,7 @@ This evidence is intentionally narrower than a production or architecture decisi
 - Chrome may retain renderer processes, driver caches, allocator pages, or shared mappings after the document is destroyed.
 - Reaching or dropping below the initial RSS baseline is useful observational evidence, not proof of exact GPU allocator reclamation.
 - The provenance-bound wrapper binds to a validated preflight snapshot; it does not independently establish that every declared payload was loaded before cancellation.
-- The output/input alias checks are preflight hardening, not race-free adversarial filesystem isolation; #1494 remains a separate policy decision.
+- The output/input alias checks are preflight hardening, not race-free adversarial filesystem isolation; the shared evidence-output cleanup policy is now generation-bound and documents its own residual boundary ([`evidence-output-reservation-cleanup-policy.md`](./evidence-output-reservation-cleanup-policy.md), unzen#1494).
 - This does not cover decoder/KV/checkpoint state, full-model equivalence, worker-loss resume, or production layout selection.
 
 A real capture should therefore be attached to #167 as one input alongside normal-completion RSS evidence, GPU-side measurements where available, and later full-model relay/cancellation evidence.
