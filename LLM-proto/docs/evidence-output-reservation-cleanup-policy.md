@@ -20,7 +20,7 @@ Of the four candidate directions recorded in #1494, the adopted policy is:
 3. `evidenceOutputGenerationBoundCleanupAvailable()` must report the removal primitives as available → otherwise return `false` (the candidate 4 fallback).
 4. rename the validated pathname to a private sibling name (`.unzen-reservation-cleanup-<uuid>`), i.e. a name created by this helper with an unpredictable suffix, so no unrelated file can already occupy it.
 5. re-verify the device/inode generation **at the private name**. If the quarantined entry is not the reservation, a replacement landed in the check→removal window: it is restored to the original pathname and the call returns `false`.
-6. `unlink` the private name. Only the reserved generation reaches this point, and only under a name that was never announced. Return `true` only after the removal succeeded.
+6. `unlink` the private name. Only the reserved generation reaches this point, and only under a private name this helper created moments earlier. Return `true` only after the removal succeeded. See [Residual boundary](#residual-boundary) for the window this does not close.
 
 A contained failure at step 4 or 6 restores the reservation to its original pathname where that is still possible (the destination must be free again), so a failed cleanup leaves the pre-cleanup state observable rather than silently dropping or displacing the artifact.
 
