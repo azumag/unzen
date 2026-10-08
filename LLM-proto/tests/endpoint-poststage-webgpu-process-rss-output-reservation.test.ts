@@ -50,13 +50,14 @@ describe('endpoint post-stage RSS evidence output reservation', () => {
     }
   });
 
-  it('removes only an unchanged failed reservation', () => {
+  it('retains an unchanged failed reservation for inspection and explicit retry', () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-poststage-rss-output-cleanup-'));
     const outputPath = join(dir, 'evidence.json');
     const fd = reserveEvidenceOutput(outputPath);
     try {
-      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(true);
-      expect(existsSync(outputPath)).toBe(false);
+      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
+      expect(existsSync(outputPath)).toBe(true);
+      expect(readFileSync(outputPath, 'utf8')).toBe('');
     } finally {
       closeSync(fd);
       rmSync(dir, { recursive: true, force: true });

@@ -44,13 +44,14 @@ describe('endpoint embedding WebGPU evidence output reservation', () => {
     }
   });
 
-  it('removes a failed reservation only while the pathname still identifies the reserved file', () => {
+  it('retains an unchanged failed reservation for inspection and explicit retry', () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-endpoint-output-identity-test-'));
     const outputPath = join(dir, 'evidence.json');
     const fd = reserveEvidenceOutput(outputPath);
     try {
-      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(true);
-      expect(existsSync(outputPath)).toBe(false);
+      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
+      expect(existsSync(outputPath)).toBe(true);
+      expect(readFileSync(outputPath, 'utf8')).toBe('');
     } finally {
       closeSync(fd);
       rmSync(dir, { recursive: true, force: true });
