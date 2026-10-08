@@ -23,17 +23,13 @@ import {
 } from '../tools/evidence_output_reservation.mjs';
 
 describe('shared evidence output reservation cleanup result', () => {
-  it('returns false and contains the error when unlink fails', () => {
+  it('returns false without attempting unlink, even when unlink would fail', () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-evidence-output-cleanup-failure-'));
     const outputPath = join(dir, 'evidence.json');
     const fd = reserveEvidenceOutput(outputPath);
     try {
       expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
-      expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
-      // The unlink targets the private quarantine name, never the shared output pathname.
-      expect(unlinkSyncMock.mock.calls[0][0]).toContain('.unzen-reservation-cleanup-');
-      expect(unlinkSyncMock.mock.calls[0][0]).not.toBe(outputPath);
-      // A contained unlink failure is restored, so no reservation artifact is silently dropped.
+      expect(unlinkSyncMock).not.toHaveBeenCalled();
       expect(existsSync(outputPath)).toBe(true);
     } finally {
       closeSync(fd);

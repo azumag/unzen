@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,18 +9,21 @@ import {
 } from '../tools/evidence_output_reservation.mjs';
 
 describe('generation-bound evidence output cleanup policy (unzen#1494)', () => {
-  it('reports the generation-bound cleanup capability as available on this runtime', () => {
-    expect(evidenceOutputGenerationBoundCleanupAvailable()).toBe(true);
+  it('reports generation-bound cleanup as unavailable even with ordinary Node fs primitives', () => {
+    expect(typeof renameSync).toBe('function');
+    expect(typeof unlinkSync).toBe('function');
+    expect(evidenceOutputGenerationBoundCleanupAvailable()).toBe(false);
   });
 
-  it('removes an unchanged failed reservation', () => {
+  it('retains an unchanged failed reservation without reporting removal', () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-evidence-cleanup-unchanged-'));
     const outputPath = join(dir, 'evidence.json');
     const fd = reserveEvidenceOutput(outputPath);
     try {
-      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(true);
-      expect(existsSync(outputPath)).toBe(false);
-      expect(readdirSync(dir)).toEqual([]);
+      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
+      expect(existsSync(outputPath)).toBe(true);
+      expect(readFileSync(outputPath, 'utf8')).toBe('');
+      expect(readdirSync(dir)).toEqual(['evidence.json']);
     } finally {
       closeSync(fd);
       rmSync(dir, { recursive: true, force: true });
@@ -105,14 +108,15 @@ describe('generation-bound evidence output cleanup policy (unzen#1494)', () => {
     }
   });
 
-  it('is idempotent: a second cleanup of the same reservation removes nothing', () => {
+  it('is idempotent: repeated cleanup retains the same failed reservation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'unzen-evidence-cleanup-idempotent-'));
     const outputPath = join(dir, 'evidence.json');
     const fd = reserveEvidenceOutput(outputPath);
     try {
-      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(true);
       expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
-      expect(readdirSync(dir)).toEqual([]);
+      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
+      expect(readFileSync(outputPath, 'utf8')).toBe('');
+      expect(readdirSync(dir)).toEqual(['evidence.json']);
     } finally {
       closeSync(fd);
       rmSync(dir, { recursive: true, force: true });
@@ -129,6 +133,30 @@ describe('generation-bound evidence output cleanup policy (unzen#1494)', () => {
       expect(readFileSync(outputPath, 'utf8')).toBe('');
       expect(readdirSync(dir)).toEqual(['evidence.json']);
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('requires a different name or manual removal to retry a failed reservation', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'unzen-evidence-cleanup-retry-'));
+    const outputPath = join(dir, 'evidence.json');
+    const fd = reserveEvidenceOutput(outputPath);
+    let retryFd: number | undefined;
+    let alternateFd: number | undefined;
+    try {
+      writeFileSync(fd, 'partial failed capture\n');
+      expect(cleanupReservedEvidenceOutput(fd, outputPath, false)).toBe(false);
+      expect(() => reserveEvidenceOutput(outputPath)).toThrow(/EEXIST/);
+      expect(readFileSync(outputPath, 'utf8')).toBe('partial failed capture\n');
+      alternateFd = reserveEvidenceOutput(join(dir, 'retry.json'));
+      // Explicit operator removal is simulated only inside this disposable fixture directory.
+      unlinkSync(outputPath);
+      retryFd = reserveEvidenceOutput(outputPath);
+      expect(readFileSync(outputPath, 'utf8')).toBe('');
+    } finally {
+      closeSync(fd);
+      if (alternateFd !== undefined) closeSync(alternateFd);
+      if (retryFd !== undefined) closeSync(retryFd);
       rmSync(dir, { recursive: true, force: true });
     }
   });

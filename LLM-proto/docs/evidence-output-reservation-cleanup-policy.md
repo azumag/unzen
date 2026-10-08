@@ -1,51 +1,43 @@
 # Reserved evidence output cleanup policy
 
-Status: **host-side evidence reliability policy decision (unzen#1494)**. This document records which cleanup contract the shared `tools/evidence_output_reservation.mjs` helper implements. It is not new real-model, physical WebGPU, relay/latency, worker-loss/resume, or cache-residency evidence, and it promotes no readiness level.
+Status: **host-side evidence reliability policy decision (unzen#1494)**. This document records the shared `tools/evidence_output_reservation.mjs` contract. It promotes no real-model, physical WebGPU, relay/latency, worker-loss/resume, cache-residency, or production readiness claim.
 
 ## Decision
 
-Of the four candidate directions recorded in #1494, the adopted policy is:
+The adopted policy is **candidate 4: skip automatic cleanup when generation-bound removal cannot be guaranteed**. On the supported Node runtimes, `cleanupReservedEvidenceOutput()` performs no filesystem operation and always returns `false`. `evidenceOutputGenerationBoundCleanupAvailable()` always returns `false`: ordinary rename/unlink functions do not supply the required guarantee.
 
-- **primary: candidate 2 — generation-bound cleanup with an explicit capability gate.** An uncommitted reservation is removed only after the removal has been bound to the reserved inode generation, and only when the runtime exposes the primitives that sequence needs;
-- **fallback: candidate 4 — fail closed when the primitive is unavailable.** If the generation-bound sequence cannot be expressed, cleanup performs no filesystem mutation at all, reports `false`, and leaves the failed reservation artifact in place for the operator;
-- **candidate 1 — descriptor-relative `unlinkat(dirFd, name)` — is unavailable.** Node's standard `fs` API exposes no descriptor-relative removal primitive on macOS or Linux, so there is no kernel-side binding to use;
-- **candidate 3 — keep the pathname unlink and document the hazard — is rejected.** It leaves the shared output pathname itself as the delete target, so any concurrent writer of the evidence directory (not only a same-user actor racing a private name) can have an unrelated file removed by cleanup.
+This supersedes PR #1679's earlier candidate-2 quarantine sequence. Independent review [5450591171](https://github.com/azumag/unzen/pull/1679#pullrequestreview-5450591171) identified that replacing the quarantine entry after the final inode check but before pathname unlink still deletes an unrelated file. A check followed by restoration rename also allows an unrelated destination to be overwritten. Removing only unlink while retaining quarantine/restore would still move or overwrite files, so the entire sequence is removed.
 
-## Cleanup sequence
+Candidate 3 (best-effort pathname deletion with a documented hazard) is rejected. Candidate 1's descriptor-relative `unlinkat(dirFd, name)` is not exposed by Node's standard `fs` API; moreover, anchoring the parent directory alone would not atomically compare the final entry with the reserved inode. Candidate 2 may only be reconsidered with a backend that actually guarantees removal of the reserved generation and deterministic coverage of replacement after the final check. Merely detecting function names cannot enable it.
 
-`cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted)` performs, in order:
+## Cleanup contract and retry
 
-1. `outputCommitted === true` → return `false` without touching the filesystem. Committed evidence is never removed.
-2. the pathname must still identify the reserved device/inode (`fstat` on the reserved descriptor vs `lstat` on the pathname) → otherwise return `false`. A pathname that already holds another file is left completely untouched.
-3. `evidenceOutputGenerationBoundCleanupAvailable()` must report the removal primitives as available → otherwise return `false` (the candidate 4 fallback).
-4. rename the validated pathname to a private sibling name (`.unzen-reservation-cleanup-<uuid>`), i.e. a name created by this helper with an unpredictable suffix, so no unrelated file can already occupy it.
-5. re-verify the device/inode generation **at the private name**. If the quarantined entry is not the reservation, a replacement landed in the check→removal window: it is restored to the original pathname and the call returns `false`.
-6. `unlink` the private name. Only the reserved generation reaches this point, and only under a private name this helper created moments earlier. Return `true` only after the removal succeeded. See [Residual boundary](#residual-boundary) for the window this does not close.
+`cleanupReservedEvidenceOutput(outputFd, outputPath, outputCommitted)` returns `false` before inspecting or mutating the namespace, for committed, uncommitted, replaced, missing, and closed-descriptor inputs alike. It never renames, quarantines, restores, unlinks, truncates, or writes a file. `false` means no removal succeeded; it does not mean the pathname is available for reuse. Callers still close their descriptors afterward.
 
-A contained failure at step 4 or 6 restores the reservation to its original pathname where that is still possible (the destination must be free again), so a failed cleanup leaves the pre-cleanup state observable rather than silently dropping or displacing the artifact.
+An unchanged failed reservation remains at the requested output pathname with its original contents, which may be empty or partially written. It is a failed diagnostic artifact, **not committed or verified evidence**. The helper adds no failure marker and does not move it to a marked filename, because that would itself mutate the namespace. If another process has moved or replaced the reservation, cleanup leaves every current entry untouched.
 
-## What this guarantees
+Reservation remains exclusive (`wx`, mode `0600`). To retry:
 
-- committed output is never removed;
-- the reserved output pathname is never the delete target: a pathname that already holds a replacement is neither deleted nor left renamed (the end state is the pre-cleanup state), and a replacement injected between the step-2 pathname identity check and the removal is quarantined, detected at the private name, and restored byte-for-byte;
-- an unchanged failed reservation is still removed, and cleanup reports success only after the unlink actually succeeded;
-- when the generation-bound primitives are unavailable, nothing is mutated and `false` is reported;
-- endpoint embedding and post-stage RSS callers keep one shared policy: every `tools/capture_endpoint*.mjs` routes cleanup through this helper and performs no reservation removal of its own.
+- choose a different output pathname; or
+- after capture has stopped, inspect the failed artifact and manually remove it before reusing the same pathname.
 
-## Residual boundary
+Reusing an occupied pathname without that manual step fails with `EEXIST`; cleanup never performs that step automatically. Bound captures may leave more than one failed reservation (for example the copied RSS output and its bound sidecar); each destination must be handled separately. For cancellation capture, the raw output reservation belongs to the direct child capture, which also uses the shared helper; the wrapper owns the bound sidecar reservation.
 
-The reserved output pathname is never the delete target, but the **private quarantine name is**. It becomes visible in `readdir` the moment the rename lands, so a same-user process watching the output directory can overwrite that name in the remaining window before its unlink; the removal then reports success while removing an unrelated file. An out-of-tree probe (3000 tight-loop trials against a directory watcher) hit the quarantine name in ~72% of trials, so this window is reachable rather than theoretical: closing it completely requires `unlinkat`, which Node does not expose, and the only alternative is to stop auto-removing reservations altogether (candidate 4), which the capability gate applies when the primitives are missing.
+## Guarantees and limits
 
-Restoring a quarantined entry has the same shape: it renames the entry back only after observing that the original pathname is free again, so an actor that re-creates that pathname inside the restore check→rename window can have its file overwritten. Both windows require same-user write access to the output directory while cleanup runs, and both are documented here rather than claimed away.
+- Cleanup does not delete, rename, or overwrite committed evidence, unchanged failed reservations, replacements, or unrelated siblings.
+- There is no final-check-to-rename, final-check-to-unlink, or restore window in cleanup, because none of those operations is attempted.
+- All host-side `tools/capture_endpoint*.mjs` callers retain one shared cleanup policy and close their reserved descriptors.
+- Exclusive reservation and descriptor-bound publication/identity checks are unchanged. This decision does not establish adversarial namespace isolation for capture publication or output/input alias preflight, nor does it automatically identify failed artifacts as valid evidence.
 
-Parent-directory mtime gating was considered as the generation token and rejected: evidence output directories are shared, so any sibling file created during a capture would refuse legitimate cleanup of an unchanged reservation.
+The [Node filesystem API](https://nodejs.org/docs/latest-v22.x/api/fs.html) exposes pathname-based rename and unlink, not removal conditional on an expected inode generation. The conservative fallback therefore remains active even when both functions exist.
 
 ## Regression coverage
 
-- `tests/evidence-output-reservation-generation-bound.test.ts` — capability probe, unchanged-reservation removal, committed-evidence protection, pre-existing replacement, missing pathname, single-shared-policy source scan over every host-side capture tool.
-- `tests/evidence-output-reservation-race-quarantine.test.ts` — private-name removal boundary, and a deterministic replacement injected between the step-2 pathname identity check and the quarantine rename (i.e. before the final re-verification), plus committed evidence and already-retargeted pathnames mutating nothing.
-- `tests/evidence-output-reservation-capability-gate.test.ts` — the fallback when the removal primitives are unavailable.
-- `tests/evidence-output-reservation-unlink-failure.test.ts` — a contained unlink failure is never reported as a successful cleanup.
-- `tests/endpoint-embedding-webgpu-output-reservation.test.ts`, `tests/endpoint-poststage-webgpu-process-rss-output-reservation.test.ts`, `tests/eight-physical-rss-bound-output-reservation.test.ts`, `tests/eight-physical-rss-direct-output-reservation.test.ts` — the capture-side reserve/commit/cleanup ordering contract.
+- `tests/evidence-output-reservation-generation-bound.test.ts`: unavailable capability on ordinary Node, retained failures, committed/replaced/missing/closed-descriptor cases, retry by alternate name or fixture-only manual removal, and the shared policy across capture callers.
+- `tests/evidence-output-reservation-race-quarantine.test.ts`: records filesystem mutation calls and compares directory names, device/inode identities, and bytes. Replacement hooks at the old pre-rename and final-quarantine-check-to-unlink boundaries stay unreachable. Existing replacement and unrelated/private-name siblings remain untouched.
+- `tests/evidence-output-reservation-capability-gate.test.ts`: no mutation when pathname removal functions are absent.
+- `tests/evidence-output-reservation-unlink-failure.test.ts`: a throwing unlink primitive is never called and no removal success is reported.
+- Endpoint embedding, post-stage RSS, direct RSS, and bound RSS reservation tests: capture-side reserve/commit/cleanup ordering and retention of failed output.
 
 Related: #1490, #1491, #1492, #1493, #1495, #1496, #167.
