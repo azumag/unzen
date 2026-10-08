@@ -342,8 +342,17 @@ function validateResumeEvidenceBinding(body, segment1WorkerIdentity) {
   return { ok: true };
 }
 
-function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
-  return sha256Json({
+// The split Coordinator's `resultDigest` deliberately attests only the immutable
+// core of an accepted split run, not the entire stored JSON result record. See
+// `EVIDENCE-CONTRACT.md` ("resultDigest scope") for the adopted contract and the
+// classification of every stored result field.
+//
+// `resultDigestProjection` is the single source of truth for the digest scope: the
+// digest is SHA-256 over this projection only, so any field added to the digest
+// must be added here. `RESULT_DIGEST_BOUND_FIELDS` mirrors the projection's keys
+// so tests and consumers can assert the contract without re-deriving it.
+export function resultDigestProjection(body, checkpoint, segment1WorkerIdentity) {
+  return {
     checkpointId: body.checkpointId,
     checkpointDigest: body.checkpointDigest,
     checkpointSourceWorkerGeneration: body.checkpointSourceWorkerGeneration,
@@ -364,7 +373,64 @@ function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
     logitsShape: body.logitsShape,
     tokenText: body.tokenText ?? null,
     resumedFromCheckpoint: body.resumedFromCheckpoint,
-  });
+  };
+}
+
+// Every field the immutable `resultDigest` attests. Derived fields that feed the
+// digest (`segment0WorkerId` from the accepted checkpoint identity,
+// `segment1WorkerIdentity` from the authenticated result write) are listed here
+// because the digest attests their canonical value; their derivation authority is
+// documented in EVIDENCE-CONTRACT.md.
+export const RESULT_DIGEST_BOUND_FIELDS = Object.freeze([
+  'checkpointId',
+  'checkpointDigest',
+  'checkpointSourceWorkerGeneration',
+  'manifestDigest',
+  'segment0WorkerId',
+  'segment1WorkerIdentity',
+  'inputTokenIds',
+  'boundaryBytes',
+  'segment0ExecutionMs',
+  'segment1ExecutionMs',
+  'top1TokenId',
+  'top1Logit',
+  'logitsShape',
+  'tokenText',
+  'resumedFromCheckpoint',
+]);
+
+// Fields the Coordinator sets or overwrites from authenticated/route state before
+// storing a result. They are not caller evidence and are not part of the digest.
+export const RESULT_COORDINATOR_DERIVED_FIELDS = Object.freeze([
+  'runId',
+  'resultDigest',
+  'segment1Role',
+  'profileIsolationConfirmed',
+  'profileIsolationEvidence',
+  'storedAt',
+]);
+
+// Fields accepted from the caller and stored verbatim. They are supplemental
+// telemetry/evidence and are NOT attested by `resultDigest`; a retry that differs
+// only in these fields is idempotent. Any field not listed in either of the two
+// lists above defaults to this classification.
+export const RESULT_SUPPLEMENTAL_FIELDS = Object.freeze([
+  'schemaVersion',
+  'kind',
+  'status',
+  'segment1WorkerId',
+  'artifactCache',
+  'logitsFinite',
+  'logitsElementCount',
+  'adapter',
+  'directWorkerNetworking',
+  'relayOwner',
+  'artifactLayout',
+  'segmentExternalData',
+]);
+
+function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
+  return sha256Json(resultDigestProjection(body, checkpoint, segment1WorkerIdentity));
 }
 
 function parseCookies(raw) {
