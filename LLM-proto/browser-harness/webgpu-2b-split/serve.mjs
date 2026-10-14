@@ -342,8 +342,74 @@ function validateResumeEvidenceBinding(body, segment1WorkerIdentity) {
   return { ok: true };
 }
 
-function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
-  return sha256Json({
+// Digest authority for stored result records (unzen#1630). `resultDigest`
+// attests only the immutable core run result projected below; it is never a
+// digest of the whole stored JSON record. Field classes:
+//   digestBound       - hashed into resultDigestFor(); a retry that changes one
+//                       of these is a new result identity and returns 409.
+//   coordinatorDerived - written by the Coordinator, never trusted from the
+//                       client payload as-is. Overlaps digestBound where the
+//                       canonical identity itself is digested.
+//   supplemental      - client-reported telemetry retained verbatim in the
+//                       stored record but explicitly unattested. A retry that
+//                       differs only here stays idempotent and the first
+//                       stored record is not replaced.
+//   validatedGate     - fixed-value mandatory gate. A differing value is
+//                       rejected before result state exists, so digest binding
+//                       would add nothing.
+// EVIDENCE-CONTRACT.md documents the same classes; the authority test asserts
+// the two stay in sync so evidence consumers can check the digest scope
+// instead of assuming it covers the full record.
+export const RESULT_DIGEST_AUTHORITY = Object.freeze({
+  digestBound: Object.freeze([
+    'checkpointId',
+    'checkpointDigest',
+    'checkpointSourceWorkerGeneration',
+    'manifestDigest',
+    'segment0WorkerId',
+    'segment1WorkerIdentity',
+    'inputTokenIds',
+    'boundaryBytes',
+    'segment0ExecutionMs',
+    'segment1ExecutionMs',
+    'top1TokenId',
+    'top1Logit',
+    'logitsShape',
+    'tokenText',
+    'resumedFromCheckpoint',
+  ]),
+  coordinatorDerived: Object.freeze([
+    'runId',
+    'resultDigest',
+    'segment0WorkerId',
+    'segment1Role',
+    'segment1WorkerIdentity',
+    'profileIsolationConfirmed',
+    'profileIsolationEvidence',
+    'storedAt',
+  ]),
+  supplemental: Object.freeze([
+    'schemaVersion',
+    'kind',
+    'segment1WorkerId',
+    'artifactCache',
+    'adapter',
+    'logitsFinite',
+    'logitsElementCount',
+    'artifactLayout',
+    'segmentExternalData',
+  ]),
+  validatedGate: Object.freeze([
+    'status',
+    'relayOwner',
+    'directWorkerNetworking',
+  ]),
+});
+
+// Exported so evidence consumers and tests can assert the documented digest
+// scope against the projection actually hashed, rather than re-deriving it.
+export function resultDigestInputFor(body, checkpoint, segment1WorkerIdentity) {
+  return {
     checkpointId: body.checkpointId,
     checkpointDigest: body.checkpointDigest,
     checkpointSourceWorkerGeneration: body.checkpointSourceWorkerGeneration,
@@ -364,7 +430,11 @@ function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
     logitsShape: body.logitsShape,
     tokenText: body.tokenText ?? null,
     resumedFromCheckpoint: body.resumedFromCheckpoint,
-  });
+  };
+}
+
+function resultDigestFor(body, checkpoint, segment1WorkerIdentity) {
+  return sha256Json(resultDigestInputFor(body, checkpoint, segment1WorkerIdentity));
 }
 
 function parseCookies(raw) {
