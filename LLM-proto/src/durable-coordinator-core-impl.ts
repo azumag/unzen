@@ -67,6 +67,7 @@ import type { InferenceResult } from './types.js';
 import { validateCheckpointEnvelope, isCheckpointExpired } from './checkpoint-envelope.js';
 import type { CheckpointEnvelope } from './checkpoint-envelope.js';
 import { withAbortableTimeout, delay } from './pipeline-utils.js';
+import { scheduleAbsoluteDeadline } from './absolute-deadline-timer.js';
 import { runDurableRecovery } from './durable-recovery-runner.js';
 import type {
   AttemptRecord,
@@ -479,18 +480,16 @@ export class DurableCoordinator {
           if (context.signal.aborted) onResumeAbort();
         }
 
-        let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-        if (context.deadlineAt !== undefined) {
-          const remaining = Math.max(0, context.deadlineAt - Date.now());
-          deadlineTimer = setTimeout(() => {
-            entry.cancelKind = 'deadline';
-            controller.abort();
-          }, remaining);
-        }
+        const cancelDeadlineTimer = context.deadlineAt === undefined
+          ? () => {}
+          : scheduleAbsoluteDeadline(context.deadlineAt, () => {
+              entry.cancelKind = 'deadline';
+              controller.abort();
+            });
         try {
           await this.runRequest(requestId, context.signal);
         } finally {
-          if (deadlineTimer) clearTimeout(deadlineTimer);
+          cancelDeadlineTimer();
           context.signal.removeEventListener('abort', onResumeAbort);
         }
       },
