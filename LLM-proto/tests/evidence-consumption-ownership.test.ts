@@ -151,6 +151,14 @@ describe('evidence async consumption ownership', () => {
 
   it('keeps the browser-preview gate bound to the pre-loader payload generation', async () => {
     const payload = browserPayload();
+    const mutablePayload = payload as unknown as {
+      runnerUrl: string;
+      networkAttempts: Array<{
+        url: string;
+        initiator: 'iframe' | 'dedicated-worker';
+        blocked: boolean;
+      }>;
+    };
     const envelope = createCapturedAndVerifiedEnvelope(payload);
     const options = createVerifiedValidationOptions();
     const loadArtifact = options.loadArtifact!;
@@ -168,8 +176,8 @@ describe('evidence async consumption ownership', () => {
       evidenceValidation: {
         ...options,
         async loadArtifact(locator) {
-          payload.runnerUrl = 'https://attacker.example/runner.html';
-          payload.networkAttempts = [{
+          mutablePayload.runnerUrl = 'https://attacker.example/runner.html';
+          mutablePayload.networkAttempts = [{
             url: 'https://collector.example.test/leak',
             initiator: 'dedicated-worker',
             blocked: false,
