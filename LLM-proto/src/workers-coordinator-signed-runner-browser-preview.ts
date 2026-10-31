@@ -13,10 +13,10 @@ import {
   type WorkersCoordinatorSignedRunnerEvidenceProvenance,
 } from './workers-coordinator-signed-runner-evidence.js';
 import {
-  validateEvidenceEnvelope,
   type EvidenceEnvelope,
   type EvidenceValidationOptions,
 } from './evidence.js';
+import { validateEvidenceEnvelopeForConsumption } from './evidence-consumption.js';
 
 export interface WorkersCoordinatorSignedRunnerBrowserPreviewTarget {
   readonly baseUrl: string;
@@ -96,9 +96,10 @@ export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerificatio
   );
 
   // The gate only trusts contract fields once the envelope has been validated.
-  // A hand-written fixture cannot reach captured-and-verified readiness, so the
-  // payload-dependent parts of the report stay absent on rejection.
-  const validation = await validateEvidenceEnvelope<WorkersCoordinatorSignedRunnerBrowserEvidencePayload>(
+  // The consumption wrapper returns an operation-owned pre-callback envelope
+  // generation, so loader/verifier code cannot rewrite what this gate consumes
+  // while validation is suspended.
+  const validation = await validateEvidenceEnvelopeForConsumption<WorkersCoordinatorSignedRunnerBrowserEvidencePayload>(
     options.browserEvidenceEnvelope,
     options.evidenceValidation,
   );
@@ -119,8 +120,7 @@ export async function runWorkersCoordinatorSignedRunnerBrowserPreviewVerificatio
     };
   }
 
-  // validation.status === 'valid' guarantees the envelope was returned, so the
-  // non-null assertion is safe here.
+  // A valid consumption result always carries the validator-owned snapshot.
   const payload = validation.envelope!.payload;
   const contract = browserEvidenceToRunnerContract(payload);
   const releaseGateReport = runWorkersCoordinatorSignedRunnerReleaseGate({
